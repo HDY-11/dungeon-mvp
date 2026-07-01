@@ -96,19 +96,19 @@ impl Stats {
                 let lvl = (1 + level_scale).min(20);
                 let s = level_scale as i32;
                 Self {
-                    level: lvl as u32, hp: 12 + s * 3, max_hp: 12 + s * 3,
+                    level: lvl as u32, hp: 10 + s * 4, max_hp: 10 + s * 4,
                     mp: 0, max_mp: 0,
-                    exp: (5 + s * 3) as u64, exp_to_next: 0,
-                    strength: (3 + level_scale).min(15) as u32, dexterity: 5, intelligence: 1, vitality: 2,
+                    exp: (6 + s * 3) as u64, exp_to_next: 0,
+                    strength: (4 + level_scale).min(18) as u32, dexterity: 5, intelligence: 1, vitality: 2,
                 }
             },
             'g' => {
                 let lvl = (1 + level_scale).min(20);
                 let s = level_scale as i32;
                 Self {
-                    level: lvl as u32, hp: 22 + s * 5, max_hp: 22 + s * 5,
+                    level: lvl as u32, hp: 18 + s * 6, max_hp: 18 + s * 6,
                     mp: 0, max_mp: 0,
-                    exp: (12 + s * 5) as u64, exp_to_next: 0,
+                    exp: (15 + s * 6) as u64, exp_to_next: 0,
                     strength: (6 + level_scale * 2).min(25) as u32, dexterity: 3, intelligence: 3, vitality: 4,
                 }
             },
@@ -155,10 +155,10 @@ impl Skills {
     pub fn default_skills() -> Self {
         Self {
             list: vec![
-                Skill { name: "治愈", key: '1', cost_mp: 5, description: "HP+15", kind: SkillKind::Heal { amount: 15 } },
-                Skill { name: "火球", key: '2', cost_mp: 8, description: "对邻接敌人造成15伤害", kind: SkillKind::Firebolt { damage: 15 } },
-                Skill { name: "护盾", key: '3', cost_mp: 6, description: "DEF+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-                Skill { name: "狂暴", key: '4', cost_mp: 6, description: "ATK+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
+                Skill { name: "治愈", key: '1', cost_mp: 6, description: "HP+15", kind: SkillKind::Heal { amount: 15 } },
+                Skill { name: "火球", key: '2', cost_mp: 10, description: "对邻接敌人造成15伤害", kind: SkillKind::Firebolt { damage: 15 } },
+                Skill { name: "护盾", key: '3', cost_mp: 5, description: "DEF+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
+                Skill { name: "狂暴", key: '4', cost_mp: 5, description: "ATK+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
             ],
         }
     }
