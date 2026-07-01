@@ -1,6 +1,6 @@
 use crate::{MAP_HEIGHT, MAP_WIDTH};
 use bevy_ecs::prelude::*;
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 
 // ── 资源定义 ───────────────────────────────────────
 
@@ -49,6 +49,34 @@ pub struct FloorNumber(pub u32);
 
 #[derive(Resource, Default)]
 pub struct PendingLevelUp { pub points: u32 }
+
+/// 玩家行动轴显示 — 预测玩家下一次行动
+#[derive(Resource, Clone)]
+pub struct PendingPlayerAction {
+    /// 显示在行动轴上的行动描述
+    pub action_name: String,
+    /// 是否为技能的待确认状态 (true=技能, false=移动/等待直接执行)
+    pub is_pending_skill: bool,
+    pub skill_idx: Option<usize>,
+    /// 当前行动的行动成本(ms)，用于行动轴计算剩余
+    pub action_cost: f32,
+}
+impl Default for PendingPlayerAction {
+    fn default() -> Self { Self {
+        action_name: "移动".into(),
+        is_pending_skill: false,
+        skill_idx: None,
+        action_cost: crate::action_cost::MOVE,
+    } }
+}
+impl PendingPlayerAction {
+    pub fn new_skill(idx: usize, name: &str) -> Self { Self {
+        action_name: format!("技能:{}", name),
+        is_pending_skill: true,
+        skill_idx: Some(idx),
+        action_cost: crate::action_cost::SKILL_CAST,
+    } }
+}
 
 #[derive(Resource)]
 pub struct OccupancyMap {

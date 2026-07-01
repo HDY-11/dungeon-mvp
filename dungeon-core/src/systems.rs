@@ -4,7 +4,7 @@ use crate::{
     items::{Equipment, Inventory, ItemPickup},
     pathfinding::find_path,
     resources::*,
-    effective_attack, effective_defense, equipment_bonus,
+    effective_attack,
     calculate_visible_tiles, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 use bevy_ecs::prelude::*;
@@ -13,7 +13,7 @@ use rand::RngExt;
 /// 玩家移动 + bump 攻击
 pub fn movement_system(
     mut player_query: Query<
-        (&mut crate::Position, &mut MovingDir, &Stats, &Inventory, &Equipment, Option<&Buffs>),
+        (&mut crate::Position, &mut MovingDir, &Stats, &Inventory, &Equipment, Option<&Buffs>, &AttackName),
         (With<Player>, Without<Monster>),
     >,
     mut monster_query: Query<(&mut Stats, &EntityName, Entity), (With<Monster>, Without<Player>)>,
@@ -25,7 +25,7 @@ pub fn movement_system(
     mut event_log: ResMut<EventLog>,
     mut pending_pickup: ResMut<PendingPickup>,
 ) {
-    for (mut pos, mut dir, player_stats, inv, equip, buffs) in player_query.iter_mut() {
+    for (mut pos, mut dir, player_stats, inv, equip, buffs, player_atk) in player_query.iter_mut() {
         if dir.dx == 0 && dir.dy == 0 { continue; }
         let new_x = pos.x.wrapping_add_signed(dir.dx);
         let new_y = pos.y.wrapping_add_signed(dir.dy);
@@ -35,14 +35,18 @@ pub fn movement_system(
         if let Some(entity) = &occupancy.cells[new_y][new_x] {
             if let Ok((mut monster_stats, mon_name, _monster_e)) = monster_query.get_mut(*entity) {
                 let atk = effective_attack(player_stats, inv, equip, buffs) as i32;
-                let dmg = (atk - monster_stats.defense() as i32).max(1);
+                let def = monster_stats.defense as i32;
+                let mut dmg = (atk - def).max(1);
+                let is_crit = player_stats.crit_rate > rand::random::<f32>();
+                if is_crit { dmg = (dmg as f32 * (1.0 + player_stats.crit_damage)).round() as i32; }
                 monster_stats.hp -= dmg;
                 if monster_stats.hp <= 0 {
                     pending.amount += monster_stats.exp;
-                    event_log.push(format!("你击杀了{}！获得{}经验", mon_name.0, monster_stats.exp));
+                    event_log.push(format!("你{}击杀了{}！获得{}经验", player_atk.0, mon_name.0, monster_stats.exp));
                     commands.entity(*entity).despawn();
                 } else {
-                    event_log.push(format!("你攻击了{}，造成{}点伤害", mon_name.0, dmg));
+                    let crit_tag = if is_crit { "！暴击" } else { "" };
+                    event_log.push(format!("你{}了{}{}，造成{}点伤害", player_atk.0, mon_name.0, crit_tag, dmg));
                 }
                 continue;
             }
@@ -63,9 +67,9 @@ pub fn fov_system(mut query: Query<(&crate::Position, &mut Viewshed)>, map: Res<
     }
 }
 
-/// 行动轴
+/// 行动轴 — 累加速度到 points，无硬上限（由行动成本自然约束）
 pub fn tick_action_system(mut query: Query<&mut ActionPoints>) {
-    for mut ap in query.iter_mut() { ap.points = (ap.points + ap.speed).min(200.0); }
+    for mut ap in query.iter_mut() { ap.points = (ap.points + ap.speed).min(5000.0); }
 }
 
 /// 死亡检测
@@ -78,27 +82,37 @@ pub fn check_death_system(
     }
 }
 
-/// 怪物 AI（优先级行为链）
+/// 怪物 AI（优先级行为链）+ 预告系统
 pub fn monster_ai_system(
     mut monster_query: Query<(
-        &mut crate::Position, &mut Viewshed, &Stats, &MonsterBrain, &EntityName, &mut FleeLogState,
+        &mut crate::Position, &mut Viewshed, &Stats, &MonsterBrain, &EntityName, &mut FleeLogState, &mut ActionPreview, &AttackName,
     ), (With<Monster>, Without<Player>)>,
-    mut player_query: Query<(&crate::Position, &mut Stats), (With<Player>, Without<Monster>)>,
+    mut player_query: Query<(&crate::Position, &mut Stats, &Viewshed), (With<Player>, Without<Monster>)>,
     map: Res<Map>, occupancy: Res<OccupancyMap>,
     mut game_rng: ResMut<GameRng>, mut event_log: ResMut<EventLog>,
 ) {
-    let Ok((player_pos, mut player_stats)) = player_query.single_mut() else { return; };
+    let Ok((player_pos, mut player_stats, player_viewshed)) = player_query.single_mut() else { return; };
     let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-    for (mut pos, mut viewshed, monster_stats, brain, name, mut flee_state) in monster_query.iter_mut() {
+    for (mut pos, mut viewshed, monster_stats, brain, name, mut flee_state, mut preview, atk_name) in monster_query.iter_mut() {
         viewshed.visible_tiles = calculate_visible_tiles(pos.x, pos.y, viewshed.range, &map);
         let can_see_player = viewshed.visible_tiles.contains(&(player_pos.x, player_pos.y));
         let mut acted = false;
+
+
+
         for behavior in &brain.behaviors {
             if acted { break; }
             match behavior {
                 AiBehavior::FleeWhenHurt { hp_threshold } => {
                     if (monster_stats.hp as f32) >= (monster_stats.max_hp as f32) * hp_threshold {
                         flee_state.last_turn_was_flee = false; continue;
+                    }
+                    // 预告：逃跑
+                    let in_fov = player_viewshed.visible_tiles.contains(&(pos.x, pos.y));
+                    let preview_text = format!("{} 即将逃跑", name.0);
+                    if in_fov && preview.last_preview.as_deref() != Some(&preview_text) {
+                        event_log.push(preview_text.clone());
+                        preview.last_preview = Some(preview_text);
                     }
                     let mut best: Option<(usize, usize)> = None; let mut best_dist: usize = 0;
                     for &(dx, dy) in &dirs {
@@ -118,10 +132,26 @@ pub fn monster_ai_system(
                     flee_state.last_turn_was_flee = false;
                     if !can_see_player { continue; }
                     let dist = pos.x.abs_diff(player_pos.x) + pos.y.abs_diff(player_pos.y);
+                    // 预告：追击/攻击
+                    let in_fov = player_viewshed.visible_tiles.contains(&(pos.x, pos.y));
+                    if in_fov {
+                        let preview_text = if dist <= 1 {
+                            format!("{} 即将攻击你", name.0)
+                        } else {
+                            format!("{} 正在接近", name.0)
+                        };
+                        if preview.last_preview.as_deref() != Some(&preview_text) {
+                            event_log.push(preview_text.clone());
+                            preview.last_preview = Some(preview_text);
+                        }
+                    }
                     if dist <= 1 {
-                        let dmg = (monster_stats.attack() as i32 - player_stats.defense() as i32).max(1);
+                        let dmg = (monster_stats.attack as i32 - player_stats.defense as i32).max(1);
+                        let is_crit = monster_stats.crit_rate > game_rng.rng.random::<f32>();
+                        let dmg = if is_crit { (dmg as f32 * (1.0 + monster_stats.crit_damage)).round() as i32 } else { dmg };
                         player_stats.hp -= dmg;
-                        event_log.push(format!("{} 攻击了你，造成 {} 点伤害", name.0, dmg));
+                        let crit_tag = if is_crit { "！暴击" } else { "" };
+                        event_log.push(format!("{}{}了你{}，造成{}点伤害", name.0, atk_name.0, crit_tag, dmg));
                         acted = true;
                     } else if let Some(path) = find_path((pos.x, pos.y), (player_pos.x, player_pos.y), &map, &occupancy, true) {
                         if path.len() > 1 {
@@ -134,6 +164,13 @@ pub fn monster_ai_system(
                 }
                 AiBehavior::Wander => {
                     flee_state.last_turn_was_flee = false;
+                    // 预告：游荡
+                    let in_fov = player_viewshed.visible_tiles.contains(&(pos.x, pos.y));
+                    let preview_text = format!("{} 正在游荡", name.0);
+                    if in_fov && preview.last_preview.as_deref() != Some(&preview_text) {
+                        event_log.push(preview_text.clone());
+                        preview.last_preview = Some(preview_text);
+                    }
                     let (dx, dy) = dirs[game_rng.rng.random_range(0..4)];
                     let nx = pos.x.wrapping_add_signed(dx); let ny = pos.y.wrapping_add_signed(dy);
                     if nx < MAP_WIDTH && ny < MAP_HEIGHT && map.tiles[ny][nx] == Tile::Floor && !occupancy.is_occupied(nx, ny) {
@@ -179,8 +216,8 @@ pub fn apply_exp_system(
             player.exp -= player.exp_to_next;
             player.level += 1;
             pending_lv.points += 3;
-            player.max_hp = crate::max_hp_for(player.level, player.vitality);
-            player.max_mp = crate::max_mp_for(player.level, player.intelligence);
+            player.max_hp = crate::max_hp_for(player.level, player.defense);
+            player.max_mp = crate::max_mp_for(player.level, player.magic_mastery);
             player.hp = player.max_hp; player.mp = player.max_mp;
             player.exp_to_next = crate::exp_to_next_level(player.level);
             event_log.push(format!("升级！达到 Lv.{}", player.level));
@@ -196,28 +233,49 @@ pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
     }
 }
 
-/// 技能执行
+/// 技能执行（含职业过滤 + 法术精通加成 + Buff叠加）
 pub fn skill_tick_system(
     mut pending: ResMut<PendingSkill>,
-    mut player: Query<(&mut Stats, &Skills, &mut Buffs, &crate::Position), (With<Player>, Without<Monster>)>,
+    mut player: Query<(&mut Stats, &Skills, &mut Buffs, &crate::Position, &PlayerClass), (With<Player>, Without<Monster>)>,
     mut monsters: Query<(&mut Stats, &crate::Position, &EntityName), (With<Monster>, Without<Player>)>,
     mut event_log: ResMut<EventLog>,
+    mut game_rng: ResMut<GameRng>,
 ) {
     let Some(skill_idx) = pending.idx.take() else { return; };
-    let Ok((mut stats, skills, mut buffs, pp)) = player.get_single_mut() else { return; };
+    let Ok((mut stats, skills, mut buffs, pp, class)) = player.get_single_mut() else { return; };
     let Some(sk) = skills.list.get(skill_idx) else { return; };
+
+    // 职业过滤
+    if !class.can_cast(sk) {
+        event_log.push(format!("{} 无法释放 {}（职业不符）", class.display_name(), sk.name));
+        return;
+    }
+
     if stats.mp < sk.cost_mp { event_log.push(format!("MP 不足，无法释放 {}", sk.name)); return; }
     stats.mp -= sk.cost_mp;
     match &sk.kind {
         SkillKind::Heal { amount } => {
-            stats.hp = (stats.hp + amount).min(stats.max_hp);
-            event_log.push(format!("释放 {}，HP+{}", sk.name, amount));
+            // 法术精通加成回复量
+            let bonus = (stats.magic_mastery as f32 * 1.0) as i32;
+            let total = amount + bonus;
+            stats.hp = (stats.hp + total).min(stats.max_hp);
+            event_log.push(format!("释放 {}，HP+{}（法术精通加成{})", sk.name, total, bonus));
         }
         SkillKind::Firebolt { damage } => {
+            // 法术精通加成伤害
+            let bonus = (stats.magic_mastery as f32 * 0.5) as i32;
+            let total_dmg = damage + bonus;
             let mut hit = false;
             for (mut ms, mp, mn) in monsters.iter_mut() {
                 if pp.x.abs_diff(mp.x) + pp.y.abs_diff(mp.y) <= 1 {
-                    let dmg = (damage - ms.defense() as i32).max(1); ms.hp -= dmg;
+                    // 暴击判定（法术）
+                    let is_crit = stats.crit_rate > game_rng.rng.random::<f32>();
+                    let mut dmg = (total_dmg - ms.defense as i32).max(1);
+                    if is_crit {
+                        dmg = (dmg as f32 * (1.0 + stats.crit_damage)).round() as i32;
+                        event_log.push(format!("法术暴击！"));
+                    }
+                    ms.hp -= dmg;
                     event_log.push(format!("火球击中 {}！造成 {} 点伤害", mn.0, dmg));
                     hit = true;
                 }
@@ -225,12 +283,26 @@ pub fn skill_tick_system(
             if !hit { event_log.push(String::from("附近没有敌人可以攻击")); }
         }
         SkillKind::Shield { def_boost, duration } => {
-            buffs.shield_turns = *duration; buffs.shield_def = *def_boost;
-            event_log.push(format!("释放 {}，DEF+{} 持续{}回合", sk.name, def_boost, duration));
+            // 叠加：刷新回合数，取最高防御加成
+            if buffs.shield_turns > 0 {
+                buffs.shield_turns = (*duration).max(buffs.shield_turns);
+                buffs.shield_def = (*def_boost).max(buffs.shield_def);
+                event_log.push(format!("释放 {}，防御+{} 叠加至{}回合", sk.name, buffs.shield_def, buffs.shield_turns));
+            } else {
+                buffs.shield_turns = *duration; buffs.shield_def = *def_boost;
+                event_log.push(format!("释放 {}，防御+{} 持续{}回合", sk.name, def_boost, duration));
+            }
         }
         SkillKind::Berserk { atk_boost, duration } => {
-            buffs.berserk_turns = *duration; buffs.berserk_atk = *atk_boost;
-            event_log.push(format!("释放 {}，ATK+{} 持续{}回合", sk.name, atk_boost, duration));
+            // 叠加
+            if buffs.berserk_turns > 0 {
+                buffs.berserk_turns = (*duration).max(buffs.berserk_turns);
+                buffs.berserk_atk = (*atk_boost).max(buffs.berserk_atk);
+                event_log.push(format!("释放 {}，攻击+{} 叠加至{}回合", sk.name, buffs.berserk_atk, buffs.berserk_turns));
+            } else {
+                buffs.berserk_turns = *duration; buffs.berserk_atk = *atk_boost;
+                event_log.push(format!("释放 {}，攻击+{} 持续{}回合", sk.name, atk_boost, duration));
+            }
         }
     }
 }

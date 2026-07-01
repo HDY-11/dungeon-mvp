@@ -2,7 +2,7 @@ use crate::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::SeedableRng;
 
 fn seeded_map(seed: u64) -> Map {
     let mut rng = SmallRng::seed_from_u64(seed);
@@ -27,13 +27,16 @@ fn test_world() -> World {
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
+    world.insert_resource(PendingPlayerAction::default());
     world.insert_resource(map);
     world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: ratatui::style::Color::Yellow },
         MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
         Stats::player(), EntityName("冒险者".into()), ActionPoints::new(10),
-        Inventory::new(36), Equipment::new(), Skills::default_skills(), Buffs::new(),
+        Inventory::new(36), Equipment::new(), Buffs::new(), ActionPreview::new(),
+        PlayerClass::Warrior, Skills { list: PlayerClass::Warrior.skills() },
+        AttackName("斩击".into()),
     ));
     world
 }
@@ -98,7 +101,7 @@ fn test_world() -> World {
 }
 #[test] fn test_skills_exist() {
     let mut world = setup_world();
-    assert_eq!(world.query::<&Skills>().iter(&world).next().unwrap().list.len(), 4);
+    assert_eq!(world.query::<&Skills>().iter(&world).next().unwrap().list.len(), 2); // 战士2个技能
 }
 
 // ── 曲线 ──────────────────────────────────────────

@@ -19,6 +19,20 @@ use rand::Rng;
 
 pub use components::EntityName;
 
+// ── 行动成本常量 ─────────────────────────────────────
+
+pub mod action_cost {
+    // 1 行动值 = 1ms
+    pub const MOVE: f32 = 300.0;        // 走一格 300ms
+    pub const ATTACK: f32 = 200.0;      // 挥砍 200ms
+    pub const SKILL_CAST: f32 = 600.0;  // 施法 600ms
+    pub const MONSTER_CHASE: f32 = 250.0;
+    pub const MONSTER_WANDER: f32 = 500.0;
+    pub const MONSTER_FLEE: f32 = 250.0;
+    pub const PICKUP: f32 = 200.0;
+    pub const WAIT: f32 = 800.0;
+}
+
 // ── 常量 ──────────────────────────────────────────────
 
 pub const MAP_WIDTH: usize = 40;

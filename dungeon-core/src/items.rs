@@ -9,8 +9,17 @@ pub enum EquipmentSlot { Weapon, Armor, Ring }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StatBonus {
-    pub strength: i32, pub dexterity: i32, pub intelligence: i32, pub vitality: i32,
-    pub hp: i32, pub attack: i32, pub defense: i32,
+    /// 攻击
+    pub attack: i32,
+    /// 防御
+    pub defense: i32,
+    /// 法术精通
+    pub magic_mastery: i32,
+    /// 敏捷
+    pub agility: i32,
+    pub hp: i32,
+    pub crit_rate: f32,
+    pub crit_damage: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -38,25 +47,25 @@ pub fn make_items() -> Vec<ItemInstance> {
             name: "锈铁剑".into(), glyph: '/', color: Color::LightCyan,
             slot: EquipmentSlot::Weapon,
             bonus: StatBonus { attack: 3, ..Default::default() },
-            description: "一把生锈的铁剑，ATK+3".into(),
+            description: "一把生锈的铁剑，攻击+3".into(),
         },
         ItemInstance {
             name: "木盾".into(), glyph: '[', color: Color::Rgb(139, 90, 43),
             slot: EquipmentSlot::Armor,
             bonus: StatBonus { defense: 2, ..Default::default() },
-            description: "简陋的木盾，DEF+2".into(),
+            description: "简陋的木盾，防御+2".into(),
         },
         ItemInstance {
             name: "皮甲".into(), glyph: ']', color: Color::LightYellow,
             slot: EquipmentSlot::Armor,
-            bonus: StatBonus { defense: 1, vitality: 1, ..Default::default() },
-            description: "轻便皮甲，DEF+1 VIT+1".into(),
+            bonus: StatBonus { defense: 1, agility: 1, ..Default::default() },
+            description: "轻便皮甲，防御+1 敏捷+1".into(),
         },
         ItemInstance {
-            name: "力量戒指".into(), glyph: '=', color: Color::LightRed,
+            name: "攻击戒指".into(), glyph: '=', color: Color::LightRed,
             slot: EquipmentSlot::Ring,
-            bonus: StatBonus { strength: 2, ..Default::default() },
-            description: "力量之戒，STR+2".into(),
+            bonus: StatBonus { attack: 2, ..Default::default() },
+            description: "攻击之戒，攻击+2".into(),
         },
     ]
 }

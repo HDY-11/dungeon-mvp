@@ -1,22 +1,15 @@
-use crate::{
-    ai::MonsterBrain,
-    components::*,
-    items::*,
-    resources::*,
-    make_items, MAP_HEIGHT, MAP_WIDTH, Tile, Map, Room,
-};
 use bevy_ecs::prelude::*;
 use ratatui::style::Color;
-use rand::{RngExt, SeedableRng};
-
-// ── 升级曲线 ────────────────────────────────────────
+use rand::SeedableRng;
+use crate::{
+    ai::MonsterBrain, components::*, items::*, resources::*,
+    make_items, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
+};
 
 pub fn exp_to_next_level(level: u32) -> u64 { 20 * (level as u64).pow(2) + 30 * (level as u64) }
-pub fn max_hp_for(level: u32, vitality: u32) -> i32 { 20 + level as i32 * 5 + vitality as i32 * 2 }
-pub fn max_mp_for(level: u32, intelligence: u32) -> i32 { 5 + level as i32 * 3 + intelligence as i32 }
+pub fn max_hp_for(level: u32, defense: u32) -> i32 { 20 + level as i32 * 5 + defense as i32 * 2 }
+pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mastery as i32 }
 pub fn defense_bonus(level: u32) -> u32 { (level as f64).log2().floor() as u32 }
-
-// ── 装备加成 ────────────────────────────────────────
 
 pub fn equipment_bonus(inv: &Inventory, equip: &Equipment) -> StatBonus {
     let mut total = StatBonus::default();
@@ -24,9 +17,9 @@ pub fn equipment_bonus(inv: &Inventory, equip: &Equipment) -> StatBonus {
         if let Some(idx) = opt {
             if let Some(item) = inv.items.get(idx) {
                 let b = &item.bonus;
-                total.strength += b.strength; total.dexterity += b.dexterity;
-                total.intelligence += b.intelligence; total.vitality += b.vitality;
-                total.hp += b.hp; total.attack += b.attack; total.defense += b.defense;
+                total.attack += b.attack; total.defense += b.defense;
+                total.magic_mastery += b.magic_mastery; total.agility += b.agility;
+                total.hp += b.hp; total.crit_rate += b.crit_rate; total.crit_damage += b.crit_damage;
             }
         }
     }
@@ -35,51 +28,42 @@ pub fn equipment_bonus(inv: &Inventory, equip: &Equipment) -> StatBonus {
 
 pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>) -> u32 {
     let bonus = equipment_bonus(inv, equip);
-    let mut atk = (stats.attack() as i32) + bonus.attack + bonus.strength;
+    let mut atk = (stats.attack as i32) + bonus.attack;
     if let Some(b) = buffs { atk += b.berserk_atk; }
     atk.max(1) as u32
 }
 
 pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>) -> u32 {
     let bonus = equipment_bonus(inv, equip);
-    let mut def = (stats.defense() as i32) + bonus.defense + bonus.vitality;
+    let mut def = (stats.defense as i32) + bonus.defense;
     if let Some(b) = buffs { def += b.shield_def; }
     def.max(0) as u32
 }
 
-// ── FOV 工具 ────────────────────────────────────────
-
-fn has_line_of_sight(x0: usize, y0: usize, x1: usize, y1: usize, map: &Map) -> bool {
-    let mut cx = x0 as isize; let mut cy = y0 as isize;
-    let ex = x1 as isize; let ey = y1 as isize;
-    let dx = (ex - cx).abs(); let dy = -(ey - cy).abs();
-    let sx = if cx < ex { 1 } else { -1 }; let sy = if cy < ey { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if (cx, cy) == (ex, ey) { return true; }
-        if (cx, cy) != (x0 as isize, y0 as isize) {
-            let ux = cx as usize; let uy = cy as usize;
-            if ux >= MAP_WIDTH || uy >= MAP_HEIGHT { return false; }
-            if map.tiles[uy][ux] == Tile::Wall { return false; }
-        }
-        let e2 = 2 * err;
-        if e2 >= dy { err += dy; cx += sx; }
-        if e2 <= dx { err += dx; cy += sy; }
-    }
-}
+// ── FOV — 对称阴影投射（symmetric-shadowcasting）────
 
 pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> Vec<(usize, usize)> {
+    use symmetric_shadowcasting::compute_fov;
+    let r2 = (range * range) as isize;
     let mut visible = Vec::new();
-    let range_sq = (range as isize) * (range as isize);
-    for dy in -(range as isize)..=range as isize {
-        for dx in -(range as isize)..=range as isize {
-            let tx = x.wrapping_add_signed(dx); let ty = y.wrapping_add_signed(dy);
-            if tx >= MAP_WIDTH || ty >= MAP_HEIGHT { continue; }
-            if dx * dx + dy * dy > range_sq { continue; }
-            if (tx, ty) == (x, y) { visible.push((tx, ty)); continue; }
-            if has_line_of_sight(x, y, tx, ty, map) { visible.push((tx, ty)); }
+    let origin = (x as isize, y as isize);
+
+    let mut is_blocking = |pos: (isize, isize)| {
+        if pos.0 < 0 || pos.0 >= MAP_WIDTH as isize || pos.1 < 0 || pos.1 >= MAP_HEIGHT as isize {
+            return true; // 地图外 = 阻挡
         }
-    }
+        map.tiles[pos.1 as usize][pos.0 as usize] == Tile::Wall
+    };
+
+    let mut mark_visible = |pos: (isize, isize)| {
+        let dx = pos.0 - origin.0;
+        let dy = pos.1 - origin.1;
+        if dx * dx + dy * dy <= r2 {
+            visible.push((pos.0 as usize, pos.1 as usize));
+        }
+    };
+
+    compute_fov(origin, &mut is_blocking, &mut mark_visible);
     visible
 }
 
@@ -132,17 +116,20 @@ pub fn setup_world() -> World {
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
+    world.insert_resource(PendingPlayerAction::default());
 
     let (spawn_x, spawn_y) = map.rooms[0].center();
     world.insert_resource(map);
-    let player_dex = 10;
+    let player_agi = 10;
 
     world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: Color::Yellow }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
-        Stats::player(), EntityName("冒险者".into()), ActionPoints::new(player_dex),
-        Inventory::new(36), Equipment::new(), Skills::default_skills(), Buffs::new(),
+        Stats::player(), EntityName("冒险者".into()), ActionPoints::new(player_agi),
+        Inventory::new(36), Equipment::new(), Buffs::new(),
+        ActionPreview::new(), PlayerClass::Warrior, AttackName("斩击".into()),
+        Skills { list: PlayerClass::Warrior.skills() },
     ));
 
     let monster_templates: [(char, Color, &str); 4] = [
@@ -160,25 +147,28 @@ pub fn setup_world() -> World {
             world.spawn((
                 Monster, MonsterBrain::creature(),
                 Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 5, visible_tiles: Vec::new() },
+                Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                ActionPoints::new(Stats::monster(glyph, 1).dexterity),
-                FleeLogState::default(),
+                ActionPoints::new(Stats::monster(glyph, 1).agility),
+                FleeLogState::default(), ActionPreview::new(),
+                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
         }
     }
 
-    // 楼梯
-    { let m = world.resource::<Map>(); let last = m.rooms.len() - 1;
+    {
+        let m = world.resource::<Map>();
+        let last = m.rooms.len() - 1;
         let (sx, sy) = m.rooms[last].center();
-        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: Color::Green })); }
+        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: Color::Green }));
+    }
 
-    // 物品
     let items = make_items();
     for (i, item) in items.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
             world.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
-                Renderable { glyph: item.glyph, color: item.color })); }
+                Renderable { glyph: item.glyph, color: item.color }));
+        }
     }
     world
 }
@@ -190,11 +180,11 @@ pub fn descend(world: &mut World) {
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = world.query::<(Entity, &Stats, &Position, &ActionPoints, &Inventory, &Equipment, &Skills, &Buffs)>();
-        let (e, s, p, ap, inv, eq, sk, bu) = q.iter(world).next().unwrap();
+        let mut q = world.query::<(Entity, &Stats, &Position, &ActionPoints, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
+        let (e, s, p, ap, inv, eq, sk, _bu, cls, atk) = q.iter(world).next().unwrap();
         (e, s.clone(), *p, ap.points, ap.speed, inv.items.clone(), inv.capacity,
          Equipment { weapon: eq.weapon, armor: eq.armor, ring: eq.ring },
-         sk.list.clone(), Buffs::new())
+         sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = world.query::<(Entity,)>();
@@ -206,7 +196,7 @@ pub fn descend(world: &mut World) {
     world.insert_resource(map); world.insert_resource(MapMemory::new());
     let spawn = { let m = world.resource::<Map>(); m.rooms[0].center() };
 
-    let e = { let mut cmd = world.spawn((
+    let _e = { let mut cmd = world.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: Color::Yellow }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
@@ -215,7 +205,9 @@ pub fn descend(world: &mut World) {
         cmd.insert(ActionPoints { points: 0.0, speed: player_data.4 });
         cmd.insert(Inventory { items: player_data.5, capacity: player_data.6 });
         cmd.insert(player_data.7); cmd.insert(Skills { list: player_data.8 });
-        cmd.insert(player_data.9.clone()); cmd.id() };
+        cmd.insert(player_data.9.clone()); cmd.insert(ActionPreview::new());
+        let class = player_data.10.clone();
+        cmd.insert(class); cmd.insert(AttackName(player_data.11.clone())); cmd.id() };
 
     let last_room = { let m = world.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
     world.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
@@ -234,17 +226,21 @@ pub fn descend(world: &mut World) {
         if let Some(&(mx, my)) = spawn_points.get(i) {
             world.spawn((Monster, MonsterBrain::creature(),
                 Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 5, visible_tiles: Vec::new() },
+                Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
-                ActionPoints::new(Stats::monster(glyph, f).dexterity),
-                FleeLogState::default())); }
+                ActionPoints::new(Stats::monster(glyph, f).agility),
+                FleeLogState::default(), ActionPreview::new(),
+                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
+            ));
+        }
     }
 
     let items = make_items();
     for (i, item) in items.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
             world.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
-                Renderable { glyph: item.glyph, color: item.color })); }
+                Renderable { glyph: item.glyph, color: item.color }));
+        }
     }
     world.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
 }
