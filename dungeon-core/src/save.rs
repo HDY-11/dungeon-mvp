@@ -1,0 +1,220 @@
+use crate::*;
+use bevy_ecs::prelude::*;
+use rand::{RngExt, SeedableRng};
+use ratatui::style::Color;
+use serde::{Deserialize, Serialize};
+
+// ── 可序列化的中间表示 ────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+pub struct RawItem {
+    pub name: String, pub glyph: char, pub r: u8, pub g: u8, pub b: u8,
+    pub slot: EquipmentSlot,
+    pub bonus_str: i32, pub bonus_dex: i32, pub bonus_int: i32, pub bonus_vit: i32,
+    pub bonus_hp: i32, pub bonus_atk: i32, pub bonus_def: i32,
+    pub desc: String,
+}
+
+impl RawItem {
+    fn from_item(item: &ItemInstance) -> Self {
+        let (r, g, b) = match item.color { Color::Rgb(r, gg, bb) => (r, gg, bb), _ => (200, 200, 200) };
+        Self {
+            name: item.name.clone(), glyph: item.glyph, r, g, b, slot: item.slot,
+            bonus_str: item.bonus.strength, bonus_dex: item.bonus.dexterity,
+            bonus_int: item.bonus.intelligence, bonus_vit: item.bonus.vitality,
+            bonus_hp: item.bonus.hp, bonus_atk: item.bonus.attack, bonus_def: item.bonus.defense,
+            desc: item.description.clone(),
+        }
+    }
+    fn into_item(self) -> ItemInstance {
+        ItemInstance {
+            name: self.name, glyph: self.glyph, color: Color::Rgb(self.r, self.g, self.b),
+            slot: self.slot, description: self.desc,
+            bonus: StatBonus {
+                strength: self.bonus_str, dexterity: self.bonus_dex,
+                intelligence: self.bonus_int, vitality: self.bonus_vit,
+                hp: self.bonus_hp, attack: self.bonus_atk, defense: self.bonus_def,
+            },
+        }
+    }
+}
+
+// ── 存档结构 ───────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+pub struct GameSave {
+    pub floor: u32,
+    pub px: u16, pub py: u16,
+    pub st: SavedStats,
+    pub inv: Vec<RawItem>,
+    pub weapon: Option<u16>, pub armor: Option<u16>, pub ring: Option<u16>,
+    pub ap: f32, pub ap_speed: f32,
+    pub buffs: SavedBuffs,
+    pub map_tiles: Vec<u8>,
+    pub rooms: Vec<Room>,
+    pub explored: Vec<u8>,
+    pub monsters: Vec<SavedMonster>,
+    pub items: Vec<SavedGroundItem>,
+    pub sx: u16, pub sy: u16,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedStats {
+    pub level: u32, pub hp: i32, pub max_hp: i32, pub mp: i32, pub max_mp: i32,
+    pub exp: u64, pub exp_to_next: u64,
+    pub strength: u32, pub dexterity: u32, pub intelligence: u32, pub vitality: u32,
+}
+
+impl From<Stats> for SavedStats {
+    fn from(s: Stats) -> Self { Self {
+        level: s.level, hp: s.hp, max_hp: s.max_hp, mp: s.mp, max_mp: s.max_mp,
+        exp: s.exp, exp_to_next: s.exp_to_next,
+        strength: s.strength, dexterity: s.dexterity, intelligence: s.intelligence, vitality: s.vitality,
+    } }
+}
+
+impl SavedStats {
+    fn into_stats(self) -> Stats { Stats {
+        level: self.level, hp: self.hp, max_hp: self.max_hp, mp: self.mp, max_mp: self.max_mp,
+        exp: self.exp, exp_to_next: self.exp_to_next,
+        strength: self.strength, dexterity: self.dexterity, intelligence: self.intelligence, vitality: self.vitality,
+    } }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedBuffs { pub shield_turns: i32, pub shield_def: i32, pub berserk_turns: i32, pub berserk_atk: i32 }
+
+impl From<Buffs> for SavedBuffs {
+    fn from(b: Buffs) -> Self { Self { shield_turns: b.shield_turns, shield_def: b.shield_def, berserk_turns: b.berserk_turns, berserk_atk: b.berserk_atk } }
+}
+impl SavedBuffs {
+    fn into_buffs(self) -> Buffs { Buffs { shield_turns: self.shield_turns, shield_def: self.shield_def, berserk_turns: self.berserk_turns, berserk_atk: self.berserk_atk } }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedMonster {
+    pub x: u16, pub y: u16, pub glyph: char, pub r: u8, pub g: u8, pub b: u8,
+    pub name: String, pub st: SavedStats, pub ap: f32, pub ap_speed: f32, pub flee: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item: RawItem }
+
+impl GameSave {
+    pub fn from_world(world: &mut World) -> Self {
+        let floor = world.resource::<FloorNumber>().0;
+        let explored = world.resource::<MapMemory>().explored;
+        let mut map_tiles = Vec::with_capacity(MAP_WIDTH * MAP_HEIGHT);
+        let map = world.resource::<Map>();
+        for row in 0..MAP_HEIGHT {
+            for col in 0..MAP_WIDTH { map_tiles.push(map.tiles[row][col] as u8); }
+        }
+        let rooms = map.rooms.clone();
+
+        let (sx, sy) = {
+            let mut sq = world.query::<(&Stairs, &Position)>();
+            sq.iter(world).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
+        };
+
+        let (px, py, st, inv, weapon, armor, ring, ap, ap_speed, buffs) = {
+            let mut q = world.query::<(&Position, &Stats, &Inventory, &Equipment, &ActionPoints, &Buffs)>();
+            let (pos, st, inv, eq, ap, bu) = q.iter(world).next().unwrap();
+            (pos.x as u16, pos.y as u16,
+             SavedStats::from(st.clone()),
+             inv.items.iter().map(RawItem::from_item).collect(),
+             eq.weapon.map(|i| i as u16), eq.armor.map(|i| i as u16), eq.ring.map(|i| i as u16),
+             ap.points, ap.speed, SavedBuffs::from(bu.clone()))
+        };
+
+        let monsters = {
+            let mut mq = world.query::<(&Monster, &Position, &Stats, &ActionPoints, &EntityName, &FleeLogState, &Renderable)>();
+            mq.iter(world).map(|(_, pos, st, ap, name, flee, rend)| {
+                let (r, g, b) = match rend.color { Color::Rgb(r, gg, bb) => (r, gg, bb), _ => (200,200,200) };
+                SavedMonster {
+                    x: pos.x as u16, y: pos.y as u16, glyph: rend.glyph, r, g, b,
+                    name: name.0.clone(), st: SavedStats::from(st.clone()),
+                    ap: ap.points, ap_speed: ap.speed, flee: flee.last_turn_was_flee,
+                }
+            }).collect()
+        };
+
+        let items = {
+            let mut iq = world.query::<(&ItemPickup, &Position)>();
+            iq.iter(world).map(|(item, pos)| SavedGroundItem {
+                x: pos.x as u16, y: pos.y as u16, item: RawItem::from_item(&item.item),
+            }).collect()
+        };
+
+        Self {
+            floor, px, py, st, inv, weapon, armor, ring, ap, ap_speed, buffs,
+            map_tiles, rooms,
+            explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
+            monsters, items, sx, sy,
+        }
+    }
+
+    pub fn into_world(self, world: &mut World) {
+        let dead: Vec<Entity> = { let mut q = world.query::<(Entity,)>();
+            q.iter(world).map(|(e,)| e).collect() };
+        for e in dead { let _ = world.despawn(e); }
+
+        world.insert_resource(FloorNumber(self.floor));
+        let mut tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
+        for (i, &v) in self.map_tiles.iter().enumerate() {
+            tiles[i / MAP_WIDTH][i % MAP_WIDTH] = if v == 0 { Tile::Wall } else { Tile::Floor };
+        }
+        world.insert_resource(Map { tiles, rooms: self.rooms });
+        let mut explored = [[false; MAP_WIDTH]; MAP_HEIGHT];
+        for (i, &v) in self.explored.iter().enumerate() { explored[i / MAP_WIDTH][i % MAP_WIDTH] = v != 0; }
+        world.insert_resource(MapMemory { explored });
+        world.insert_resource(PendingExp::default());
+        world.insert_resource(PendingPickup::default());
+        world.insert_resource(PendingSkill::default());
+        world.insert_resource(EventLog::new());
+        world.insert_resource(TurnManager::new());
+        world.insert_resource(PendingLevelUp::default());
+        world.insert_resource(OccupancyMap::new());
+        world.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
+
+        let mut s = self.st.into_stats();
+        world.spawn((
+            Player, Position { x: self.px as usize, y: self.py as usize },
+            Renderable { glyph: '@', color: Color::Yellow },
+            MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
+            s, EntityName("冒险者".into()),
+            ActionPoints { points: self.ap, speed: self.ap_speed },
+            Inventory { items: self.inv.into_iter().map(RawItem::into_item).collect(), capacity: 36 },
+            Equipment {
+                weapon: self.weapon.map(|i| i as usize),
+                armor: self.armor.map(|i| i as usize),
+                ring: self.ring.map(|i| i as usize),
+            },
+            Skills::default_skills(), self.buffs.into_buffs(),
+        ));
+
+        world.spawn((Stairs, Position { x: self.sx as usize, y: self.sy as usize },
+            Renderable { glyph: '>', color: Color::Green }));
+
+        for m in self.monsters {
+            world.spawn((
+                Monster, MonsterBrain::creature(),
+                Position { x: m.x as usize, y: m.y as usize },
+                Renderable { glyph: m.glyph, color: Color::Rgb(m.r, m.g, m.b) },
+                Viewshed { range: 5, visible_tiles: Vec::new() },
+                m.st.into_stats(), EntityName(m.name),
+                ActionPoints { points: m.ap, speed: m.ap_speed },
+                FleeLogState { last_turn_was_flee: m.flee },
+            ));
+        }
+
+        for gi in self.items {
+            let (glyph, r, g, b) = (gi.item.glyph, gi.item.r, gi.item.g, gi.item.b);
+            let item = gi.item.into_item();
+            world.spawn((
+                ItemPickup { item },
+                Position { x: gi.x as usize, y: gi.y as usize },
+                Renderable { glyph, color: Color::Rgb(r, g, b) },
+            ));
+        }
+    }
+}
