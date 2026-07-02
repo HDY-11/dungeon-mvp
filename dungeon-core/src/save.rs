@@ -1,7 +1,6 @@
 use crate::*;
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
-use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 // ── 可序列化的中间表示 ────────────────────────────
@@ -17,7 +16,7 @@ pub struct RawItem {
 
 impl RawItem {
     fn from_item(item: &ItemInstance) -> Self {
-        let (r, g, b) = match item.color { Color::Rgb(r, gg, bb) => (r, gg, bb), _ => (200, 200, 200) };
+        let (r, g, b) = item.color;
         Self {
             name: item.name.clone(), glyph: item.glyph, r, g, b, slot: item.slot,
             bonus_atk: item.bonus.attack, bonus_def: item.bonus.defense,
@@ -28,7 +27,7 @@ impl RawItem {
     }
     fn into_item(self) -> ItemInstance {
         ItemInstance {
-            name: self.name, glyph: self.glyph, color: Color::Rgb(self.r, self.g, self.b),
+            name: self.name, glyph: self.glyph, color: (self.r, self.g, self.b),
             slot: self.slot, description: self.desc,
             bonus: StatBonus {
                 attack: self.bonus_atk, defense: self.bonus_def,
@@ -48,7 +47,7 @@ pub struct GameSave {
     pub st: SavedStats,
     pub inv: Vec<RawItem>,
     pub weapon: Option<u16>, pub armor: Option<u16>, pub ring: Option<u16>,
-    pub ap: f32, pub ap_speed: f32,
+    pub av: f32, pub av_speed: f32,
     pub buffs: SavedBuffs,
     pub map_tiles: Vec<u8>,
     pub rooms: Vec<Room>,
@@ -98,7 +97,7 @@ impl SavedBuffs {
 #[derive(Serialize, Deserialize)]
 pub struct SavedMonster {
     pub x: u16, pub y: u16, pub glyph: char, pub r: u8, pub g: u8, pub b: u8,
-    pub name: String, pub st: SavedStats, pub ap: f32, pub ap_speed: f32, pub flee: bool,
+    pub name: String, pub st: SavedStats, pub av: f32, pub av_speed: f32, pub flee: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -120,25 +119,25 @@ impl GameSave {
             sq.iter(world).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon, armor, ring, ap, ap_speed, buffs, player_class, atk_name) = {
-            let mut q = world.query::<(&Position, &Stats, &Inventory, &Equipment, &ActionPoints, &Buffs, &PlayerClass, &AttackName)>();
-            let (pos, st, inv, eq, ap, bu, cls, atk) = q.iter(world).next().unwrap();
+        let (px, py, st, inv, weapon, armor, ring, av, buffs, player_class, atk_name) = {
+            let mut q = world.query::<(&Position, &Stats, &Inventory, &Equipment, &ActionValue, &Buffs, &PlayerClass, &AttackName)>();
+            let (pos, st, inv, eq, av, bu, cls, atk) = q.iter(world).next().unwrap();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.items.iter().map(RawItem::from_item).collect(),
              eq.weapon.map(|i| i as u16), eq.armor.map(|i| i as u16), eq.ring.map(|i| i as u16),
-             ap.points, ap.speed, SavedBuffs::from(bu.clone()),
+             av.current_av, SavedBuffs::from(bu.clone()),
              Some(cls.clone()), atk.0.clone())
         };
 
         let monsters = {
-            let mut mq = world.query::<(&Monster, &Position, &Stats, &ActionPoints, &EntityName, &FleeLogState, &Renderable)>();
-            mq.iter(world).map(|(_, pos, st, ap, name, flee, rend)| {
-                let (r, g, b) = match rend.color { Color::Rgb(r, gg, bb) => (r, gg, bb), _ => (200,200,200) };
+            let mut mq = world.query::<(&Monster, &Position, &Stats, &ActionValue, &EntityName, &FleeLogState, &Renderable)>();
+            mq.iter(world).map(|(_, pos, st, av, name, flee, rend)| {
+                let (r, g, b) = rend.color;
                 SavedMonster {
                     x: pos.x as u16, y: pos.y as u16, glyph: rend.glyph, r, g, b,
                     name: name.0.clone(), st: SavedStats::from(st.clone()),
-                    ap: ap.points, ap_speed: ap.speed, flee: flee.last_turn_was_flee,
+                    av: av.current_av, av_speed: 50.0, flee: flee.last_turn_was_flee,
                 }
             }).collect()
         };
@@ -152,7 +151,7 @@ impl GameSave {
 
         let _ = atk_name; // 只读不存，玩家重生时由 PlayerClass 重新派生
         Self {
-            floor, px, py, st, inv, weapon, armor, ring, ap, ap_speed, buffs,
+            floor, px, py, st, inv, weapon, armor, ring, av, av_speed: 0.0, buffs,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
@@ -185,12 +184,15 @@ impl GameSave {
 
         let s = self.st.into_stats();
         let pc = self.player_class.unwrap_or(PlayerClass::Warrior);
+        let mut player_av = ActionValue::new(s.agility);
+        player_av.current_av = self.av;
         world.spawn((
             Player, Position { x: self.px as usize, y: self.py as usize },
-            Renderable { glyph: '@', color: Color::Yellow },
+            Renderable { glyph: '@', color: (255, 255, 0) },
             MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
             s, EntityName("冒险者".into()),
-            ActionPoints { points: self.ap, speed: self.ap_speed },
+            player_av,
+            ActionPrediction::new("移动", ActionKind::Move),
             Inventory { items: self.inv.into_iter().map(RawItem::into_item).collect(), capacity: 36 },
             Equipment {
                 weapon: self.weapon.map(|i| i as usize),
@@ -202,16 +204,20 @@ impl GameSave {
         ));
 
         world.spawn((Stairs, Position { x: self.sx as usize, y: self.sy as usize },
-            Renderable { glyph: '>', color: Color::Green }));
+            Renderable { glyph: '>', color: (0, 255, 0) }));
 
         for m in self.monsters {
+            let mon_stats = m.st.into_stats();
+            let mut mon_av = ActionValue::new(mon_stats.agility);
+            mon_av.current_av = m.av;
             world.spawn((
                 Monster, MonsterBrain::creature(),
                 Position { x: m.x as usize, y: m.y as usize },
-                Renderable { glyph: m.glyph, color: Color::Rgb(m.r, m.g, m.b) },
+                Renderable { glyph: m.glyph, color: (m.r, m.g, m.b) },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
-                m.st.into_stats(), EntityName(m.name),
-                ActionPoints { points: m.ap, speed: m.ap_speed },
+                mon_stats, EntityName(m.name),
+                mon_av,
+                ActionPrediction::new("追击", ActionKind::Chase),
                 FleeLogState { last_turn_was_flee: m.flee }, ActionPreview::new(),
                 AttackName(if m.glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
@@ -223,7 +229,7 @@ impl GameSave {
             world.spawn((
                 ItemPickup { item },
                 Position { x: gi.x as usize, y: gi.y as usize },
-                Renderable { glyph, color: Color::Rgb(r, g, b) },
+                Renderable { glyph, color: (r, g, b) },
             ));
         }
     }

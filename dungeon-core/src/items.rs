@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
-use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+use crate::components::RgbColor;
 
 // ── 物品 / 装备 ─────────────────────────────────────
 
@@ -24,7 +24,7 @@ pub struct StatBonus {
 
 #[derive(Clone, Debug)]
 pub struct ItemInstance {
-    pub name: String, pub glyph: char, pub color: Color,
+    pub name: String, pub glyph: char, pub color: RgbColor,
     pub slot: EquipmentSlot, pub bonus: StatBonus, pub description: String,
 }
 
@@ -44,25 +44,25 @@ pub struct ItemPickup { pub item: ItemInstance }
 pub fn make_items() -> Vec<ItemInstance> {
     vec![
         ItemInstance {
-            name: "锈铁剑".into(), glyph: '/', color: Color::LightCyan,
+            name: "锈铁剑".into(), glyph: '/', color: (224, 255, 255),
             slot: EquipmentSlot::Weapon,
             bonus: StatBonus { attack: 3, ..Default::default() },
             description: "一把生锈的铁剑，攻击+3".into(),
         },
         ItemInstance {
-            name: "木盾".into(), glyph: '[', color: Color::Rgb(139, 90, 43),
+            name: "木盾".into(), glyph: '[', color: (139, 90, 43),
             slot: EquipmentSlot::Armor,
             bonus: StatBonus { defense: 2, ..Default::default() },
             description: "简陋的木盾，防御+2".into(),
         },
         ItemInstance {
-            name: "皮甲".into(), glyph: ']', color: Color::LightYellow,
+            name: "皮甲".into(), glyph: ']', color: (255, 255, 224),
             slot: EquipmentSlot::Armor,
             bonus: StatBonus { defense: 1, agility: 1, ..Default::default() },
             description: "轻便皮甲，防御+1 敏捷+1".into(),
         },
         ItemInstance {
-            name: "攻击戒指".into(), glyph: '=', color: Color::LightRed,
+            name: "攻击戒指".into(), glyph: '=', color: (255, 128, 128),
             slot: EquipmentSlot::Ring,
             bonus: StatBonus { attack: 2, ..Default::default() },
             description: "攻击之戒，攻击+2".into(),

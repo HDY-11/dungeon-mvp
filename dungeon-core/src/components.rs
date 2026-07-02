@@ -1,6 +1,15 @@
 use bevy_ecs::prelude::*;
-use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+
+/// ASCII 渲染颜色（不依赖 ratatui）。渲染层负责转换为目标颜色类型。
+pub type RgbColor = (u8, u8, u8);
+
+// ── 速度 → 有效 AV 成本 ────────────────────────────
+
+/// 基础 cost 受速度缩放后的有效 AV 消耗
+pub fn effective_cost(base_cost: f32, speed: f32) -> f32 {
+    (base_cost * 50.0 / speed.max(1.0)).max(10.0)
+}
 
 // ── 基础 ECS 组件 ─────────────────────────────────
 
@@ -13,7 +22,7 @@ pub struct Position {
 #[derive(Component, Clone, Debug)]
 pub struct Renderable {
     pub glyph: char,
-    pub color: Color,
+    pub color: RgbColor,
 }
 
 #[derive(Component)]
@@ -45,16 +54,122 @@ pub struct FleeLogState {
     pub last_turn_was_flee: bool,
 }
 
-#[derive(Component, Clone, Debug)]
-pub struct ActionPoints {
-    pub points: f32,
-    pub speed: f32,
+// ── 敏捷 → 速度 ──────────────────────────────────
+
+/// 从敏捷推算速度（对数曲线，防止速度过快）
+/// 基线 60，对数增长：敏捷×4 → 速度约翻倍
+pub fn agility_to_speed(agility: u32) -> f32 {
+    let a = agility as f32;
+    60.0 + 25.0 * (1.0 + a).ln()
 }
 
-impl ActionPoints {
+// ── 行动值（AV）组件 ──────────────────────────────
+
+/// 行动值：描述实体在跑道上的位置与参数。
+///
+/// ## 跑道隐喻
+/// - `current_av` = 距离终点线的剩余距离。递减至 0 时行动执行。
+/// - `base_av` = 本轮行动的总长度（跑道全长）。用于跑道切换时
+///   按比例保留已消耗进度。
+/// - `speed` = 当前速度。影响行动成本：`base_av = 基础成本 × 50 / speed`。
+/// - `reaction_time` = 反应时（锁定窗口）。当 `current_av ≤ reaction_time`
+///   时行动不可再修改（Phase 2 将改为 per-entity）。
+#[derive(Component, Clone, Debug)]
+pub struct ActionValue {
+    /// 剩余 AV（距行动还有多远），递减到 0 时执行
+    pub current_av: f32,
+    /// 本轮行动的总 AV 长度（跑道全长）
+    pub base_av: f32,
+    /// 当前速度（从敏捷派生，受加减速效果影响）
+    pub speed: f32,
+    /// 反应时：AV 低于此值后行动锁定，不可修改
+    pub reaction_time: f32,
+}
+
+impl ActionValue {
+    /// 以默认动作（MOVE）初始化，根据敏捷计算速度与 AV。
     pub fn new(agility: u32) -> Self {
-        Self { points: 0.0, speed: 50.0 + agility as f32 * 3.0 }
+        let speed = agility_to_speed(agility);
+        let base_av = effective_cost(crate::action_cost::MOVE, speed);
+        Self {
+            current_av: base_av,
+            base_av,
+            speed,
+            reaction_time: 100.0, // Phase 2 改为 per‑entity
+        }
     }
+
+    /// 以指定动作类型初始化（用于非默认动作的 AV 重置）。
+    pub fn with_cost(base_cost: f32, agility: u32) -> Self {
+        let speed = agility_to_speed(agility);
+        let base_av = effective_cost(base_cost, speed);
+        Self {
+            current_av: base_av,
+            base_av,
+            speed,
+            reaction_time: 100.0,
+        }
+    }
+}
+
+/// 实体初始 AV（默认动作为 MOVE）
+pub fn self_av_initial(agility: u32) -> f32 {
+    ActionValue::new(agility).current_av
+}
+
+// ── 加减速效果组件 ──────────────────────────────
+
+/// 附加在实体上的速度修正效果（持续指定次数行动后自动移除）。
+#[derive(Component, Clone, Debug)]
+pub struct SpeedModifier {
+    /// 速度倍率：1.0 = 正常，>1.0 = 加速（更短 AV），<1.0 = 减速（更长 AV）
+    pub factor: f32,
+    /// 剩余生效次数（每次实体行动后 -1，归零后移除）
+    pub remaining_ticks: u32,
+}
+
+// ── 行动预测组件 ──────────────────────────────────
+
+#[derive(Component, Clone, Debug)]
+pub struct ActionPrediction {
+    /// 本轮预测描述
+    pub desc: String,
+    /// 本轮动作类型
+    pub kind: ActionKind,
+    /// 是否已锁定（AV ≤ reaction_time 后不可反悔）
+    pub locked: bool,
+    /// 本轮是否已确认（防止重复锁定）
+    pub just_confirmed: bool,
+    /// 下轮预测描述（比当前更远的一步）
+    pub next_desc: String,
+    /// 下轮动作类型
+    pub next_kind: ActionKind,
+}
+
+impl ActionPrediction {
+    pub fn new(desc: &str, kind: ActionKind) -> Self {
+        Self {
+            desc: desc.into(), kind: kind.clone(), locked: false,
+            just_confirmed: false,
+            next_desc: desc.into(), next_kind: kind,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActionKind {
+    Move,
+    BumpAttack,
+    Skill(usize),
+    UseItem(usize),
+    Wait,
+    // 怪物行动
+    Chase,
+    Attack,
+    Flee,
+    Wander,
+    // 无行动（待预测）
+    None,
 }
 
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]

@@ -1,0 +1,1205 @@
+[
+  {
+    "name": ".git",
+    "type": "directory",
+    "children": [
+      {
+        "name": "COMMIT_EDITMSG",
+        "type": "file"
+      },
+      {
+        "name": "HEAD",
+        "type": "file"
+      },
+      {
+        "name": "branches",
+        "type": "directory",
+        "children": []
+      },
+      {
+        "name": "config",
+        "type": "file"
+      },
+      {
+        "name": "description",
+        "type": "file"
+      },
+      {
+        "name": "hooks",
+        "type": "directory",
+        "children": [
+          {
+            "name": "applypatch-msg.sample",
+            "type": "file"
+          },
+          {
+            "name": "commit-msg.sample",
+            "type": "file"
+          },
+          {
+            "name": "fsmonitor-watchman.sample",
+            "type": "file"
+          },
+          {
+            "name": "post-update.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-applypatch.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-commit.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-merge-commit.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-push.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-rebase.sample",
+            "type": "file"
+          },
+          {
+            "name": "pre-receive.sample",
+            "type": "file"
+          },
+          {
+            "name": "prepare-commit-msg.sample",
+            "type": "file"
+          },
+          {
+            "name": "push-to-checkout.sample",
+            "type": "file"
+          },
+          {
+            "name": "update.sample",
+            "type": "file"
+          }
+        ]
+      },
+      {
+        "name": "index",
+        "type": "file"
+      },
+      {
+        "name": "info",
+        "type": "directory",
+        "children": [
+          {
+            "name": "exclude",
+            "type": "file"
+          }
+        ]
+      },
+      {
+        "name": "logs",
+        "type": "directory",
+        "children": [
+          {
+            "name": "HEAD",
+            "type": "file"
+          },
+          {
+            "name": "refs",
+            "type": "directory",
+            "children": [
+              {
+                "name": "heads",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "main",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "remotes",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "origin",
+                    "type": "directory",
+                    "children": [
+                      {
+                        "name": "main",
+                        "type": "file"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "objects",
+        "type": "directory",
+        "children": [
+          {
+            "name": "12",
+            "type": "directory",
+            "children": [
+              {
+                "name": "44d460ca0326b2d256babc303ee2d6fbb8e039",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "14",
+            "type": "directory",
+            "children": [
+              {
+                "name": "0e068c235f24c5b72a83df8bf9ba1a0698063a",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "26",
+            "type": "directory",
+            "children": [
+              {
+                "name": "e5900415847259152634de6e554b43600e63dd",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "2f",
+            "type": "directory",
+            "children": [
+              {
+                "name": "d055073c268974f1e4c9e814002ffbf8a31354",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "32",
+            "type": "directory",
+            "children": [
+              {
+                "name": "81080f3ed120d2fbcc5f24567f9894484ae709",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "38",
+            "type": "directory",
+            "children": [
+              {
+                "name": "103dac0faa461d121f8f5a42baff2b189723f6",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "4c",
+            "type": "directory",
+            "children": [
+              {
+                "name": "c893507b61b70248150fe4c66c7332fa20ed05",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "5a",
+            "type": "directory",
+            "children": [
+              {
+                "name": "9a5b6853c795d84ab19b724c685d03489a48ea",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "5e",
+            "type": "directory",
+            "children": [
+              {
+                "name": "4cf00d1df5a5f3ffae735162f1ab997de115c9",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "69",
+            "type": "directory",
+            "children": [
+              {
+                "name": "0148d28c19342b904eed22ee5cd32ed176045b",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "71",
+            "type": "directory",
+            "children": [
+              {
+                "name": "ae06fa159905d970dded43e0c2e225346799cf",
+                "type": "file"
+              },
+              {
+                "name": "e3cc01330ba84714a77991ece8c3aa3f2e9adf",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "88",
+            "type": "directory",
+            "children": [
+              {
+                "name": "b6907b255bb8d594b0de0ae820334bbe73ec85",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "9a",
+            "type": "directory",
+            "children": [
+              {
+                "name": "7d65e958c82f91b76116e1a5360919f57db674",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "b5",
+            "type": "directory",
+            "children": [
+              {
+                "name": "dc17650c641f07e75d780e521ae2d74539fe9a",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "c6",
+            "type": "directory",
+            "children": [
+              {
+                "name": "feaa7f6a5381074180021cb45a7085c6b0b00a",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "cc",
+            "type": "directory",
+            "children": [
+              {
+                "name": "b19e68b50436e1fa770f98a148947d722c35b0",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "d0",
+            "type": "directory",
+            "children": [
+              {
+                "name": "8c493c89db5588a754c6b8ad6c5789f5d5c407",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "d5",
+            "type": "directory",
+            "children": [
+              {
+                "name": "c778ef7bdd19b9849d76149e70fe31b157182b",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "dc",
+            "type": "directory",
+            "children": [
+              {
+                "name": "e5c4ef760e88cad1ccc66da0c17b38733b25d9",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "e3",
+            "type": "directory",
+            "children": [
+              {
+                "name": "5df5f9568d390bd6c59a6b915396c5227c3a1c",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "e5",
+            "type": "directory",
+            "children": [
+              {
+                "name": "bc4a3c4eb7a558954278c9c65e2326b9baab05",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "ea",
+            "type": "directory",
+            "children": [
+              {
+                "name": "8c4bf7f35f6f77f75d92ad8ce8349f6e81ddba",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "ee",
+            "type": "directory",
+            "children": [
+              {
+                "name": "7542c4bb7faf901f67feaa0b895bd13e718725",
+                "type": "file"
+              },
+              {
+                "name": "f5dad6ce3eacd875eb5ab44af4783217c9870f",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "f1",
+            "type": "directory",
+            "children": [
+              {
+                "name": "d315b9b3a9ddde9042f890192d729cc538c6d1",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "info",
+            "type": "directory",
+            "children": []
+          },
+          {
+            "name": "pack",
+            "type": "directory",
+            "children": []
+          }
+        ]
+      },
+      {
+        "name": "refs",
+        "type": "directory",
+        "children": [
+          {
+            "name": "heads",
+            "type": "directory",
+            "children": [
+              {
+                "name": "main",
+                "type": "file"
+              }
+            ]
+          },
+          {
+            "name": "remotes",
+            "type": "directory",
+            "children": [
+              {
+                "name": "origin",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "main",
+                    "type": "file"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "tags",
+            "type": "directory",
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": ".gitignore",
+    "type": "file"
+  },
+  {
+    "name": "Cargo.lock",
+    "type": "file"
+  },
+  {
+    "name": "Cargo.toml",
+    "type": "file"
+  },
+  {
+    "name": "README.md",
+    "type": "file"
+  },
+  {
+    "name": "dungeon-core",
+    "type": "directory",
+    "children": [
+      {
+        "name": "Cargo.toml",
+        "type": "file"
+      },
+      {
+        "name": "src",
+        "type": "directory",
+        "children": [
+          {
+            "name": "ai.rs",
+            "type": "file"
+          },
+          {
+            "name": "api.rs",
+            "type": "file"
+          },
+          {
+            "name": "components.rs",
+            "type": "file"
+          },
+          {
+            "name": "items.rs",
+            "type": "file"
+          },
+          {
+            "name": "lib.rs",
+            "type": "file"
+          },
+          {
+            "name": "pathfinding.rs",
+            "type": "file"
+          },
+          {
+            "name": "resources.rs",
+            "type": "file"
+          },
+          {
+            "name": "save.rs",
+            "type": "file"
+          },
+          {
+            "name": "systems.rs",
+            "type": "file"
+          },
+          {
+            "name": "tests.rs",
+            "type": "file"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "fov-test",
+    "type": "directory",
+    "children": [
+      {
+        "name": "Cargo.toml",
+        "type": "file"
+      },
+      {
+        "name": "src",
+        "type": "directory",
+        "children": [
+          {
+            "name": "lib.rs",
+            "type": "file"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "save.bin",
+    "type": "file"
+  },
+  {
+    "name": "src",
+    "type": "directory",
+    "children": [
+      {
+        "name": "main.rs",
+        "type": "file"
+      }
+    ]
+  },
+  {
+    "name": "target",
+    "type": "directory",
+    "children": [
+      {
+        "name": ".rustc_info.json",
+        "type": "file"
+      },
+      {
+        "name": "CACHEDIR.TAG",
+        "type": "file"
+      },
+      {
+        "name": "debug",
+        "type": "directory",
+        "children": [
+          {
+            "name": ".cargo-artifact-lock",
+            "type": "file"
+          },
+          {
+            "name": ".cargo-build-lock",
+            "type": "file"
+          },
+          {
+            "name": ".cargo-lock",
+            "type": "file"
+          },
+          {
+            "name": ".fingerprint",
+            "type": "directory",
+            "children": [
+              {
+                "name": "allocator-api2-7b02f80e4eb85c1b",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-allocator_api2",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-allocator_api2",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-allocator_api2.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "allocator-api2-ec9b304a0bfdb8df",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-allocator_api2",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-allocator_api2",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-allocator_api2.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "assert_type_match-44dbafd7ffc71521",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-assert_type_match",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-assert_type_match",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-assert_type_match.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "async-executor-84b9ffe1bd3e7131",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-async_executor",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_executor",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_executor.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "async-executor-87bdbe6589b19247",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-async_executor",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_executor",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_executor.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "async-task-53a44992059aafaf",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-async_task",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_task",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_task.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "async-task-fa21723a5672a521",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-async_task",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_task",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-async_task.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "atomic-waker-0451c32a97f709fe",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-atomic_waker",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-atomic_waker",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-atomic_waker.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "atomic-waker-2433aa5dc1ef41d0",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-atomic_waker",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-atomic_waker",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-atomic_waker.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs-143da2a5d5e8b169",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs-52f2aafdf08c894d",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs-7cb137755f4898d6",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs-a59bfc1592f63a0b",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs_macros-199dff88298f4556",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs_macros",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs_macros",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs_macros.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ecs_macros-64d1828a8757ac51",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ecs_macros",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs_macros",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ecs_macros.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_macro_utils-8d74b14072f127e6",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_macro_utils",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_macro_utils",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_macro_utils.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_macro_utils-92e139c6aadc0aab",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_macro_utils",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_macro_utils",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_macro_utils.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_platform-189656abf6e920ee",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_platform-3c7bdacd778c5ba3",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_platform-7c583c5e5e3b52eb",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_platform-c3e9b325abe4c55f",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_platform.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ptr-44e9cba1613eb672",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ptr",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ptr",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ptr.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_ptr-a1c4226378b3b034",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_ptr",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ptr",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_ptr.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_reflect-6e7d221ec29b060d",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_reflect-b4f385412e8b8654",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_reflect-b72dc0822effffa6",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "invoked.timestamp",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect",
+                    "type": "file"
+                  },
+                  {
+                    "name": "lib-bevy_reflect.json",
+                    "type": "file"
+                  }
+                ]
+              },
+              {
+                "name": "bevy_reflect-e55cfd5cb204eb20",
+                "type": "directory",
+                "children": [
+                  {
+                    "name": "dep-lib-b
+
+[…truncated 824153 chars — raise BridgeOptions.maxResultChars, or call the tool with a narrower scope (filter, head, pagination)…]
+
+ {
+                        "name": "en2cti90v4976iu14bq4y7mow.o",
+                        "type": "file"
+                      },
+                      {
+                        "name": "query-cache.bin",
+                        "type": "file"
+                      },
+                      {
+                        "name": "work-products.bin",
+                        "type": "file"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "s-hjyi3495f4-1e3yrmm.lock",
+                    "type": "file"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "item",
+            "type": "file"
+          },
+          {
+            "name": "item.d",
+            "type": "file"
+          },
+          {
+            "name": "libdungeon_core.d",
+            "type": "file"
+          },
+          {
+            "name": "libdungeon_core.rlib",
+            "type": "file"
+          }
+        ]
+      }
+    ]
+  }
+]

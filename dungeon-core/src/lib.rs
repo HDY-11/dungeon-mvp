@@ -22,10 +22,12 @@ pub use components::EntityName;
 // ── 行动成本常量 ─────────────────────────────────────
 
 pub mod action_cost {
-    // 1 行动值 = 1ms
-    pub const MOVE: f32 = 300.0;        // 走一格 300ms
-    pub const ATTACK: f32 = 200.0;      // 挥砍 200ms
-    pub const SKILL_CAST: f32 = 600.0;  // 施法 600ms
+    // 基础 AV 成本（受 speed 缩放：effective = base × 50/speed）
+    pub const MOVE: f32 = 300.0;        // 走一格
+    pub const ATTACK: f32 = 200.0;      // 普通攻击
+    pub const SKILL_CAST: f32 = 600.0;  // 施法
+    pub const SHIELD_BLOCK: f32 = 40.0; // 格挡（极短）
+    pub const USE_POTION: f32 = 80.0;   // 使用药水
     pub const MONSTER_CHASE: f32 = 250.0;
     pub const MONSTER_WANDER: f32 = 500.0;
     pub const MONSTER_FLEE: f32 = 250.0;

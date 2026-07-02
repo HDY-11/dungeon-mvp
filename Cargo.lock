@@ -591,11 +591,18 @@ name = "dungeon-core"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
- "num-rational",
  "rand 0.10.1",
- "ratatui",
  "serde",
  "symmetric-shadowcasting",
+]
+
+[[package]]
+name = "dungeon-render"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "dungeon-core",
+ "ratatui",
 ]
 
 [[package]]
@@ -606,6 +613,7 @@ dependencies = [
  "bincode",
  "crossterm",
  "dungeon-core",
+ "dungeon-render",
  "ratatui",
 ]
 
@@ -1093,17 +1101,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
-name = "num-bigint"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f6f7833f2cbf2360a6cfd58cd41a53aa7a90bd4c202f5b1c7dd2ed73c57b2c3"
-dependencies = [
- "autocfg",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1136,7 +1133,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12ac428b1cb17fce6f731001d307d351ec70a6d202fc2e60f7d4c5e42d8f4f07"
 dependencies = [
  "autocfg",
- "num-bigint",
  "num-integer",
  "num-traits",
 ]

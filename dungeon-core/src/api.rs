@@ -1,5 +1,4 @@
 use bevy_ecs::prelude::*;
-use ratatui::style::Color;
 use rand::SeedableRng;
 use crate::{
     ai::MonsterBrain, components::*, items::*, resources::*,
@@ -93,7 +92,7 @@ pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {
     for mut dir in query.iter_mut(world) { dir.dx = dx; dir.dy = dy; }
 }
 
-pub fn collect_renderables(world: &mut World) -> Vec<(usize, usize, char, Color)> {
+pub fn collect_renderables(world: &mut World) -> Vec<(usize, usize, char, RgbColor)> {
     let mut query = world.query::<(&Position, &Renderable)>();
     query.iter(world).map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect()
 }
@@ -122,19 +121,20 @@ pub fn setup_world() -> World {
     world.insert_resource(map);
     let player_agi = 10;
 
+    let mut pc = PlayerClass::Warrior;
     world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
-        Renderable { glyph: '@', color: Color::Yellow }, MovingDir::default(),
+        Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
-        Stats::player(), EntityName("冒险者".into()), ActionPoints::new(player_agi),
+        Stats::player(), EntityName("冒险者".into()), ActionValue::new(player_agi),
+        ActionPrediction::new("移动", ActionKind::Move),
         Inventory::new(36), Equipment::new(), Buffs::new(),
-        ActionPreview::new(), PlayerClass::Warrior, AttackName("斩击".into()),
-        Skills { list: PlayerClass::Warrior.skills() },
-    ));
+        ActionPreview::new(), pc.clone(), AttackName("斩击".into()),
+    )).insert(Skills { list: pc.skills() });
 
-    let monster_templates: [(char, Color, &str); 4] = [
-        ('r', Color::Red, "老鼠"), ('g', Color::Green, "哥布林"),
-        ('r', Color::LightRed, "老鼠"), ('g', Color::LightGreen, "哥布林"),
+    let monster_templates: [(char, RgbColor, &str); 4] = [
+        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
+        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
     ];
     let spawn_points: Vec<(usize, usize)> = {
         let map_ref = world.resource::<Map>();
@@ -149,7 +149,8 @@ pub fn setup_world() -> World {
                 Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                ActionPoints::new(Stats::monster(glyph, 1).agility),
+                ActionValue::new(Stats::monster(glyph, 1).agility),
+                ActionPrediction::new("追击", ActionKind::Chase),
                 FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
@@ -160,7 +161,7 @@ pub fn setup_world() -> World {
         let m = world.resource::<Map>();
         let last = m.rooms.len() - 1;
         let (sx, sy) = m.rooms[last].center();
-        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: Color::Green }));
+        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
     let items = make_items();
@@ -180,9 +181,9 @@ pub fn descend(world: &mut World) {
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = world.query::<(Entity, &Stats, &Position, &ActionPoints, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
+        let mut q = world.query::<(Entity, &Stats, &Position, &ActionValue, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
         let (e, s, p, ap, inv, eq, sk, _bu, cls, atk) = q.iter(world).next().unwrap();
-        (e, s.clone(), *p, ap.points, ap.speed, inv.items.clone(), inv.capacity,
+        (e, s.clone(), *p, ap.current_av, inv.items.clone(), inv.capacity,
          Equipment { weapon: eq.weapon, armor: eq.armor, ring: eq.ring },
          sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
     };
@@ -198,24 +199,27 @@ pub fn descend(world: &mut World) {
 
     let _e = { let mut cmd = world.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
-        Renderable { glyph: '@', color: Color::Yellow }, MovingDir::default(),
+        Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
         player_data.1.clone(), EntityName("冒险者".into()),
     ));
-        cmd.insert(ActionPoints { points: 0.0, speed: player_data.4 });
-        cmd.insert(Inventory { items: player_data.5, capacity: player_data.6 });
-        cmd.insert(player_data.7); cmd.insert(Skills { list: player_data.8 });
-        cmd.insert(player_data.9.clone()); cmd.insert(ActionPreview::new());
-        let class = player_data.10.clone();
-        cmd.insert(class); cmd.insert(AttackName(player_data.11.clone())); cmd.id() };
+        let mut av = ActionValue::new(player_data.1.agility);
+        av.current_av = player_data.3;
+        cmd.insert(av);
+        cmd.insert(ActionPrediction::new("移动", ActionKind::Move));
+        cmd.insert(Inventory { items: player_data.4, capacity: player_data.5 });
+        cmd.insert(player_data.6); cmd.insert(Skills { list: player_data.7 });
+        cmd.insert(player_data.8); cmd.insert(ActionPreview::new());
+        let class = player_data.9.clone();
+        cmd.insert(class); cmd.insert(AttackName(player_data.10.clone())); cmd.id() };
 
     let last_room = { let m = world.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
     world.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
-        Renderable { glyph: '>', color: Color::Green }));
+        Renderable { glyph: '>', color: (0, 255, 0) }));
 
-    let monster_templates: [(char, Color, &str); 4] = [
-        ('r', Color::Red, "老鼠"), ('g', Color::Green, "哥布林"),
-        ('r', Color::LightRed, "老鼠"), ('g', Color::LightGreen, "哥布林"),
+    let monster_templates: [(char, RgbColor, &str); 4] = [
+        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
+        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
     ];
     let spawn_points: Vec<(usize, usize)> = {
         let m = world.resource::<Map>();
@@ -228,7 +232,8 @@ pub fn descend(world: &mut World) {
                 Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
-                ActionPoints::new(Stats::monster(glyph, f).agility),
+                ActionValue::new(Stats::monster(glyph, f).agility),
+                ActionPrediction::new("追击", ActionKind::Chase),
                 FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
