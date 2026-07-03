@@ -6,6 +6,7 @@
 use crate::world;
 use crate::{Stats, Viewshed, Player, Position, EntityName, Monster};
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::RunSystemOnce;
 
 // ══════════════════════════════════════════════════════
 // 实体属性
@@ -358,7 +359,9 @@ fn execute_entry(entry: &ActionEntry) {
         ActionKindV3::Flee => execute_flee(entry.entity),
         ActionKindV3::Wander => execute_wander(entry.entity),
         ActionKindV3::Wait => execute_wait(entry.entity),
-        _ => {} // Move/Attack/Skill 由玩家输入驱动
+        ActionKindV3::Move { dx, dy } => execute_player_move(entry.entity, *dx, *dy),
+        ActionKindV3::Attack { target } => {} // TODO
+        ActionKindV3::Skill(_) => {} // TODO
     }
 }
 
@@ -475,9 +478,44 @@ fn execute_wander(entity: Entity) {
 }
 
 fn execute_wait(entity: Entity) {
-    // 等待只是消耗时间，不需要实际行动
     if let Some(mut wait) = world!(mut).get_mut::<CanWait>(entity) {
         wait.cooldown_remaining = wait.duration;
+    }
+}
+
+fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
+    use crate::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, movement_system};
+    // 先读数据
+    let pos = {
+        let w = world!();
+        let p = match w.get::<Position>(entity) {
+            Some(p) => (p.x, p.y),
+            None => return,
+        };
+        let nx = p.0.wrapping_add_signed(dx);
+        let ny = p.1.wrapping_add_signed(dy);
+        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
+        let tile = w.resource::<Map>().tiles[ny][nx];
+        let occupied = w.resource::<OccupancyMap>().is_occupied(nx, ny);
+        if tile != Tile::Floor { return; }
+        (nx, ny, occupied)
+    };
+    if pos.2 {
+        // 有怪物 → bump 攻击
+        crate::set_player_dir(dx, dy);
+        crate::rebuild_occupancy();
+        world!(mut).run_system_once(movement_system);
+        crate::rebuild_occupancy();
+    } else {
+        let mut w = world!(mut);
+        if let Some(mut p) = w.get_mut::<Position>(entity) {
+            p.x = pos.0;
+            p.y = pos.1;
+        }
+    }
+    let mut w = world!(mut);
+    if let Some(mut m) = w.get_mut::<CanMove>(entity) {
+        m.cooldown_remaining = m.duration;
     }
 }
 
