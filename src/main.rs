@@ -30,6 +30,12 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 fn main() -> io::Result<()> {
+    // panic hook: 将 panic 写入文件（raw 模式下看不到 stderr）
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {}\n", info);
+        std::fs::write("panic.log", msg).ok();
+    }));
+
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;

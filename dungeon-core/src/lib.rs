@@ -105,3 +105,6 @@ impl Map {
     }
 }
 impl Default for Map { fn default() -> Self { Self::new() } }
+
+#[cfg(test)]
+mod tests;
