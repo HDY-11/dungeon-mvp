@@ -123,13 +123,15 @@ pub fn setup_world() -> World {
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
     world.insert_resource(PendingPlayerAction::default());
+    world.insert_resource(crate::action::ActionQueue::default());
+    world.insert_resource(crate::action::InputBuffer::default());
 
     let (spawn_x, spawn_y) = map.rooms[0].center();
     world.insert_resource(map);
     let player_agi = 10;
 
     let mut pc = PlayerClass::Warrior;
-    world.spawn((
+    let mut cmd = world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
@@ -137,7 +139,11 @@ pub fn setup_world() -> World {
         ActionPrediction::new("移动", ActionKind::Move),
         Inventory::new(36), Equipment::new(), Buffs::new(),
         ActionPreview::new(), pc.clone(), AttackName("斩击".into()),
-    )).insert(Skills { list: pc.skills() });
+    ));
+    cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_agi) });
+    cmd.insert(crate::action::CanMove::new(100));
+    cmd.insert(crate::action::CanWait::new(0));
+    cmd.insert(Skills { list: pc.skills() });
 
     let monster_templates: [(char, RgbColor, &str); 4] = [
         ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
@@ -151,16 +157,22 @@ pub fn setup_world() -> World {
 
     for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
-            world.spawn((
+            let mon_agi = Stats::monster(glyph, 1).agility;
+            let mut cmd = world.spawn((
                 Monster, MonsterBrain::creature(),
                 Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                ActionValue::new(Stats::monster(glyph, 1).agility),
+                ActionValue::new(mon_agi),
                 ActionPrediction::new("追击", ActionKind::Chase),
                 FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
+            cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
+            cmd.insert(crate::action::CanChase::new(100));
+            cmd.insert(crate::action::CanFlee::new(200));
+            cmd.insert(crate::action::CanWander::new(50));
+            cmd.insert(crate::action::CanWait::new(0));
         }
     }
 
@@ -219,7 +231,13 @@ pub fn descend() {
         cmd.insert(player_data.6); cmd.insert(Skills { list: player_data.7 });
         cmd.insert(player_data.8); cmd.insert(ActionPreview::new());
         let class = player_data.9.clone();
-        cmd.insert(class); cmd.insert(AttackName(player_data.10.clone())); cmd.id() };
+        cmd.insert(class); cmd.insert(AttackName(player_data.10.clone()));
+        cmd.insert(crate::action::Reaction {
+            time: crate::action::agility_to_reaction(player_data.1.agility),
+        });
+        cmd.insert(crate::action::CanMove::new(100));
+        cmd.insert(crate::action::CanWait::new(0));
+        cmd.id() };
 
     let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
     w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
@@ -236,15 +254,22 @@ pub fn descend() {
     };
     for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
-            w.spawn((Monster, MonsterBrain::creature(),
+            let mon_agi = Stats::monster(glyph, f).agility;
+            let mut cmd = w.spawn((
+                Monster, MonsterBrain::creature(),
                 Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
-                ActionValue::new(Stats::monster(glyph, f).agility),
+                ActionValue::new(mon_agi),
                 ActionPrediction::new("追击", ActionKind::Chase),
                 FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
+            cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
+            cmd.insert(crate::action::CanChase::new(100));
+            cmd.insert(crate::action::CanFlee::new(200));
+            cmd.insert(crate::action::CanWander::new(50));
+            cmd.insert(crate::action::CanWait::new(0));
         }
     }
 
