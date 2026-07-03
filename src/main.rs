@@ -235,45 +235,53 @@ fn handle_input(
     if handle_global_toggle(key) {
         return Ok(());
     }
-    let w = world!();
+
+    // 新输入模型：tap-tap 确认方向键
     match key.code {
-        // 方向键 → 写预测 + 立即提交（已锁定时切暂停）
-        KeyCode::Up => { drop(w); auto_move(0, -1); }
-        KeyCode::Down => { drop(w); auto_move(0, 1); }
-        KeyCode::Left => { drop(w); auto_move(-1, 0); }
-        KeyCode::Right => { drop(w); auto_move(1, 0); }
+        KeyCode::Up => handle_player_direction(0, -1),
+        KeyCode::Down => handle_player_direction(0, 1),
+        KeyCode::Left => handle_player_direction(-1, 0),
+        KeyCode::Right => handle_player_direction(1, 0),
         KeyCode::Char('q') | KeyCode::Esc => {
-            drop(w);
             if confirm_quit(terminal)? {
                 world!(mut).resource_mut::<TurnManager>().wants_quit = true;
             }
         }
-        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            let (idx, name) = skill_info(key);
-            drop(w);
-            if let Some(n) = name {
-                write_skill_prediction(idx, &n);
+        KeyCode::Char('.') => {
+            // 确认等待（直接入队）
+            use dungeon_core::action::{ActionKindV3, ActionQueue, Reaction, CanWait};
+            let player = crate::player_entity();
+            if let Some(e) = player {
+                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
+                let duration = world!().get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
+                world!(mut).resource_mut::<ActionQueue>()
+                    .enqueue(e, ActionKindV3::Wait, reaction_time, duration);
             }
-            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
         }
-        KeyCode::Char('.') | KeyCode::Char('5') => {
-            drop(w);
-            world!(mut).resource_mut::<PendingInput>().direction = None;
-            commit_player_action();
+        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
+            // 技能：直接入队（暂用旧系统）
+            let (idx, _name) = skill_info(key);
+            use dungeon_core::action::{ActionKindV3, ActionQueue, Reaction};
+            let player = crate::player_entity();
+            if let Some(e) = player {
+                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
+                world!(mut).resource_mut::<ActionQueue>()
+                    .enqueue(e, ActionKindV3::Skill(idx), reaction_time, 600.0);
+            }
+        }
+        KeyCode::Char('5') => {
+            // 等待（已在上面的 '.' 中处理）
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
-            drop(w);
             open_inventory(terminal)?;
         }
         KeyCode::F(5) => {
-            drop(w);
             if let Ok(data) = bincode::serialize(&GameSave::capture()) {
                 std::fs::write("save.bin", data).ok();
                 world!(mut).resource_mut::<EventLog>().push("已保存");
             }
         }
         KeyCode::F(9) => {
-            drop(w);
             if let Ok(data) = std::fs::read("save.bin") {
                 if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
                     save.restore();
@@ -282,7 +290,6 @@ fn handle_input(
             }
         }
         KeyCode::Char('>') => {
-            drop(w);
             if on_stairs() && confirm_stairs(terminal)? {
                 descend();
                 world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
@@ -291,6 +298,37 @@ fn handle_input(
         _ => {}
     }
     Ok(())
+}
+
+/// 新方向键处理器：tap-tap 模式
+/// 第一次按 → 设预览，第二次同方向 → 入队 ActionQueue
+fn handle_player_direction(dx: isize, dy: isize) {
+    use dungeon_core::action::{PlayerPreview, ActionKindV3, ActionQueue, Reaction, CanMove};
+    let Some(entity) = crate::player_entity() else { return };
+
+    // 先读取需要的数据（避免在持有锁时再次锁）
+    let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
+    let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
+
+    // 检查是否是第二次 tap
+    let is_confirm = {
+        let w = world!();
+        let preview = w.resource::<PlayerPreview>();
+        matches!(&preview.kind, Some(ActionKindV3::Move { dx: pd, dy: pd2 }) if *pd == dx && *pd2 == dy)
+    };
+
+    if is_confirm {
+        // 第二次确认 → 入队
+        world!(mut).resource_mut::<ActionQueue>()
+            .enqueue(entity, ActionKindV3::Move { dx, dy }, reaction_time, duration);
+        // 清除预览
+        let mut w2 = world!(mut);
+        w2.resource_mut::<PlayerPreview>().kind = None;
+    } else {
+        // 第一次按 → 设预览
+        let mut w2 = world!(mut);
+        w2.resource_mut::<PlayerPreview>().kind = Some(ActionKindV3::Move { dx, dy });
+    }
 }
 
 fn handle_combat_key(
