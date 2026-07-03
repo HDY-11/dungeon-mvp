@@ -8,8 +8,9 @@ use std::collections::HashSet;
 use std::io::{self, stdout};
 use std::time::Instant;
 
-use bevy_ecs::prelude::{Entity, World};
+use bevy_ecs::prelude::Entity;
 use bevy_ecs::system::RunSystemOnce;
+use dungeon_core::world;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -32,8 +33,8 @@ fn main() -> io::Result<()> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
-    let (mut world, game_start) = title_screen(&mut terminal)?;
-    let result = run(&mut terminal, &mut world, game_start);
+    let game_start = title_screen(&mut terminal)?;
+    let result = run(&mut terminal, game_start);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -44,20 +45,22 @@ fn main() -> io::Result<()> {
 // 玩家行动函数（统一路径）
 // ══════════════════════════════════════════════════════
 
-fn player_entity(world: &mut World) -> Option<Entity> {
-    let mut q = world.query::<(Entity, &Player)>();
-    q.iter(world).next().map(|(e, _)| e)
+fn player_entity() -> Option<Entity> {
+    let mut w = world!(mut);
+    let mut q = w.query::<(Entity, &Player)>();
+    q.iter(&mut *w).next().map(|(e, _)| e)
 }
 
-fn player_prediction(world: &mut World) -> Option<ActionPrediction> {
-    let mut q = world.query::<(&Player, &ActionPrediction)>();
-    q.iter(world).next().map(|(_, p)| p.clone())
+fn player_prediction() -> Option<ActionPrediction> {
+    let mut w = world!(mut);
+    let mut q = w.query::<(&Player, &ActionPrediction)>();
+    q.iter(&mut *w).next().map(|(_, p)| p.clone())
 }
 
 /// 仅填充预测（不提交），保留已有锁定状态。
-fn write_player_prediction(world: &mut World, dx: isize, dy: isize) {
-    let Some(entity) = player_entity(world) else { return };
-    if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
+fn write_player_prediction(dx: isize, dy: isize) {
+    let Some(entity) = player_entity() else { return };
+    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
         if pred.locked {
             return;
         }
@@ -68,10 +71,10 @@ fn write_player_prediction(world: &mut World, dx: isize, dy: isize) {
 }
 
 /// 仅填充技能预测（不提交）。
-fn write_skill_prediction(world: &mut World, skill_idx: usize, name: &str) {
-    let Some(entity) = player_entity(world) else { return };
-    *world.resource_mut::<PendingPlayerAction>() = PendingPlayerAction::new_skill(skill_idx, name);
-    if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
+fn write_skill_prediction(skill_idx: usize, name: &str) {
+    let Some(entity) = player_entity() else { return };
+    *world!(mut).resource_mut::<PendingPlayerAction>() = PendingPlayerAction::new_skill(skill_idx, name);
+    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
         pred.desc = format!("技能:{}", name);
         pred.kind = ActionKind::Skill(skill_idx);
         pred.locked = false;
@@ -82,51 +85,51 @@ fn write_skill_prediction(world: &mut World, skill_idx: usize, name: &str) {
 /// 执行时机由 `advance_by` 在 AV 递减至 0 时触发。
 ///
 /// 技能效果立即执行，AV 设为技能成本作为冷却。
-fn commit_player_action(world: &mut World) {
-    let Some(entity) = player_entity(world) else { return };
-    let pending = world.resource::<PendingPlayerAction>().clone();
-    let agility = world.get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
+fn commit_player_action() {
+    let Some(entity) = player_entity() else { return };
+    let pending = world!().resource::<PendingPlayerAction>().clone();
+    let agility = world!().get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
 
     // 已被锁定 → 解锁，推进到玩家 AV=0（其他实体同步减）
-    let already_locked = world.get::<ActionPrediction>(entity)
+    let already_locked = world!().get::<ActionPrediction>(entity)
         .map(|p| p.locked).unwrap_or(false);
 
     if already_locked {
-        let skipped = world.get::<ActionValue>(entity).map(|av| av.current_av).unwrap_or(0.0);
-        if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
+        let skipped = world!().get::<ActionValue>(entity).map(|av| av.current_av).unwrap_or(0.0);
+        if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
             pred.locked = false;
         }
         // 同步推进所有实体（包括玩家）跳过玩家的剩余 AV
-        advance_by(world, skipped);
+        advance_by(skipped);
     } else if pending.is_pending_skill {
         if let Some(si) = pending.skill_idx {
-            apply_skill(world, si);
-            let _ = world.run_system_once(skill_tick_system);
+            apply_skill(si);
+            world!(mut).run_system_once(skill_tick_system);
         }
-        if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
             *av = ActionValue::with_cost(action_cost::SKILL_CAST, agility);
         }
-    } else if world.resource::<PendingInput>().direction.is_some() {
-        if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+    } else if world!().resource::<PendingInput>().direction.is_some() {
+        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
             *av = ActionValue::with_cost(action_cost::MOVE, agility);
         }
     } else {
-        if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
             *av = ActionValue::with_cost(action_cost::WAIT, agility);
         }
-        if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
+        if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
             pred.desc = "等待".into();
             pred.kind = ActionKind::Wait;
         }
     }
 
-    if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
+    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
         pred.locked = false;
         pred.just_confirmed = false;
     }
 
-    world.resource_mut::<PendingPlayerAction>().is_pending_skill = false;
-    world.resource_mut::<PendingPlayerAction>().skill_idx = None;
+    world!(mut).resource_mut::<PendingPlayerAction>().is_pending_skill = false;
+    world!(mut).resource_mut::<PendingPlayerAction>().skill_idx = None;
 }
 
 // ══════════════════════════════════════════════════════
@@ -135,28 +138,29 @@ fn commit_player_action(world: &mut World) {
 
 fn run(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    world: &mut World,
     game_start: Instant,
 ) -> io::Result<()> {
-    world.insert_resource(GamePacing::default());
-    world.insert_resource(PendingInput::default());
-    rebuild_occupancy(world);
-    let _ = world.run_system_once(fov_system);
-    let _ = world.run_system_once(predict_monster_actions_system);
-    terminal.draw(|frame| render_ui(frame, world, game_start))?;
+    world!(mut).insert_resource(GamePacing::default());
+    world!(mut).insert_resource(PendingInput::default());
+    rebuild_occupancy();
+    world!(mut).run_system_once(fov_system);
+    world!(mut).run_system_once(predict_monster_actions_system);
+    terminal.draw(|frame| render_ui(frame, game_start))?;
 
     loop {
-        if world.resource::<TurnManager>().game_over || world.resource::<TurnManager>().wants_quit {
+        let w = world!();
+        if w.resource::<TurnManager>().game_over || w.resource::<TurnManager>().wants_quit {
             break Ok(());
         }
+        drop(w);
 
         // 闪烁相位
-        world.resource_mut::<GamePacing>().blink_phase =
-            !world.resource::<GamePacing>().blink_phase;
+        let blink = !world!().resource::<GamePacing>().blink_phase;
+        world!(mut).resource_mut::<GamePacing>().blink_phase = blink;
 
-        let is_paused = matches!(world.resource::<GamePacing>().mode, PacingMode::CombatPaused);
+        let is_paused = matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused);
 
-        terminal.draw(|frame| render_ui(frame, world, game_start))?;
+        terminal.draw(|frame| render_ui(frame, game_start))?;
 
         // ══════════════════════════════════════════════
         // 二态：暂停 vs 即时。
@@ -166,16 +170,16 @@ fn run(
 
         if is_paused {
             if let Event::Key(key) = event::read()? {
-                handle_combat_key(world, terminal, key)?;
+                handle_combat_key(terminal, key)?;
             }
-            if !matches!(world.resource::<GamePacing>().mode, PacingMode::CombatPaused) {
-                advance_and_settle(world);
+            if !matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused) {
+                advance_and_settle();
             }
         } else {
             if let Event::Key(key) = event::read()? {
-                handle_input(world, terminal, key)?;
-                if !matches!(world.resource::<GamePacing>().mode, PacingMode::CombatPaused) {
-                    advance_and_settle(world);
+                handle_input(terminal, key)?;
+                if !matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused) {
+                    advance_and_settle();
                 }
             }
         }
@@ -184,52 +188,55 @@ fn run(
 
 /// 统一推进 + 模式调整。
 /// 非战斗时锁定自动确认并继续推进；战斗时锁定暂停。
-fn advance_and_settle(world: &mut World) {
+fn advance_and_settle() {
     loop {
-        advance_to_next_decision_point(world);
-        post_advance(world);
+        advance_to_next_decision_point();
+        post_advance();
 
-        let combat = world.resource::<GamePacing>().combat_active;
-        let locked = player_prediction(world).map(|p| p.locked).unwrap_or(false);
+        let combat = world!().resource::<GamePacing>().combat_active;
+        let locked = player_prediction().map(|p| p.locked).unwrap_or(false);
 
         if combat && locked {
-            world.resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
+            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
             break;
         }
         if !locked {
             break;
         }
         // 非战斗锁定 → 自动确认，推进到 AV=0
-        if let Some(e) = player_entity(world) {
-            let skipped = world.get::<ActionValue>(e).map(|av| av.current_av).unwrap_or(0.0);
-            if let Some(mut pred) = world.get_mut::<ActionPrediction>(e) {
+        if let Some(e) = player_entity() {
+            let skipped = world!().get::<ActionValue>(e).map(|av| av.current_av).unwrap_or(0.0);
+            if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(e) {
                 pred.locked = false;
             }
-            advance_by(world, skipped);
+            advance_by(skipped);
         }
     }
 }
 
-fn post_advance(world: &mut World) {
-    rebuild_occupancy(world);
-    let _ = world.run_system_once(fov_system);
-    update_map_memory(world);
-    let _ = world.run_system_once(check_death_system);
+fn post_advance() {
+    rebuild_occupancy();
+    world!(mut).run_system_once(fov_system);
+    update_map_memory();
+    world!(mut).run_system_once(check_death_system);
 
     // 退出战斗：视野内无怪物
-    if world.resource::<GamePacing>().combat_active {
-        let fov: HashSet<(usize, usize)> = world
+    if world!().resource::<GamePacing>().combat_active {
+        let mut w = world!(mut);
+        let fov: HashSet<(usize, usize)> = w
             .query::<(&Player, &Viewshed)>()
-            .iter(world)
+            .iter(&mut *w)
             .next()
             .map(|(_, v)| v.visible_tiles.iter().copied().collect())
             .unwrap_or_default();
-        let any_in_fov = world
-            .query::<(&Monster, &Position)>()
-            .iter(world)
-            .any(|(_, p)| fov.contains(&(p.x, p.y)));
+        let any_in_fov = {
+            let mut w2 = world!(mut);
+            let mut q = w2.query::<(&Monster, &Position)>();
+            q.iter(&mut *w2).any(|(_, p)| fov.contains(&(p.x, p.y)))
+        };
         if !any_in_fov {
-            let mut p = world.resource_mut::<GamePacing>();
+            let mut w3 = world!(mut);
+            let mut p = w3.resource_mut::<GamePacing>();
             p.combat_active = false;
             p.mode = PacingMode::Exploration;
         }
@@ -242,56 +249,63 @@ fn post_advance(world: &mut World) {
 // ══════════════════════════════════════════════════════
 
 fn handle_input(
-    world: &mut World,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key: crossterm::event::KeyEvent,
 ) -> io::Result<()> {
-    if handle_global_toggle(world, key) {
+    if handle_global_toggle(key) {
         return Ok(());
     }
+    let w = world!();
     match key.code {
         // 方向键 → 写预测 + 立即提交（已锁定时切暂停）
-        KeyCode::Up => auto_move(world, 0, -1),
-        KeyCode::Down => auto_move(world, 0, 1),
-        KeyCode::Left => auto_move(world, -1, 0),
-        KeyCode::Right => auto_move(world, 1, 0),
+        KeyCode::Up => { drop(w); auto_move(0, -1); }
+        KeyCode::Down => { drop(w); auto_move(0, 1); }
+        KeyCode::Left => { drop(w); auto_move(-1, 0); }
+        KeyCode::Right => { drop(w); auto_move(1, 0); }
         KeyCode::Char('q') | KeyCode::Esc => {
+            drop(w);
             if confirm_quit(terminal)? {
-                world.resource_mut::<TurnManager>().wants_quit = true;
+                world!(mut).resource_mut::<TurnManager>().wants_quit = true;
             }
         }
         KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            let (idx, name) = skill_info(world, key);
+            let (idx, name) = skill_info(key);
+            drop(w);
             if let Some(n) = name {
-                write_skill_prediction(world, idx, &n);
+                write_skill_prediction(idx, &n);
             }
-            world.resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
+            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
         }
         KeyCode::Char('.') | KeyCode::Char('5') => {
-            world.resource_mut::<PendingInput>().direction = None;
-            commit_player_action(world);
+            drop(w);
+            world!(mut).resource_mut::<PendingInput>().direction = None;
+            commit_player_action();
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
-            open_inventory(world, terminal)?;
+            drop(w);
+            open_inventory(terminal)?;
         }
         KeyCode::F(5) => {
-            if let Ok(data) = bincode::serialize(&GameSave::from_world(world)) {
+            drop(w);
+            if let Ok(data) = bincode::serialize(&GameSave::capture()) {
                 std::fs::write("save.bin", data).ok();
-                world.resource_mut::<EventLog>().push("已保存");
+                world!(mut).resource_mut::<EventLog>().push("已保存");
             }
         }
         KeyCode::F(9) => {
+            drop(w);
             if let Ok(data) = std::fs::read("save.bin") {
                 if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
-                    save.into_world(world);
-                    world.resource_mut::<EventLog>().push("已读档");
+                    save.restore();
+                    world!(mut).resource_mut::<EventLog>().push("已读档");
                 }
             }
         }
         KeyCode::Char('>') => {
-            if on_stairs(world) && confirm_stairs(terminal)? {
-                descend(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+            drop(w);
+            if on_stairs() && confirm_stairs(terminal)? {
+                descend();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             }
         }
         _ => {}
@@ -300,72 +314,71 @@ fn handle_input(
 }
 
 fn handle_combat_key(
-    world: &mut World,
     _terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key: crossterm::event::KeyEvent,
 ) -> io::Result<()> {
-    if handle_global_toggle(world, key) {
+    if handle_global_toggle(key) {
         return Ok(());
     }
     // 上次按下的方向/技能
-    let last_dir = world.resource::<PendingInput>().direction;
-    let last_skill = world.resource::<PendingPlayerAction>().skill_idx;
+    let last_dir = world!().resource::<PendingInput>().direction;
+    let last_skill = world!().resource::<PendingPlayerAction>().skill_idx;
 
     match key.code {
         KeyCode::Up => {
             if last_dir == Some((0, -1)) {
-                commit_player_action(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+                commit_player_action();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             } else {
-                world.resource_mut::<PendingInput>().direction = Some((0, -1));
-                write_player_prediction(world, 0, -1);
+                world!(mut).resource_mut::<PendingInput>().direction = Some((0, -1));
+                write_player_prediction(0, -1);
             }
         }
         KeyCode::Down => {
             if last_dir == Some((0, 1)) {
-                commit_player_action(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+                commit_player_action();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             } else {
-                world.resource_mut::<PendingInput>().direction = Some((0, 1));
-                write_player_prediction(world, 0, 1);
+                world!(mut).resource_mut::<PendingInput>().direction = Some((0, 1));
+                write_player_prediction(0, 1);
             }
         }
         KeyCode::Left => {
             if last_dir == Some((-1, 0)) {
-                commit_player_action(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+                commit_player_action();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             } else {
-                world.resource_mut::<PendingInput>().direction = Some((-1, 0));
-                write_player_prediction(world, -1, 0);
+                world!(mut).resource_mut::<PendingInput>().direction = Some((-1, 0));
+                write_player_prediction(-1, 0);
             }
         }
         KeyCode::Right => {
             if last_dir == Some((1, 0)) {
-                commit_player_action(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+                commit_player_action();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             } else {
-                world.resource_mut::<PendingInput>().direction = Some((1, 0));
-                write_player_prediction(world, 1, 0);
+                world!(mut).resource_mut::<PendingInput>().direction = Some((1, 0));
+                write_player_prediction(1, 0);
             }
         }
         KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            let (idx, name) = skill_info(world, key);
+            let (idx, name) = skill_info(key);
             if last_skill == Some(idx) {
-                commit_player_action(world);
-                world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+                commit_player_action();
+                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             } else if let Some(n) = name {
-                write_skill_prediction(world, idx, &n);
+                write_skill_prediction(idx, &n);
             }
         }
         KeyCode::Char('.') | KeyCode::Char('5') => {
-            world.resource_mut::<PendingInput>().direction = None;
-            world.resource_mut::<PendingPlayerAction>().is_pending_skill = false;
-            commit_player_action(world);
-            world.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
+            world!(mut).resource_mut::<PendingInput>().direction = None;
+            world!(mut).resource_mut::<PendingPlayerAction>().is_pending_skill = false;
+            commit_player_action();
+            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
         }
         KeyCode::Char('q') | KeyCode::Esc => {
             if confirm_quit(_terminal)? {
-                world.resource_mut::<TurnManager>().game_over = true;
+                world!(mut).resource_mut::<TurnManager>().game_over = true;
             }
         }
         _ => {}
@@ -374,7 +387,7 @@ fn handle_combat_key(
 }
 
 /// 从按键获取技能索引和名称。
-fn skill_info(world: &mut World, key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
+fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
     let idx = match key.code {
         KeyCode::Char('1') => 0,
         KeyCode::Char('2') => 1,
@@ -382,8 +395,9 @@ fn skill_info(world: &mut World, key: crossterm::event::KeyEvent) -> (usize, Opt
         _ => 3,
     };
     let names: Vec<String> = {
-        let mut q = world.query::<&Skills>();
-        q.iter(world)
+        let mut w = world!(mut);
+        let mut q = w.query::<&Skills>();
+        q.iter(&mut *w)
             .next()
             .map(|sk| sk.list.iter().map(|s| s.name.to_string()).collect())
             .unwrap_or_default()
@@ -394,32 +408,32 @@ fn skill_info(world: &mut World, key: crossterm::event::KeyEvent) -> (usize, Opt
 /// 自动模式下方向键。
 /// 探索中（无战斗）：锁定自动采纳，不暂停。
 /// 战斗中：锁定 → 暂停等确认；未锁定 → 即时提交。
-fn auto_move(world: &mut World, dx: isize, dy: isize) {
-    world.resource_mut::<PendingInput>().direction = Some((dx, dy));
-    let locked = player_prediction(world).map(|p| p.locked).unwrap_or(false);
-    let combat = world.resource::<GamePacing>().combat_active;
+fn auto_move(dx: isize, dy: isize) {
+    world!(mut).resource_mut::<PendingInput>().direction = Some((dx, dy));
+    let locked = player_prediction().map(|p| p.locked).unwrap_or(false);
+    let combat = world!().resource::<GamePacing>().combat_active;
 
     if locked && combat {
         // 战斗中锁定 → 暂停让玩家确认
-        world.resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
+        world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
         return;
     }
     // 探索中 / 战斗中未锁定 → 直接提交
-    write_player_prediction(world, dx, dy);
-    commit_player_action(world);
+    write_player_prediction(dx, dy);
+    commit_player_action();
 }
 
 /// 全局切换键：'m' = 强制手动, 'a' = 清除覆盖(恢复自动跟随)。
-fn handle_global_toggle(world: &mut World, key: crossterm::event::KeyEvent) -> bool {
+fn handle_global_toggle(key: crossterm::event::KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('m') | KeyCode::Char('M') => {
-            world.resource_mut::<GamePacing>().manual_override = ManualOverride::ForceManual;
-            world.resource_mut::<EventLog>().push("切换为手动模式");
+            world!(mut).resource_mut::<GamePacing>().manual_override = ManualOverride::ForceManual;
+            world!(mut).resource_mut::<EventLog>().push("切换为手动模式");
             true
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
-            world.resource_mut::<GamePacing>().manual_override = ManualOverride::None;
-            world.resource_mut::<EventLog>().push("切换为自动模式");
+            world!(mut).resource_mut::<GamePacing>().manual_override = ManualOverride::None;
+            world!(mut).resource_mut::<EventLog>().push("切换为自动模式");
             true
         }
         _ => false,
@@ -430,15 +444,16 @@ fn handle_global_toggle(world: &mut World, key: crossterm::event::KeyEvent) -> b
 // 工具函数
 // ══════════════════════════════════════════════════════
 
-fn on_stairs(world: &mut World) -> bool {
+fn on_stairs() -> bool {
+    let mut w = world!(mut);
     let pp = {
-        let mut q = world.query::<&Position>();
-        *q.iter(world)
+        let mut q = w.query::<&Position>();
+        *q.iter(&mut *w)
             .next()
             .unwrap_or(&Position { x: 0, y: 0 })
     };
-    let mut sq = world.query::<(&Stairs, &Position)>();
-    sq.iter(world).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
+    let mut q2 = w.query::<(&Stairs, &Position)>();
+    q2.iter(&mut *w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
 }
 
 fn confirm_quit(
@@ -511,25 +526,25 @@ fn confirm_stairs(
 
 fn title_screen(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-) -> io::Result<(World, Instant)> {
+) -> io::Result<Instant> {
     loop {
         terminal.draw(|frame| draw_title(frame))?;
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Enter => {
-                    let mut world = setup_world();
-                    let _ = world.run_system_once(fov_system);
-                    update_map_memory(&mut world);
-                    return Ok((world, Instant::now()));
+                    let world = setup_world();
+                    dungeon_core::global::set_world(world);
+                    world!(mut).run_system_once(fov_system);
+                    update_map_memory();
+                    return Ok(Instant::now());
                 }
                 KeyCode::F(9) => {
                     if let Ok(data) = std::fs::read("save.bin") {
                         if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
-                            let mut world = World::new();
-                            save.into_world(&mut world);
-                            let _ = world.run_system_once(fov_system);
-                            update_map_memory(&mut world);
-                            return Ok((world, Instant::now()));
+                            save.restore();
+                            world!(mut).run_system_once(fov_system);
+                            update_map_memory();
+                            return Ok(Instant::now());
                         }
                     }
                 }
@@ -546,79 +561,83 @@ fn title_screen(
 
 #[allow(dead_code)]
 fn level_up_screen(
-    world: &mut World,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     _game_start: Instant,
 ) -> io::Result<()> {
-    terminal.draw(|frame| draw_level_up(frame, world.resource::<PendingLevelUp>().points))?;
+    terminal.draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
     loop {
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('0') => {
-                    world.resource_mut::<PendingLevelUp>().points = 0;
+                    world!(mut).resource_mut::<PendingLevelUp>().points = 0;
                     break;
                 }
                 KeyCode::Char('1') => {
-                    if world.resource::<PendingLevelUp>().points > 0 {
-                        world.resource_mut::<PendingLevelUp>().points -= 1;
-                        world.query::<&mut Stats>().single_mut(world).unwrap().attack += 1;
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().attack += 1;
                     }
                 }
                 KeyCode::Char('2') => {
-                    if world.resource::<PendingLevelUp>().points > 0 {
-                        world.resource_mut::<PendingLevelUp>().points -= 1;
-                        world.query::<&mut Stats>().single_mut(world).unwrap().defense += 1;
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().defense += 1;
                     }
                 }
                 KeyCode::Char('3') => {
-                    if world.resource::<PendingLevelUp>().points > 0 {
-                        world.resource_mut::<PendingLevelUp>().points -= 1;
-                        world.query::<&mut Stats>().single_mut(world).unwrap().magic_mastery += 1;
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().magic_mastery += 1;
                     }
                 }
                 KeyCode::Char('4') => {
-                    if world.resource::<PendingLevelUp>().points > 0 {
-                        world.resource_mut::<PendingLevelUp>().points -= 1;
-                        world.query::<&mut Stats>().single_mut(world).unwrap().agility += 1;
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().agility += 1;
                     }
                 }
                 KeyCode::Char('5') => {
-                    if world.resource::<PendingLevelUp>().points > 0 {
-                        world.resource_mut::<PendingLevelUp>().points -= 1;
-                        let mut s = world.query::<&mut Stats>().single_mut(world).unwrap();
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        let mut s = w.query::<&mut Stats>().single_mut(&mut *w).unwrap();
                         s.max_hp += 5;
                         s.hp = s.hp.min(s.max_hp);
                     }
                 }
                 _ => {}
             }
-            if world.resource::<PendingLevelUp>().points == 0 {
+            if world!().resource::<PendingLevelUp>().points == 0 {
                 break;
             }
             terminal
-                .draw(|frame| draw_level_up(frame, world.resource::<PendingLevelUp>().points))?;
+                .draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
         }
     }
     Ok(())
 }
 
 fn open_inventory(
-    world: &mut World,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
     let mut selected: usize = 0;
     let mut scroll: usize = 0;
 
-    fn get_inv(world: &mut World) -> (Vec<ItemInstance>, usize, (Option<usize>, Option<usize>, Option<usize>)) {
-        let mut q = world.query::<(&Inventory, &Equipment)>();
-        q.iter(world)
+    fn get_inv() -> (Vec<ItemInstance>, usize, (Option<usize>, Option<usize>, Option<usize>)) {
+        let mut w = world!(mut);
+        let mut q = w.query::<(&Inventory, &Equipment)>();
+        q.iter(&mut *w)
             .next()
             .map(|(inv, eq)| (inv.items.clone(), inv.capacity, (eq.weapon, eq.armor, eq.ring)))
             .unwrap_or_default()
     }
 
     loop {
-        let inv_data = get_inv(world);
+        let inv_data = get_inv();
         terminal.draw(|frame| {
             let area = frame.area();
             let block = Block::default()
@@ -698,8 +717,9 @@ fn open_inventory(
                     if selected < scroll { scroll = scroll.saturating_sub(1); }
                 }
                 KeyCode::Char('e') => {
-                    let mut q = world.query::<(&mut Inventory, &mut Equipment)>();
-                    if let Some((mut inv, mut eq)) = q.iter_mut(world).next() {
+                    let mut w = world!(mut);
+                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
                         if inv.items.get(selected).is_some() {
                             match inv.items[selected].slot {
                                 EquipmentSlot::Weapon => eq.weapon = Some(selected),
@@ -710,8 +730,9 @@ fn open_inventory(
                     }
                 }
                 KeyCode::Char('d') => {
-                    let mut q = world.query::<(&mut Inventory, &mut Equipment)>();
-                    if let Some((mut inv, mut eq)) = q.iter_mut(world).next() {
+                    let mut w = world!(mut);
+                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
                         if selected < inv.items.len() {
                             if eq.weapon == Some(selected) { eq.weapon = None; }
                             if eq.armor == Some(selected) { eq.armor = None; }

@@ -3,7 +3,7 @@
 //! 从 `World` 读取所有实体的 AV 状态与预测，产出行序列的 ASCII 布局。
 
 use bevy_ecs::prelude::{Entity, World};
-use dungeon_core::{
+use dungeon_core::{world, 
     ActionPrediction, ActionValue, EntityName, GamePacing, PacingMode, Player, Position,
     Renderable,
 };
@@ -21,9 +21,9 @@ use crate::color::renderable_color;
 /// 锁定条目与未锁定条目之间画一条锁定边界线。
 /// 玩家未锁定条目闪烁提醒"可修改"。
 pub fn build_timeline(
-    world: &mut World,
     player_visible: HashSet<(usize, usize)>,
 ) -> Vec<Line<'static>> {
+    let mut w = world!(mut);
     let mut out: Vec<Line<'static>> = Vec::new();
 
     struct Card {
@@ -40,9 +40,9 @@ pub fn build_timeline(
     let mut cards: Vec<Card> = Vec::new();
 
     // 玩家卡片
-    if let Some((av, pred)) = world
+    if let Some((av, pred)) = w
         .query::<(&Player, &ActionValue, &ActionPrediction)>()
-        .iter(world)
+        .iter(&mut *w)
         .next()
         .map(|(_, av, p)| (av, p))
     {
@@ -58,13 +58,20 @@ pub fn build_timeline(
         });
     }
 
+    // 获取玩家 entity（用于后续判断）
+    let player_entity: Option<Entity> = w
+        .query::<(Entity, &Player)>()
+        .iter(&mut *w)
+        .next()
+        .map(|(e, _)| e);
+
     // 怪物卡片（仅可见 + 非玩家）
     let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    for (e, pos, name, rend, av, pred) in world
+    for (e, pos, name, rend, av, pred) in w
         .query::<(Entity, &Position, &EntityName, &Renderable, &ActionValue, &ActionPrediction)>()
-        .iter(world)
+        .iter(&mut *w)
     {
-        if world.get::<Player>(e).is_some() {
+        if Some(e) == player_entity {
             continue;
         }
         if !player_visible.contains(&(pos.x, pos.y)) {
@@ -102,7 +109,7 @@ pub fn build_timeline(
     let boundary_idx = cards.iter().position(|c| !c.locked);
 
     // 渲染
-    let blink = world.resource::<GamePacing>().blink_phase;
+    let blink = w.resource::<GamePacing>().blink_phase;
 
     for (i, card) in cards.iter().enumerate() {
         if Some(i) == boundary_idx {
@@ -184,7 +191,7 @@ pub fn build_timeline(
     }
 
     // 底部操作提示
-    let pacing = world.resource::<GamePacing>();
+    let pacing = w.resource::<GamePacing>();
     let combat_active = pacing.combat_active;
     let paused = matches!(pacing.mode, PacingMode::CombatPaused);
 

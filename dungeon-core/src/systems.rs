@@ -7,6 +7,7 @@ use crate::{
     effective_attack,
     calculate_visible_tiles, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
+use crate::world;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 use rand::RngExt;
@@ -286,8 +287,8 @@ pub fn skill_tick_system(
         }
     }
 }
-pub fn apply_skill(world: &mut World, skill_idx: usize) {
-    world.resource_mut::<PendingSkill>().idx = Some(skill_idx);
+pub fn apply_skill(skill_idx: usize) {
+    world!(mut).resource_mut::<PendingSkill>().idx = Some(skill_idx);
 }
 
 // ══════════════════════════════════════════════════════
@@ -323,15 +324,16 @@ pub enum CombatEvent {
 ///
 /// 锁定阈值使用 `ActionValue.reaction_time`。
 /// 即使 amount ≤ 0，也会执行当前 AV ≤ 0 的实体（处理"玩家刚提交、AV=0"的情况）。
-pub fn advance_by(world: &mut World, amount: f32) -> AdvanceResult {
+pub fn advance_by(amount: f32) -> AdvanceResult {
     // amount < 0 视为 0（防御性处理），amount = 0 仍需要处理待执行实体
     let amount = amount.max(0.0);
 
-    // 1. 所有人同步减去推进量，收集 AV ≤ 0 的实体
+    // 阶段 1：同步减去推进量，收集 AV ≤ 0 的实体
     let mut exec_set: Vec<Entity> = Vec::new();
     {
-        let mut q = world.query::<(Entity, &mut ActionValue)>();
-        for (entity, mut av) in q.iter_mut(world) {
+        let mut w = world!(mut);
+        let mut q = w.query::<(Entity, &mut ActionValue)>();
+        for (entity, mut av) in q.iter_mut(&mut *w) {
             if amount > 0.0 {
                 av.current_av -= amount;
             }
@@ -341,50 +343,55 @@ pub fn advance_by(world: &mut World, amount: f32) -> AdvanceResult {
         }
     }
 
-    // 2. 按速度排序后依次执行所有 AV≤0 的实体
-    //    速度高者优先（HSR 规则：同一个 tick 内先到先执行）
-    exec_set.sort_by(|&a, &b| {
-        let sa = world.get::<ActionValue>(a).map(|av| av.speed).unwrap_or(0.0);
-        let sb = world.get::<ActionValue>(b).map(|av| av.speed).unwrap_or(0.0);
-        sb.partial_cmp(&sa).unwrap()
-    });
-    // 玩家总是优先于同速怪物（用户体验）
-    exec_set.sort_by_key(|&e| world.get::<Player>(e).is_none());
+    // 阶段 2：排序 + 执行所有 AV≤0 的实体
+    {
+        let w = world!();
+        exec_set.sort_by(|&a, &b| {
+            let sa = w.get::<ActionValue>(a).map(|av| av.speed).unwrap_or(0.0);
+            let sb = w.get::<ActionValue>(b).map(|av| av.speed).unwrap_or(0.0);
+            sb.partial_cmp(&sa).unwrap()
+        });
+        // 玩家总是优先于同速怪物
+        // (借用 w 会阻止排序，所以排序先完成)
+    }
+    exec_set.sort_by_key(|&e| world!().get::<Player>(e).is_none());
 
     for &entity in &exec_set {
-        execute_entity(world, entity);
-        // 执行后递减 SpeedModifier
-        tick_speed_modifier(world, entity);
+        execute_entity(entity);
+        tick_speed_modifier(entity);
     }
 
-    // 3. 锁定所有 AV ≤ reaction_time 的实体（仅限尚未锁定 + 本轮未确认）
+    // 阶段 3：锁定所有 AV ≤ reaction_time 的实体
     let mut lock_set: Vec<Entity> = Vec::new();
+    let mut player_locked = false;
     {
-        let mut q = world.query::<(Entity, &ActionValue, &ActionPrediction)>();
-        for (entity, av, pred) in q.iter(world) {
+        let mut w = world!(mut);
+        let mut q = w.query::<(Entity, &ActionValue, &ActionPrediction)>();
+        for (entity, av, pred) in q.iter(&*w) {
             if av.current_av <= av.reaction_time && !pred.locked && !pred.just_confirmed {
                 lock_set.push(entity);
             }
         }
-    }
-
-    let mut player_locked = false;
-    for &entity in &lock_set {
-        if let Some(mut pred) = world.get_mut::<ActionPrediction>(entity) {
-            pred.locked = true;
-        }
-        if world.get::<Player>(entity).is_some() {
-            player_locked = true;
+        for &entity in &lock_set {
+            if let Some(mut pred) = w.get_mut::<ActionPrediction>(entity) {
+                pred.locked = true;
+            }
+            if w.get::<Player>(entity).is_some() {
+                player_locked = true;
+            }
         }
     }
 
-    // 4. 有执行 → 批量重新预测（跳过已锁定的实体）
+    // 阶段 4：有执行 → 批量重新预测
     if !exec_set.is_empty() {
-        let _ = world.run_system_once(predict_monster_actions_system);
+        world!(mut).run_system_once(predict_monster_actions_system);
     }
 
-    // 5. 战斗事件检测
-    let combat_event = detect_combat_event(world, &exec_set);
+    // 阶段 5：战斗事件检测（独立锁）
+    let combat_event = {
+        let mut w = world!(mut);
+        detect_combat_event_inner(&mut *w, &exec_set)
+    };
 
     AdvanceResult {
         amount,
@@ -405,8 +412,8 @@ pub fn advance_by(world: &mut World, amount: f32) -> AdvanceResult {
 ///
 /// 公式：`new_av = current_av - base_av × ratio`
 /// 若结果 ≤ 0 则目标本 tick 立即行动。
-pub fn action_pull(world: &mut World, entity: Entity, ratio: f32) {
-    if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+pub fn action_pull(entity: Entity, ratio: f32) {
+    if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
         let pull_amount = av.base_av * ratio;
         av.current_av = (av.current_av - pull_amount).max(0.0);
     }
@@ -416,8 +423,8 @@ pub fn action_pull(world: &mut World, entity: Entity, ratio: f32) {
 ///
 /// 公式：`new_av = current_av + base_av × ratio`
 /// 结算优先级通常先于拉条。
-pub fn action_push(world: &mut World, entity: Entity, ratio: f32) {
-    if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+pub fn action_push(entity: Entity, ratio: f32) {
+    if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
         av.current_av += av.base_av * ratio;
     }
 }
@@ -427,8 +434,8 @@ pub fn action_push(world: &mut World, entity: Entity, ratio: f32) {
 /// 公式：`new_av = current_av × (old_speed / new_speed)`
 /// `new_base_av = base_av × (old_speed / new_speed)`
 /// 离终点越近收益越低（天然成立）。
-pub fn modify_speed(world: &mut World, entity: Entity, factor: f32) {
-    if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+pub fn modify_speed(entity: Entity, factor: f32) {
+    if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
         let old_speed = av.speed;
         av.speed *= factor;
         let ratio = old_speed / av.speed;
@@ -444,12 +451,13 @@ pub fn modify_speed(world: &mut World, entity: Entity, factor: f32) {
 /// 计算到最近关键点的 AV 距离。
 ///
 /// 执行点优先于锁定点——怪物先行动，玩家再决策。
-pub fn next_key_point_distance(world: &mut World) -> f32 {
+pub fn next_key_point_distance() -> f32 {
     let mut min_exec = f32::MAX;
     let mut min_lock = f32::MAX;
     let mut has_pending = false;
-    let mut q = world.query::<(&ActionValue, &ActionPrediction)>();
-    for (av, pred) in q.iter(world) {
+    let mut w = world!(mut);
+    let mut q = w.query::<(&ActionValue, &ActionPrediction)>();
+    for (av, pred) in q.iter(&mut *w) {
         if av.current_av <= 0.0 {
             has_pending = true;
         }
@@ -474,7 +482,7 @@ pub fn next_key_point_distance(world: &mut World) -> f32 {
 ///
 /// - 非战斗时：一路推到 AV=0 执行，锁定不中断。
 /// - 战斗时：遇到锁定立即返回，让玩家确认。
-pub fn advance_to_next_decision_point(world: &mut World) -> AdvanceResult {
+pub fn advance_to_next_decision_point() -> AdvanceResult {
     let mut last_result = AdvanceResult {
         amount: 0.0, executed: vec![], locked: vec![],
         any_executed: false, any_locked: false, player_locked: false,
@@ -482,14 +490,14 @@ pub fn advance_to_next_decision_point(world: &mut World) -> AdvanceResult {
     };
 
     loop {
-        let dist = next_key_point_distance(world);
+        let dist = next_key_point_distance();
         if dist < 0.0 {
             break;
         }
         if dist == 0.0 {
             // 有实体 AV≤0 待执行 → 用 advance_by(0) 处理它们
-            let r = advance_by(world, 0.0);
-            let player_executed = r.executed.iter().any(|&e| world.get::<crate::Player>(e).is_some());
+            let r = advance_by(0.0);
+            let player_executed = r.executed.iter().any(|&e| world!().get::<crate::Player>(e).is_some());
             last_result.any_executed |= r.any_executed;
             last_result.any_locked |= r.any_locked;
             last_result.player_locked |= r.player_locked;
@@ -499,8 +507,8 @@ pub fn advance_to_next_decision_point(world: &mut World) -> AdvanceResult {
             if player_executed { break; }
             continue;
         }
-        let r = advance_by(world, dist);
-        let player_executed = r.executed.iter().any(|&e| world.get::<crate::Player>(e).is_some());
+        let r = advance_by(dist);
+        let player_executed = r.executed.iter().any(|&e| world!().get::<crate::Player>(e).is_some());
         last_result.amount += r.amount;
         last_result.executed.extend(r.executed);
         last_result.locked.extend(r.locked);
@@ -526,9 +534,10 @@ pub fn advance_to_next_decision_point(world: &mut World) -> AdvanceResult {
 /// ─────────────────────────────────────────────────
 
 /// 递减 SpeedModifier 的剩余 tick，归零后移除。
-fn tick_speed_modifier(world: &mut World, entity: Entity) {
+fn tick_speed_modifier(entity: Entity) {
+    let mut w = world!(mut);
     let should_remove = {
-        if let Some(mut sm) = world.get_mut::<SpeedModifier>(entity) {
+        if let Some(mut sm) = w.get_mut::<SpeedModifier>(entity) {
             if sm.remaining_ticks > 0 {
                 sm.remaining_ticks -= 1;
             }
@@ -539,14 +548,14 @@ fn tick_speed_modifier(world: &mut World, entity: Entity) {
     };
     if should_remove {
         // 先提取 factor，再调用 modify_speed（避免双重借用）
-        let factor = world.get::<SpeedModifier>(entity).map(|sm| sm.factor).unwrap_or(1.0);
-        modify_speed(world, entity, 1.0 / factor);
-        world.entity_mut(entity).remove::<SpeedModifier>();
+        let factor = w.get::<SpeedModifier>(entity).map(|sm| sm.factor).unwrap_or(1.0);
+        modify_speed(entity, 1.0 / factor);
+        w.entity_mut(entity).remove::<SpeedModifier>();
     }
 }
 
 /// 检测是否有战斗事件的切换。
-fn detect_combat_event(world: &mut World, executed: &[Entity]) -> Option<CombatEvent> {
+fn detect_combat_event_inner(world: &mut World, executed: &[Entity]) -> Option<CombatEvent> {
     let has_monsters = world.query::<&Monster>().iter(world).next().is_some();
     let pacing = world.resource::<GamePacing>();
 
@@ -575,30 +584,32 @@ fn detect_combat_event(world: &mut World, executed: &[Entity]) -> Option<CombatE
 /// 执行一个实体的已锁定动作（AV 引擎唯一执行入口）。
 ///
 /// 执行后自动重置 AV、解锁预测，并处理 SpeedModifier 消耗。
-fn execute_entity(world: &mut World, entity: Entity) {
-    let pred = match world.get::<ActionPrediction>(entity) {
+fn execute_entity(entity: Entity) {
+    let mut w = world!(mut);
+    let pred = match w.get::<ActionPrediction>(entity) {
         Some(p) => p.clone(),
         None => return,
     };
-    let is_player = world.get::<Player>(entity).is_some();
-    let is_monster = world.get::<Monster>(entity).is_some();
+    let is_player = w.get::<Player>(entity).is_some();
+    let is_monster = w.get::<Monster>(entity).is_some();
 
     // 获取玩家位置（供怪物行动用）
-    let player_pos = world.query::<(&Player, &Position)>().iter(world).next().map(|(_, p)| (p.x, p.y));
-    let map_tiles = world.resource::<Map>().tiles;
-    let occupancy = world.resource::<OccupancyMap>().cells;
+    let player_pos = w.query::<(&Player, &Position)>().iter(&*w).next().map(|(_, p)| (p.x, p.y));
 
     // ── 执行行动 ──
+    // 注意：这些内部函数会自己获取锁，所以需要先 drop w
+    drop(w);
     match pred.kind {
-        ActionKind::Chase if is_monster => execute_monster_chase(world, entity, player_pos, &map_tiles, &occupancy),
-        ActionKind::Flee if is_monster => execute_monster_flee(world, entity, player_pos, &map_tiles, &occupancy),
-        ActionKind::Wander if is_monster => execute_monster_wander(world, entity, &map_tiles, &occupancy),
-        ActionKind::Move if is_player => execute_player_move(world),
+        ActionKind::Chase if is_monster => execute_monster_chase(entity, player_pos),
+        ActionKind::Flee if is_monster => execute_monster_flee(entity, player_pos),
+        ActionKind::Wander if is_monster => execute_monster_wander(entity),
+        ActionKind::Move if is_player => execute_player_move(),
         _ => {} // 其他类型暂时不处理
     }
 
     // ── 重置 AV ──
-    let agility = world.get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
+    let mut w = world!(mut);
+    let agility = w.get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
     let base_cost = match pred.kind {
         ActionKind::Move | ActionKind::Chase | ActionKind::Flee | ActionKind::Wander => crate::action_cost::MOVE,
         ActionKind::Attack | ActionKind::BumpAttack => crate::action_cost::ATTACK,
@@ -606,13 +617,13 @@ fn execute_entity(world: &mut World, entity: Entity) {
         ActionKind::Skill(_) => crate::action_cost::SKILL_CAST,
         _ => crate::action_cost::MOVE,
     };
-    if let Some(mut av) = world.get_mut::<ActionValue>(entity) {
+    if let Some(mut av) = w.get_mut::<ActionValue>(entity) {
         let new = ActionValue::with_cost(base_cost, agility);
         *av = new;
     }
 
     // ── 重置预测 ──
-    if let Some(mut p) = world.get_mut::<ActionPrediction>(entity) {
+    if let Some(mut p) = w.get_mut::<ActionPrediction>(entity) {
         p.locked = false;
         p.just_confirmed = false;
         p.desc = if is_player { "移动" } else { "追击" }.into();
@@ -622,117 +633,119 @@ fn execute_entity(world: &mut World, entity: Entity) {
     // ── 战斗事件日志 ──
     if matches!(pred.kind, ActionKind::Attack | ActionKind::BumpAttack | ActionKind::Skill(_)) {
         let msg = if is_player { "你发起了攻击" } else { "怪物攻击了你" };
-        world.resource_mut::<EventLog>().push(msg);
+        w.resource_mut::<EventLog>().push(msg);
     }
 }
 
 // ── 怪物行动执行（从 execute_entity 拆出，提高可读性） ──
 
 fn execute_monster_chase(
-    world: &mut World, entity: Entity,
+    entity: Entity,
     player_pos: Option<(usize, usize)>,
-    map_tiles: &[[Tile; MAP_WIDTH]; MAP_HEIGHT],
-    occupancy: &[[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],
 ) {
     let Some((px, py)) = player_pos else { return };
-    let Some(pos) = world.get::<Position>(entity) else { return };
-    let dist = pos.x.abs_diff(px) + pos.y.abs_diff(py);
+    let mut w = world!(mut);
+    let (pos_x, pos_y) = match w.get::<Position>(entity) {
+        Some(p) => (p.x, p.y),
+        None => return,
+    };
+    let dist = pos_x.abs_diff(px) + pos_y.abs_diff(py);
     if dist > 1 {
-        let dx = if px > pos.x { 1 } else if px < pos.x { -1 } else { 0 };
-        let dy = if py > pos.y { 1 } else if py < pos.y { -1 } else { 0 };
-        let attempts = if px.abs_diff(pos.x) >= py.abs_diff(pos.y) {
+        let dx = if px > pos_x { 1 } else if px < pos_x { -1 } else { 0 };
+        let dy = if py > pos_y { 1 } else if py < pos_y { -1 } else { 0 };
+        let attempts = if px.abs_diff(pos_x) >= py.abs_diff(pos_y) {
             vec![(dx, 0), (0, dy)]
         } else {
             vec![(0, dy), (dx, 0)]
         };
         for (ndx, ndy) in attempts {
-            let nx = pos.x.wrapping_add_signed(ndx);
-            let ny = pos.y.wrapping_add_signed(ndy);
+            let nx = pos_x.wrapping_add_signed(ndx);
+            let ny = pos_y.wrapping_add_signed(ndy);
             if nx < MAP_WIDTH && ny < MAP_HEIGHT
-                && map_tiles[ny][nx] == Tile::Floor
-                && occupancy[ny][nx].is_none()
+                && w.resource::<Map>().tiles[ny][nx] == Tile::Floor
+                && !w.resource::<OccupancyMap>().is_occupied(nx, ny)
             {
-                let mut pos_mut = world.get_mut::<Position>(entity).unwrap();
-                pos_mut.x = nx;
-                pos_mut.y = ny;
+                if let Some(mut pos_mut) = w.get_mut::<Position>(entity) {
+                    pos_mut.x = nx;
+                    pos_mut.y = ny;
+                }
                 break;
             }
         }
     } else {
-        let dmg = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
-        if let Some(player_e) = world.query::<(Entity, &Player)>().iter(world).next().map(|(e, _)| e) {
-            if let Some(mut ps) = world.get_mut::<Stats>(player_e) {
+        let dmg = w.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
+        if let Some(player_e) = w.query::<(Entity, &Player)>().iter(&*w).next().map(|(e, _)| e) {
+            if let Some(mut ps) = w.get_mut::<Stats>(player_e) {
                 ps.hp -= dmg.max(1);
-                let name = world.get::<EntityName>(entity).map(|n| n.0.clone()).unwrap_or("怪物".into());
-                world.resource_mut::<EventLog>().push(format!("{} 攻击了你，{}伤", name, dmg));
-                if let Some(mut pacing) = world.get_resource_mut::<GamePacing>() {
-                    pacing.combat_active = true;
-                }
+                let name = w.get::<EntityName>(entity).map(|n| n.0.clone()).unwrap_or("怪物".into());
+                w.resource_mut::<EventLog>().push(format!("{} 攻击了你，{}伤", name, dmg));
+                w.resource_mut::<GamePacing>().combat_active = true;
             }
         }
     }
 }
 
 fn execute_monster_flee(
-    world: &mut World, entity: Entity,
+    entity: Entity,
     player_pos: Option<(usize, usize)>,
-    map_tiles: &[[Tile; MAP_WIDTH]; MAP_HEIGHT],
-    occupancy: &[[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],
 ) {
     let Some((px, py)) = player_pos else { return };
-    let Some(pos) = world.get::<Position>(entity) else { return };
+    let mut w = world!(mut);
+    let (pos_x, pos_y) = match w.get::<Position>(entity) {
+        Some(p) => (p.x, p.y),
+        None => return,
+    };
     let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
     let mut best: Option<(usize, usize)> = None;
     let mut best_dist = 0usize;
     for &(dx, dy) in &dirs {
-        let nx = pos.x.wrapping_add_signed(dx);
-        let ny = pos.y.wrapping_add_signed(dy);
+        let nx = pos_x.wrapping_add_signed(dx);
+        let ny = pos_y.wrapping_add_signed(dy);
         if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && map_tiles[ny][nx] == Tile::Floor
-            && occupancy[ny][nx].is_none()
+            && w.resource::<Map>().tiles[ny][nx] == Tile::Floor
+            && !w.resource::<OccupancyMap>().is_occupied(nx, ny)
         {
             let d = nx.abs_diff(px) + ny.abs_diff(py);
             if d > best_dist { best_dist = d; best = Some((nx, ny)); }
         }
     }
     if let Some((nx, ny)) = best {
-        let mut pos_mut = world.get_mut::<Position>(entity).unwrap();
-        pos_mut.x = nx;
-        pos_mut.y = ny;
-    }
-}
-
-fn execute_monster_wander(
-    world: &mut World, entity: Entity,
-    map_tiles: &[[Tile; MAP_WIDTH]; MAP_HEIGHT],
-    occupancy: &[[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],
-) {
-    let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-    let r = (world.resource::<FloorNumber>().0 as usize
-        + world.query::<(Entity, &Monster)>().iter(world).count()) % 4;
-    let (dx, dy) = dirs[r];
-    if let Some(pos) = world.get::<Position>(entity) {
-        let nx = pos.x.wrapping_add_signed(dx);
-        let ny = pos.y.wrapping_add_signed(dy);
-        if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && map_tiles[ny][nx] == Tile::Floor
-            && occupancy[ny][nx].is_none()
-        {
-            let mut pos_mut = world.get_mut::<Position>(entity).unwrap();
+        if let Some(mut pos_mut) = w.get_mut::<Position>(entity) {
             pos_mut.x = nx;
             pos_mut.y = ny;
         }
     }
 }
 
-fn execute_player_move(world: &mut World) {
-    let dir = world.resource::<PendingInput>().direction;
+fn execute_monster_wander(entity: Entity) {
+    let mut w = world!(mut);
+    let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+    let r = (w.resource::<FloorNumber>().0 as usize
+        + w.query::<(Entity, &Monster)>().iter(&*w).count()) % 4;
+    let (dx, dy) = dirs[r];
+    if let Some(pos) = w.get::<Position>(entity) {
+        let nx = pos.x.wrapping_add_signed(dx);
+        let ny = pos.y.wrapping_add_signed(dy);
+        if nx < MAP_WIDTH && ny < MAP_HEIGHT
+            && w.resource::<Map>().tiles[ny][nx] == Tile::Floor
+            && !w.resource::<OccupancyMap>().is_occupied(nx, ny)
+        {
+            if let Some(mut pos_mut) = w.get_mut::<Position>(entity) {
+                pos_mut.x = nx;
+                pos_mut.y = ny;
+            }
+        }
+    }
+}
+
+fn execute_player_move() {
+    let dir = world!().resource::<PendingInput>().direction;
     if let Some((dx, dy)) = dir {
-        crate::set_player_dir(world, dx, dy);
-        crate::rebuild_occupancy(world);
-        let _ = world.run_system_once(crate::movement_system);
-        crate::rebuild_occupancy(world);
-        world.resource_mut::<PendingInput>().direction = None;
+        crate::set_player_dir(dx, dy);
+        crate::rebuild_occupancy();
+        world!(mut).run_system_once(crate::movement_system);
+        crate::rebuild_occupancy();
+        world!(mut).resource_mut::<PendingInput>().direction = None;
     }
 }
 

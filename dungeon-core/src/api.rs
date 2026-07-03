@@ -5,6 +5,8 @@ use crate::{
     make_items, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 
+use crate::world;
+
 pub fn exp_to_next_level(level: u32) -> u64 { 20 * (level as u64).pow(2) + 30 * (level as u64) }
 pub fn max_hp_for(level: u32, defense: u32) -> i32 { 20 + level as i32 * 5 + defense as i32 * 2 }
 pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mastery as i32 }
@@ -68,33 +70,38 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
 
 // ── World 操作 ──────────────────────────────────────
 
-pub fn update_map_memory(world: &mut World) {
+pub fn update_map_memory() {
     let visible: Vec<(usize, usize)> = {
-        let mut q = world.query::<(&Player, &Viewshed)>();
-        q.iter(world).next().map(|(_, v)| v.visible_tiles.clone()).unwrap_or_default()
+        let mut w = world!(mut);
+        let mut q = w.query::<(&Player, &Viewshed)>();
+        q.iter(&mut *w).next().map(|(_, v)| v.visible_tiles.clone()).unwrap_or_default()
     };
-    let mut memory = world.resource_mut::<MapMemory>();
+    let mut w = world!(mut);
+    let mut memory = w.resource_mut::<MapMemory>();
     for &(x, y) in &visible { memory.explored[y][x] = true; }
 }
 
-pub fn rebuild_occupancy(world: &mut World) {
+pub fn rebuild_occupancy() {
+    let mut w = world!(mut);
     let positions: Vec<(Entity, usize, usize)> = {
-        let mut q = world.query::<(Entity, &Position)>();
-        q.iter(world).map(|(e, p)| (e, p.x, p.y)).collect()
+        let mut q = w.query::<(Entity, &Position)>();
+        q.iter(&mut *w).map(|(e, p)| (e, p.x, p.y)).collect()
     };
-    let mut occupancy = world.resource_mut::<OccupancyMap>();
+    let mut occupancy = w.resource_mut::<OccupancyMap>();
     occupancy.clear();
     for (entity, x, y) in positions { occupancy.set(x, y, entity); }
 }
 
-pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {
-    let mut query = world.query::<&mut MovingDir>();
-    for mut dir in query.iter_mut(world) { dir.dx = dx; dir.dy = dy; }
+pub fn set_player_dir(dx: isize, dy: isize) {
+    let mut w = world!(mut);
+    let mut query = w.query::<&mut MovingDir>();
+    for mut dir in query.iter_mut(&mut *w) { dir.dx = dx; dir.dy = dy; }
 }
 
-pub fn collect_renderables(world: &mut World) -> Vec<(usize, usize, char, RgbColor)> {
-    let mut query = world.query::<(&Position, &Renderable)>();
-    query.iter(world).map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect()
+pub fn collect_renderables() -> Vec<(usize, usize, char, RgbColor)> {
+    let mut w = world!(mut);
+    let mut query = w.query::<(&Position, &Renderable)>();
+    query.iter(&mut *w).map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect()
 }
 
 // ── setup_world ─────────────────────────────────────
@@ -176,28 +183,29 @@ pub fn setup_world() -> World {
 
 // ── descend ─────────────────────────────────────────
 
-pub fn descend(world: &mut World) {
-    let mut floor = world.resource_mut::<FloorNumber>();
+pub fn descend() {
+    let mut w = world!(mut);
+    let mut floor = w.resource_mut::<FloorNumber>();
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = world.query::<(Entity, &Stats, &Position, &ActionValue, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
-        let (e, s, p, ap, inv, eq, sk, _bu, cls, atk) = q.iter(world).next().unwrap();
+        let mut q = w.query::<(Entity, &Stats, &Position, &ActionValue, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
+        let (e, s, p, ap, inv, eq, sk, _bu, cls, atk) = q.iter(&mut *w).next().unwrap();
         (e, s.clone(), *p, ap.current_av, inv.items.clone(), inv.capacity,
          Equipment { weapon: eq.weapon, armor: eq.armor, ring: eq.ring },
          sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
     };
 
-    let to_despawn: Vec<Entity> = { let mut q = world.query::<(Entity,)>();
-        q.iter(world).map(|(e,)| e).collect() };
-    for e in to_despawn { let _ = world.despawn(e); }
+    let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
+        q.iter(&mut *w).map(|(e,)| e).collect() };
+    for e in to_despawn { let _ = w.despawn(e); }
 
     let mut rng = rand::rngs::SmallRng::seed_from_u64(42 + f as u64);
     let mut map = Map::new(); map.generate(&mut rng);
-    world.insert_resource(map); world.insert_resource(MapMemory::new());
-    let spawn = { let m = world.resource::<Map>(); m.rooms[0].center() };
+    w.insert_resource(map); w.insert_resource(MapMemory::new());
+    let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
 
-    let _e = { let mut cmd = world.spawn((
+    let _e = { let mut cmd = w.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
@@ -213,8 +221,8 @@ pub fn descend(world: &mut World) {
         let class = player_data.9.clone();
         cmd.insert(class); cmd.insert(AttackName(player_data.10.clone())); cmd.id() };
 
-    let last_room = { let m = world.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
-    world.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
+    let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
+    w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
 
     let monster_templates: [(char, RgbColor, &str); 4] = [
@@ -222,13 +230,13 @@ pub fn descend(world: &mut World) {
         ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
     ];
     let spawn_points: Vec<(usize, usize)> = {
-        let m = world.resource::<Map>();
+        let m = w.resource::<Map>();
         monster_templates.iter().enumerate()
             .filter_map(|(i, _)| m.rooms.get(i + 1).map(|r| r.center())).collect()
     };
     for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
-            world.spawn((Monster, MonsterBrain::creature(),
+            w.spawn((Monster, MonsterBrain::creature(),
                 Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
@@ -243,9 +251,9 @@ pub fn descend(world: &mut World) {
     let items = make_items();
     for (i, item) in items.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
-            world.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
+            w.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
                 Renderable { glyph: item.glyph, color: item.color }));
         }
     }
-    world.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
+    w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
 }

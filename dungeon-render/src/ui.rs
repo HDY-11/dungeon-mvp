@@ -1,7 +1,7 @@
 //! 主 UI 布局与状态面板渲染。
 
 use bevy_ecs::prelude::World;
-use dungeon_core::{
+use dungeon_core::{world, 
     collect_renderables, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map,
     MapMemory, Player, Position, Renderable, Skills, Stats, TurnManager, Viewshed,
     MAP_HEIGHT, MAP_WIDTH, effective_attack, effective_defense,
@@ -20,9 +20,10 @@ use crate::color::renderable_color;
 use crate::timeline::build_timeline;
 
 /// 渲染完整 UI（地图 + 行动轴 + 状态面板）。
-pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
+pub fn render_ui(frame: &mut Frame, game_start: Instant) {
+    let mut w = world!(mut);
     let area = frame.area();
-    let title = if world.resource::<TurnManager>().game_over {
+    let title = if w.resource::<TurnManager>().game_over {
         "  你死了  "
     } else {
         "  Dungeon MVP "
@@ -34,7 +35,7 @@ pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
         .border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(block, area);
     let inner = inner_rect(area, 1);
-    if world.resource::<TurnManager>().game_over {
+    if w.resource::<TurnManager>().game_over {
         frame.render_widget(
             Paragraph::new(Line::from("按 q 退出").centered())
                 .style(Style::default().fg(Color::Red)),
@@ -64,24 +65,24 @@ pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
     };
 
     let player_visible: HashSet<(usize, usize)> = {
-        let mut q = world.query::<(&Player, &Viewshed)>();
-        q.iter(world)
+        let mut q = w.query::<(&Player, &Viewshed)>();
+        q.iter(&mut *w)
             .next()
             .map(|(_, v)| v.visible_tiles.iter().copied().collect())
             .unwrap_or_default()
     };
-    let explored = world.resource::<MapMemory>().explored;
-    let tiles = world.resource::<Map>().tiles;
-    let renderables = collect_renderables(world);
+    let explored = w.resource::<MapMemory>().explored;
+    let tiles = w.resource::<Map>().tiles;
+    let renderables = collect_renderables();
     let (px, py) = {
-        let mut q = world.query::<(&Player, &Position)>();
-        q.iter(world)
+        let mut q = w.query::<(&Player, &Position)>();
+        q.iter(&mut *w)
             .next()
             .map(|(_, p)| (p.x, p.y))
             .unwrap_or((0, 0))
     };
     let monster_count = renderables.iter().filter(|(_, _, g, _)| *g != '@').count();
-    let room_count = world.resource::<Map>().rooms.len();
+    let room_count = w.resource::<Map>().rooms.len();
 
     // 地图
     let mut lines: Vec<Vec<(char, Color)>> = Vec::with_capacity(MAP_HEIGHT);
@@ -122,7 +123,7 @@ pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
     );
 
     // 行动轴
-    let timeline = build_timeline(world, player_visible);
+    let timeline = build_timeline(player_visible);
     frame.render_widget(
         Paragraph::new(timeline)
             .style(Style::default().fg(Color::White))
@@ -136,7 +137,7 @@ pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
     );
 
     // 状态面板
-    let stats = build_stats_panel(world, px, py, room_count, monster_count, game_start);
+    let stats = build_stats_panel(px, py, room_count, monster_count, game_start);
     frame.render_widget(
         Paragraph::new(stats)
             .style(Style::default().fg(Color::White))
@@ -151,17 +152,17 @@ pub fn render_ui(frame: &mut Frame, world: &mut World, game_start: Instant) {
 
 /// 状态面板。
 pub fn build_stats_panel(
-    world: &mut World,
     px: usize,
     py: usize,
     room_count: usize,
     monster_count: usize,
     game_start: Instant,
 ) -> Vec<Line<'static>> {
+    let mut w = world!(mut);
     let mut out: Vec<Line<'static>> = Vec::new();
-    let stats: Option<Stats> = world
+    let stats: Option<Stats> = w
         .query::<(&Player, &Stats)>()
-        .iter(world)
+        .iter(&mut *w)
         .next()
         .map(|(_, s)| s.clone());
     let Some(ref s) = stats else {
@@ -208,15 +209,15 @@ pub fn build_stats_panel(
     out.push(Line::from(Span::raw("")));
 
     let eff_atk = {
-        let mut q = world.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
-        q.iter(world)
+        let mut q = w.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
+        q.iter(&mut *w)
             .next()
             .map(|(inv, eq, bu)| effective_attack(s, inv, eq, bu))
             .unwrap_or(s.attack)
     };
     let eff_def = {
-        let mut q = world.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
-        q.iter(world)
+        let mut q = w.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
+        q.iter(&mut *w)
             .next()
             .map(|(inv, eq, bu)| effective_defense(s, inv, eq, bu))
             .unwrap_or(s.defense)
@@ -244,7 +245,7 @@ pub fn build_stats_panel(
         Span::raw(format!("{:>4.0}%", s.crit_damage * 100.0)),
     ]));
     out.push(Line::from(Span::raw("")));
-    let floor = world.resource::<FloorNumber>().0;
+    let floor = w.resource::<FloorNumber>().0;
     out.push(Line::from(Span::raw(format!(" 楼层 {}", floor))));
     out.push(Line::from(Span::raw(format!(" 房间 {}", room_count))));
     out.push(Line::from(Span::raw(format!("  @ ({}, {})", px, py))));
@@ -260,8 +261,8 @@ pub fn build_stats_panel(
     out.push(Line::from(Span::raw("")));
     // 技能
     {
-        let mut q = world.query::<(&Skills, &Stats)>();
-        if let Some((sk, st)) = q.iter(world).next() {
+        let mut q = w.query::<(&Skills, &Stats)>();
+        if let Some((sk, st)) = q.iter(&mut *w).next() {
             out.push(Line::from(Span::styled(
                 "── 技能 ──",
                 Style::default().fg(Color::DarkGray),
@@ -280,7 +281,7 @@ pub fn build_stats_panel(
         }
     }
     // Buff
-    if let Some(b) = world.query::<&Buffs>().iter(world).next() {
+    if let Some(b) = w.query::<&Buffs>().iter(&mut *w).next() {
         let parts: Vec<String> = [b.shield_turns > 0, b.berserk_turns > 0]
             .iter()
             .enumerate()
@@ -302,7 +303,7 @@ pub fn build_stats_panel(
     }
     // 事件日志
     out.push(Line::from(Span::raw("")));
-    let log = world.resource::<EventLog>();
+    let log = w.resource::<EventLog>();
     if !log.messages.is_empty() {
         out.push(Line::from(Span::styled(
             "── 事件 ──",
@@ -314,15 +315,15 @@ pub fn build_stats_panel(
     }
     // 视野实体
     {
-        let pv: HashSet<(usize, usize)> = world
+        let pv: HashSet<(usize, usize)> = w
             .query::<(&Player, &Viewshed)>()
-            .iter(world)
+            .iter(&mut *w)
             .next()
             .map(|(_, v)| v.visible_tiles.iter().copied().collect())
             .unwrap_or_default();
-        let ents: Vec<(String, i32, i32, usize, usize, Color)> = world
+        let ents: Vec<(String, i32, i32, usize, usize, Color)> = w
             .query::<(&Position, &EntityName, &Stats, &Renderable)>()
-            .iter(world)
+            .iter(&mut *w)
             .filter(|(p, _, _, _)| pv.contains(&(p.x, p.y)))
             .filter(|(_, n, _, _)| n.0 != "冒险者")
             .map(|(p, n, st, r)| (n.0.clone(), st.hp, st.max_hp, p.x, p.y, renderable_color(r.color)))

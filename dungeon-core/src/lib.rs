@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod api;
 pub mod components;
+pub mod global;
 pub mod items;
 pub mod pathfinding;
 pub mod resources;
