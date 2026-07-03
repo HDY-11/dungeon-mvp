@@ -1,4 +1,7 @@
 use bevy_ecs::prelude::World;
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
+use std::cell::RefCell;
 use std::sync::{OnceLock, RwLock};
 
 static WORLD: OnceLock<RwLock<World>> = OnceLock::new();
@@ -37,6 +40,19 @@ pub fn write_world() -> std::sync::RwLockWriteGuard<'static, World> {
         .expect("World not initialized — call set_world first")
         .write()
         .unwrap()
+}
+
+/// 线程局部的随机数生成器（用于仲裁时随机选择相同优先级的行动）
+std::thread_local! {
+    static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::seed_from_u64(0));
+}
+
+pub fn rand_u8() -> u8 {
+    use rand::RngExt;
+    RNG.with(|r| {
+        let mut guard = r.borrow_mut();
+        (&mut *guard).random_range(0u8..=255u8)
+    })
 }
 
 /// 获取全局 World 的读锁（不可变借用）。
