@@ -1,2 +1,4 @@
 /target
 .reasonix/
+*.log
+save.bin
