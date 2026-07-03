@@ -125,6 +125,7 @@ pub fn setup_world() -> World {
     world.insert_resource(PendingPlayerAction::default());
     world.insert_resource(crate::action::ActionQueue::default());
     world.insert_resource(crate::action::InputBuffer::default());
+    world.insert_resource(crate::action::PlayerPreview::default());
 
     let (spawn_x, spawn_y) = map.rooms[0].center();
     world.insert_resource(map);

@@ -1,6 +1,6 @@
 use crate::*;
 use crate::world;
-use crate::action::{Reaction, agility_to_reaction, CanMove, CanChase, CanFlee, CanWander, CanWait, ActionQueue, InputBuffer};
+use crate::action::{Reaction, agility_to_reaction, CanMove, CanChase, CanFlee, CanWander, CanWait, ActionQueue, InputBuffer, PlayerPreview};
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -180,6 +180,7 @@ impl GameSave {
         w.insert_resource(OccupancyMap::new());
         w.insert_resource(ActionQueue::default());
         w.insert_resource(InputBuffer::default());
+        w.insert_resource(PlayerPreview::default());
         w.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
 
         let s = self.st.into_stats();
