@@ -362,7 +362,7 @@ fn title_screen(
         terminal.draw(|frame| draw_title(frame))?;
         if let Event::Key(key) = event::read()? {
             match key.code {
-                KeyCode::Enter => {
+                KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r') => {
                     let world = setup_world();
                     dungeon_core::global::set_world(world);
                     world!(mut).run_system_once(fov_system);
