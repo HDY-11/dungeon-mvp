@@ -1,236 +1,94 @@
-//! 行动轴渲染。
-//!
-//! 从 `World` 读取所有实体的 AV 状态与预测，产出行序列的 ASCII 布局。
-
-use bevy_ecs::prelude::{Entity, World};
-use dungeon_core::{world, 
-    ActionPrediction, ActionValue, EntityName, GamePacing, PacingMode, Player, Position,
-    Renderable,
+use dungeon_core::{
+    EntityName, GamePacing, Player, Position, Renderable,
+    action::{ActionQueue, ActionKindV3, PlayerPreview},
 };
+use dungeon_core::world;
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
 };
 use std::collections::HashSet;
-
 use crate::color::renderable_color;
 
-/// 行动轴：每实体显示当前 AV、动作(锁定/预测/下轮)。
-///
-/// 排序按 AV 升序（距终点最近者排最前）。
-/// 锁定条目与未锁定条目之间画一条锁定边界线。
-/// 玩家未锁定条目闪烁提醒"可修改"。
-pub fn build_timeline(
-    player_visible: HashSet<(usize, usize)>,
-) -> Vec<Line<'static>> {
-    let mut w = world!(mut);
+/// 行动表：显示视野内已确认待执行的行动
+pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
 
-    struct Card {
-        label: String,
-        av: f32,
-        reaction_time: f32,
-        action: String,
-        locked: bool,
-        next_action: String,
-        is_player: bool,
-        color: Color,
-    }
+    let preview = {
+        let w = world!();
+        w.resource::<PlayerPreview>().kind.clone()
+    };
 
-    let mut cards: Vec<Card> = Vec::new();
+    // 玩家行
+    let preview_text = match &preview {
+        Some(ActionKindV3::Move { dx, dy }) => format!("移动({},{})", dx, dy),
+        Some(ActionKindV3::Wait) => "等待".into(),
+        _ => "等待输入".into(),
+    };
+    out.push(Line::from(vec![
+        Span::styled("╭──────────", Style::default().fg(Color::Yellow)),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("│ ", Style::default().fg(Color::Yellow)),
+        Span::styled("@", Style::default().fg(Color::Yellow)),
+        Span::raw(" "),
+        Span::styled(preview_text, Style::default().fg(Color::Green)),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("╰──────────", Style::default().fg(Color::Yellow)),
+    ]));
 
-    // 玩家卡片
-    if let Some((av, pred)) = w
-        .query::<(&Player, &ActionValue, &ActionPrediction)>()
-        .iter(&mut *w)
-        .next()
-        .map(|(_, av, p)| (av, p))
+    // 行动队列中视野内的条目
     {
-        cards.push(Card {
-            label: "@".into(),
-            av: av.current_av,
-            reaction_time: av.reaction_time,
-            action: pred.desc.clone(),
-            locked: pred.locked,
-            next_action: pred.next_desc.clone(),
-            is_player: true,
-            color: Color::Yellow,
-        });
-    }
+        let w = world!();
+        let queue = w.resource::<ActionQueue>();
+        for entry in &queue.entries {
+            let in_view = w.get::<Position>(entry.entity)
+                .map(|p| player_visible.contains(&(p.x, p.y)))
+                .unwrap_or(false);
+            if !in_view { continue; }
 
-    // 获取玩家 entity（用于后续判断）
-    let player_entity: Option<Entity> = w
-        .query::<(Entity, &Player)>()
-        .iter(&mut *w)
-        .next()
-        .map(|(e, _)| e);
+            let name = w.get::<EntityName>(entry.entity)
+                .map(|n| n.0.chars().take(5).collect::<String>())
+                .unwrap_or("?".into());
 
-    // 怪物卡片（仅可见 + 非玩家）
-    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    for (e, pos, name, rend, av, pred) in w
-        .query::<(Entity, &Position, &EntityName, &Renderable, &ActionValue, &ActionPrediction)>()
-        .iter(&mut *w)
-    {
-        if Some(e) == player_entity {
-            continue;
+            let color = w.get::<Renderable>(entry.entity)
+                .map(|r| renderable_color(r.color))
+                .unwrap_or(Color::DarkGray);
+
+            let (action_label, timer) = action_display(&entry.kind, entry.reaction_remaining);
+
+            out.push(Line::from(vec![
+                Span::styled(format!("{} ", name), Style::default().fg(color)),
+                Span::raw(action_label),
+                Span::styled(format!(" {:>3}ms", timer as u32), Style::default().fg(Color::DarkGray)),
+            ]));
         }
-        if !player_visible.contains(&(pos.x, pos.y)) {
-            continue;
-        }
-        let key = name.0.clone();
-        let count = name_counts.get(&key).copied().unwrap_or(0);
-        name_counts.insert(key.clone(), count + 1);
-        let label = if count > 0 {
-            format!(
-                "{}({},{})",
-                name.0.chars().take(4).collect::<String>(),
-                pos.x,
-                pos.y
-            )
-        } else {
-            name.0.chars().take(5).collect()
-        };
-        cards.push(Card {
-            label,
-            av: av.current_av,
-            reaction_time: av.reaction_time,
-            action: pred.desc.clone(),
-            locked: pred.locked,
-            next_action: pred.next_desc.clone(),
-            is_player: false,
-            color: renderable_color(rend.color),
-        });
     }
 
-    // 按 AV 升序
-    cards.sort_by(|a, b| a.av.partial_cmp(&b.av).unwrap());
-
-    // 锁定边界索引
-    let boundary_idx = cards.iter().position(|c| !c.locked);
-
-    // 渲染
-    let blink = w.resource::<GamePacing>().blink_phase;
-
-    for (i, card) in cards.iter().enumerate() {
-        if Some(i) == boundary_idx {
-            let rt_min = cards
-                .iter()
-                .take_while(|c| c.locked)
-                .map(|c| c.reaction_time as u32)
-                .min()
-                .unwrap_or(100);
-            let rt_max = cards
-                .iter()
-                .take_while(|c| c.locked)
-                .map(|c| c.reaction_time as u32)
-                .max()
-                .unwrap_or(100);
-            let rt_label = if rt_min == rt_max {
-                format!(" ──── 锁定边界 (RT={}) ────", rt_min)
-            } else {
-                format!(" ──── 锁定边界 (RT={}~{}) ────", rt_min, rt_max)
-            };
-            out.push(Line::from(Span::styled(
-                rt_label,
-                Style::default().fg(Color::Yellow),
-            )));
-        }
-
-        let locked = card.locked;
-        let (top, side, bottom, fg) = if locked {
-            ("╭", "│", "╰", Color::Red)
-        } else {
-            ("┌", "│", "└", Color::DarkGray)
-        };
-
-        let name_fg = if card.is_player && !locked && blink {
-            Color::DarkGray
-        } else if card.is_player {
-            Color::Yellow
-        } else {
-            card.color
-        };
-
-        let av_str = format!("{:>3}", card.av as u32);
-        let act_trim: String = card.action.chars().take(5).collect();
-        let next_trim: String = card.next_action.chars().take(5).collect();
-
-        out.push(Line::from(Span::styled(
-            format!(" {} {}", top, "────────────"),
-            Style::default().fg(fg),
-        )));
-        out.push(Line::from(vec![
-            Span::styled(format!(" {} ", side), Style::default().fg(fg)),
-            Span::styled(format!("{:<6}", card.label), Style::default().fg(name_fg)),
-            Span::styled(format!("AV{:>3}", av_str), Style::default().fg(name_fg)),
-            Span::raw(" "),
-            Span::styled(
-                format!("{:<4}", act_trim),
-                Style::default().fg(if card.is_player {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                }),
-            ),
-            Span::styled("→", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{:<4}", next_trim), Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", side), Style::default().fg(fg)),
-        ]));
-        out.push(Line::from(Span::styled(
-            format!(" {} {}", bottom, "────────────"),
-            Style::default().fg(fg),
-        )));
+    if out.len() <= 3 {
+        out.push(Line::from(Span::styled(" (视野无行动)", Style::default().fg(Color::DarkGray))));
     }
 
-    if cards.is_empty() {
-        out.push(Line::from(Span::styled(
-            " (视野无实体)",
-            Style::default().fg(Color::DarkGray),
-        )));
-        out.push(Line::from(Span::raw("")));
+    out.push(Line::from(Span::raw("")));
+    let w = world!();
+    let p = w.resource::<GamePacing>();
+    if p.combat_active {
+        out.push(Line::from(Span::styled(" [战斗中]", Style::default().fg(Color::Yellow))));
     }
-
-    // 底部操作提示
-    let pacing = w.resource::<GamePacing>();
-    let combat_active = pacing.combat_active;
-    let paused = matches!(pacing.mode, PacingMode::CombatPaused);
-
-    if paused {
-        out.push(Line::from(Span::styled(
-            " [锁定中]",
-            Style::default().fg(Color::Yellow),
-        )));
-        out.push(Line::from(Span::styled(
-            " Enter确认  .等待",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else if combat_active {
-        out.push(Line::from(Span::styled(
-            " [战斗中]",
-            Style::default().fg(Color::Yellow),
-        )));
-        out.push(Line::from(Span::styled(
-            " ↑↓←→移动  1-4技能",
-            Style::default().fg(Color::DarkGray),
-        )));
-        out.push(Line::from(Span::styled(
-            " .等待  e背包",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        out.push(Line::from(Span::styled(
-            " ↑↓←→移动",
-            Style::default().fg(Color::DarkGray),
-        )));
-        out.push(Line::from(Span::styled(
-            " 1-4技能  .等待",
-            Style::default().fg(Color::DarkGray),
-        )));
-        out.push(Line::from(Span::styled(
-            " e背包  >下楼",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
+    out.push(Line::from(Span::styled(" ↑↓←→移动 1-4技能", Style::default().fg(Color::DarkGray))));
+    out.push(Line::from(Span::styled(" .等待  e背包", Style::default().fg(Color::DarkGray))));
     out
+}
+
+fn action_display(kind: &ActionKindV3, reaction: f32) -> (String, f32) {
+    match kind {
+        ActionKindV3::Move { .. } => ("移动".into(), reaction),
+        ActionKindV3::Chase => ("追击".into(), reaction),
+        ActionKindV3::Flee => ("逃跑".into(), reaction),
+        ActionKindV3::Wander => ("游荡".into(), reaction),
+        ActionKindV3::Wait => ("等待".into(), reaction),
+        ActionKindV3::Attack { .. } => ("攻击".into(), reaction),
+        ActionKindV3::Skill(i) => (format!("技能{}", i), reaction),
+    }
 }

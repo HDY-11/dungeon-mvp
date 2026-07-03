@@ -1,10 +1,9 @@
 use crate::*;
 use crate::world;
+use crate::action::{Reaction, agility_to_reaction, CanMove, CanChase, CanFlee, CanWander, CanWait, ActionQueue, InputBuffer};
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-
-// ── 可序列化的中间表示 ────────────────────────────
 
 #[derive(Serialize, Deserialize)]
 pub struct RawItem {
@@ -39,8 +38,6 @@ impl RawItem {
     }
 }
 
-// ── 存档结构 ───────────────────────────────────────
-
 #[derive(Serialize, Deserialize)]
 pub struct GameSave {
     pub floor: u32,
@@ -48,7 +45,6 @@ pub struct GameSave {
     pub st: SavedStats,
     pub inv: Vec<RawItem>,
     pub weapon: Option<u16>, pub armor: Option<u16>, pub ring: Option<u16>,
-    pub av: f32, pub av_speed: f32,
     pub buffs: SavedBuffs,
     pub map_tiles: Vec<u8>,
     pub rooms: Vec<Room>,
@@ -98,14 +94,13 @@ impl SavedBuffs {
 #[derive(Serialize, Deserialize)]
 pub struct SavedMonster {
     pub x: u16, pub y: u16, pub glyph: char, pub r: u8, pub g: u8, pub b: u8,
-    pub name: String, pub st: SavedStats, pub av: f32, pub av_speed: f32, pub flee: bool,
+    pub name: String, pub st: SavedStats,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item: RawItem }
 
 impl GameSave {
-    /// 从全局 World 捕获当前状态。
     pub fn capture() -> Self {
         let mut w = world!(mut);
         let floor = w.resource::<FloorNumber>().0;
@@ -117,35 +112,30 @@ impl GameSave {
                 for col in 0..MAP_WIDTH { map_tiles.push(map.tiles[row][col] as u8); }
             }
         }
-        let rooms = {
-            let map = w.resource::<Map>();
-            map.rooms.clone()
-        };
+        let rooms = { let map = w.resource::<Map>(); map.rooms.clone() };
 
         let (sx, sy) = {
             let mut sq = w.query::<(&Stairs, &Position)>();
             sq.iter(&mut *w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon, armor, ring, av, buffs, player_class, atk_name) = {
-            let mut q = w.query::<(&Position, &Stats, &Inventory, &Equipment, &ActionValue, &Buffs, &PlayerClass, &AttackName)>();
-            let (pos, st, inv, eq, av, bu, cls, atk) = q.iter(&mut *w).next().unwrap();
+        let (px, py, st, inv, weapon, armor, ring, buffs, player_class) = {
+            let mut q = w.query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>();
+            let (pos, st, inv, eq, bu, cls) = q.iter(&mut *w).next().unwrap();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.items.iter().map(RawItem::from_item).collect(),
              eq.weapon.map(|i| i as u16), eq.armor.map(|i| i as u16), eq.ring.map(|i| i as u16),
-             av.current_av, SavedBuffs::from(bu.clone()),
-             Some(cls.clone()), atk.0.clone())
+             SavedBuffs::from(bu.clone()), Some(cls.clone()))
         };
 
         let monsters = {
-            let mut mq = w.query::<(&Monster, &Position, &Stats, &ActionValue, &EntityName, &FleeLogState, &Renderable)>();
-            mq.iter(&mut *w).map(|(_, pos, st, av, name, flee, rend)| {
+            let mut mq = w.query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>();
+            mq.iter(&mut *w).map(|(_, pos, st, name, rend)| {
                 let (r, g, b) = rend.color;
                 SavedMonster {
                     x: pos.x as u16, y: pos.y as u16, glyph: rend.glyph, r, g, b,
                     name: name.0.clone(), st: SavedStats::from(st.clone()),
-                    av: av.current_av, av_speed: 50.0, flee: flee.last_turn_was_flee,
                 }
             }).collect()
         };
@@ -157,9 +147,8 @@ impl GameSave {
             }).collect()
         };
 
-        let _ = atk_name; // 只读不存，玩家重生时由 PlayerClass 重新派生
         Self {
-            floor, px, py, st, inv, weapon, armor, ring, av, av_speed: 0.0, buffs,
+            floor, px, py, st, inv, weapon, armor, ring, buffs,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
@@ -189,27 +178,28 @@ impl GameSave {
         w.insert_resource(PendingLevelUp::default());
         w.insert_resource(PendingPlayerAction::default());
         w.insert_resource(OccupancyMap::new());
+        w.insert_resource(ActionQueue::default());
+        w.insert_resource(InputBuffer::default());
         w.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
 
         let s = self.st.into_stats();
         let pc = self.player_class.unwrap_or(PlayerClass::Warrior);
-        let mut player_av = ActionValue::new(s.agility);
-        player_av.current_av = self.av;
+        let agi = s.agility;
         w.spawn((
             Player, Position { x: self.px as usize, y: self.py as usize },
             Renderable { glyph: '@', color: (255, 255, 0) },
             MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
             s, EntityName("冒险者".into()),
-            player_av,
-            ActionPrediction::new("移动", ActionKind::Move),
             Inventory { items: self.inv.into_iter().map(RawItem::into_item).collect(), capacity: 36 },
             Equipment {
                 weapon: self.weapon.map(|i| i as usize),
                 armor: self.armor.map(|i| i as usize),
                 ring: self.ring.map(|i| i as usize),
             },
-            pc.clone(), self.buffs.into_buffs(), ActionPreview::new(),
+            pc.clone(), self.buffs.into_buffs(),
             Skills { list: pc.skills() },
+            Reaction { time: agility_to_reaction(agi) },
+            CanMove::new(100), CanWait::new(0),
         ));
 
         w.spawn((Stairs, Position { x: self.sx as usize, y: self.sy as usize },
@@ -217,18 +207,15 @@ impl GameSave {
 
         for m in self.monsters {
             let mon_stats = m.st.into_stats();
-            let mut mon_av = ActionValue::new(mon_stats.agility);
-            mon_av.current_av = m.av;
+            let agi = mon_stats.agility;
             w.spawn((
-                Monster, MonsterBrain::creature(),
-                Position { x: m.x as usize, y: m.y as usize },
+                Monster, Position { x: m.x as usize, y: m.y as usize },
                 Renderable { glyph: m.glyph, color: (m.r, m.g, m.b) },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 mon_stats, EntityName(m.name),
-                mon_av,
-                ActionPrediction::new("追击", ActionKind::Chase),
-                FleeLogState { last_turn_was_flee: m.flee }, ActionPreview::new(),
                 AttackName(if m.glyph == 'r' { "撕咬" } else { "重击" }.into()),
+                Reaction { time: agility_to_reaction(agi) },
+                CanChase::new(100), CanFlee::new(200), CanWander::new(50), CanWait::new(0),
             ));
         }
 

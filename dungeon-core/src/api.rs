@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use crate::{
-    ai::MonsterBrain, components::*, items::*, resources::*,
+    components::*, items::*, resources::*,
     make_items, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 
@@ -135,10 +135,9 @@ pub fn setup_world() -> World {
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
-        Stats::player(), EntityName("冒险者".into()), ActionValue::new(player_agi),
-        ActionPrediction::new("移动", ActionKind::Move),
+        Stats::player(), EntityName("冒险者".into()),
         Inventory::new(36), Equipment::new(), Buffs::new(),
-        ActionPreview::new(), pc.clone(), AttackName("斩击".into()),
+        pc.clone(), AttackName("斩击".into()),
     ));
     cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_agi) });
     cmd.insert(crate::action::CanMove::new(100));
@@ -159,13 +158,9 @@ pub fn setup_world() -> World {
         if let Some(&(mx, my)) = spawn_points.get(i) {
             let mon_agi = Stats::monster(glyph, 1).agility;
             let mut cmd = world.spawn((
-                Monster, MonsterBrain::creature(),
-                Position { x: mx, y: my }, Renderable { glyph, color },
+                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                ActionValue::new(mon_agi),
-                ActionPrediction::new("追击", ActionKind::Chase),
-                FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
             cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
@@ -201,9 +196,9 @@ pub fn descend() {
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = w.query::<(Entity, &Stats, &Position, &ActionValue, &Inventory, &Equipment, &Skills, &Buffs, &PlayerClass, &AttackName)>();
-        let (e, s, p, ap, inv, eq, sk, _bu, cls, atk) = q.iter(&mut *w).next().unwrap();
-        (e, s.clone(), *p, ap.current_av, inv.items.clone(), inv.capacity,
+        let mut q = w.query::<(Entity, &Stats, &Position, &Inventory, &Equipment, &Skills, &PlayerClass, &AttackName)>();
+        let (e, s, p, inv, eq, sk, cls, atk) = q.iter(&mut *w).next().unwrap();
+        (e, s.clone(), *p, inv.items.clone(), inv.capacity,
          Equipment { weapon: eq.weapon, armor: eq.armor, ring: eq.ring },
          sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
     };
@@ -217,27 +212,20 @@ pub fn descend() {
     w.insert_resource(map); w.insert_resource(MapMemory::new());
     let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
 
-    let _e = { let mut cmd = w.spawn((
+    let mut cmd = w.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
         player_data.1.clone(), EntityName("冒险者".into()),
+        Inventory { items: player_data.3, capacity: player_data.4 },
     ));
-        let mut av = ActionValue::new(player_data.1.agility);
-        av.current_av = player_data.3;
-        cmd.insert(av);
-        cmd.insert(ActionPrediction::new("移动", ActionKind::Move));
-        cmd.insert(Inventory { items: player_data.4, capacity: player_data.5 });
-        cmd.insert(player_data.6); cmd.insert(Skills { list: player_data.7 });
-        cmd.insert(player_data.8); cmd.insert(ActionPreview::new());
-        let class = player_data.9.clone();
-        cmd.insert(class); cmd.insert(AttackName(player_data.10.clone()));
-        cmd.insert(crate::action::Reaction {
-            time: crate::action::agility_to_reaction(player_data.1.agility),
-        });
-        cmd.insert(crate::action::CanMove::new(100));
-        cmd.insert(crate::action::CanWait::new(0));
-        cmd.id() };
+    cmd.insert(Skills { list: player_data.6 });
+    cmd.insert(player_data.8.clone());
+    cmd.insert(AttackName(player_data.9.clone()));
+    cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_data.1.agility) });
+    cmd.insert(crate::action::CanMove::new(100));
+    cmd.insert(crate::action::CanWait::new(0));
+    let _e = cmd.id();
 
     let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
     w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
@@ -256,13 +244,9 @@ pub fn descend() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
             let mon_agi = Stats::monster(glyph, f).agility;
             let mut cmd = w.spawn((
-                Monster, MonsterBrain::creature(),
-                Position { x: mx, y: my }, Renderable { glyph, color },
+                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
-                ActionValue::new(mon_agi),
-                ActionPrediction::new("追击", ActionKind::Chase),
-                FleeLogState::default(), ActionPreview::new(),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
             ));
             cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });

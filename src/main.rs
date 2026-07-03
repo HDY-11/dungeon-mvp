@@ -15,10 +15,10 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    action_cost, advance_by, apply_skill, check_death_system, descend,
+    apply_skill, check_death_system, descend,
     fov_system, rebuild_occupancy, save::GameSave,
-    setup_world, skill_tick_system, update_map_memory, ActionKind, ActionPrediction,
-    ActionValue, Equipment, EquipmentSlot, EventLog, GamePacing, Inventory, ItemInstance,
+    setup_world, skill_tick_system, update_map_memory,
+    Equipment, EquipmentSlot, EventLog, GamePacing, Inventory, ItemInstance,
     ManualOverride, Monster, PacingMode, PendingInput, PendingLevelUp, PendingPlayerAction,
     Player, Position, Skills, Stairs, Stats, TurnManager, Viewshed,
 };
@@ -51,87 +51,6 @@ fn player_entity() -> Option<Entity> {
     q.iter(&mut *w).next().map(|(e, _)| e)
 }
 
-fn player_prediction() -> Option<ActionPrediction> {
-    let mut w = world!(mut);
-    let mut q = w.query::<(&Player, &ActionPrediction)>();
-    q.iter(&mut *w).next().map(|(_, p)| p.clone())
-}
-
-/// 仅填充预测（不提交），保留已有锁定状态。
-fn write_player_prediction(dx: isize, dy: isize) {
-    let Some(entity) = player_entity() else { return };
-    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
-        if pred.locked {
-            return;
-        }
-        pred.desc = "移动".into();
-        pred.kind = ActionKind::Move;
-        pred.just_confirmed = false;
-    }
-}
-
-/// 仅填充技能预测（不提交）。
-fn write_skill_prediction(skill_idx: usize, name: &str) {
-    let Some(entity) = player_entity() else { return };
-    *world!(mut).resource_mut::<PendingPlayerAction>() = PendingPlayerAction::new_skill(skill_idx, name);
-    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
-        pred.desc = format!("技能:{}", name);
-        pred.kind = ActionKind::Skill(skill_idx);
-        pred.locked = false;
-    }
-}
-
-/// 统一提交：写预测 + 排入 AV 队列（设为行动成本）。
-/// 执行时机由 `advance_by` 在 AV 递减至 0 时触发。
-///
-/// 技能效果立即执行，AV 设为技能成本作为冷却。
-fn commit_player_action() {
-    let Some(entity) = player_entity() else { return };
-    let pending = world!().resource::<PendingPlayerAction>().clone();
-    let agility = world!().get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
-
-    // 已被锁定 → 解锁，推进到玩家 AV=0（其他实体同步减）
-    let already_locked = world!().get::<ActionPrediction>(entity)
-        .map(|p| p.locked).unwrap_or(false);
-
-    if already_locked {
-        let skipped = world!().get::<ActionValue>(entity).map(|av| av.current_av).unwrap_or(0.0);
-        if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
-            pred.locked = false;
-        }
-        // 同步推进所有实体（包括玩家）跳过玩家的剩余 AV
-        advance_by(skipped);
-    } else if pending.is_pending_skill {
-        if let Some(si) = pending.skill_idx {
-            apply_skill(si);
-            world!(mut).run_system_once(skill_tick_system);
-        }
-        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
-            *av = ActionValue::with_cost(action_cost::SKILL_CAST, agility);
-        }
-    } else if world!().resource::<PendingInput>().direction.is_some() {
-        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
-            *av = ActionValue::with_cost(action_cost::MOVE, agility);
-        }
-    } else {
-        if let Some(mut av) = world!(mut).get_mut::<ActionValue>(entity) {
-            *av = ActionValue::with_cost(action_cost::WAIT, agility);
-        }
-        if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
-            pred.desc = "等待".into();
-            pred.kind = ActionKind::Wait;
-        }
-    }
-
-    if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(entity) {
-        pred.locked = false;
-        pred.just_confirmed = false;
-    }
-
-    world!(mut).resource_mut::<PendingPlayerAction>().is_pending_skill = false;
-    world!(mut).resource_mut::<PendingPlayerAction>().skill_idx = None;
-}
-
 // ══════════════════════════════════════════════════════
 // 主循环
 // ══════════════════════════════════════════════════════
@@ -157,30 +76,15 @@ fn run(
         let blink = !world!().resource::<GamePacing>().blink_phase;
         world!(mut).resource_mut::<GamePacing>().blink_phase = blink;
 
-        let is_paused = matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused);
-
         terminal.draw(|frame| render_ui(frame, game_start))?;
 
         // ══════════════════════════════════════════════
-        // 二态：暂停 vs 即时。
-        // 逻辑路径唯一：方向键 → auto_move → 写预测+提交。
-        // auto_move 内部根据 combat+locked 决定是否切暂停。
+        // 统一输入循环
         // ══════════════════════════════════════════════
 
-        if is_paused {
-            if let Event::Key(key) = event::read()? {
-                handle_combat_key(terminal, key)?;
-            }
-            if !matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused) {
-                advance_and_settle();
-            }
-        } else {
-            if let Event::Key(key) = event::read()? {
-                handle_input(terminal, key)?;
-                if !matches!(world!().resource::<GamePacing>().mode, PacingMode::CombatPaused) {
-                    advance_and_settle();
-                }
-            }
+        if let Event::Key(key) = event::read()? {
+            handle_input(terminal, key)?;
+            advance_and_settle();
         }
     }
 }
@@ -331,79 +235,6 @@ fn handle_player_direction(dx: isize, dy: isize) {
     }
 }
 
-fn handle_combat_key(
-    _terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    key: crossterm::event::KeyEvent,
-) -> io::Result<()> {
-    if handle_global_toggle(key) {
-        return Ok(());
-    }
-    // 上次按下的方向/技能
-    let last_dir = world!().resource::<PendingInput>().direction;
-    let last_skill = world!().resource::<PendingPlayerAction>().skill_idx;
-
-    match key.code {
-        KeyCode::Up => {
-            if last_dir == Some((0, -1)) {
-                commit_player_action();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-            } else {
-                world!(mut).resource_mut::<PendingInput>().direction = Some((0, -1));
-                write_player_prediction(0, -1);
-            }
-        }
-        KeyCode::Down => {
-            if last_dir == Some((0, 1)) {
-                commit_player_action();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-            } else {
-                world!(mut).resource_mut::<PendingInput>().direction = Some((0, 1));
-                write_player_prediction(0, 1);
-            }
-        }
-        KeyCode::Left => {
-            if last_dir == Some((-1, 0)) {
-                commit_player_action();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-            } else {
-                world!(mut).resource_mut::<PendingInput>().direction = Some((-1, 0));
-                write_player_prediction(-1, 0);
-            }
-        }
-        KeyCode::Right => {
-            if last_dir == Some((1, 0)) {
-                commit_player_action();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-            } else {
-                world!(mut).resource_mut::<PendingInput>().direction = Some((1, 0));
-                write_player_prediction(1, 0);
-            }
-        }
-        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            let (idx, name) = skill_info(key);
-            if last_skill == Some(idx) {
-                commit_player_action();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-            } else if let Some(n) = name {
-                write_skill_prediction(idx, &n);
-            }
-        }
-        KeyCode::Char('.') | KeyCode::Char('5') => {
-            world!(mut).resource_mut::<PendingInput>().direction = None;
-            world!(mut).resource_mut::<PendingPlayerAction>().is_pending_skill = false;
-            commit_player_action();
-            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            if confirm_quit(_terminal)? {
-                world!(mut).resource_mut::<TurnManager>().game_over = true;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 /// 从按键获取技能索引和名称。
 fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
     let idx = match key.code {
@@ -421,24 +252,6 @@ fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
             .unwrap_or_default()
     };
     (idx, names.get(idx).cloned())
-}
-
-/// 自动模式下方向键。
-/// 探索中（无战斗）：锁定自动采纳，不暂停。
-/// 战斗中：锁定 → 暂停等确认；未锁定 → 即时提交。
-fn auto_move(dx: isize, dy: isize) {
-    world!(mut).resource_mut::<PendingInput>().direction = Some((dx, dy));
-    let locked = player_prediction().map(|p| p.locked).unwrap_or(false);
-    let combat = world!().resource::<GamePacing>().combat_active;
-
-    if locked && combat {
-        // 战斗中锁定 → 暂停让玩家确认
-        world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
-        return;
-    }
-    // 探索中 / 战斗中未锁定 → 直接提交
-    write_player_prediction(dx, dy);
-    commit_player_action();
 }
 
 /// 全局切换键：'m' = 强制手动, 'a' = 清除覆盖(恢复自动跟随)。

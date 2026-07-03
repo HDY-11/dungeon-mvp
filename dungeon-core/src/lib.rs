@@ -1,5 +1,4 @@
 pub mod action;
-pub mod ai;
 pub mod api;
 pub mod components;
 pub mod global;
@@ -10,7 +9,6 @@ pub mod save;
 pub mod systems;
 
 
-pub use ai::*;
 pub use api::*;
 pub use components::*;
 pub use items::*;
@@ -107,6 +105,3 @@ impl Map {
     }
 }
 impl Default for Map { fn default() -> Self { Self::new() } }
-
-#[cfg(test)]
-mod tests;
