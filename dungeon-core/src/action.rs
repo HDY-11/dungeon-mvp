@@ -365,7 +365,7 @@ fn execute_entry(entry: &ActionEntry) {
         ActionKindV3::Wander => execute_wander(entry.entity),
         ActionKindV3::Wait => execute_wait(entry.entity),
         ActionKindV3::Move { dx, dy } => execute_player_move(entry.entity, *dx, *dy),
-        ActionKindV3::Attack { target } => {} // TODO
+        ActionKindV3::Attack { target } => execute_attack(entry.entity, *target),
         ActionKindV3::Skill(_) => {} // TODO
     }
 }
@@ -521,6 +521,60 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
     let mut w = world!(mut);
     if let Some(mut m) = w.get_mut::<CanMove>(entity) {
         m.cooldown_remaining = m.duration;
+    }
+}
+
+fn execute_attack(attacker: Entity, target: Entity) {
+    use crate::{Stats, EntityName, EventLog, GamePacing, AttackName, equipment_bonus, Buffs, Inventory, Equipment, PendingExp};
+    // 先读取需要的数据
+    let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def);
+    {
+        let mut w = world!(mut);
+        let Some(target_stats) = w.get::<Stats>(target).cloned() else { return };
+        let Some(attacker_stats) = w.get::<Stats>(attacker).cloned() else { return };
+        name = w.get::<EntityName>(target).map(|n| n.0.clone()).unwrap_or("怪物".into());
+        atk_name = w.get::<AttackName>(attacker).map(|a| a.0.clone()).unwrap_or("攻击".into());
+        let inventory = w.get::<Inventory>(attacker);
+        let equipment = w.get::<Equipment>(attacker);
+        base_atk = if let (Some(inv), Some(eq)) = (inventory, equipment) {
+            equipment_bonus(inv, eq).attack + attacker_stats.attack as i32
+        } else {
+            attacker_stats.attack as i32
+        };
+        crit_rate = attacker_stats.crit_rate;
+        crit_dmg = attacker_stats.crit_damage;
+        target_def = target_stats.defense as i32;
+        exp = target_stats.exp;
+    }
+
+    // 计算伤害
+    let raw_dmg = (base_atk - target_def).max(1);
+    let crit = crit_rate > rand::random::<f32>();
+    let dmg = if crit { (raw_dmg as f32 * (1.0 + crit_dmg)).round() as i32 } else { raw_dmg };
+
+    // 应用伤害
+    {
+        let mut w = world!(mut);
+        let Some(mut target_stats) = w.get_mut::<Stats>(target) else { return };
+        target_stats.hp -= dmg;
+        if target_stats.hp <= 0 {
+            w.resource_mut::<PendingExp>().amount += exp;
+            w.resource_mut::<EventLog>().push(format!("你{}击杀了{}！获得{}经验", atk_name, name, exp));
+            w.entity_mut(target).despawn();
+            true
+        } else {
+            w.resource_mut::<EventLog>().push(format!("你{}了{}{}，造成{}点伤害", atk_name, name, if crit { "！暴击" } else { "" }, dmg));
+            w.resource_mut::<GamePacing>().combat_active = true;
+            false
+        }
+    };
+
+    // 设置冷却
+    {
+        let mut w = world!(mut);
+        if let Some(mut m) = w.get_mut::<CanMove>(attacker) {
+            m.cooldown_remaining = m.duration;
+        }
     }
 }
 
