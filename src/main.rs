@@ -11,7 +11,7 @@ use std::time::Instant;
 use bevy_ecs::prelude::Entity;
 use bevy_ecs::system::RunSystemOnce;
 use dungeon_core::world;
-use crossterm::event::KeyCode;
+use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
@@ -88,9 +88,10 @@ fn run(
         // 统一输入循环
         // ══════════════════════════════════════════════
 
-            let key = read_key_raw()?;
-        handle_input(terminal, key)?;
-        advance_and_settle();
+        if let Event::Key(key) = event::read()? {
+            handle_input(terminal, key)?;
+            advance_and_settle();
+        }
     }
 }
 
@@ -292,32 +293,6 @@ fn on_stairs() -> bool {
     q2.iter(&mut *w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
 }
 
-/// 从 stdin 读取一个按键（单字节，vi 方向键 h/j/k/l）
-fn read_key_raw() -> io::Result<crossterm::event::KeyEvent> {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use std::io::Read;
-
-    let mut buf = [0u8; 1];
-    loop {
-        match io::stdin().read(&mut buf) {
-            Ok(0) | Err(_) => continue,
-            Ok(_) => {}
-        }
-        let code = match buf[0] {
-            b'\n' | b'\r' => KeyCode::Enter,
-            b'\x1b' => KeyCode::Esc,
-            b'\x7f' => KeyCode::Backspace,
-            b'\t' => KeyCode::Tab,
-            b'h' | b'H' => KeyCode::Left,
-            b'j' | b'J' => KeyCode::Down,
-            b'k' | b'K' => KeyCode::Up,
-            b'l' | b'L' => KeyCode::Right,
-            c => KeyCode::Char(c as char),
-        };
-        return Ok(KeyEvent::new(code, KeyModifiers::NONE));
-    }
-}
-
 fn confirm_quit(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<bool> {
@@ -346,9 +321,8 @@ fn confirm_quit(
         );
     })?;
     loop {
-        match read_key_raw()?.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => return Ok(true),
-            _ => return Ok(false),
+        if let Event::Key(k) = event::read()? {
+            return Ok(matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')));
         }
     }
 }
@@ -381,9 +355,8 @@ fn confirm_stairs(
         );
     })?;
     loop {
-        match read_key_raw()?.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => return Ok(true),
-            _ => return Ok(false),
+        if let Event::Key(k) = event::read()? {
+            return Ok(matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y')));
         }
     }
 }
@@ -391,25 +364,34 @@ fn confirm_stairs(
 fn title_screen(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<Instant> {
-    use std::io::Read;
     loop {
         terminal.draw(|frame| draw_title(frame))?;
-
-        let key = read_key_raw()?;
-        match key.code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                let world = setup_world();
-                dungeon_core::global::set_world(world);
-                world!(mut).run_system_once(fov_system);
-                update_map_memory();
-                return Ok(Instant::now());
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r') => {
+                    let world = setup_world();
+                    dungeon_core::global::set_world(world);
+                    world!(mut).run_system_once(fov_system);
+                    update_map_memory();
+                    return Ok(Instant::now());
+                }
+                KeyCode::F(9) => {
+                    if let Ok(data) = std::fs::read("save.bin") {
+                        if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
+                            save.restore();
+                            world!(mut).run_system_once(fov_system);
+                            update_map_memory();
+                            return Ok(Instant::now());
+                        }
+                    }
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    disable_raw_mode()?;
+                    stdout().execute(LeaveAlternateScreen)?;
+                    std::process::exit(0);
+                }
+                _ => {}
             }
-            KeyCode::Char('q') | KeyCode::Esc => {
-                disable_raw_mode()?;
-                stdout().execute(LeaveAlternateScreen)?;
-                std::process::exit(0);
-            }
-            _ => {}
         }
     }
 }
@@ -421,56 +403,57 @@ fn level_up_screen(
 ) -> io::Result<()> {
     terminal.draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
     loop {
-        let key = read_key_raw()?;
-        match key.code {
-            KeyCode::Char('0') => {
-                world!(mut).resource_mut::<PendingLevelUp>().points = 0;
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Char('0') => {
+                    world!(mut).resource_mut::<PendingLevelUp>().points = 0;
+                    break;
+                }
+                KeyCode::Char('1') => {
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().attack += 1;
+                    }
+                }
+                KeyCode::Char('2') => {
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().defense += 1;
+                    }
+                }
+                KeyCode::Char('3') => {
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().magic_mastery += 1;
+                    }
+                }
+                KeyCode::Char('4') => {
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().agility += 1;
+                    }
+                }
+                KeyCode::Char('5') => {
+                    let mut w = world!(mut);
+                    if w.resource::<PendingLevelUp>().points > 0 {
+                        w.resource_mut::<PendingLevelUp>().points -= 1;
+                        let mut s = w.query::<&mut Stats>().single_mut(&mut *w).unwrap();
+                        s.max_hp += 5;
+                        s.hp = s.hp.min(s.max_hp);
+                    }
+                }
+                _ => {}
+            }
+            if world!().resource::<PendingLevelUp>().points == 0 {
                 break;
             }
-            KeyCode::Char('1') => {
-                let mut w = world!(mut);
-                if w.resource::<PendingLevelUp>().points > 0 {
-                    w.resource_mut::<PendingLevelUp>().points -= 1;
-                    w.query::<&mut Stats>().single_mut(&mut *w).unwrap().attack += 1;
-                }
-            }
-            KeyCode::Char('2') => {
-                let mut w = world!(mut);
-                if w.resource::<PendingLevelUp>().points > 0 {
-                    w.resource_mut::<PendingLevelUp>().points -= 1;
-                    w.query::<&mut Stats>().single_mut(&mut *w).unwrap().defense += 1;
-                }
-            }
-            KeyCode::Char('3') => {
-                let mut w = world!(mut);
-                if w.resource::<PendingLevelUp>().points > 0 {
-                    w.resource_mut::<PendingLevelUp>().points -= 1;
-                    w.query::<&mut Stats>().single_mut(&mut *w).unwrap().magic_mastery += 1;
-                }
-            }
-            KeyCode::Char('4') => {
-                let mut w = world!(mut);
-                if w.resource::<PendingLevelUp>().points > 0 {
-                    w.resource_mut::<PendingLevelUp>().points -= 1;
-                    w.query::<&mut Stats>().single_mut(&mut *w).unwrap().agility += 1;
-                }
-            }
-            KeyCode::Char('5') => {
-                let mut w = world!(mut);
-                if w.resource::<PendingLevelUp>().points > 0 {
-                    w.resource_mut::<PendingLevelUp>().points -= 1;
-                    let mut s = w.query::<&mut Stats>().single_mut(&mut *w).unwrap();
-                    s.max_hp += 5;
-                    s.hp = s.hp.min(s.max_hp);
-                }
-            }
-            _ => {}
+            terminal
+                .draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
         }
-        if world!().resource::<PendingLevelUp>().points == 0 {
-            break;
-        }
-        terminal
-            .draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
     }
     Ok(())
 }
@@ -556,47 +539,48 @@ fn open_inventory(
             frame.render_widget(Paragraph::new(lines), inner);
         })?;
 
-        let key = read_key_raw()?;
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => break,
-            KeyCode::Down => {
-                let len = inv_data.0.len();
-                if len > 0 {
-                    selected = (selected + 1).min(len - 1);
-                    if selected >= scroll + 10 { scroll += 1; }
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => break,
+                KeyCode::Down => {
+                    let len = inv_data.0.len();
+                    if len > 0 {
+                        selected = (selected + 1).min(len - 1);
+                        if selected >= scroll + 10 { scroll += 1; }
+                    }
                 }
-            }
-            KeyCode::Up => {
-                selected = selected.saturating_sub(1);
-                if selected < scroll { scroll = scroll.saturating_sub(1); }
-            }
-            KeyCode::Char('e') => {
-                let mut w = world!(mut);
-                let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                    if inv.items.get(selected).is_some() {
-                        match inv.items[selected].slot {
-                            EquipmentSlot::Weapon => eq.weapon = Some(selected),
-                            EquipmentSlot::Armor => eq.armor = Some(selected),
-                            EquipmentSlot::Ring => eq.ring = Some(selected),
+                KeyCode::Up => {
+                    selected = selected.saturating_sub(1);
+                    if selected < scroll { scroll = scroll.saturating_sub(1); }
+                }
+                KeyCode::Char('e') => {
+                    let mut w = world!(mut);
+                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                        if inv.items.get(selected).is_some() {
+                            match inv.items[selected].slot {
+                                EquipmentSlot::Weapon => eq.weapon = Some(selected),
+                                EquipmentSlot::Armor => eq.armor = Some(selected),
+                                EquipmentSlot::Ring => eq.ring = Some(selected),
+                            }
                         }
                     }
                 }
-            }
-            KeyCode::Char('d') => {
-                let mut w = world!(mut);
-                let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                    if selected < inv.items.len() {
-                        if eq.weapon == Some(selected) { eq.weapon = None; }
-                        if eq.armor == Some(selected) { eq.armor = None; }
-                        if eq.ring == Some(selected) { eq.ring = None; }
-                        inv.items.remove(selected);
-                        selected = selected.min(inv.items.len().saturating_sub(1));
+                KeyCode::Char('d') => {
+                    let mut w = world!(mut);
+                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                        if selected < inv.items.len() {
+                            if eq.weapon == Some(selected) { eq.weapon = None; }
+                            if eq.armor == Some(selected) { eq.armor = None; }
+                            if eq.ring == Some(selected) { eq.ring = None; }
+                            inv.items.remove(selected);
+                            selected = selected.min(inv.items.len().saturating_sub(1));
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
     Ok(())

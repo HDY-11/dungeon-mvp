@@ -335,20 +335,23 @@ pub fn run_monster_decision() {
 
 /// 推进一次事件（到下一个 reaction 结束或 cooldown 结束）
 pub fn advance_action_queue() {
-    let mut w = world!(mut);
-    let dist = {
-        let queue = w.resource::<ActionQueue>();
-        queue.next_event_distance().unwrap_or(0.0)
-    };
-    if dist <= 0.0 { return; }
+    // 阶段 1：推进队列（持有写锁）
+    let dist;
+    let ready;
+    {
+        let mut w = world!(mut);
+        dist = {
+            let queue = w.resource::<ActionQueue>();
+            queue.next_event_distance().unwrap_or(0.0)
+        };
+        if dist <= 0.0 { return; }
+        w.resource_mut::<ActionQueue>().advance(dist);
+        ready = w.resource_mut::<ActionQueue>().pop_ready();
+    } // 写锁在此释放
 
-    // 推进
-    w.resource_mut::<ActionQueue>().advance(dist);
-
-    // 取出就绪的
-    let ready = w.resource_mut::<ActionQueue>().pop_ready();
-    for entry in ready {
-        execute_entry(&entry);
+    // 阶段 2：执行就绪条目（不持有锁，execute_* 内部自己获取锁）
+    for entry in &ready {
+        execute_entry(entry);
     }
 }
 
