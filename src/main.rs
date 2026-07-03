@@ -15,8 +15,8 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    action_cost, advance_by, advance_to_next_decision_point, apply_skill, check_death_system, descend,
-    fov_system, predict_monster_actions_system, rebuild_occupancy, save::GameSave,
+    action_cost, advance_by, apply_skill, check_death_system, descend,
+    fov_system, rebuild_occupancy, save::GameSave,
     setup_world, skill_tick_system, update_map_memory, ActionKind, ActionPrediction,
     ActionValue, Equipment, EquipmentSlot, EventLog, GamePacing, Inventory, ItemInstance,
     ManualOverride, Monster, PacingMode, PendingInput, PendingLevelUp, PendingPlayerAction,
@@ -144,7 +144,6 @@ fn run(
     world!(mut).insert_resource(PendingInput::default());
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
-    world!(mut).run_system_once(predict_monster_actions_system);
     terminal.draw(|frame| render_ui(frame, game_start))?;
 
     loop {
@@ -186,62 +185,43 @@ fn run(
     }
 }
 
-/// 统一推进 + 模式调整。
-/// 非战斗时锁定自动确认并继续推进；战斗时锁定暂停。
+/// 统一推进：新行动系统 + 通用后处理
 fn advance_and_settle() {
-    loop {
-        advance_to_next_decision_point();
-        post_advance();
+    use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
 
-        let combat = world!().resource::<GamePacing>().combat_active;
-        let locked = player_prediction().map(|p| p.locked).unwrap_or(false);
+    // 1. 冷却递减（所有实体的 Action 组件 cooldown）
+    tick_all_cooldowns(10.0);
 
-        if combat && locked {
-            world!(mut).resource_mut::<GamePacing>().mode = PacingMode::CombatPaused;
-            break;
-        }
-        if !locked {
-            break;
-        }
-        // 非战斗锁定 → 自动确认，推进到 AV=0
-        if let Some(e) = player_entity() {
-            let skipped = world!().get::<ActionValue>(e).map(|av| av.current_av).unwrap_or(0.0);
-            if let Some(mut pred) = world!(mut).get_mut::<ActionPrediction>(e) {
-                pred.locked = false;
-            }
-            advance_by(skipped);
-        }
-    }
-}
+    // 2. 怪物决策（条件满足 → 仲裁 → 入队）
+    run_monster_decision();
 
-fn post_advance() {
+    // 3. 推进行动队列（反应时倒计时 → 保活 → 执行 → 冷却）
+    advance_action_queue();
+
+    // 4. 通用后处理
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     update_map_memory();
     world!(mut).run_system_once(check_death_system);
 
-    // 退出战斗：视野内无怪物
+    // 5. 退出战斗检查
     if world!().resource::<GamePacing>().combat_active {
         let mut w = world!(mut);
-        let fov: HashSet<(usize, usize)> = w
-            .query::<(&Player, &Viewshed)>()
-            .iter(&mut *w)
-            .next()
-            .map(|(_, v)| v.visible_tiles.iter().copied().collect())
-            .unwrap_or_default();
+        let fov: HashSet<(usize, usize)> = {
+            let mut q = w.query::<(&Player, &Viewshed)>();
+            q.iter(&mut *w).next()
+                .map(|(_, v)| v.visible_tiles.iter().copied().collect())
+                .unwrap_or_default()
+        };
         let any_in_fov = {
-            let mut w2 = world!(mut);
-            let mut q = w2.query::<(&Monster, &Position)>();
-            q.iter(&mut *w2).any(|(_, p)| fov.contains(&(p.x, p.y)))
+            let mut q = w.query::<(&Monster, &Position)>();
+            q.iter(&mut *w).any(|(_, p)| fov.contains(&(p.x, p.y)))
         };
         if !any_in_fov {
-            let mut w3 = world!(mut);
-            let mut p = w3.resource_mut::<GamePacing>();
-            p.combat_active = false;
-            p.mode = PacingMode::Exploration;
+            w.resource_mut::<GamePacing>().combat_active = false;
+            w.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
         }
     }
-    // 进入战斗由 damage 事件触发（movement_system / execute_monster_chase）
 }
 
 // ══════════════════════════════════════════════════════
