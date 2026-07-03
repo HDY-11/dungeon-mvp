@@ -334,7 +334,8 @@ pub fn run_monster_decision() {
 // ══════════════════════════════════════════════════════
 
 /// 推进一次事件（到下一个 reaction 结束或 cooldown 结束）
-pub fn advance_action_queue() {
+/// 推进行动队列，返回实际推进量（用于同步冷却递减）
+pub fn advance_action_queue() -> f32 {
     // 阶段 1：推进队列（持有写锁）
     let dist;
     let ready;
@@ -344,15 +345,16 @@ pub fn advance_action_queue() {
             let queue = w.resource::<ActionQueue>();
             queue.next_event_distance().unwrap_or(0.0)
         };
-        if dist <= 0.0 { return; }
+        if dist <= 0.0 { return 0.0; }
         w.resource_mut::<ActionQueue>().advance(dist);
         ready = w.resource_mut::<ActionQueue>().pop_ready();
-    } // 写锁在此释放
+    }
 
-    // 阶段 2：执行就绪条目（不持有锁，execute_* 内部自己获取锁）
+    // 阶段 2：执行就绪条目
     for entry in &ready {
         execute_entry(entry);
     }
+    dist
 }
 
 /// 执行一个行动条目（保活检查 + 调用 execute）

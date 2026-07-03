@@ -99,14 +99,16 @@ fn run(
 fn advance_and_settle() {
     use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
 
-    // 1. 冷却递减（所有实体的 Action 组件 cooldown）
-    tick_all_cooldowns(10.0);
+    // 1. 先推进队列，得到实际推进量
+    let dist = advance_action_queue();
 
-    // 2. 怪物决策（条件满足 → 仲裁 → 入队）
+    // 2. 用相同推进量递减冷却
+    if dist > 0.0 {
+        tick_all_cooldowns(dist);
+    }
+
+    // 3. 怪物决策
     run_monster_decision();
-
-    // 3. 推进行动队列（反应时倒计时 → 保活 → 执行 → 冷却）
-    advance_action_queue();
 
     // 4. 通用后处理
     rebuild_occupancy();
@@ -210,34 +212,57 @@ fn handle_input(
     Ok(())
 }
 
-/// 新方向键处理器：tap-tap 模式
-/// 第一次按 → 设预览，第二次同方向 → 入队 ActionQueue
+/// 方向键处理器：语义识别 + tap-tap 确认
+/// 第一次按 → 预览（Move/Attack/无效），第二次同方向 → 入队
 fn handle_player_direction(dx: isize, dy: isize) {
     use dungeon_core::action::{PlayerPreview, ActionKindV3, ActionQueue, Reaction, CanMove};
+    use dungeon_core::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster};
     let Some(entity) = crate::player_entity() else { return };
 
-    // 先读取需要的数据（避免在持有锁时再次锁）
+    // 检查目标格
+    let (nx, ny): (usize, usize);
+    let target_info = {
+        let w = world!();
+        let Some(pos) = w.get::<Position>(entity) else { return };
+        nx = pos.x.wrapping_add_signed(dx);
+        ny = pos.y.wrapping_add_signed(dy);
+        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
+        let tile = w.resource::<Map>().tiles[ny][nx];
+        let has_enemy = w.resource::<OccupancyMap>().cells[ny][nx]
+            .and_then(|e| if w.get::<Monster>(e).is_some() { Some(e) } else { None });
+        (tile == Tile::Floor, has_enemy)
+    };
+
+    // 墙 → 丢弃
+    if !target_info.0 && target_info.1.is_none() { return; }
+
+    // 确定行动类型
+    let kind = if target_info.1.is_some() {
+        ActionKindV3::Attack { target: target_info.1.unwrap() }
+    } else {
+        ActionKindV3::Move { dx, dy }
+    };
+
     let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
     let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
 
-    // 检查是否是第二次 tap
+    // 检查是否是第二次 tap（相同方向）
     let is_confirm = {
         let w = world!();
         let preview = w.resource::<PlayerPreview>();
-        matches!(&preview.kind, Some(ActionKindV3::Move { dx: pd, dy: pd2 }) if *pd == dx && *pd2 == dy)
+        match (&preview.kind, &kind) {
+            (Some(ActionKindV3::Move { dx: pd, dy: pd2 }), ActionKindV3::Move { .. })
+                if *pd == dx && *pd2 == dy => true,
+            (Some(ActionKindV3::Attack { .. }), ActionKindV3::Attack { .. }) => true,
+            _ => false,
+        }
     };
 
     if is_confirm {
-        // 第二次确认 → 入队
-        world!(mut).resource_mut::<ActionQueue>()
-            .enqueue(entity, ActionKindV3::Move { dx, dy }, reaction_time, duration);
-        // 清除预览
-        let mut w2 = world!(mut);
-        w2.resource_mut::<PlayerPreview>().kind = None;
+        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, reaction_time, duration);
+        world!(mut).resource_mut::<PlayerPreview>().kind = None;
     } else {
-        // 第一次按 → 设预览
-        let mut w2 = world!(mut);
-        w2.resource_mut::<PlayerPreview>().kind = Some(ActionKindV3::Move { dx, dy });
+        world!(mut).resource_mut::<PlayerPreview>().kind = Some(kind);
     }
 }
 
