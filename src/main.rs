@@ -16,7 +16,7 @@ use dungeon_core::{
     fov_system, rebuild_occupancy, save::GameSave,
     setup_world, update_map_memory, update_visible_memory,
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position, Renderable, Skills, Stairs, TurnManager,
+    Player, Position, Renderable, Stairs, TurnManager,
 };
 use dungeon_core::action::{ActionKindV3, PlayerPreview, ActionQueue};
 use dungeon_render::{draw_title, render_ui};
@@ -44,9 +44,9 @@ fn main() -> io::Result<()> {
 }
 
 fn player_entity() -> Option<Entity> {
-    let mut w = world!(mut);
-    let mut q = w.query::<(Entity, &Player)>();
-    q.iter(&mut *w).next().map(|(e, _)| e)
+    let w = world!();
+    let mut q = w.try_query::<(Entity, &Player)>().unwrap();
+    q.iter(&w).next().map(|(e, _)| e)
 }
 
 // ══════════════════════════════════════════════════════
@@ -58,7 +58,7 @@ fn run(
     game_start: Instant,
 ) -> io::Result<()> {
     rebuild_occupancy();
-    world!(mut).run_system_once(fov_system);
+    let _ = world!(mut).run_system_once(fov_system);
     update_visible_memory();
     terminal.draw(|frame| render_ui(frame, game_start))?;
 
@@ -125,8 +125,8 @@ fn advance_until_player_acted() {
         let dist = advance_action_queue();
         if dist <= 0.0 { break; }
         let player_done = {
-            let mut w = world!(mut);
-            let player = w.query::<(Entity, &Player)>().iter(&mut *w).next().map(|(e, _)| e);
+            let w = world!();
+            let player = w.try_query::<(Entity, &Player)>().unwrap().iter(&w).next().map(|(e, _)| e);
             match player {
                 Some(p) => !w.resource::<ActionQueue>().has_entity(p),
                 None => true,
@@ -143,10 +143,10 @@ fn advance_and_settle() {
     run_monster_decision();
 
     rebuild_occupancy();
-    world!(mut).run_system_once(fov_system);
+    let _ = world!(mut).run_system_once(fov_system);
     update_map_memory();
     update_visible_memory();
-    world!(mut).run_system_once(check_death_system);
+    let _ = world!(mut).run_system_once(check_death_system);
     // Buff 随行动推进衰减
     let _ = world!(mut).run_system_once(dungeon_core::buff_tick_system);
 }
@@ -157,14 +157,14 @@ fn advance_and_settle() {
 
 fn pickup_ground() {
     let (ppx, ppy) = {
-        let mut w = world!(mut);
-        let mut q = w.query::<(&Player, &Position)>();
-        q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+        let w = world!();
+        let mut q = w.try_query::<(&Player, &Position)>().unwrap();
+        q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
     };
     let ground: Vec<(Entity, ItemStack)> = {
-        let mut w = world!(mut);
-        let mut q = w.query::<(Entity, &ItemPickup, &Position)>();
-        q.iter(&mut *w)
+        let w = world!();
+        let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
+        q.iter(&w)
             .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
             .map(|(e, p, _)| (e, p.stack.clone()))
             .collect()
@@ -368,10 +368,10 @@ fn handle_skill(code: KeyCode) -> bool {
 // ══════════════════════════════════════════════════════
 
 fn on_stairs() -> bool {
-    let mut w = world!(mut);
-    let pp = *w.query::<&Position>().iter(&mut *w).next().unwrap_or(&Position { x: 0, y: 0 });
-    let mut q2 = w.query::<(&Stairs, &Position)>();
-    q2.iter(&mut *w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
+    let w = world!();
+    let pp = *w.try_query::<&Position>().unwrap().iter(&w).next().unwrap_or(&Position { x: 0, y: 0 });
+    let mut q2 = w.try_query::<(&Stairs, &Position)>().unwrap();
+    q2.iter(&w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
 }
 
 fn title_screen(
@@ -384,7 +384,7 @@ fn title_screen(
                 KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r') => {
                     let world = setup_world();
                     dungeon_core::global::set_world(world);
-                    world!(mut).run_system_once(fov_system);
+                    let _ = world!(mut).run_system_once(fov_system);
                     update_map_memory();
                     update_visible_memory();
                     return Ok(Instant::now());
@@ -393,7 +393,7 @@ fn title_screen(
                     if let Ok(data) = std::fs::read("save.bin") {
                         if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
                             save.restore();
-                            world!(mut).run_system_once(fov_system);
+                            let _ = world!(mut).run_system_once(fov_system);
                             update_map_memory();
                             update_visible_memory();
                             return Ok(Instant::now());
@@ -421,13 +421,13 @@ enum InvPanel { Left, Right }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DetailSource { LeftInv, LeftEquip, Right }
 
-fn collect_ground_items_in(w: &mut bevy_ecs::prelude::World) -> Vec<(ItemStack, Entity)> {
+fn collect_ground_items_in(w: &bevy_ecs::prelude::World) -> Vec<(ItemStack, Entity)> {
     let pp = {
-        let mut q = w.query::<(&Player, &Position)>();
+        let mut q = w.try_query::<(&Player, &Position)>().unwrap();
         q.iter(w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
     };
     let mut items = Vec::new();
-    let mut q = w.query::<(Entity, &ItemPickup, &Position)>();
+    let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
     for (entity, pickup, pos) in q.iter(w) {
         if pos.x == pp.0 && pos.y == pp.1 {
             items.push((pickup.stack.clone(), entity));
@@ -440,23 +440,23 @@ fn open_inventory(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
     let mut left_sel: usize = 0;
-    let mut left_scroll: usize = 0;
+    let _left_scroll: usize = 0;
     let mut right_sel: usize = 0;
-    let mut right_scroll: usize = 0;
+    let _right_scroll: usize = 0;
     let mut panel = InvPanel::Left;
     let mut detail: Option<(DetailSource, usize)> = None;
 
-    fn left_count(eq: &Equipment, inv: &Inventory) -> usize {
+    fn left_count(_eq: &Equipment, inv: &Inventory) -> usize {
         3 + inv.stacks.len()
     }
 
     loop {
         let (inv_stacks, inv_cap, equip, ground) = {
-            let mut w = world!(mut);
-            let mut q = w.query::<(&Inventory, &Equipment)>();
-            let (inv, eq) = q.iter_mut(&mut *w).next()
+            let w = world!();
+            let mut q = w.try_query::<(&Inventory, &Equipment)>().unwrap();
+            let (inv, eq) = q.iter(&w).next()
                 .map(|(i, e)| (i.clone(), e.clone())).unwrap_or_default();
-            let ground = collect_ground_items_in(&mut *w);
+            let ground = collect_ground_items_in(&*w);
             (inv.stacks, inv.capacity, eq, ground)
         };
 
@@ -477,7 +477,7 @@ fn open_inventory(
             let inner = Rect { x: area.x + 1, y: area.y + 1, width: area.width.saturating_sub(2), height: area.height.saturating_sub(2) };
 
             if let Some((dsrc, idx)) = &detail {
-                let (stack, source_label, is_equip_slot) = match dsrc {
+                let (stack, source_label, _is_equip_slot) = match dsrc {
                     DetailSource::LeftEquip => ([&equip.weapon, &equip.armor, &equip.ring][*idx].as_ref(), "装备", true),
                     DetailSource::LeftInv => (inv_stacks.get(*idx), "背包", false),
                     DetailSource::Right => (ground.get(*idx).map(|(s, _)| s), "地面", false),
@@ -619,9 +619,9 @@ fn open_inventory(
                 }
                 KeyCode::Char('g') => {
                     // Copy of pickup_ground inline
-                    let (ppx, ppy) = { let mut w = world!(mut); let mut q = w.query::<(&Player, &Position)>(); q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                    let (ppx, ppy) = { let w = world!(); let mut q = w.try_query::<(&Player, &Position)>().unwrap(); q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
                     let mut collected = Vec::new();
-                    { let mut w = world!(mut); let mut q = w.query::<(Entity, &ItemPickup, &Position)>(); for (e, pu, po) in q.iter(&mut *w) { if po.x == ppx && po.y == ppy { collected.push((e, pu.stack.clone())); } } }
+                    { let w = world!(); let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap(); for (e, pu, po) in q.iter(&w) { if po.x == ppx && po.y == ppy { collected.push((e, pu.stack.clone())); } } }
                     let mut logs = Vec::new(); let mut despawn = Vec::new();
                     for (e, s) in &collected { let mut w = world!(mut); let mut q = w.query::<(&mut Inventory,)>(); if let Some((mut inv,)) = q.iter_mut(&mut *w).next() { let leftover = inv.add(s.item_id, s.count); let picked = s.count - leftover; if picked > 0 { logs.push(format!("拾取了{}x{}", s.name(), picked)); } despawn.push(*e); } }
                     for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }

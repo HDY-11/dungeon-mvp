@@ -1,5 +1,5 @@
 use dungeon_core::{
-    EntityName, Player, Position, Renderable,
+    EntityName, Position, Renderable,
     action::{ActionQueue, ActionKindV3, PlayerPreview},
 };
 use dungeon_core::world;

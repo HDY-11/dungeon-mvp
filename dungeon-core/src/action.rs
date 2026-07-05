@@ -274,12 +274,12 @@ pub fn run_monster_decision() {
     // 阶段 1：收集 (entity, priority, av, kind)
     let mut collected: Vec<(Entity, u32, f32, ActionKindV3)> = Vec::new();
     {
-        let mut w = world!(mut);
-        let player_pos = w.query::<(&Player, &Position)>().iter(&mut *w).next().map(|(_, p)| (p.x, p.y));
+        let w = world!();
+        let player_pos = w.try_query::<(&Player, &Position)>().unwrap().iter(&w).next().map(|(_, p)| (p.x, p.y));
 
         // 追击（读取 Reaction 获取反应时）
-        for (entity, chase, stats, view, reaction) in
-            w.query::<(Entity, &CanChase, &Stats, &Viewshed, &Reaction)>().iter(&mut *w)
+        for (entity, chase, _stats, view, reaction) in
+            w.try_query::<(Entity, &CanChase, &Stats, &Viewshed, &Reaction)>().unwrap().iter(&w)
         {
             let can_see = player_pos.map_or(false, |pp| view.visible_tiles.contains(&pp));
             if CanChase::condition(can_see) {
@@ -290,7 +290,7 @@ pub fn run_monster_decision() {
 
         // 逃跑
         for (entity, flee, stats, reaction) in
-            w.query::<(Entity, &CanFlee, &Stats, &Reaction)>().iter(&mut *w)
+            w.try_query::<(Entity, &CanFlee, &Stats, &Reaction)>().unwrap().iter(&w)
         {
             let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
             if CanFlee::condition(hp_ratio) {
@@ -301,7 +301,7 @@ pub fn run_monster_decision() {
 
         // 游荡
         for (entity, wander, reaction) in
-            w.query::<(Entity, &CanWander, &Reaction)>().iter(&mut *w)
+            w.try_query::<(Entity, &CanWander, &Reaction)>().unwrap().iter(&w)
         {
             if !collected.iter().any(|(e, _, _, _)| *e == entity) && CanWander::condition() {
                 let av = reaction.time + wander.duration;
@@ -361,11 +361,11 @@ pub fn advance_action_queue() -> f32 {
 
 /// 保活检查：执行前回调组件验证条件是否仍满足
 fn check_condition(entry: &ActionEntry) -> bool {
-    let mut w = world!(mut);
+    let w = world!();
     match &entry.kind {
         ActionKindV3::Chase => {
             // 玩家是否仍在视野内
-            let player_pos = w.query::<(&Player, &Position)>().iter(&mut *w).next().map(|(_, p)| (p.x, p.y));
+            let player_pos = w.try_query::<(&Player, &Position)>().unwrap().iter(&w).next().map(|(_, p)| (p.x, p.y));
             let Some((px, py)) = player_pos else { return false };
             w.get::<Viewshed>(entry.entity)
                 .map(|v| v.visible_tiles.contains(&(px, py)))
@@ -423,9 +423,7 @@ fn execute_entry(entry: &ActionEntry) {
 }
 
 fn execute_chase(entity: Entity) {
-    use crate::{Map, MAP_WIDTH, MAP_HEIGHT, Tile, OccupancyMap, FloorNumber};
-    use crate::pathfinding::find_path;
-    use crate::components::AttackName;
+    use crate::{Map, MAP_WIDTH, MAP_HEIGHT, Tile, OccupancyMap};
 
     let mut w = world!(mut);
     let Some(player_entity) = w.query::<(Entity, &Player)>().iter(&mut *w).next().map(|(e, _)| e) else { return };
@@ -456,7 +454,7 @@ fn execute_chase(entity: Entity) {
         } else {
             vec![(0, dy), (dx, 0)]
         };
-        drop(map); drop(occupancy);
+        let _ = map; let _ = occupancy;
         for (ndx, ndy) in attempts {
             let nx = pos.0.wrapping_add_signed(ndx);
             let ny = pos.1.wrapping_add_signed(ndy);
@@ -549,7 +547,7 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
         // 有怪物 → bump 攻击
         crate::set_player_dir(dx, dy);
         crate::rebuild_occupancy();
-        world!(mut).run_system_once(movement_system);
+        let _ = world!(mut).run_system_once(movement_system);
         crate::rebuild_occupancy();
     } else {
         let mut w = world!(mut);
@@ -561,11 +559,11 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
 }
 
 fn execute_attack(attacker: Entity, target: Entity) {
-    use crate::{Stats, EntityName, EventLog, AttackName, Buffs, Inventory, Equipment, PendingExp, LootTable, ItemPickup, Renderable, Position};
+    use crate::{Stats, EntityName, EventLog, AttackName, Inventory, Equipment, PendingExp, LootTable, ItemPickup, Renderable, Position};
     // 先读取需要的数据
     let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def, target_pos);
     {
-        let mut w = world!(mut);
+        let w = world!(mut);
         let Some(target_stats) = w.get::<Stats>(target).cloned() else { return };
         let Some(attacker_stats) = w.get::<Stats>(attacker).cloned() else { return };
         name = w.get::<EntityName>(target).map(|n| n.0.clone()).unwrap_or("怪物".into());
@@ -638,7 +636,7 @@ fn execute_skill(entity: Entity, skill_idx: usize) {
         }
         skill_kind = skill.kind.clone();
         cost_mp = skill.cost_mp;
-        skill_name = skill.name.clone();
+        skill_name = skill.name.to_string();
     }
 
     // 扣 MP
@@ -667,7 +665,7 @@ fn execute_skill(entity: Entity, skill_idx: usize) {
             let mut hit_any = false;
             {
                 let mut w = world!(mut);
-                for (me, mut ms, mp, mn) in w.query::<(Entity, &mut Stats, &Position, &EntityName)>().iter_mut(&mut *w) {
+                for (me, mut ms, mp, _mn) in w.query::<(Entity, &mut Stats, &Position, &EntityName)>().iter_mut(&mut *w) {
                     if let Some((px, py)) = pp {
                         if mp.x.abs_diff(px) + mp.y.abs_diff(py) <= 1 {
                             let is_crit = crit_rate > rand::random::<f32>();

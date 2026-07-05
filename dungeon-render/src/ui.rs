@@ -1,7 +1,7 @@
 use dungeon_core::{
     Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
     Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
-    MAP_HEIGHT, MAP_WIDTH, effective_attack, effective_defense, Tile, collect_renderables,
+    MAP_HEIGHT, MAP_WIDTH, effective_attack, effective_defense, collect_renderables,
 };
 use dungeon_core::world;
 use ratatui::{
@@ -22,19 +22,19 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant) {
 
     // ── 读取数据阶段（持有锁，读完就放） ──
     let (game_over, player_visible, tiles, explored, px, py, room_count, monster_count, visible_mem) = {
-        let mut w = world!(mut);
+        let w = world!();
         let go = w.resource::<TurnManager>().game_over;
         let pv: HashSet<(usize, usize)> = {
-            let mut q = w.query::<(&Player, &Viewshed)>();
-            q.iter(&mut *w).next()
+            let mut q = w.try_query::<(&Player, &Viewshed)>().unwrap();
+            q.iter(&w).next()
                 .map(|(_, v)| v.visible_tiles.iter().copied().collect())
                 .unwrap_or_default()
         };
         let ts = w.resource::<Map>().tiles;
         let ex = w.resource::<MapMemory>().explored;
-        let pp = w.query::<(&Player, &Position)>().iter(&mut *w)
+        let pp = w.try_query::<(&Player, &Position)>().unwrap().iter(&w)
             .next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-        let mc = w.query::<(&Position, &Renderable)>().iter(&mut *w)
+        let mc = w.try_query::<(&Position, &Renderable)>().unwrap().iter(&w)
             .filter(|(_, r)| r.glyph != '@').count();
         let rc = w.resource::<Map>().rooms.len();
         let vm: Vec<(usize, usize, char, (u8, u8, u8))> = w.resource::<VisibleMemory>().entries.values().copied().collect();
@@ -122,9 +122,9 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant) {
 }
 
 pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count: usize, game_start: Instant) -> Vec<Line<'static>> {
-    let mut w = world!(mut);
+    let w = world!();
     let mut out: Vec<Line<'static>> = Vec::new();
-    let stats: Option<Stats> = w.query::<(&Player, &Stats)>().iter(&mut *w).next().map(|(_, s)| s.clone());
+    let stats: Option<Stats> = w.try_query::<(&Player, &Stats)>().unwrap().iter(&w).next().map(|(_, s)| s.clone());
     let Some(ref s) = stats else {
         out.push(Line::from(Span::raw("(无数据)"))); return out;
     };
@@ -148,12 +148,12 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     ]));
     out.push(Line::from(Span::raw("")));
     let eff_atk = {
-        let mut q = w.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
-        q.iter(&mut *w).next().map(|(inv, eq, bu)| effective_attack(s, inv, eq, bu)).unwrap_or(s.attack)
+        let mut q = w.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().unwrap();
+        q.iter(&w).next().map(|(inv, eq, bu)| effective_attack(s, inv, eq, bu)).unwrap_or(s.attack)
     };
     let eff_def = {
-        let mut q = w.query::<(&Inventory, &Equipment, Option<&Buffs>)>();
-        q.iter(&mut *w).next().map(|(inv, eq, bu)| effective_defense(s, inv, eq, bu)).unwrap_or(s.defense)
+        let mut q = w.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().unwrap();
+        q.iter(&w).next().map(|(inv, eq, bu)| effective_defense(s, inv, eq, bu)).unwrap_or(s.defense)
     };
     out.push(Line::from(vec![
         Span::styled(" 攻击", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>3}", eff_atk)), Span::raw("   "),
@@ -179,8 +179,8 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     out.push(Line::from(Span::raw("")));
     // 技能
     {
-        let mut q = w.query::<(&Skills, &Stats)>();
-        if let Some((sk, st)) = q.iter(&mut *w).next() {
+        let mut q = w.try_query::<(&Skills, &Stats)>().unwrap();
+        if let Some((sk, st)) = q.iter(&w).next() {
             out.push(Line::from(Span::styled("── 技能 ──", Style::default().fg(Color::DarkGray))));
             for sk in &sk.list {
                 let c = if st.mp >= sk.cost_mp { Color::White } else { Color::DarkGray };
@@ -192,7 +192,7 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
         }
     }
     // Buff
-    if let Some(b) = w.query::<&Buffs>().iter(&mut *w).next() {
+    if let Some(b) = w.try_query::<&Buffs>().unwrap().iter(&w).next() {
         let parts: Vec<String> = [b.shield_turns > 0, b.berserk_turns > 0].iter().enumerate()
             .filter(|&(_, v)| *v).map(|(i, _)| if i == 0 { format!("🛡{}", b.shield_turns) } else { format!("⚔{}", b.berserk_turns) }).collect();
         if !parts.is_empty() {
@@ -208,10 +208,10 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     }
     // 视野实体
     {
-        let pv: HashSet<(usize, usize)> = w.query::<(&Player, &Viewshed)>().iter(&mut *w)
+        let pv: HashSet<(usize, usize)> = w.try_query::<(&Player, &Viewshed)>().unwrap().iter(&w)
             .next().map(|(_, v)| v.visible_tiles.iter().copied().collect()).unwrap_or_default();
-        let ents: Vec<(String, i32, i32, usize, usize, Color)> = w.query::<(&Position, &EntityName, &Stats, &Renderable)>()
-            .iter(&mut *w)
+        let ents: Vec<(String, i32, i32, usize, usize, Color)> = w.try_query::<(&Position, &EntityName, &Stats, &Renderable)>().unwrap()
+            .iter(&w)
             .filter(|(p, _, _, _)| pv.contains(&(p.x, p.y)))
             .filter(|(_, n, _, _)| n.0 != "冒险者")
             .map(|(p, n, st, r)| (n.0.clone(), st.hp, st.max_hp, p.x, p.y, renderable_color(r.color)))

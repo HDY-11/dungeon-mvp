@@ -77,7 +77,7 @@ pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item_id: usize, pub cou
 
 impl GameSave {
     pub fn capture() -> Self {
-        let mut w = world!(mut);
+        let w = world!();
         let floor = w.resource::<FloorNumber>().0;
         let explored = w.resource::<MapMemory>().explored;
         let mut map_tiles = Vec::with_capacity(MAP_WIDTH * MAP_HEIGHT);
@@ -90,13 +90,13 @@ impl GameSave {
         let rooms = { let map = w.resource::<Map>(); map.rooms.clone() };
 
         let (sx, sy) = {
-            let mut sq = w.query::<(&Stairs, &Position)>();
-            sq.iter(&mut *w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
+            let mut sq = w.try_query::<(&Stairs, &Position)>().unwrap();
+            sq.iter(&w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
         let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, player_class) = {
-            let mut q = w.query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>();
-            let (pos, st, inv, eq, bu, cls) = q.iter(&mut *w).next().unwrap();
+            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>().unwrap();
+            let (pos, st, inv, eq, bu, cls) = q.iter(&w).next().unwrap();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.stacks.iter().map(|s| SavedStack { item_id: s.item_id, count: s.count }).collect(),
@@ -107,8 +107,8 @@ impl GameSave {
         };
 
         let monsters = {
-            let mut mq = w.query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>();
-            mq.iter(&mut *w).map(|(_, pos, st, name, rend)| {
+            let mut mq = w.try_query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>().unwrap();
+            mq.iter(&w).map(|(_, pos, st, name, rend)| {
                 let (r, g, b) = rend.color;
                 SavedMonster {
                     x: pos.x as u16, y: pos.y as u16, glyph: rend.glyph, r, g, b,
@@ -118,8 +118,8 @@ impl GameSave {
         };
 
         let items = {
-            let mut iq = w.query::<(&ItemPickup, &Position)>();
-            iq.iter(&mut *w).map(|(item, pos)| SavedGroundItem {
+            let mut iq = w.try_query::<(&ItemPickup, &Position)>().unwrap();
+            iq.iter(&w).map(|(item, pos)| SavedGroundItem {
                 x: pos.x as u16, y: pos.y as u16,
                 item_id: item.stack.item_id, count: item.stack.count,
             }).collect()

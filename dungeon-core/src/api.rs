@@ -125,9 +125,9 @@ pub fn set_player_dir(dx: isize, dy: isize) {
 }
 
 pub fn collect_renderables() -> Vec<(usize, usize, char, RgbColor)> {
-    let mut w = world!(mut);
-    let mut query = w.query::<(&Position, &Renderable)>();
-    let mut v: Vec<(usize, usize, char, RgbColor)> = query.iter(&mut *w)
+    let w = world!();
+    let mut query = w.try_query::<(&Position, &Renderable)>().unwrap();
+    let mut v: Vec<(usize, usize, char, RgbColor)> = query.iter(&w)
         .map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect();
     // 玩家 (@) 最后渲染，确保显示在最上层
     v.sort_by_key(|(_, _, glyph, _)| if *glyph == '@' { 1 } else { 0 });
