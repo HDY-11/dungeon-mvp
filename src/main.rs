@@ -625,22 +625,7 @@ fn open_inventory(
                         InvPanel::Right => { if !ground.is_empty() { detail = Some((DetailSource::Right, right_sel)); } }
                     }
                 }
-                KeyCode::Char(ch) if ch.is_ascii_digit() || ch.is_ascii_lowercase() => {
-                    // 快捷键：0-9 → 背包索引 0-9, a-z → 背包索引 10-35
-                    if detail.is_none() {
-                        panel = InvPanel::Left;
-                        let idx = if ch.is_ascii_digit() {
-                            ch.to_digit(10).unwrap() as usize
-                        } else {
-                            (ch as usize - 'a' as usize) + 10
-                        };
-                        let inv_idx = idx; // 背包内的索引直接等于快捷键数字
-                        if inv_idx < inv_stacks.len() {
-                            left_sel = 3 + inv_idx;
-                            detail = Some((DetailSource::LeftInv, inv_idx));
-                        }
-                    }
-                }
+                // 特定操作键放在热键之前，确保详情页能收到
                 KeyCode::Char('g') => {
                     // Copy of pickup_ground inline
                     let (ppx, ppy) = { let w = world!(); let mut q = w.try_query::<(&Player, &Position)>().unwrap(); q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
@@ -702,6 +687,22 @@ fn open_inventory(
                                     detail = None;
                                 }
                             }
+                        }
+                    }
+                }
+                // 热键（排除 e/g/u/d 以免拦截详情页的装备/拾取/丢弃/卸载）
+                KeyCode::Char(ch) if ch.is_ascii_digit() || (ch.is_ascii_lowercase() && !matches!(ch, 'e' | 'g' | 'u' | 'd')) => {
+                    if detail.is_none() {
+                        panel = InvPanel::Left;
+                        let idx = if ch.is_ascii_digit() {
+                            ch.to_digit(10).unwrap() as usize
+                        } else {
+                            (ch as usize - 'a' as usize) + 10
+                        };
+                        let inv_idx = idx;
+                        if inv_idx < inv_stacks.len() {
+                            left_sel = 3 + inv_idx;
+                            detail = Some((DetailSource::LeftInv, inv_idx));
                         }
                     }
                 }
