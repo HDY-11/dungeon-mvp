@@ -147,8 +147,6 @@ pub struct ActionEntry {
     pub kind: ActionKindV3,
     /// 反应时剩余（来自实体的 Reaction.time，入队时填入）
     pub reaction_remaining: f32,
-    /// 冷却剩余（来自动作的 duration，执行后填入）
-    pub cooldown_remaining: f32,
 }
 
 /// 全局行动队列（FIFO）
@@ -162,12 +160,11 @@ impl Default for ActionQueue {
 }
 
 impl ActionQueue {
-    pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, reaction_time: f32, duration: f32) {
+    pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, reaction_time: f32) {
         self.entries.push(ActionEntry {
             entity,
             kind,
             reaction_remaining: reaction_time,
-            cooldown_remaining: 0.0, // 执行后才填入 duration
         });
     }
 
@@ -175,32 +172,24 @@ impl ActionQueue {
         for entry in &mut self.entries {
             if entry.reaction_remaining > 0.0 {
                 entry.reaction_remaining = (entry.reaction_remaining - amount).max(0.0);
-            } else if entry.cooldown_remaining > 0.0 {
-                entry.cooldown_remaining = (entry.cooldown_remaining - amount).max(0.0);
             }
         }
     }
 
-    /// 找最小正 reaction_remaining 或 cooldown_remaining（= 下一次事件的距离）
+    /// 找最小正 reaction_remaining（= 下一次事件的距离）
     pub fn next_event_distance(&self) -> Option<f32> {
         self.entries
             .iter()
-            .filter(|e| e.reaction_remaining > 0.0 || e.cooldown_remaining > 0.0)
-            .map(|e| {
-                if e.reaction_remaining > 0.0 {
-                    e.reaction_remaining
-                } else {
-                    e.cooldown_remaining
-                }
-            })
+            .filter(|e| e.reaction_remaining > 0.0)
+            .map(|e| e.reaction_remaining)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
     }
 
-    /// 取出所有 reaction_remaining ≤ 0 且 cooldown_remaining ≤ 0 的条目
+    /// 取出所有 reaction_remaining ≤ 0 的条目
     pub fn pop_ready(&mut self) -> Vec<ActionEntry> {
         let mut ready = Vec::new();
         self.entries.retain(|e| {
-            if e.reaction_remaining <= 0.0 && e.cooldown_remaining <= 0.0 {
+            if e.reaction_remaining <= 0.0 {
                 ready.push(e.clone());
                 false
             } else {
@@ -326,9 +315,9 @@ pub fn run_monster_decision() {
     // 阶段 3：入队（已在队列中的实体不再重复入队）
     let mut w = world!(mut);
     let mut queue = w.resource_mut::<ActionQueue>();
-    for (entity, _priority, reaction_time, duration, kind) in &collected {
+    for (entity, _priority, reaction_time, _duration, kind) in &collected {
         if !queue.has_entity(*entity) {
-            queue.enqueue(*entity, kind.clone(), *reaction_time, *duration);
+            queue.enqueue(*entity, kind.clone(), *reaction_time);
         }
     }
 }
