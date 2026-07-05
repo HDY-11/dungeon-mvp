@@ -345,11 +345,12 @@ pub fn advance_action_queue() -> f32 {
         ready = w.resource_mut::<ActionQueue>().pop_ready();
     }
 
-    // 阶段 2：保活检查 + 执行就绪条目
+    // 阶段 2：保活检查 + 执行就绪条目（每次执行后重建碰撞图）
     for entry in &ready {
         if check_condition(entry) {
             execute_entry(entry);
             let _ = world!(mut).run_system_once(crate::systems::apply_exp_system);
+            crate::rebuild_occupancy();
         } else {
             // 条件不再满足，丢弃行动（实体已损失 AV）
             world!(mut).resource_mut::<EventLog>().push(format!("行动被取消"));
@@ -377,7 +378,29 @@ fn check_condition(entry: &ActionEntry) -> bool {
                 .unwrap_or(false)
         }
         ActionKindV3::Wander | ActionKindV3::Wait => true,
-        ActionKindV3::Move { .. } => true, // 玩家行动不检查
+        ActionKindV3::Move { dx, dy } => {
+            // 目标格是否仍是地板且未被占用
+            if let Some(pos) = w.get::<Position>(entry.entity) {
+                let nx = pos.x.wrapping_add_signed(*dx);
+                let ny = pos.y.wrapping_add_signed(*dy);
+                if nx < crate::MAP_WIDTH && ny < crate::MAP_HEIGHT {
+                    let map = w.resource::<crate::Map>();
+                    if map.tiles[ny][nx] != crate::Tile::Floor {
+                        return false;
+                    }
+                    let occ = w.resource::<crate::OccupancyMap>();
+                    if occ.is_occupied(nx, ny) {
+                        // 有实体 → 转为 Attack
+                        return false; // 放弃原来的 Move，等下次 tap-tap 重新判断
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
         ActionKindV3::Attack { target } => {
             // 目标是否仍存在且是怪物
             w.get::<Monster>(*target).is_some()
