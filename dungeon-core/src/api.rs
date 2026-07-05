@@ -278,7 +278,9 @@ pub fn descend() {
         player_data.1.clone(), EntityName("冒险者".into()),
         Inventory { stacks: player_data.3, capacity: player_data.4 },
     ));
+    cmd.insert(player_data.5);  // Equipment
     cmd.insert(Skills { list: player_data.6 });
+    cmd.insert(player_data.7);  // Buffs
     cmd.insert(player_data.8.clone());
     cmd.insert(AttackName(player_data.9.clone()));
     cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_data.1.agility) });
