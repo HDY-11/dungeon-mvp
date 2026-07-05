@@ -2,12 +2,11 @@ use crate::{
     components::*,
     items::{Equipment, Inventory, ItemPickup},
     resources::*,
-    effective_attack, effective_defense,
+    effective_attack,
     calculate_visible_tiles, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 use crate::world;
 use bevy_ecs::prelude::*;
-use bevy_ecs::system::RunSystemOnce;
 
 /// 玩家移动 + bump 攻击（仅在 CanMove execute 中调用）
 pub fn movement_system(
@@ -15,7 +14,7 @@ pub fn movement_system(
         (&mut Position, &mut MovingDir, &Stats, &Inventory, &Equipment, Option<&Buffs>, &AttackName),
         (With<Player>, Without<Monster>),
     >,
-    mut monster_query: Query<(&mut Stats, &EntityName, Entity), (With<Monster>, Without<Player>)>,
+    mut monster_query: Query<(&mut Stats, &EntityName, &Position, Entity, Option<&LootTable>), (With<Monster>, Without<Player>)>,
     item_query: Query<(Entity, &ItemPickup, &Position), (Without<Player>, Without<Monster>)>,
     map: Res<Map>,
     occupancy: Res<OccupancyMap>,
@@ -32,7 +31,7 @@ pub fn movement_system(
         if new_x >= MAP_WIDTH || new_y >= MAP_HEIGHT { continue; }
         if map.tiles[new_y][new_x] != Tile::Floor { continue; }
         if let Some(entity) = &occupancy.cells[new_y][new_x] {
-            if let Ok((mut monster_stats, mon_name, _monster_e)) = monster_query.get_mut(*entity) {
+            if let Ok((mut monster_stats, mon_name, monster_pos, mon_entity, loot_table)) = monster_query.get_mut(*entity) {
                 let atk = effective_attack(player_stats, inv, equip, buffs) as i32;
                 let def = monster_stats.defense as i32;
                 let mut dmg = (atk - def).max(1);
@@ -40,9 +39,25 @@ pub fn movement_system(
                 if is_crit { dmg = (dmg as f32 * (1.0 + player_stats.crit_damage)).round() as i32; }
                 monster_stats.hp -= dmg;
                 if monster_stats.hp <= 0 {
+                    // 经验
                     pending.amount += monster_stats.exp;
                     event_log.push(format!("你{}击杀了{}！获得{}经验", player_atk.0, mon_name.0, monster_stats.exp));
-                    commands.entity(*entity).despawn();
+
+                    // 掉落
+                    if let Some(loot_table) = loot_table {
+                        let loot = loot_table.roll();
+                        for stack in &loot {
+                            let name = stack.name();
+                            event_log.push(format!("{}掉落{}x{}", mon_name.0, name, stack.count));
+                            commands.spawn((
+                                ItemPickup { stack: stack.clone() },
+                                Position { x: monster_pos.x, y: monster_pos.y },
+                                Renderable { glyph: stack.glyph(), color: stack.color() },
+                            ));
+                        }
+                    }
+
+                    commands.entity(mon_entity).despawn();
                 } else {
                     let crit_tag = if is_crit { "！暴击" } else { "" };
                     event_log.push(format!("你{}了{}{}，造成{}点伤害", player_atk.0, mon_name.0, crit_tag, dmg));
@@ -50,9 +65,10 @@ pub fn movement_system(
                 continue;
             }
         }
+        // 拾取地面物品
         for (item_entity, pickup, item_pos) in item_query.iter() {
-            if item_pos.x == new_x && item_pos.y == new_y && inv.items.len() < inv.capacity {
-                pending_pickup.entries.push((item_entity, pickup.item.clone()));
+            if item_pos.x == new_x && item_pos.y == new_y {
+                pending_pickup.entries.push((item_entity, pickup.stack.clone()));
             }
         }
         pos.x = new_x; pos.y = new_y;
@@ -76,15 +92,22 @@ pub fn check_death_system(
 
 pub fn pickup_system(
     mut player_query: Query<&mut Inventory, With<Player>>,
-    mut pending: ResMut<PendingPickup>, mut commands: Commands, mut event_log: ResMut<EventLog>,
+    mut pending: ResMut<PendingPickup>,
+    mut commands: Commands,
+    mut event_log: ResMut<EventLog>,
 ) {
     if pending.entries.is_empty() { return; }
     if let Ok(mut inv) = player_query.single_mut() {
-        for (entity, item) in pending.entries.drain(..) {
-            if inv.items.len() < inv.capacity {
-                let name = item.name.clone(); inv.items.push(item);
+        for (entity, stack) in pending.entries.drain(..) {
+            let name = stack.name();
+            let leftover = inv.add(stack.item_id, stack.count);
+            let picked_up = stack.count - leftover;
+            if picked_up > 0 {
+                event_log.push(format!("拾取了{}x{}", name, picked_up));
                 commands.entity(entity).despawn();
-                event_log.push(format!("拾取了 {}", name));
+            }
+            if leftover > 0 {
+                event_log.push(format!("背包已满，{}x{}掉落在地上", name, leftover));
             }
         }
     }
@@ -126,10 +149,10 @@ pub fn skill_tick_system(
     mut player: Query<(&mut Stats, &Skills, &mut Buffs, &Position, &PlayerClass), (With<Player>, Without<Monster>)>,
     mut monsters: Query<(&mut Stats, &Position, &EntityName), (With<Monster>, Without<Player>)>,
     mut event_log: ResMut<EventLog>,
-    mut game_rng: ResMut<GameRng>,
+    mut _game_rng: ResMut<GameRng>,
 ) {
     let Some(skill_idx) = pending.idx.take() else { return; };
-    let Ok((mut stats, skills, mut buffs, pp, class)) = player.single_mut() else { return; };
+    let Ok((mut stats, skills, mut _buffs, pp, class)) = player.single_mut() else { return; };
     let Some(sk) = skills.list.get(skill_idx) else { return; };
     if !class.can_cast(sk) { return; }
     if stats.mp < sk.cost_mp { event_log.push(format!("MP 不足")); return; }

@@ -1,9 +1,3 @@
-//! Dungeon MVP — 主循环、输入处理。
-//!
-//! 逻辑层：dungeon-core（ECS 组件、系统、AV 引擎）
-//! 渲染层：dungeon-render（UI 绘制、行动轴、状态面板）
-//! 应用层：本文件（主循环、输入、模式）
-
 use std::io::{self, stdout};
 use std::time::Instant;
 
@@ -17,12 +11,11 @@ use dungeon_core::{
     check_death_system, descend,
     fov_system, rebuild_occupancy, save::GameSave,
     setup_world, update_map_memory,
-    Equipment, EquipmentSlot, EventLog, Inventory, ItemInstance,
-    PendingLevelUp,
-    Player, Position, Skills, Stairs, Stats, TurnManager,
+    Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
+    Player, Position, Renderable, Skills, Stairs, TurnManager,
 };
 use dungeon_core::action::ActionKindV3;
-use dungeon_render::{draw_level_up, draw_title, render_ui};
+use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -46,10 +39,6 @@ fn main() -> io::Result<()> {
     terminal.show_cursor()?;
     result
 }
-
-// ══════════════════════════════════════════════════════
-// 玩家行动函数（统一路径）
-// ══════════════════════════════════════════════════════
 
 fn player_entity() -> Option<Entity> {
     let mut w = world!(mut);
@@ -78,10 +67,6 @@ fn run(
 
         terminal.draw(|frame| render_ui(frame, game_start))?;
 
-        // ══════════════════════════════════════════════
-        // 统一输入循环
-        // ══════════════════════════════════════════════
-
         if let Event::Key(key) = event::read()? {
             handle_input(terminal, key)?;
             advance_and_settle();
@@ -89,26 +74,66 @@ fn run(
     }
 }
 
-/// 统一推进：新行动系统 + 通用后处理
 fn advance_and_settle() {
     use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
 
-    // 1. 先推进队列，得到实际推进量
     let dist = advance_action_queue();
 
-    // 2. 用相同推进量递减冷却
     if dist > 0.0 {
         tick_all_cooldowns(dist);
     }
 
-    // 3. 怪物决策
     run_monster_decision();
 
-    // 4. 通用后处理
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     update_map_memory();
     world!(mut).run_system_once(check_death_system);
+}
+
+// ══════════════════════════════════════════════════════
+// 拾取地面物品（g 键）
+// ══════════════════════════════════════════════════════
+
+fn pickup_ground() {
+    let (ppx, ppy) = {
+        let mut w = world!(mut);
+        let mut q = w.query::<(&Player, &Position)>();
+        q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+    };
+    // 收集地面物品
+    let ground: Vec<(Entity, ItemStack)> = {
+        let mut w = world!(mut);
+        let mut q = w.query::<(Entity, &ItemPickup, &Position)>();
+        q.iter(&mut *w)
+            .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
+            .map(|(e, p, _)| (e, p.stack.clone()))
+            .collect()
+    };
+    if ground.is_empty() { return; }
+    // 加入背包
+    let mut logs = Vec::new();
+    let mut despawn = Vec::new();
+    for (entity, stack) in &ground {
+        let mut w = world!(mut);
+        let mut q = w.query::<(&mut Inventory,)>();
+        if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
+            let leftover = inv.add(stack.item_id, stack.count);
+            let picked = stack.count - leftover;
+            if picked > 0 {
+                logs.push(format!("拾取了{}x{}", stack.name(), picked));
+            }
+            despawn.push(*entity);
+        }
+    }
+    for e in despawn {
+        let mut w = world!(mut);
+        w.entity_mut(e).despawn();
+    }
+    for msg in logs {
+        let mut w = world!(mut);
+        w.resource_mut::<EventLog>().push(msg);
+    }
 }
 
 // ══════════════════════════════════════════════════════
@@ -120,7 +145,6 @@ fn handle_input(
     key: crossterm::event::KeyEvent,
 ) -> io::Result<()> {
     match key.code {
-        // ── 耗时行动：tap-tap 确认 ──
         KeyCode::Up => handle_player_direction(0, -1),
         KeyCode::Down => handle_player_direction(0, 1),
         KeyCode::Left => handle_player_direction(-1, 0),
@@ -141,7 +165,6 @@ fn handle_input(
                 handle_timed_action(e, ActionKindV3::Skill(idx), reaction_time, 600.0);
             }
         }
-        // ── 非耗时行动：单击执行 ──
         KeyCode::Char('q') | KeyCode::Esc => {
             if confirm_quit(terminal)? {
                 world!(mut).resource_mut::<TurnManager>().wants_quit = true;
@@ -149,6 +172,9 @@ fn handle_input(
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
             open_inventory(terminal)?;
+        }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            pickup_ground();
         }
         KeyCode::F(5) => {
             if let Ok(data) = bincode::serialize(&GameSave::capture()) {
@@ -174,7 +200,6 @@ fn handle_input(
     Ok(())
 }
 
-/// 统一 tap-tap 处理：第一次 tap 设置预览，第二次相同行动确认入队
 fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, duration: f32) {
     use dungeon_core::action::{PlayerPreview, ActionQueue};
 
@@ -199,14 +224,11 @@ fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, d
     }
 }
 
-/// 方向键处理器：语义识别 + tap-tap 确认
-/// 第一次按 → 预览（Move/Attack/无效），第二次同方向 → 入队
 fn handle_player_direction(dx: isize, dy: isize) {
     use dungeon_core::action::{ActionKindV3, Reaction, CanMove};
     use dungeon_core::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster};
     let Some(entity) = player_entity() else { return };
 
-    // 检查目标格
     let kind = {
         let w = world!();
         let Some(pos) = w.get::<Position>(entity) else { return };
@@ -216,7 +238,6 @@ fn handle_player_direction(dx: isize, dy: isize) {
         let tile = w.resource::<Map>().tiles[ny][nx];
         let has_enemy = w.resource::<OccupancyMap>().cells[ny][nx]
             .and_then(|e| if w.get::<Monster>(e).is_some() { Some(e) } else { None });
-        // 墙 → 丢弃
         if tile != Tile::Floor && has_enemy.is_none() { return; }
         if let Some(target) = has_enemy {
             ActionKindV3::Attack { target }
@@ -230,7 +251,6 @@ fn handle_player_direction(dx: isize, dy: isize) {
     handle_timed_action(entity, kind, reaction_time, duration);
 }
 
-/// 从按键获取技能索引和名称。
 fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
     let idx = match key.code {
         KeyCode::Char('1') => 0,
@@ -368,85 +388,61 @@ fn title_screen(
     }
 }
 
-#[allow(dead_code)]
-fn level_up_screen(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    _game_start: Instant,
-) -> io::Result<()> {
-    terminal.draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
-    loop {
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('0') => {
-                    world!(mut).resource_mut::<PendingLevelUp>().points = 0;
-                    break;
-                }
-                KeyCode::Char('1') => {
-                    let mut w = world!(mut);
-                    if w.resource::<PendingLevelUp>().points > 0 {
-                        w.resource_mut::<PendingLevelUp>().points -= 1;
-                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().attack += 1;
-                    }
-                }
-                KeyCode::Char('2') => {
-                    let mut w = world!(mut);
-                    if w.resource::<PendingLevelUp>().points > 0 {
-                        w.resource_mut::<PendingLevelUp>().points -= 1;
-                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().defense += 1;
-                    }
-                }
-                KeyCode::Char('3') => {
-                    let mut w = world!(mut);
-                    if w.resource::<PendingLevelUp>().points > 0 {
-                        w.resource_mut::<PendingLevelUp>().points -= 1;
-                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().magic_mastery += 1;
-                    }
-                }
-                KeyCode::Char('4') => {
-                    let mut w = world!(mut);
-                    if w.resource::<PendingLevelUp>().points > 0 {
-                        w.resource_mut::<PendingLevelUp>().points -= 1;
-                        w.query::<&mut Stats>().single_mut(&mut *w).unwrap().agility += 1;
-                    }
-                }
-                KeyCode::Char('5') => {
-                    let mut w = world!(mut);
-                    if w.resource::<PendingLevelUp>().points > 0 {
-                        w.resource_mut::<PendingLevelUp>().points -= 1;
-                        let mut s = w.query::<&mut Stats>().single_mut(&mut *w).unwrap();
-                        s.max_hp += 5;
-                        s.hp = s.hp.min(s.max_hp);
-                    }
-                }
-                _ => {}
-            }
-            if world!().resource::<PendingLevelUp>().points == 0 {
-                break;
-            }
-            terminal
-                .draw(|frame| draw_level_up(frame, world!().resource::<PendingLevelUp>().points))?;
+// ══════════════════════════════════════════════════════
+// 背包界面（双栏 + 详情页）
+// ══════════════════════════════════════════════════════
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InvPanel { Left, Right }
+
+struct InvState {
+    panel: InvPanel,
+    left_sel: usize,
+    left_scroll: usize,
+    right_sel: usize,
+    right_scroll: usize,
+    detail: Option<(DetailSource, usize)>, // (source, stack index)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DetailSource { LeftInv, LeftEquip, Right }
+
+fn collect_ground_items_in(world: &mut bevy_ecs::prelude::World) -> Vec<(ItemStack, Entity)> {
+    let pp = {
+        let mut q = world.query::<(&Player, &Position)>();
+        q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+    };
+    let mut items = Vec::new();
+    let mut q = world.query::<(Entity, &ItemPickup, &Position)>();
+    for (entity, pickup, pos) in q.iter(world) {
+        if pos.x == pp.0 && pos.y == pp.1 {
+            items.push((pickup.stack.clone(), entity));
         }
     }
-    Ok(())
+    items
 }
 
 fn open_inventory(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
-    let mut selected: usize = 0;
-    let mut scroll: usize = 0;
-
-    fn get_inv() -> (Vec<ItemInstance>, usize, (Option<usize>, Option<usize>, Option<usize>)) {
-        let mut w = world!(mut);
-        let mut q = w.query::<(&Inventory, &Equipment)>();
-        q.iter(&mut *w)
-            .next()
-            .map(|(inv, eq)| (inv.items.clone(), inv.capacity, (eq.weapon, eq.armor, eq.ring)))
-            .unwrap_or_default()
-    }
+    let mut st = InvState {
+        panel: InvPanel::Left,
+        left_sel: 0, left_scroll: 0,
+        right_sel: 0, right_scroll: 0,
+        detail: None,
+    };
 
     loop {
-        let inv_data = get_inv();
+        // ── 读取数据 ──
+        let (inv_stacks, inv_cap, equip, ground): (Vec<ItemStack>, usize, Equipment, Vec<(ItemStack, Entity)>) = {
+            let mut w = world!(mut);
+            let mut q = w.query::<(&Inventory, &Equipment)>();
+            let (inv, eq) = q.iter_mut(&mut *w).next().map(|(i, e)| (i.clone(), e.clone())).unwrap_or_default();
+            let ground = collect_ground_items_in(&mut *w);
+            (inv.stacks, inv.capacity, eq, ground)
+        };
+
+        // ── 构建 UI ──
         terminal.draw(|frame| {
             let area = frame.area();
             let block = Block::default()
@@ -456,98 +452,367 @@ fn open_inventory(
                 .border_style(Style::default().fg(Color::Cyan));
             frame.render_widget(block, area);
             let inner = inner_rect(area, 1);
-            let (ref items, capacity, (weapon, armor, ring)) = inv_data;
-            let mut lines: Vec<Line> = Vec::new();
-            lines.push(Line::from(vec![Span::styled(
-                format!(
-                    " 物品 {} / {}  e:装备 d:丢弃 Esc:返回",
-                    items.len(),
-                    capacity
-                ),
-                Style::default().fg(Color::DarkGray),
-            )]));
-            lines.push(Line::from(Span::raw("")));
-            let eq_name = |idx: Option<usize>| {
-                idx.and_then(|i| items.get(i))
-                    .map(|it| it.name.clone())
-                    .unwrap_or("(空)".into())
-            };
-            lines.push(Line::from(Span::raw(format!(
-                " 武器: {}  防具: {}  戒指: {}",
-                eq_name(weapon),
-                eq_name(armor),
-                eq_name(ring)
-            ))));
-            lines.push(Line::from(Span::raw("")));
-            let page_size = (inner.height as usize).saturating_sub(5).min(20);
-            if items.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    " (背包为空)",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            } else {
-                let sel = selected.min(items.len() - 1);
-                let sc = scroll.min(sel);
-                let end = (sc + page_size).min(items.len());
-                for i in sc..end {
-                    let item = &items[i];
-                    let idx_char =
-                        if i < 10 { char::from_digit(i as u32, 10).unwrap() } else { '?' };
-                    let prefix = if i == sel { "▸" } else { " " };
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{}{}", prefix, idx_char),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                        Span::raw(format!(" {}", item.name)),
-                        Span::styled(
-                            format!(" {:?}", item.slot),
+
+            if let Some((dsrc, idx)) = &st.detail {
+                // ── 详情页 ──
+                let (stack, source_label) = match dsrc {
+                    DetailSource::LeftInv => (inv_stacks.get(*idx), "背包"),
+                    DetailSource::LeftEquip => {
+                        let all_equip = equip.equipped_stacks();
+                        let stacks: Vec<&ItemStack> = all_equip.into_iter().collect();
+                        (stacks.get(*idx).copied(), "装备")
+                    }
+                    DetailSource::Right => (ground.get(*idx).map(|(s, _)| s), "地面"),
+                };
+                if let Some(item) = stack {
+                    let def = item.def();
+                    let mut lines = Vec::new();
+                    lines.push(Line::from(Span::styled(
+                        format!(" ── {} ──", source_label),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                    lines.push(Line::from(Span::raw("")));
+                    lines.push(Line::from(Span::styled(
+                        format!(" {}", item.name()),
+                        Style::default().fg(Color::Yellow).bold(),
+                    )));
+                    if item.count > 1 {
+                        lines.push(Line::from(Span::styled(
+                            format!(" 数量: {}", item.count),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                    if let Some(d) = def {
+                        lines.push(Line::from(Span::styled(
+                            format!(" 槽位: {:?}", d.slot),
                             Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::raw(format!(" {}", item.description)),
-                    ]));
+                        )));
+                    }
+                    lines.push(Line::from(Span::raw("")));
+                    let desc = item.description();
+                    if !desc.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {}", desc),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    lines.push(Line::from(Span::raw("")));
+                    lines.push(Line::from(Span::raw("")));
+                    // 操作提示
+                    match dsrc {
+                        DetailSource::LeftInv => {
+                            if let Some(d) = def {
+                                match d.slot {
+                                    EquipmentSlot::Material => {
+                                        lines.push(Line::from(Span::styled(" d:丢弃", Style::default().fg(Color::DarkGray))));
+                                    }
+                                    _ => {
+                                        lines.push(Line::from(Span::styled(" e:装备  d:丢弃", Style::default().fg(Color::DarkGray))));
+                                    }
+                                }
+                            }
+                        }
+                        DetailSource::LeftEquip => {
+                            lines.push(Line::from(Span::styled(" u:卸载装备", Style::default().fg(Color::DarkGray))));
+                        }
+                        DetailSource::Right => {
+                            lines.push(Line::from(Span::styled(" g:拾取", Style::default().fg(Color::DarkGray))));
+                        }
+                    }
+                    lines.push(Line::from(Span::styled(" Esc:返回", Style::default().fg(Color::DarkGray))));
+                    frame.render_widget(Paragraph::new(lines), inner);
+                }
+            } else {
+                // ── 双栏布局 ──
+                let half = inner.width / 2;
+                let left_area = Rect { x: inner.x, y: inner.y, width: half, height: inner.height };
+                let right_area = Rect { x: inner.x + half, y: inner.y, width: inner.width - half, height: inner.height };
+
+                // ── 左栏：背包 + 装备 ──
+                {
+                    let mut lines: Vec<Line> = Vec::new();
+                    let active = st.panel == InvPanel::Left;
+                    let title_style = if active { Style::default().fg(Color::Cyan).bold() } else { Style::default().fg(Color::DarkGray) };
+                    lines.push(Line::from(Span::styled(" ── 装备 ──", title_style)));
+
+                    // 装备槽
+                    let equip_items: Vec<(&str, Option<&ItemStack>)> = vec![
+                        ("武器", equip.weapon.as_ref()),
+                        ("防具", equip.armor.as_ref()),
+                        ("戒指", equip.ring.as_ref()),
+                    ];
+                    for (i, (label, item)) in equip_items.iter().enumerate() {
+                        let name = item.map(|s| s.name()).unwrap_or("(空)".into());
+                        let prefix = if active && st.panel == InvPanel::Left && st.left_sel == usize::MAX - i {
+                            "▸ "
+                        } else { "  " };
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("{}[{}]", prefix, label.chars().next().unwrap()), Style::default().fg(Color::Yellow)),
+                            Span::raw(format!(" {}", name)),
+                        ]));
+                    }
+
+                    lines.push(Line::from(Span::styled(
+                        format!(" ── 背包 ({}/{}) ──", inv_stacks.len(), inv_cap),
+                        title_style,
+                    )));
+
+                    if inv_stacks.is_empty() {
+                        lines.push(Line::from(Span::styled(" (空)", Style::default().fg(Color::DarkGray))));
+                    } else {
+                        let sel = if active { st.left_sel } else { st.left_sel };
+                        let page_size = (left_area.height as usize).saturating_sub(8).min(15);
+                        let sc = st.left_scroll.min(sel.min(inv_stacks.len().saturating_sub(1)));
+                        let end = (sc + page_size).min(inv_stacks.len());
+                        for i in sc..end {
+                            let stack = &inv_stacks[i];
+                            let idx_char = if i < 36 { char::from_digit((i as u32) % 10, 10).unwrap_or('?') } else { '?' };
+                            let prefix = if active && i == st.left_sel { "▸" } else { " " };
+                            let count_label = if stack.count > 1 { format!(" x{}", stack.count) } else { String::new() };
+                            let slot_label = stack.def().map(|d| format!("{:?}", d.slot)).unwrap_or_default();
+                            lines.push(Line::from(vec![
+                                Span::styled(format!("{}{}", prefix, idx_char), Style::default().fg(Color::Yellow)),
+                                Span::raw(format!(" {}{}", stack.name(), count_label)),
+                                Span::styled(format!(" {}", slot_label), Style::default().fg(Color::DarkGray)),
+                            ]));
+                        }
+                    }
+                    frame.render_widget(Paragraph::new(lines), left_area);
+                }
+
+                // ── 右栏：地面物品 ──
+                {
+                    let mut lines: Vec<Line> = Vec::new();
+                    let active = st.panel == InvPanel::Right;
+                    let title_style = if active { Style::default().fg(Color::Cyan).bold() } else { Style::default().fg(Color::DarkGray) };
+                    lines.push(Line::from(Span::styled(" ── 地面 ──", title_style)));
+
+                    if ground.is_empty() {
+                        lines.push(Line::from(Span::styled(" (无物品)", Style::default().fg(Color::DarkGray))));
+                    } else {
+                        let sel = st.right_sel;
+                        let page_size = (right_area.height as usize).saturating_sub(4).min(15);
+                        let sc = st.right_scroll.min(sel.min(ground.len().saturating_sub(1)));
+                        let end = (sc + page_size).min(ground.len());
+                        for i in sc..end {
+                            let (stack, _) = &ground[i];
+                            let prefix = if active && i == st.right_sel { "▸" } else { " " };
+                            let count_label = if stack.count > 1 { format!(" x{}", stack.count) } else { String::new() };
+                            lines.push(Line::from(vec![
+                                Span::styled(format!("{}", prefix), Style::default().fg(Color::Yellow)),
+                                Span::raw(format!(" {}{}", stack.name(), count_label)),
+                            ]));
+                        }
+                    }
+                    lines.push(Line::from(Span::raw("")));
+                    if active {
+                        if !ground.is_empty() {
+                            lines.push(Line::from(Span::styled(" Enter:查看  g:拾取全部", Style::default().fg(Color::DarkGray))));
+                        }
+                    }
+                    frame.render_widget(Paragraph::new(lines), right_area);
                 }
             }
-            frame.render_widget(Paragraph::new(lines), inner);
         })?;
 
+        // ── 输入处理 ──
         if let Event::Key(key) = event::read()? {
             match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => break,
-                KeyCode::Down => {
-                    let len = inv_data.0.len();
-                    if len > 0 {
-                        selected = (selected + 1).min(len - 1);
-                        if selected >= scroll + 10 { scroll += 1; }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    if st.detail.is_some() {
+                        st.detail = None;
+                    } else {
+                        break;
+                    }
+                }
+                KeyCode::Left => {
+                    if st.detail.is_none() {
+                        st.panel = InvPanel::Left;
+                    }
+                }
+                KeyCode::Right => {
+                    if st.detail.is_none() {
+                        st.panel = InvPanel::Right;
                     }
                 }
                 KeyCode::Up => {
-                    selected = selected.saturating_sub(1);
-                    if selected < scroll { scroll = scroll.saturating_sub(1); }
+                    if st.detail.is_some() { continue; }
+                    match st.panel {
+                        InvPanel::Left => {
+                            if st.left_sel > 0 { st.left_sel -= 1; }
+                            if st.left_sel < st.left_scroll { st.left_scroll = st.left_sel; }
+                        }
+                        InvPanel::Right => {
+                            if st.right_sel > 0 { st.right_sel -= 1; }
+                            if st.right_sel < st.right_scroll { st.right_scroll = st.right_sel; }
+                        }
+                    }
+                }
+                KeyCode::Down => {
+                    if st.detail.is_some() { continue; }
+                    match st.panel {
+                        InvPanel::Left => {
+                            if inv_stacks.len() > 0 && st.left_sel < inv_stacks.len() - 1 {
+                                st.left_sel += 1;
+                                let page = 10;
+                                if st.left_sel >= st.left_scroll + page { st.left_scroll += 1; }
+                            }
+                        }
+                        InvPanel::Right => {
+                            if ground.len() > 0 && st.right_sel < ground.len() - 1 {
+                                st.right_sel += 1;
+                                let page = 10;
+                                if st.right_sel >= st.right_scroll + page { st.right_scroll += 1; }
+                            }
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    if st.detail.is_some() { continue; }
+                    match st.panel {
+                        InvPanel::Left => {
+                            if !inv_stacks.is_empty() {
+                                st.detail = Some((DetailSource::LeftInv, st.left_sel));
+                            }
+                        }
+                        InvPanel::Right => {
+                            if !ground.is_empty() {
+                                st.detail = Some((DetailSource::Right, st.right_sel));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('g') => {
+                    // 拾取全部地面物品（主界面g或详情页g）
+                    let (ppx, ppy) = {
+                        let mut w = world!(mut);
+                        let mut q = w.query::<(&Player, &Position)>();
+                        q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+                    };
+                    // 收集该格地面物品
+                    let ground_items: Vec<(Entity, ItemStack)> = {
+                        let mut w = world!(mut);
+                        let mut q = w.query::<(Entity, &ItemPickup, &Position)>();
+                        q.iter(&mut *w)
+                            .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
+                            .map(|(e, pickup, _)| (e, pickup.stack.clone()))
+                            .collect()
+                    };
+                    // 拾取
+                    let mut despawn_list = Vec::new();
+                    let mut log_entries: Vec<String> = Vec::new();
+                    {
+                        let mut w = world!(mut);
+                        let mut inv_q = w.query::<(&mut Inventory,)>();
+                        if let Some((mut inv,)) = inv_q.iter_mut(&mut *w).next() {
+                            for (entity, stack) in &ground_items {
+                                let leftover = inv.add(stack.item_id, stack.count);
+                                let picked = stack.count - leftover;
+                                if picked > 0 {
+                                    log_entries.push(format!("拾取了{}x{}", stack.name(), picked));
+                                }
+                                despawn_list.push(*entity);
+                            }
+                        }
+                    }
+                    // 写日志（释放了 inv_q 之后再拿 w）
+                    if !log_entries.is_empty() {
+                        let mut w = world!(mut);
+                        for msg in &log_entries {
+                            w.resource_mut::<EventLog>().push(msg.clone());
+                        }
+                    }
+                    // 销毁已拾取的实体
+                    {
+                        let mut w = world!(mut);
+                        for e in despawn_list { w.entity_mut(e).despawn(); }
+                    }
+                    if let Some((DetailSource::Right, _)) = st.detail { st.detail = None; }
                 }
                 KeyCode::Char('e') => {
-                    let mut w = world!(mut);
-                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                        if inv.items.get(selected).is_some() {
-                            match inv.items[selected].slot {
-                                EquipmentSlot::Weapon => eq.weapon = Some(selected),
-                                EquipmentSlot::Armor => eq.armor = Some(selected),
-                                EquipmentSlot::Ring => eq.ring = Some(selected),
+                    // 装备：从背包详情页触发
+                    if let Some((DetailSource::LeftInv, idx)) = st.detail {
+                        let mut w = world!(mut);
+                        let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                        if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                            if let Some(stack) = inv.stacks.get(idx) {
+                                let item_id = stack.item_id;
+                                let count = stack.count;
+                                if let Some(def) = stack.def() {
+                                    let can_equip = match def.slot {
+                                        EquipmentSlot::Weapon => eq.weapon.is_none(),
+                                        EquipmentSlot::Armor => eq.armor.is_none(),
+                                        EquipmentSlot::Ring => eq.ring.is_none(),
+                                        EquipmentSlot::Material => false,
+                                    };
+                                    if can_equip {
+                                        // 从背包移除 1 个
+                                        inv.remove(idx, 1);
+                                        let equip_stack = ItemStack::new(item_id, 1);
+                                        match def.slot {
+                                            EquipmentSlot::Weapon => eq.weapon = Some(equip_stack),
+                                            EquipmentSlot::Armor => eq.armor = Some(equip_stack),
+                                            EquipmentSlot::Ring => eq.ring = Some(equip_stack),
+                                            _ => {}
+                                        }
+                                        st.detail = None;
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 KeyCode::Char('d') => {
-                    let mut w = world!(mut);
-                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                        if selected < inv.items.len() {
-                            if eq.weapon == Some(selected) { eq.weapon = None; }
-                            if eq.armor == Some(selected) { eq.armor = None; }
-                            if eq.ring == Some(selected) { eq.ring = None; }
-                            inv.items.remove(selected);
-                            selected = selected.min(inv.items.len().saturating_sub(1));
+                    // 丢弃：从背包详情页触发
+                    if let Some((DetailSource::LeftInv, idx)) = st.detail {
+                        let mut w = world!(mut);
+                        let pp = {
+                            let mut q = w.query::<(&Player, &Position)>();
+                            q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+                        };
+                        let mut q = w.query::<(&mut Inventory,)>();
+                        if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
+                            if let Some(stack) = inv.stacks.get(idx) {
+                                let drop_stack = ItemStack::new(stack.item_id, 1);
+                                inv.remove(idx, 1);
+                                w.spawn((
+                                    ItemPickup { stack: drop_stack.clone() },
+                                    Position { x: pp.0, y: pp.1 },
+                                    Renderable { glyph: drop_stack.glyph(), color: drop_stack.color() },
+                                ));
+                                st.detail = None;
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('u') => {
+                    // 卸载装备
+                    if let Some((DetailSource::LeftEquip, idx)) = st.detail {
+                        let mut w = world!(mut);
+                        let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                        if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                            let slot = match idx {
+                                0 => &mut eq.weapon,
+                                1 => &mut eq.armor,
+                                2 => &mut eq.ring,
+                                _ => unreachable!(),
+                            };
+                            if let Some(stack) = slot.take() {
+                                let leftover = inv.add(stack.item_id, stack.count);
+                                if leftover > 0 {
+                                    // 背包满了，掉地上
+                                    let pp = {
+                                        let mut p = w.query::<(&Player, &Position)>();
+                                        p.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+                                    };
+                                    w.spawn((
+                                        ItemPickup { stack: ItemStack::new(stack.item_id, leftover) },
+                                        Position { x: pp.0, y: pp.1 },
+                                        Renderable { glyph: stack.glyph(), color: stack.color() },
+                                    ));
+                                }
+                                st.detail = None;
+                            }
                         }
                     }
                 }

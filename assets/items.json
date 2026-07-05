@@ -1,0 +1,82 @@
+[
+  {
+    "id": 0,
+    "name": "锈铁剑",
+    "description": "一把生锈的铁剑。",
+    "glyph": "/",
+    "color": [224, 255, 255],
+    "slot": "Weapon",
+    "max_stack": 1,
+    "bonus": { "attack": 3, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 1,
+    "name": "木盾",
+    "description": "简陋的木盾。",
+    "glyph": "[",
+    "color": [139, 90, 43],
+    "slot": "Armor",
+    "max_stack": 1,
+    "bonus": { "attack": 0, "defense": 2, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 2,
+    "name": "皮甲",
+    "description": "轻便皮甲。",
+    "glyph": "]",
+    "color": [255, 255, 224],
+    "slot": "Armor",
+    "max_stack": 1,
+    "bonus": { "attack": 0, "defense": 1, "magic_mastery": 0, "agility": 1, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 3,
+    "name": "攻击戒指",
+    "description": "攻击之戒。",
+    "glyph": "=",
+    "color": [255, 128, 128],
+    "slot": "Ring",
+    "max_stack": 1,
+    "bonus": { "attack": 2, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 10,
+    "name": "生物血肉",
+    "description": "怪物的血肉，散发出腥臭味。",
+    "glyph": "%",
+    "color": [180, 50, 50],
+    "slot": "Material",
+    "max_stack": 64,
+    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 11,
+    "name": "破布",
+    "description": "破烂的布料，没什么用。",
+    "glyph": "&",
+    "color": [180, 180, 160],
+    "slot": "Material",
+    "max_stack": 64,
+    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 12,
+    "name": "坚硬木棍",
+    "description": "还算结实的木棍，可以当柴烧。",
+    "glyph": "/",
+    "color": [139, 90, 43],
+    "slot": "Material",
+    "max_stack": 64,
+    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  },
+  {
+    "id": 13,
+    "name": "染血兽牙",
+    "description": "沾满血迹的尖牙，散发出危险的气息。",
+    "glyph": "v",
+    "color": [255, 255, 240],
+    "slot": "Material",
+    "max_stack": 64,
+    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+  }
+]

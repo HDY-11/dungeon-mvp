@@ -3,6 +3,43 @@ use serde::{Deserialize, Serialize};
 
 pub type RgbColor = (u8, u8, u8);
 
+// ── 掉落表组件 ─────────────────────────────────────
+
+#[derive(Component, Clone, Debug)]
+pub struct LootTable {
+    pub entries: Vec<LootEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LootEntry {
+    pub item_id: usize,
+    /// 独立掉落概率 0.0 ~ 1.0
+    pub chance: f32,
+    pub min_count: u32,
+    pub max_count: u32,
+}
+
+impl LootTable {
+    /// 掷骰决定掉落物，返回掉落的 ItemStack 列表
+    pub fn roll(&self) -> Vec<crate::items::ItemStack> {
+        let mut results = Vec::new();
+        for entry in &self.entries {
+            if rand::random::<f32>() < entry.chance {
+                let count = if entry.min_count == entry.max_count {
+                    entry.min_count
+                } else {
+                    let range = entry.max_count - entry.min_count + 1;
+                    entry.min_count + (rand::random::<u32>() % range)
+                };
+                if count > 0 {
+                    results.push(crate::items::ItemStack::new(entry.item_id, count));
+                }
+            }
+        }
+        results
+    }
+}
+
 // ── 基础 ECS 组件 ─────────────────────────────────
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -76,31 +113,31 @@ impl Stats {
         let level_scale = floor.saturating_sub(1);
         match glyph {
             'r' => {
-                let s = level_scale as i32;
+                let s = level_scale as f64;
                 Self {
-                    level: (1 + level_scale).min(20) as u32, hp: 10 + s * 4, max_hp: 10 + s * 4,
+                    level: (1 + level_scale as u32).min(20), hp: 10 + (s * 4.0) as i32, max_hp: 10 + (s * 4.0) as i32,
                     mp: 0, max_mp: 0,
-                    exp: (6 + s * 3) as u64, exp_to_next: 0,
+                    exp: (6.0 + s * 6.0 * 0.5).round() as u64, exp_to_next: 0,
                     attack: (4 + level_scale).min(18) as u32, agility: 5, magic_mastery: 1, defense: 2,
                     crit_rate: 0.05, crit_damage: 0.50,
                 }
             },
             'g' => {
-                let s = level_scale as i32;
+                let s = level_scale as f64;
                 Self {
-                    level: (1 + level_scale).min(20) as u32, hp: 18 + s * 6, max_hp: 18 + s * 6,
+                    level: (1 + level_scale as u32).min(20), hp: 18 + (s * 6.0) as i32, max_hp: 18 + (s * 6.0) as i32,
                     mp: 0, max_mp: 0,
-                    exp: (15 + s * 6) as u64, exp_to_next: 0,
+                    exp: (15.0 + s * 15.0 * 0.5).round() as u64, exp_to_next: 0,
                     attack: (6 + level_scale * 2).min(25) as u32, agility: 3, magic_mastery: 3, defense: 4,
                     crit_rate: 0.05, crit_damage: 0.50,
                 }
             },
             _ => {
-                let s = level_scale as i32;
+                let s = level_scale as f64;
                 Self {
-                    level: (1 + level_scale).min(20) as u32,
-                    hp: 10 + s * 3, max_hp: 10 + s * 3,
-                    mp: 0, max_mp: 0, exp: (5 + s * 3) as u64, exp_to_next: 0,
+                    level: (1 + level_scale as u32).min(20),
+                    hp: 10 + (s * 3.0) as i32, max_hp: 10 + (s * 3.0) as i32,
+                    mp: 0, max_mp: 0, exp: (5.0 + s * 5.0 * 0.5).round() as u64, exp_to_next: 0,
                     attack: (3 + level_scale).min(10) as u32, agility: 3, magic_mastery: 1, defense: 3,
                     crit_rate: 0.05, crit_damage: 0.50,
                 }

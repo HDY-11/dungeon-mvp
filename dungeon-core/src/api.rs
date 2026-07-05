@@ -2,30 +2,20 @@ use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use crate::{
     components::*, items::*, resources::*,
-    make_items, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
+    MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 
 use crate::world;
 
-pub fn exp_to_next_level(level: u32) -> u64 { 20 * (level as u64).pow(2) + 30 * (level as u64) }
+pub fn exp_to_next_level(level: u32) -> u64 {
+    (25.0 * (level as f64).powf(1.5) + 10.0 * level as f64) as u64
+}
 pub fn max_hp_for(level: u32, defense: u32) -> i32 { 20 + level as i32 * 5 + defense as i32 * 2 }
 pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mastery as i32 }
 pub fn defense_bonus(level: u32) -> u32 { (level as f64).log2().floor() as u32 }
 
-pub fn equipment_bonus(inv: &Inventory, equip: &Equipment) -> StatBonus {
-    let mut total = StatBonus::default();
-    for &opt in [&equip.weapon, &equip.armor, &equip.ring] {
-        if let Some(idx) = opt {
-            if let Some(item) = inv.items.get(idx) {
-                let b = &item.bonus;
-                total.attack += b.attack; total.defense += b.defense;
-                total.magic_mastery += b.magic_mastery; total.agility += b.agility;
-                total.hp += b.hp; total.crit_rate += b.crit_rate; total.crit_damage += b.crit_damage;
-            }
-        }
-    }
-    total
-}
+// ── effective_attack / effective_defense ────────────
+// (equipment_bonus 已在 items.rs 中定义)
 
 pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>) -> u32 {
     let bonus = equipment_bonus(inv, equip);
@@ -41,7 +31,7 @@ pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, buff
     def.max(0) as u32
 }
 
-// ── FOV — 对称阴影投射（symmetric-shadowcasting）────
+// ── FOV ─────────────────────────────────────────────
 
 pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> Vec<(usize, usize)> {
     use symmetric_shadowcasting::compute_fov;
@@ -51,7 +41,7 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
 
     let mut is_blocking = |pos: (isize, isize)| {
         if pos.0 < 0 || pos.0 >= MAP_WIDTH as isize || pos.1 < 0 || pos.1 >= MAP_HEIGHT as isize {
-            return true; // 地图外 = 阻挡
+            return true;
         }
         map.tiles[pos.1 as usize][pos.0 as usize] == Tile::Wall
     };
@@ -104,9 +94,32 @@ pub fn collect_renderables() -> Vec<(usize, usize, char, RgbColor)> {
     query.iter(&mut *w).map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect()
 }
 
+// ── 工具函数：给怪物添加 LootTable ─────────────────
+
+fn rat_loot() -> LootTable {
+    LootTable {
+        entries: vec![
+            LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 2 }, // 生物血肉
+        ],
+    }
+}
+
+fn goblin_loot() -> LootTable {
+    LootTable {
+        entries: vec![
+            LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 3 }, // 生物血肉
+            LootEntry { item_id: 11, chance: 0.6, min_count: 1, max_count: 1 }, // 破布
+            LootEntry { item_id: 12, chance: 0.4, min_count: 1, max_count: 1 }, // 坚硬木棍
+            LootEntry { item_id: 13, chance: 0.3, min_count: 1, max_count: 1 }, // 染血兽牙
+        ],
+    }
+}
+
 // ── setup_world ─────────────────────────────────────
 
 pub fn setup_world() -> World {
+    ItemRegistry::load(); // 初始化全局物品注册表
+
     let mut world = World::new();
     let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
     let mut map = Map::new();
@@ -130,7 +143,7 @@ pub fn setup_world() -> World {
     world.insert_resource(map);
     let player_agi = 10;
 
-    let mut pc = PlayerClass::Warrior;
+    let pc = PlayerClass::Warrior;
     let mut cmd = world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
@@ -157,11 +170,13 @@ pub fn setup_world() -> World {
     for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
             let mon_agi = Stats::monster(glyph, 1).agility;
+            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
             let mut cmd = world.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
+                loot,
             ));
             cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
             cmd.insert(crate::action::CanChase::new(100));
@@ -178,11 +193,16 @@ pub fn setup_world() -> World {
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
-    let items = make_items();
-    for (i, item) in items.iter().enumerate() {
+    // 地面物品（使用 ItemStack + ItemRegistry）
+    let ground_item_ids = [0, 1, 2, 3]; // 锈铁剑, 木盾, 皮甲, 攻击戒指
+    for (i, &item_id) in ground_item_ids.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
-            world.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
-                Renderable { glyph: item.glyph, color: item.color }));
+            let def = ItemRegistry::global().get(item_id).unwrap();
+            world.spawn((
+                ItemPickup { stack: ItemStack::new(item_id, 1) },
+                Position { x: ix + 1, y: iy },
+                Renderable { glyph: def.glyph, color: def.color },
+            ));
         }
     }
     world
@@ -198,8 +218,8 @@ pub fn descend() {
     let player_data = {
         let mut q = w.query::<(Entity, &Stats, &Position, &Inventory, &Equipment, &Skills, &PlayerClass, &AttackName)>();
         let (e, s, p, inv, eq, sk, cls, atk) = q.iter(&mut *w).next().unwrap();
-        (e, s.clone(), *p, inv.items.clone(), inv.capacity,
-         Equipment { weapon: eq.weapon, armor: eq.armor, ring: eq.ring },
+        (e, s.clone(), *p, inv.stacks.clone(), inv.capacity,
+         Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
          sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
     };
 
@@ -217,7 +237,7 @@ pub fn descend() {
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 8, visible_tiles: Vec::new() },
         player_data.1.clone(), EntityName("冒险者".into()),
-        Inventory { items: player_data.3, capacity: player_data.4 },
+        Inventory { stacks: player_data.3, capacity: player_data.4 },
     ));
     cmd.insert(Skills { list: player_data.6 });
     cmd.insert(player_data.8.clone());
@@ -225,7 +245,6 @@ pub fn descend() {
     cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_data.1.agility) });
     cmd.insert(crate::action::CanMove::new(100));
     cmd.insert(crate::action::CanWait::new(0));
-    let _e = cmd.id();
 
     let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
     w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
@@ -243,11 +262,13 @@ pub fn descend() {
     for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
         if let Some(&(mx, my)) = spawn_points.get(i) {
             let mon_agi = Stats::monster(glyph, f).agility;
+            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
             let mut cmd = w.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 Stats::monster(glyph, f), EntityName(mon_name.into()),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
+                loot,
             ));
             cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
             cmd.insert(crate::action::CanChase::new(100));
@@ -257,11 +278,16 @@ pub fn descend() {
         }
     }
 
-    let items = make_items();
-    for (i, item) in items.iter().enumerate() {
+    // 地面物品（使用 ItemStack + ItemRegistry）
+    let ground_item_ids = [0, 1, 2, 3];
+    for (i, &item_id) in ground_item_ids.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
-            w.spawn((ItemPickup { item: item.clone() }, Position { x: ix + 1, y: iy },
-                Renderable { glyph: item.glyph, color: item.color }));
+            let def = ItemRegistry::global().get(item_id).unwrap();
+            w.spawn((
+                ItemPickup { stack: ItemStack::new(item_id, 1) },
+                Position { x: ix + 1, y: iy },
+                Renderable { glyph: def.glyph, color: def.color },
+            ));
         }
     }
     w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));

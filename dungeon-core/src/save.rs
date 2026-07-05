@@ -6,36 +6,9 @@ use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub struct RawItem {
-    pub name: String, pub glyph: char, pub r: u8, pub g: u8, pub b: u8,
-    pub slot: EquipmentSlot,
-    pub bonus_atk: i32, pub bonus_def: i32, pub bonus_mag: i32, pub bonus_agi: i32,
-    pub bonus_hp: i32, pub bonus_crit_rate: f32, pub bonus_crit_dmg: f32,
-    pub desc: String,
-}
-
-impl RawItem {
-    fn from_item(item: &ItemInstance) -> Self {
-        let (r, g, b) = item.color;
-        Self {
-            name: item.name.clone(), glyph: item.glyph, r, g, b, slot: item.slot,
-            bonus_atk: item.bonus.attack, bonus_def: item.bonus.defense,
-            bonus_mag: item.bonus.magic_mastery, bonus_agi: item.bonus.agility,
-            bonus_hp: item.bonus.hp, bonus_crit_rate: item.bonus.crit_rate, bonus_crit_dmg: item.bonus.crit_damage,
-            desc: item.description.clone(),
-        }
-    }
-    fn into_item(self) -> ItemInstance {
-        ItemInstance {
-            name: self.name, glyph: self.glyph, color: (self.r, self.g, self.b),
-            slot: self.slot, description: self.desc,
-            bonus: StatBonus {
-                attack: self.bonus_atk, defense: self.bonus_def,
-                magic_mastery: self.bonus_mag, agility: self.bonus_agi,
-                hp: self.bonus_hp, crit_rate: self.bonus_crit_rate, crit_damage: self.bonus_crit_dmg,
-            },
-        }
-    }
+pub struct SavedStack {
+    pub item_id: usize,
+    pub count: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -43,8 +16,10 @@ pub struct GameSave {
     pub floor: u32,
     pub px: u16, pub py: u16,
     pub st: SavedStats,
-    pub inv: Vec<RawItem>,
-    pub weapon: Option<u16>, pub armor: Option<u16>, pub ring: Option<u16>,
+    pub inv: Vec<SavedStack>,
+    pub weapon_item_id: Option<usize>, pub weapon_count: Option<u32>,
+    pub armor_item_id: Option<usize>, pub armor_count: Option<u32>,
+    pub ring_item_id: Option<usize>, pub ring_count: Option<u32>,
     pub buffs: SavedBuffs,
     pub map_tiles: Vec<u8>,
     pub rooms: Vec<Room>,
@@ -98,7 +73,7 @@ pub struct SavedMonster {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item: RawItem }
+pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item_id: usize, pub count: u32 }
 
 impl GameSave {
     pub fn capture() -> Self {
@@ -119,13 +94,15 @@ impl GameSave {
             sq.iter(&mut *w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon, armor, ring, buffs, player_class) = {
+        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, player_class) = {
             let mut q = w.query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>();
             let (pos, st, inv, eq, bu, cls) = q.iter(&mut *w).next().unwrap();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
-             inv.items.iter().map(RawItem::from_item).collect(),
-             eq.weapon.map(|i| i as u16), eq.armor.map(|i| i as u16), eq.ring.map(|i| i as u16),
+             inv.stacks.iter().map(|s| SavedStack { item_id: s.item_id, count: s.count }).collect(),
+             eq.weapon.as_ref().map(|s| s.item_id), eq.weapon.as_ref().map(|s| s.count),
+             eq.armor.as_ref().map(|s| s.item_id), eq.armor.as_ref().map(|s| s.count),
+             eq.ring.as_ref().map(|s| s.item_id), eq.ring.as_ref().map(|s| s.count),
              SavedBuffs::from(bu.clone()), Some(cls.clone()))
         };
 
@@ -143,12 +120,15 @@ impl GameSave {
         let items = {
             let mut iq = w.query::<(&ItemPickup, &Position)>();
             iq.iter(&mut *w).map(|(item, pos)| SavedGroundItem {
-                x: pos.x as u16, y: pos.y as u16, item: RawItem::from_item(&item.item),
+                x: pos.x as u16, y: pos.y as u16,
+                item_id: item.stack.item_id, count: item.stack.count,
             }).collect()
         };
 
         Self {
-            floor, px, py, st, inv, weapon, armor, ring, buffs,
+            floor, px, py, st, inv,
+            weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
+            buffs,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
@@ -190,11 +170,16 @@ impl GameSave {
             Renderable { glyph: '@', color: (255, 255, 0) },
             MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
             s, EntityName("冒险者".into()),
-            Inventory { items: self.inv.into_iter().map(RawItem::into_item).collect(), capacity: 36 },
+            Inventory {
+                stacks: self.inv.into_iter()
+                    .map(|s| ItemStack { item_id: s.item_id, count: s.count })
+                    .collect(),
+                capacity: 36,
+            },
             Equipment {
-                weapon: self.weapon.map(|i| i as usize),
-                armor: self.armor.map(|i| i as usize),
-                ring: self.ring.map(|i| i as usize),
+                weapon: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1) }),
+                armor: self.armor_item_id.map(|id| ItemStack { item_id: id, count: self.armor_count.unwrap_or(1) }),
+                ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1) }),
             },
             pc.clone(), self.buffs.into_buffs(),
             Skills { list: pc.skills() },
@@ -208,25 +193,48 @@ impl GameSave {
         for m in self.monsters {
             let mon_stats = m.st.into_stats();
             let agi = mon_stats.agility;
+            let loot = if m.glyph == 'g' { goblin_loot() } else { rat_loot() };
             w.spawn((
                 Monster, Position { x: m.x as usize, y: m.y as usize },
                 Renderable { glyph: m.glyph, color: (m.r, m.g, m.b) },
                 Viewshed { range: 8, visible_tiles: Vec::new() },
                 mon_stats, EntityName(m.name),
                 AttackName(if m.glyph == 'r' { "撕咬" } else { "重击" }.into()),
+                loot,
                 Reaction { time: agility_to_reaction(agi) },
                 CanChase::new(100), CanFlee::new(200), CanWander::new(50), CanWait::new(0),
             ));
         }
 
         for gi in self.items {
-            let (glyph, r, g, b) = (gi.item.glyph, gi.item.r, gi.item.g, gi.item.b);
-            let item = gi.item.into_item();
+            let def = ItemRegistry::global().get(gi.item_id).unwrap_or_else(|| {
+                panic!("物品 ID {} 在注册表中不存在", gi.item_id)
+            });
             w.spawn((
-                ItemPickup { item },
+                ItemPickup { stack: ItemStack { item_id: gi.item_id, count: gi.count } },
                 Position { x: gi.x as usize, y: gi.y as usize },
-                Renderable { glyph, color: (r, g, b) },
+                Renderable { glyph: def.glyph, color: def.color },
             ));
         }
+    }
+}
+
+// 复用 api.rs 中的怪物掉落定义
+fn rat_loot() -> LootTable {
+    LootTable {
+        entries: vec![
+            crate::components::LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 2 },
+        ],
+    }
+}
+
+fn goblin_loot() -> LootTable {
+    LootTable {
+        entries: vec![
+            crate::components::LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 3 },
+            crate::components::LootEntry { item_id: 11, chance: 0.6, min_count: 1, max_count: 1 },
+            crate::components::LootEntry { item_id: 12, chance: 0.4, min_count: 1, max_count: 1 },
+            crate::components::LootEntry { item_id: 13, chance: 0.3, min_count: 1, max_count: 1 },
+        ],
     }
 }

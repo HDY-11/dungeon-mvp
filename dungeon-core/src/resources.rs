@@ -20,7 +20,7 @@ pub struct GameRng { pub rng: rand::rngs::SmallRng }
 pub struct PendingExp { pub amount: u64 }
 
 #[derive(Resource, Default)]
-pub struct PendingPickup { pub entries: Vec<(Entity, crate::ItemInstance)> }
+pub struct PendingPickup { pub entries: Vec<(Entity, crate::items::ItemStack)> }
 
 #[derive(Resource, Default)]
 pub struct PendingSkill { pub idx: Option<usize> }

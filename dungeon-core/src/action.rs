@@ -350,9 +350,10 @@ pub fn advance_action_queue() -> f32 {
         ready = w.resource_mut::<ActionQueue>().pop_ready();
     }
 
-    // 阶段 2：执行就绪条目
+    // 阶段 2：执行就绪条目（每个条目执行后立即结算经验）
     for entry in &ready {
         execute_entry(entry);
+        let _ = world!(mut).run_system_once(crate::systems::apply_exp_system);
     }
     dist
 }
@@ -525,19 +526,20 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
 }
 
 fn execute_attack(attacker: Entity, target: Entity) {
-    use crate::{Stats, EntityName, EventLog, AttackName, equipment_bonus, Buffs, Inventory, Equipment, PendingExp};
+    use crate::{Stats, EntityName, EventLog, AttackName, Buffs, Inventory, Equipment, PendingExp, LootTable, ItemPickup, Renderable, Position};
     // 先读取需要的数据
-    let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def);
+    let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def, target_pos);
     {
         let mut w = world!(mut);
         let Some(target_stats) = w.get::<Stats>(target).cloned() else { return };
         let Some(attacker_stats) = w.get::<Stats>(attacker).cloned() else { return };
         name = w.get::<EntityName>(target).map(|n| n.0.clone()).unwrap_or("怪物".into());
         atk_name = w.get::<AttackName>(attacker).map(|a| a.0.clone()).unwrap_or("攻击".into());
+        target_pos = w.get::<Position>(target).map(|p| (p.x, p.y));
         let inventory = w.get::<Inventory>(attacker);
         let equipment = w.get::<Equipment>(attacker);
         base_atk = if let (Some(inv), Some(eq)) = (inventory, equipment) {
-            equipment_bonus(inv, eq).attack + attacker_stats.attack as i32
+            crate::equipment_bonus(inv, eq).attack + attacker_stats.attack as i32
         } else {
             attacker_stats.attack as i32
         };
@@ -552,7 +554,7 @@ fn execute_attack(attacker: Entity, target: Entity) {
     let crit = crit_rate > rand::random::<f32>();
     let dmg = if crit { (raw_dmg as f32 * (1.0 + crit_dmg)).round() as i32 } else { raw_dmg };
 
-    // 应用伤害
+    // 应用伤害 + 掉落
     {
         let mut w = world!(mut);
         let Some(mut target_stats) = w.get_mut::<Stats>(target) else { return };
@@ -560,11 +562,26 @@ fn execute_attack(attacker: Entity, target: Entity) {
         if target_stats.hp <= 0 {
             w.resource_mut::<PendingExp>().amount += exp;
             w.resource_mut::<EventLog>().push(format!("你{}击杀了{}！获得{}经验", atk_name, name, exp));
+
+            // 掉落
+            let loot_stacks = w.get::<LootTable>(target)
+                .map(|lt| lt.roll())
+                .unwrap_or_default();
+            if let Some((px, py)) = target_pos {
+                for stack in &loot_stacks {
+                    let sname = stack.name();
+                    w.resource_mut::<EventLog>().push(format!("{}掉落{}x{}", name, sname, stack.count));
+                    w.spawn((
+                        ItemPickup { stack: stack.clone() },
+                        Position { x: px, y: py },
+                        Renderable { glyph: stack.glyph(), color: stack.color() },
+                    ));
+                }
+            }
+
             w.entity_mut(target).despawn();
-            true
         } else {
             w.resource_mut::<EventLog>().push(format!("你{}了{}{}，造成{}点伤害", atk_name, name, if crit { "！暴击" } else { "" }, dmg));
-            false
         }
     };
 
