@@ -176,7 +176,6 @@ impl GameSave {
         w.insert_resource(EventLog::new());
         w.insert_resource(TurnManager::new());
         w.insert_resource(PendingLevelUp::default());
-        w.insert_resource(PendingPlayerAction::default());
         w.insert_resource(OccupancyMap::new());
         w.insert_resource(ActionQueue::default());
         w.insert_resource(InputBuffer::default());

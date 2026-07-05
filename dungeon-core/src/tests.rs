@@ -1,7 +1,6 @@
 //! 行动系统单元测试 — 验证逻辑正确性
 use crate::*;
 use crate::action::*;
-use crate::resources::{PendingInput, GamePacing};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 
@@ -13,7 +12,7 @@ fn fresh_world() -> World {
 
 #[test]
 fn test_all_resources_exist() {
-    let mut world = fresh_world();
+    let world = fresh_world();
     assert!(world.get_resource::<ActionQueue>().is_some());
     assert!(world.get_resource::<InputBuffer>().is_some());
     assert!(world.get_resource::<PlayerPreview>().is_some());
@@ -31,12 +30,6 @@ fn test_global_world_startup() {
     let world = setup_world();
     crate::global::set_world(world);
 
-    // 写和读在不同作用域
-    {
-        let mut w = world!(mut);
-        w.insert_resource(GamePacing::default());
-        w.insert_resource(PendingInput::default());
-    }
     {
         let w = world!();
         assert!(!w.resource::<TurnManager>().game_over);
@@ -97,11 +90,6 @@ fn test_player_preview_tap_tap() {
 #[test]
 fn test_action_queue_advance() {
     crate::global::set_world(fresh_world());
-    {
-        let mut w = world!(mut);
-        w.insert_resource(GamePacing::default());
-        w.insert_resource(PendingInput::default());
-    }
     // 获取 entity 和数据
     let player;
     let reaction_time;
@@ -142,11 +130,6 @@ fn test_action_queue_advance() {
 #[test]
 fn test_monster_decision_produces_actions() {
     crate::global::set_world(fresh_world());
-    {
-        let mut w = world!(mut);
-        w.insert_resource(GamePacing::default());
-        w.insert_resource(PendingInput::default());
-    }
     {
         let w = world!();
         assert!(w.resource::<ActionQueue>().entries.is_empty());

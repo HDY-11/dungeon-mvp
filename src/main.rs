@@ -1,10 +1,9 @@
-//! Dungeon MVP — 主循环、输入处理、模式切换。
+//! Dungeon MVP — 主循环、输入处理。
 //!
 //! 逻辑层：dungeon-core（ECS 组件、系统、AV 引擎）
 //! 渲染层：dungeon-render（UI 绘制、行动轴、状态面板）
 //! 应用层：本文件（主循环、输入、模式）
 
-use std::collections::HashSet;
 use std::io::{self, stdout};
 use std::time::Instant;
 
@@ -15,13 +14,14 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    apply_skill, check_death_system, descend,
+    check_death_system, descend,
     fov_system, rebuild_occupancy, save::GameSave,
-    setup_world, skill_tick_system, update_map_memory,
-    Equipment, EquipmentSlot, EventLog, GamePacing, Inventory, ItemInstance,
-    ManualOverride, Monster, PacingMode, PendingInput, PendingLevelUp, PendingPlayerAction,
-    Player, Position, Skills, Stairs, Stats, TurnManager, Viewshed,
+    setup_world, update_map_memory,
+    Equipment, EquipmentSlot, EventLog, Inventory, ItemInstance,
+    PendingLevelUp,
+    Player, Position, Skills, Stairs, Stats, TurnManager,
 };
+use dungeon_core::action::ActionKindV3;
 use dungeon_render::{draw_level_up, draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
@@ -65,8 +65,6 @@ fn run(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     game_start: Instant,
 ) -> io::Result<()> {
-    world!(mut).insert_resource(GamePacing::default());
-    world!(mut).insert_resource(PendingInput::default());
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     terminal.draw(|frame| render_ui(frame, game_start))?;
@@ -77,10 +75,6 @@ fn run(
             break Ok(());
         }
         drop(w);
-
-        // 闪烁相位
-        let blink = !world!().resource::<GamePacing>().blink_phase;
-        world!(mut).resource_mut::<GamePacing>().blink_phase = blink;
 
         terminal.draw(|frame| render_ui(frame, game_start))?;
 
@@ -115,25 +109,6 @@ fn advance_and_settle() {
     world!(mut).run_system_once(fov_system);
     update_map_memory();
     world!(mut).run_system_once(check_death_system);
-
-    // 5. 退出战斗检查
-    if world!().resource::<GamePacing>().combat_active {
-        let mut w = world!(mut);
-        let fov: HashSet<(usize, usize)> = {
-            let mut q = w.query::<(&Player, &Viewshed)>();
-            q.iter(&mut *w).next()
-                .map(|(_, v)| v.visible_tiles.iter().copied().collect())
-                .unwrap_or_default()
-        };
-        let any_in_fov = {
-            let mut q = w.query::<(&Monster, &Position)>();
-            q.iter(&mut *w).any(|(_, p)| fov.contains(&(p.x, p.y)))
-        };
-        if !any_in_fov {
-            w.resource_mut::<GamePacing>().combat_active = false;
-            w.resource_mut::<GamePacing>().mode = PacingMode::Exploration;
-        }
-    }
 }
 
 // ══════════════════════════════════════════════════════
@@ -144,45 +119,33 @@ fn handle_input(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     key: crossterm::event::KeyEvent,
 ) -> io::Result<()> {
-    if handle_global_toggle(key) {
-        return Ok(());
-    }
-
-    // 新输入模型：tap-tap 确认方向键
     match key.code {
+        // ── 耗时行动：tap-tap 确认 ──
         KeyCode::Up => handle_player_direction(0, -1),
         KeyCode::Down => handle_player_direction(0, 1),
         KeyCode::Left => handle_player_direction(-1, 0),
         KeyCode::Right => handle_player_direction(1, 0),
+        KeyCode::Char('.') => {
+            use dungeon_core::action::{ActionKindV3, Reaction, CanWait};
+            if let Some(e) = player_entity() {
+                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
+                let duration = world!().get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
+                handle_timed_action(e, ActionKindV3::Wait, reaction_time, duration);
+            }
+        }
+        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
+            use dungeon_core::action::{ActionKindV3, Reaction};
+            let (idx, _) = skill_info(key);
+            if let Some(e) = player_entity() {
+                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
+                handle_timed_action(e, ActionKindV3::Skill(idx), reaction_time, 600.0);
+            }
+        }
+        // ── 非耗时行动：单击执行 ──
         KeyCode::Char('q') | KeyCode::Esc => {
             if confirm_quit(terminal)? {
                 world!(mut).resource_mut::<TurnManager>().wants_quit = true;
             }
-        }
-        KeyCode::Char('.') => {
-            // 确认等待（直接入队）
-            use dungeon_core::action::{ActionKindV3, ActionQueue, Reaction, CanWait};
-            let player = crate::player_entity();
-            if let Some(e) = player {
-                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-                let duration = world!().get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
-                world!(mut).resource_mut::<ActionQueue>()
-                    .enqueue(e, ActionKindV3::Wait, reaction_time, duration);
-            }
-        }
-        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            // 技能：直接入队（暂用旧系统）
-            let (idx, _name) = skill_info(key);
-            use dungeon_core::action::{ActionKindV3, ActionQueue, Reaction};
-            let player = crate::player_entity();
-            if let Some(e) = player {
-                let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-                world!(mut).resource_mut::<ActionQueue>()
-                    .enqueue(e, ActionKindV3::Skill(idx), reaction_time, 600.0);
-            }
-        }
-        KeyCode::Char('5') => {
-            // 等待（已在上面的 '.' 中处理）
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
             open_inventory(terminal)?;
@@ -204,7 +167,6 @@ fn handle_input(
         KeyCode::Char('>') => {
             if on_stairs() && confirm_stairs(terminal)? {
                 descend();
-                world!(mut).resource_mut::<GamePacing>().mode = PacingMode::Exploration;
             }
         }
         _ => {}
@@ -212,47 +174,18 @@ fn handle_input(
     Ok(())
 }
 
-/// 方向键处理器：语义识别 + tap-tap 确认
-/// 第一次按 → 预览（Move/Attack/无效），第二次同方向 → 入队
-fn handle_player_direction(dx: isize, dy: isize) {
-    use dungeon_core::action::{PlayerPreview, ActionKindV3, ActionQueue, Reaction, CanMove};
-    use dungeon_core::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster};
-    let Some(entity) = crate::player_entity() else { return };
+/// 统一 tap-tap 处理：第一次 tap 设置预览，第二次相同行动确认入队
+fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, duration: f32) {
+    use dungeon_core::action::{PlayerPreview, ActionQueue};
 
-    // 检查目标格
-    let (nx, ny): (usize, usize);
-    let target_info = {
-        let w = world!();
-        let Some(pos) = w.get::<Position>(entity) else { return };
-        nx = pos.x.wrapping_add_signed(dx);
-        ny = pos.y.wrapping_add_signed(dy);
-        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
-        let tile = w.resource::<Map>().tiles[ny][nx];
-        let has_enemy = w.resource::<OccupancyMap>().cells[ny][nx]
-            .and_then(|e| if w.get::<Monster>(e).is_some() { Some(e) } else { None });
-        (tile == Tile::Floor, has_enemy)
-    };
-
-    // 墙 → 丢弃
-    if !target_info.0 && target_info.1.is_none() { return; }
-
-    // 确定行动类型
-    let kind = if target_info.1.is_some() {
-        ActionKindV3::Attack { target: target_info.1.unwrap() }
-    } else {
-        ActionKindV3::Move { dx, dy }
-    };
-
-    let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
-    let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
-
-    // 检查是否是第二次 tap（相同方向）
     let is_confirm = {
         let w = world!();
         let preview = w.resource::<PlayerPreview>();
         match (&preview.kind, &kind) {
-            (Some(ActionKindV3::Move { dx: pd, dy: pd2 }), ActionKindV3::Move { .. })
-                if *pd == dx && *pd2 == dy => true,
+            (Some(ActionKindV3::Move { dx: pd, dy: pd2 }), ActionKindV3::Move { dx, dy })
+                if *pd == *dx && *pd2 == *dy => true,
+            (Some(ActionKindV3::Wait), ActionKindV3::Wait) => true,
+            (Some(ActionKindV3::Skill(a)), ActionKindV3::Skill(b)) if *a == *b => true,
             (Some(ActionKindV3::Attack { .. }), ActionKindV3::Attack { .. }) => true,
             _ => false,
         }
@@ -264,6 +197,37 @@ fn handle_player_direction(dx: isize, dy: isize) {
     } else {
         world!(mut).resource_mut::<PlayerPreview>().kind = Some(kind);
     }
+}
+
+/// 方向键处理器：语义识别 + tap-tap 确认
+/// 第一次按 → 预览（Move/Attack/无效），第二次同方向 → 入队
+fn handle_player_direction(dx: isize, dy: isize) {
+    use dungeon_core::action::{ActionKindV3, Reaction, CanMove};
+    use dungeon_core::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster};
+    let Some(entity) = player_entity() else { return };
+
+    // 检查目标格
+    let kind = {
+        let w = world!();
+        let Some(pos) = w.get::<Position>(entity) else { return };
+        let nx = pos.x.wrapping_add_signed(dx);
+        let ny = pos.y.wrapping_add_signed(dy);
+        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
+        let tile = w.resource::<Map>().tiles[ny][nx];
+        let has_enemy = w.resource::<OccupancyMap>().cells[ny][nx]
+            .and_then(|e| if w.get::<Monster>(e).is_some() { Some(e) } else { None });
+        // 墙 → 丢弃
+        if tile != Tile::Floor && has_enemy.is_none() { return; }
+        if let Some(target) = has_enemy {
+            ActionKindV3::Attack { target }
+        } else {
+            ActionKindV3::Move { dx, dy }
+        }
+    };
+
+    let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
+    let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
+    handle_timed_action(entity, kind, reaction_time, duration);
 }
 
 /// 从按键获取技能索引和名称。
@@ -283,23 +247,6 @@ fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {
             .unwrap_or_default()
     };
     (idx, names.get(idx).cloned())
-}
-
-/// 全局切换键：'m' = 强制手动, 'a' = 清除覆盖(恢复自动跟随)。
-fn handle_global_toggle(key: crossterm::event::KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Char('m') | KeyCode::Char('M') => {
-            world!(mut).resource_mut::<GamePacing>().manual_override = ManualOverride::ForceManual;
-            world!(mut).resource_mut::<EventLog>().push("切换为手动模式");
-            true
-        }
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            world!(mut).resource_mut::<GamePacing>().manual_override = ManualOverride::None;
-            world!(mut).resource_mut::<EventLog>().push("切换为自动模式");
-            true
-        }
-        _ => false,
-    }
 }
 
 // ══════════════════════════════════════════════════════

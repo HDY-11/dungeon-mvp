@@ -23,7 +23,6 @@ pub fn movement_system(
     mut pending: ResMut<PendingExp>,
     mut event_log: ResMut<EventLog>,
     mut pending_pickup: ResMut<PendingPickup>,
-    mut pacing: ResMut<GamePacing>,
 ) {
     for (mut pos, mut dir, player_stats, inv, equip, buffs, player_atk) in player_query.iter_mut() {
         if dir.dx == 0 && dir.dy == 0 { continue; }
@@ -40,7 +39,6 @@ pub fn movement_system(
                 let is_crit = player_stats.crit_rate > rand::random::<f32>();
                 if is_crit { dmg = (dmg as f32 * (1.0 + player_stats.crit_damage)).round() as i32; }
                 monster_stats.hp -= dmg;
-                pacing.combat_active = true;
                 if monster_stats.hp <= 0 {
                     pending.amount += monster_stats.exp;
                     event_log.push(format!("你{}击杀了{}！获得{}经验", player_atk.0, mon_name.0, monster_stats.exp));

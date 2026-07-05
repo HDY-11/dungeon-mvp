@@ -525,7 +525,7 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
 }
 
 fn execute_attack(attacker: Entity, target: Entity) {
-    use crate::{Stats, EntityName, EventLog, GamePacing, AttackName, equipment_bonus, Buffs, Inventory, Equipment, PendingExp};
+    use crate::{Stats, EntityName, EventLog, AttackName, equipment_bonus, Buffs, Inventory, Equipment, PendingExp};
     // 先读取需要的数据
     let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def);
     {
@@ -564,7 +564,6 @@ fn execute_attack(attacker: Entity, target: Entity) {
             true
         } else {
             w.resource_mut::<EventLog>().push(format!("你{}了{}{}，造成{}点伤害", atk_name, name, if crit { "！暴击" } else { "" }, dmg));
-            w.resource_mut::<GamePacing>().combat_active = true;
             false
         }
     };

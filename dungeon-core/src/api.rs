@@ -122,7 +122,6 @@ pub fn setup_world() -> World {
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
-    world.insert_resource(PendingPlayerAction::default());
     world.insert_resource(crate::action::ActionQueue::default());
     world.insert_resource(crate::action::InputBuffer::default());
     world.insert_resource(crate::action::PlayerPreview::default());

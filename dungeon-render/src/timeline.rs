@@ -1,5 +1,5 @@
 use dungeon_core::{
-    EntityName, GamePacing, Player, Position, Renderable,
+    EntityName, Player, Position, Renderable,
     action::{ActionQueue, ActionKindV3, PlayerPreview},
 };
 use dungeon_core::world;
@@ -23,6 +23,8 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'stat
     let preview_text = match &preview {
         Some(ActionKindV3::Move { dx, dy }) => format!("移动({},{})", dx, dy),
         Some(ActionKindV3::Wait) => "等待".into(),
+        Some(ActionKindV3::Skill(i)) => format!("技能{}", i + 1),
+        Some(ActionKindV3::Attack { .. }) => "攻击".into(),
         _ => "等待输入".into(),
     };
     out.push(Line::from(vec![
@@ -71,12 +73,7 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'stat
     }
 
     out.push(Line::from(Span::raw("")));
-    let w = world!();
-    let p = w.resource::<GamePacing>();
-    if p.combat_active {
-        out.push(Line::from(Span::styled(" [战斗中]", Style::default().fg(Color::Yellow))));
-    }
-    out.push(Line::from(Span::styled(" ↑↓←→移动 1-4技能", Style::default().fg(Color::DarkGray))));
+    out.push(Line::from(Span::styled(" ↑↓←→移动 1-4技能 (双击确认)", Style::default().fg(Color::DarkGray))));
     out.push(Line::from(Span::styled(" .等待  e背包", Style::default().fg(Color::DarkGray))));
     out
 }
