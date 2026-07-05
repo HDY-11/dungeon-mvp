@@ -73,9 +73,16 @@ pub fn update_map_memory() {
 
 pub fn rebuild_occupancy() {
     let mut w = world!(mut);
+    // 排除地上物品（ItemPickup），它们不阻挡移动
+    let pickups: std::collections::HashSet<Entity> = {
+        let mut q = w.query::<(Entity, &ItemPickup)>();
+        q.iter(&mut *w).map(|(e, _)| e).collect()
+    };
     let positions: Vec<(Entity, usize, usize)> = {
         let mut q = w.query::<(Entity, &Position)>();
-        q.iter(&mut *w).map(|(e, p)| (e, p.x, p.y)).collect()
+        q.iter(&mut *w)
+            .filter(|(e, _)| !pickups.contains(e))
+            .map(|(e, p)| (e, p.x, p.y)).collect()
     };
     let mut occupancy = w.resource_mut::<OccupancyMap>();
     occupancy.clear();
@@ -91,7 +98,11 @@ pub fn set_player_dir(dx: isize, dy: isize) {
 pub fn collect_renderables() -> Vec<(usize, usize, char, RgbColor)> {
     let mut w = world!(mut);
     let mut query = w.query::<(&Position, &Renderable)>();
-    query.iter(&mut *w).map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect()
+    let mut v: Vec<(usize, usize, char, RgbColor)> = query.iter(&mut *w)
+        .map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect();
+    // 玩家 (@) 最后渲染，确保显示在最上层
+    v.sort_by_key(|(_, _, glyph, _)| if *glyph == '@' { 1 } else { 0 });
+    v
 }
 
 // ── 工具函数：给怪物添加 LootTable ─────────────────

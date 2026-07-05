@@ -209,6 +209,11 @@ impl ActionQueue {
         });
         ready
     }
+
+    /// 检查实体是否已在队列中
+    pub fn has_entity(&self, entity: Entity) -> bool {
+        self.entries.iter().any(|e| e.entity == entity)
+    }
 }
 
 // ══════════════════════════════════════════════════════
@@ -318,12 +323,11 @@ pub fn run_monster_decision() {
         pb.cmp(pa).then_with(|| crate::global::rand_u8().cmp(&crate::global::rand_u8()))
     });
 
-    // 阶段 3：入队
+    // 阶段 3：入队（已在队列中的实体不再重复入队）
     let mut w = world!(mut);
-    let mut seen = std::collections::HashSet::new();
     let mut queue = w.resource_mut::<ActionQueue>();
     for (entity, _priority, reaction_time, duration, kind) in &collected {
-        if seen.insert(*entity) {
+        if !queue.has_entity(*entity) {
             queue.enqueue(*entity, kind.clone(), *reaction_time, *duration);
         }
     }
