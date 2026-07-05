@@ -217,7 +217,7 @@ fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, d
     };
 
     if is_confirm {
-        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, reaction_time);
+        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, reaction_time, duration);
         world!(mut).resource_mut::<PlayerPreview>().kind = None;
     } else {
         world!(mut).resource_mut::<PlayerPreview>().kind = Some(kind);

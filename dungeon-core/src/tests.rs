@@ -65,14 +65,16 @@ fn test_player_preview_tap_tap() {
     }
     // 第二次 tap
     let reaction;
+    let duration;
     {
         let w = world!();
         reaction = w.get::<Reaction>(player).unwrap().time;
+        duration = w.get::<CanMove>(player).unwrap().duration;
     }
     {
         let mut w = world!(mut);
         w.resource_mut::<ActionQueue>().enqueue(
-            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction,
+            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction, duration,
         );
         w.resource_mut::<PlayerPreview>().kind = None;
     }
@@ -91,16 +93,18 @@ fn test_action_queue_advance() {
     // 获取 entity 和数据
     let player;
     let reaction_time;
+    let duration;
     {
         let mut w = world!(mut);
         player = w.query::<(Entity, &Player)>().iter(&mut w).next().map(|(e, _)| e).unwrap();
         reaction_time = w.get::<Reaction>(player).unwrap().time;
+        duration = w.get::<CanMove>(player).unwrap().duration;
     }
     // 入队
     {
         let mut w = world!(mut);
         w.resource_mut::<ActionQueue>().enqueue(
-            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction_time,
+            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction_time, duration,
         );
     }
     // 推进一半
