@@ -429,6 +429,12 @@ enum InvPanel { Left, Right }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DetailSource { LeftInv, LeftEquip, Right }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    List(InvPanel),
+    Detail(DetailSource, usize),
+}
+
 fn collect_ground_items_in(w: &bevy_ecs::prelude::World) -> Vec<(ItemStack, Entity)> {
     let pp = {
         let mut q = w.try_query::<(&Player, &Position)>().unwrap();
@@ -451,8 +457,7 @@ fn open_inventory(
     let _left_scroll: usize = 0;
     let mut right_sel: usize = 0;
     let _right_scroll: usize = 0;
-    let mut panel = InvPanel::Left;
-    let mut detail: Option<(DetailSource, usize)> = None;
+    let mut page = Page::List(InvPanel::Left);
 
     fn left_count(_eq: &Equipment, inv: &Inventory) -> usize {
         3 + inv.stacks.len()
@@ -469,10 +474,10 @@ fn open_inventory(
         };
 
         let left_total = left_count(&equip, &Inventory { stacks: inv_stacks.clone(), capacity: inv_cap });
-        if panel == InvPanel::Left && left_total > 0 && left_sel >= left_total {
+        if page == Page::List(InvPanel::Left) && left_total > 0 && left_sel >= left_total {
             left_sel = left_total - 1;
         }
-        if panel == InvPanel::Right && ground.len() > 0 && right_sel >= ground.len() {
+        if page == Page::List(InvPanel::Right) && ground.len() > 0 && right_sel >= ground.len() {
             right_sel = ground.len() - 1;
         }
 
@@ -484,7 +489,7 @@ fn open_inventory(
             frame.render_widget(block, area);
             let inner = Rect { x: area.x + 1, y: area.y + 1, width: area.width.saturating_sub(2), height: area.height.saturating_sub(2) };
 
-            if let Some((dsrc, idx)) = &detail {
+            if let Page::Detail(dsrc, idx) = &page {
                 let (stack, source_label, _is_equip_slot) = match dsrc {
                     DetailSource::LeftEquip => ([&equip.weapon, &equip.armor, &equip.ring][*idx].as_ref(), "装备", true),
                     DetailSource::LeftInv => (inv_stacks.get(*idx), "背包", false),
@@ -541,7 +546,7 @@ fn open_inventory(
                 // Left panel
                 {
                     let mut lines = vec![];
-                    let act = panel == InvPanel::Left;
+                    let act = page == Page::List(InvPanel::Left);
                     let ts = if act { Style::default().fg(Color::Cyan).bold() } else { Style::default().fg(Color::DarkGray) };
                     lines.push(Line::from(Span::styled(" ── 装备 ──", ts)));
                     for i in 0..3 {
@@ -578,7 +583,7 @@ fn open_inventory(
                 // Right panel
                 {
                     let mut lines = vec![];
-                    let act = panel == InvPanel::Right;
+                    let act = page == Page::List(InvPanel::Right);
                     let ts = if act { Style::default().fg(Color::Cyan).bold() } else { Style::default().fg(Color::DarkGray) };
                     lines.push(Line::from(Span::styled(" ── 地面 ──", ts)));
                     if ground.is_empty() {
@@ -603,125 +608,145 @@ fn open_inventory(
         })?;
 
         if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => { if detail.is_some() { detail = None; } else { break; } }
-                KeyCode::Left => { if detail.is_none() { panel = InvPanel::Left; } }
-                KeyCode::Right => { if detail.is_none() { panel = InvPanel::Right; } }
-                KeyCode::Up => {
-                    if detail.is_some() { continue; }
-                    match panel { InvPanel::Left => { if left_sel > 0 { left_sel -= 1; } } InvPanel::Right => { if right_sel > 0 { right_sel -= 1; } } }
+            match (&page, key.code) {
+                // ── 全局：Esc/q → 详情页返回列表，列表页退出 ──
+                (Page::Detail(_, _), KeyCode::Esc | KeyCode::Char('q')) => {
+                    page = Page::List(InvPanel::Left);
                 }
-                KeyCode::Down => {
-                    if detail.is_some() { continue; }
-                    match panel { InvPanel::Left => { if left_sel + 1 < left_total { left_sel += 1; } } InvPanel::Right => { if right_sel + 1 < ground.len() { right_sel += 1; } } }
-                }
-                KeyCode::Enter => {
-                    if detail.is_some() { continue; }
-                    match panel {
-                        InvPanel::Left => {
-                            if left_sel < 3 { if [&equip.weapon, &equip.armor, &equip.ring][left_sel].is_some() { detail = Some((DetailSource::LeftEquip, left_sel)); } }
-                            else if left_sel - 3 < inv_stacks.len() { detail = Some((DetailSource::LeftInv, left_sel - 3)); }
+                (Page::List(_), KeyCode::Esc | KeyCode::Char('q')) => break,
+
+                // ── 列表页：方向键 ──
+                (Page::List(_), KeyCode::Left) => page = Page::List(InvPanel::Left),
+                (Page::List(_), KeyCode::Right) => page = Page::List(InvPanel::Right),
+                (Page::List(InvPanel::Left), KeyCode::Up) => { if left_sel > 0 { left_sel -= 1; } }
+                (Page::List(InvPanel::Right), KeyCode::Up) => { if right_sel > 0 { right_sel -= 1; } }
+                (Page::List(InvPanel::Left), KeyCode::Down) => { if left_sel + 1 < left_total { left_sel += 1; } }
+                (Page::List(InvPanel::Right), KeyCode::Down) => { if right_sel + 1 < ground.len() { right_sel += 1; } }
+
+                // ── 列表页：Enter 打开详情 ──
+                (Page::List(InvPanel::Left), KeyCode::Enter) => {
+                    if left_sel < 3 {
+                        if [&equip.weapon, &equip.armor, &equip.ring][left_sel].is_some() {
+                            page = Page::Detail(DetailSource::LeftEquip, left_sel);
                         }
-                        InvPanel::Right => { if !ground.is_empty() { detail = Some((DetailSource::Right, right_sel)); } }
+                    } else if left_sel - 3 < inv_stacks.len() {
+                        page = Page::Detail(DetailSource::LeftInv, left_sel - 3);
                     }
                 }
-                // 字母数字按键：根据当前页面分派
-                // 列表页 → 全部作为快捷键选中背包物品
-                // 详情页 → e=装备 d=丢弃 u=卸载（g=拾取已单独处理）
-                KeyCode::Char(ch) if ch.is_ascii_digit() || ch.is_ascii_lowercase() => {
-                    if detail.is_none() {
-                        // ── 列表页：快捷键选中 ──
-                        panel = InvPanel::Left;
-                        let idx = if ch.is_ascii_digit() {
-                            ch.to_digit(10).unwrap() as usize
-                        } else {
-                            (ch as usize - 'a' as usize) + 10
-                        };
-                        let inv_idx = idx;
-                        if inv_idx < inv_stacks.len() {
-                            left_sel = 3 + inv_idx;
-                            detail = Some((DetailSource::LeftInv, inv_idx));
-                        }
+                (Page::List(InvPanel::Right), KeyCode::Enter) => {
+                    if !ground.is_empty() {
+                        page = Page::Detail(DetailSource::Right, right_sel);
+                    }
+                }
+
+                // ── 列表页：g 拾取（单独处理避免被热键捕获）──
+                (Page::List(_), KeyCode::Char('g')) => {
+                    let (ppx, ppy) = { let w = world!(); let mut q = w.try_query::<(&Player, &Position)>().unwrap(); q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                    let mut collected = Vec::new();
+                    { let w = world!(); let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap(); for (e, pu, po) in q.iter(&w) { if po.x == ppx && po.y == ppy { collected.push((e, pu.stack.clone())); } } }
+                    let mut logs = Vec::new(); let mut despawn = Vec::new();
+                    for (e, s) in &collected { let mut w = world!(mut); let mut q = w.query::<(&mut Inventory,)>(); if let Some((mut inv,)) = q.iter_mut(&mut *w).next() { let leftover = inv.add(s.item_id, s.count); let picked = s.count - leftover; if picked > 0 { logs.push(format!("拾取了{}x{}", s.name(), picked)); } despawn.push(*e); } }
+                    for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }
+                    for msg in logs { let mut w = world!(mut); w.resource_mut::<EventLog>().push(msg); }
+                }
+
+                // ── 列表页：字母数字快捷键选中背包 ──
+                (Page::List(_), KeyCode::Char(ch)) if ch.is_ascii_digit() || ch.is_ascii_lowercase() => {
+                    let idx = if ch.is_ascii_digit() {
+                        ch.to_digit(10).unwrap() as usize
                     } else {
-                        // ── 详情页：功能键分派 ──
-                        match ch {
-                            'e' => {
-                                if let Some((DetailSource::LeftInv, idx)) = detail {
-                                    let mut w = world!(mut);
-                                    let item_id = {
-                                        let mut q = w.query::<(&Inventory,)>();
-                                        q.iter_mut(&mut *w).next()
-                                            .and_then(|(inv,)| inv.stacks.get(idx).map(|s| s.item_id))
-                                    };
-                                    if let Some(id) = item_id {
-                                        if let Some(def) = ItemStack::new(id, 1).def() {
-                                            if matches!(def.slot, EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring) {
-                                                let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                                                if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                                                    let slot_free = match def.slot {
-                                                        EquipmentSlot::Weapon => eq.weapon.is_none(),
-                                                        EquipmentSlot::Armor => eq.armor.is_none(),
-                                                        EquipmentSlot::Ring => eq.ring.is_none(),
-                                                        _ => false,
-                                                    };
-                                                    if slot_free {
-                                                        inv.remove(idx, 1);
-                                                        let es = ItemStack::new(id, 1);
-                                                        match def.slot {
-                                                            EquipmentSlot::Weapon => eq.weapon = Some(es),
-                                                            EquipmentSlot::Armor => eq.armor = Some(es),
-                                                            EquipmentSlot::Ring => eq.ring = Some(es),
-                                                            _ => {}
-                                                        }
-                                                    } else {
-                                                        w.resource_mut::<EventLog>().push("该装备槽位已被占用".to_string());
-                                                    }
-                                                } else {
-                                                    w.resource_mut::<EventLog>().push("找不到玩家背包/装备".to_string());
-                                                }
-                                            } else {
-                                                w.resource_mut::<EventLog>().push("该物品无法装备".to_string());
-                                            }
-                                        }
-                                    }
-                                    detail = None;
-                                }
-                            'u' => {
-                                if let Some((DetailSource::LeftEquip, idx)) = detail {
-                                    let mut w = world!(mut);
-                                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                                        let slot = match idx { 0 => &mut eq.weapon, 1 => &mut eq.armor, 2 => &mut eq.ring, _ => unreachable!() };
-                                        if let Some(stack) = slot.take() {
-                                            let leftover = inv.add(stack.item_id, stack.count);
-                                            if leftover > 0 {
-                                                let pp = { let mut p = w.query::<(&Player, &Position)>(); p.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
-                                                w.spawn((ItemPickup { stack: ItemStack::new(stack.item_id, leftover) }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: stack.glyph(), color: stack.color() }));
-                                            }
-                                        }
-                                    }
-                                    detail = None;
-                                }
-                            }
-                            'd' => {
-                                if let Some((DetailSource::LeftInv, idx)) = detail {
-                                    let mut w = world!(mut);
-                                    let pp = { let mut q = w.query::<(&Player, &Position)>(); q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
-                                    let mut q = w.query::<(&mut Inventory,)>();
-                                    if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
-                                        if let Some(stack) = inv.stacks.get(idx) {
-                                            let drop = ItemStack::new(stack.item_id, 1);
-                                            inv.remove(idx, 1);
-                                            w.spawn((ItemPickup { stack: drop.clone() }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: drop.glyph(), color: drop.color() }));
-                                            detail = None;
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+                        (ch as usize - 'a' as usize) + 10
+                    };
+                    if idx < inv_stacks.len() {
+                        left_sel = 3 + idx;
+                        page = Page::Detail(DetailSource::LeftInv, idx);
                     }
                 }
+
+                // ── 详情页：装备/丢弃/卸载/拾取 ──
+                (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('e')) => {
+                    let mut w = world!(mut);
+                    let item_id = {
+                        let mut q = w.query::<(&Inventory,)>();
+                        q.iter_mut(&mut *w).next()
+                            .and_then(|(inv,)| inv.stacks.get(*idx).map(|s| s.item_id))
+                    };
+                    if let Some(id) = item_id {
+                        if let Some(def) = ItemStack::new(id, 1).def() {
+                            if matches!(def.slot, EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring) {
+                                let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                                if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                                    let slot_free = match def.slot {
+                                        EquipmentSlot::Weapon => eq.weapon.is_none(),
+                                        EquipmentSlot::Armor => eq.armor.is_none(),
+                                        EquipmentSlot::Ring => eq.ring.is_none(),
+                                        _ => false,
+                                    };
+                                    if slot_free {
+                                        inv.remove(*idx, 1);
+                                        let es = ItemStack::new(id, 1);
+                                        match def.slot {
+                                            EquipmentSlot::Weapon => eq.weapon = Some(es),
+                                            EquipmentSlot::Armor => eq.armor = Some(es),
+                                            EquipmentSlot::Ring => eq.ring = Some(es),
+                                            _ => {}
+                                        }
+                                    } else {
+                                        w.resource_mut::<EventLog>().push("该装备槽位已被占用".to_string());
+                                    }
+                                } else {
+                                    w.resource_mut::<EventLog>().push("找不到玩家背包/装备".to_string());
+                                }
+                            } else {
+                                w.resource_mut::<EventLog>().push("该物品无法装备".to_string());
+                            }
+                        }
+                    }
+                    page = Page::List(InvPanel::Left);
+                }
+                (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
+                    let mut w = world!(mut);
+                    let pp = { let mut q = w.query::<(&Player, &Position)>(); q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                    let mut q = w.query::<(&mut Inventory,)>();
+                    if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
+                        if let Some(stack) = inv.stacks.get(*idx) {
+                            let drop = ItemStack::new(stack.item_id, 1);
+                            inv.remove(*idx, 1);
+                            w.spawn((ItemPickup { stack: drop.clone() }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: drop.glyph(), color: drop.color() }));
+                        }
+                    }
+                    page = Page::List(InvPanel::Left);
+                }
+                (Page::Detail(DetailSource::LeftEquip, idx), KeyCode::Char('u')) => {
+                    let mut w = world!(mut);
+                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                        let slot = match idx { 0 => &mut eq.weapon, 1 => &mut eq.armor, 2 => &mut eq.ring, _ => unreachable!() };
+                        if let Some(stack) = slot.take() {
+                            let leftover = inv.add(stack.item_id, stack.count);
+                            if leftover > 0 {
+                                let pp = { let mut p = w.query::<(&Player, &Position)>(); p.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                                w.spawn((ItemPickup { stack: ItemStack::new(stack.item_id, leftover) }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: stack.glyph(), color: stack.color() }));
+                            }
+                        }
+                    }
+                    page = Page::List(InvPanel::Left);
+                }
+                (Page::Detail(DetailSource::Right, _), KeyCode::Char('g')) => {
+                    let (ppx, ppy) = { let w = world!(); let mut q = w.try_query::<(&Player, &Position)>().unwrap(); q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                    let mut collected = Vec::new();
+                    { let w = world!(); let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap(); for (e, pu, po) in q.iter(&w) { if po.x == ppx && po.y == ppy { collected.push((e, pu.stack.clone())); } } }
+                    let mut logs = Vec::new(); let mut despawn = Vec::new();
+                    for (e, s) in &collected { let mut w = world!(mut); let mut q = w.query::<(&mut Inventory,)>(); if let Some((mut inv,)) = q.iter_mut(&mut *w).next() { let leftover = inv.add(s.item_id, s.count); let picked = s.count - leftover; if picked > 0 { logs.push(format!("拾取了{}x{}", s.name(), picked)); } despawn.push(*e); } }
+                    for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }
+                    for msg in logs { let mut w = world!(mut); w.resource_mut::<EventLog>().push(msg); }
+                    page = Page::List(InvPanel::Left);
+                }
+
+                // ── 详情页：其他键忽略 ──
+                (Page::Detail(_, _), _) => {}
+
+                // ── 其他 ──
                 _ => {}
             }
         }
