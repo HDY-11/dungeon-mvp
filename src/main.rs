@@ -625,74 +625,12 @@ fn open_inventory(
                         InvPanel::Right => { if !ground.is_empty() { detail = Some((DetailSource::Right, right_sel)); } }
                     }
                 }
-                // 特定操作键放在热键之前，确保详情页能收到
-                KeyCode::Char('g') => {
-                    // Copy of pickup_ground inline
-                    let (ppx, ppy) = { let w = world!(); let mut q = w.try_query::<(&Player, &Position)>().unwrap(); q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
-                    let mut collected = Vec::new();
-                    { let w = world!(); let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap(); for (e, pu, po) in q.iter(&w) { if po.x == ppx && po.y == ppy { collected.push((e, pu.stack.clone())); } } }
-                    let mut logs = Vec::new(); let mut despawn = Vec::new();
-                    for (e, s) in &collected { let mut w = world!(mut); let mut q = w.query::<(&mut Inventory,)>(); if let Some((mut inv,)) = q.iter_mut(&mut *w).next() { let leftover = inv.add(s.item_id, s.count); let picked = s.count - leftover; if picked > 0 { logs.push(format!("拾取了{}x{}", s.name(), picked)); } despawn.push(*e); } }
-                    for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }
-                    for msg in logs { let mut w = world!(mut); w.resource_mut::<EventLog>().push(msg); }
-                    if let Some((DetailSource::Right, _)) = detail { detail = None; }
-                }
-                KeyCode::Char('e') => {
-                    if let Some((DetailSource::LeftInv, idx)) = detail {
-                        let mut w = world!(mut);
-                        // 获取物品 ID
-                        let item_id = {
-                            let mut q = w.query::<(&Inventory,)>();
-                            q.iter_mut(&mut *w).next()
-                                .and_then(|(inv,)| inv.stacks.get(idx).map(|s| s.item_id))
-                        };
-                        if let Some(id) = item_id {
-                            if let Some(def) = ItemStack::new(id, 1).def() {
-                                let can_equip = match def.slot {
-                                    EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring => true,
-                                    _ => false,
-                                };
-                                if can_equip {
-                                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                                        let slot_free = match def.slot {
-                                            EquipmentSlot::Weapon => eq.weapon.is_none(),
-                                            EquipmentSlot::Armor => eq.armor.is_none(),
-                                            EquipmentSlot::Ring => eq.ring.is_none(),
-                                            _ => false,
-                                        };
-                                        if slot_free {
-                                            inv.remove(idx, 1);
-                                            let es = ItemStack::new(id, 1);
-                                            match def.slot {
-                                                EquipmentSlot::Weapon => eq.weapon = Some(es),
-                                                EquipmentSlot::Armor => eq.armor = Some(es),
-                                                EquipmentSlot::Ring => eq.ring = Some(es),
-                                                _ => {}
-                                            }
-                                            detail = None; // 装备成功后退出详情页
-                                        } else {
-                                            w.resource_mut::<EventLog>()
-                                                .push("该装备槽位已被占用".to_string());
-                                            detail = None;
-                                        }
-                                    } else {
-                                        w.resource_mut::<EventLog>()
-                                            .push("找不到玩家背包/装备".to_string());
-                                        detail = None;
-                                    }
-                                } else {
-                                    w.resource_mut::<EventLog>()
-                                        .push("该物品无法装备".to_string());
-                                    detail = None;
-                                }
-                            }
-                        }
-                    }
-                }
-                // 热键（排除 e/g/u/d 以免拦截详情页的装备/拾取/丢弃/卸载）
-                KeyCode::Char(ch) if ch.is_ascii_digit() || (ch.is_ascii_lowercase() && !matches!(ch, 'e' | 'g' | 'u' | 'd')) => {
+                // 字母数字按键：根据当前页面分派
+                // 列表页 → 全部作为快捷键选中背包物品
+                // 详情页 → e=装备 d=丢弃 u=卸载（g=拾取已单独处理）
+                KeyCode::Char(ch) if ch.is_ascii_digit() || ch.is_ascii_lowercase() => {
                     if detail.is_none() {
+                        // ── 列表页：快捷键选中 ──
                         panel = InvPanel::Left;
                         let idx = if ch.is_ascii_digit() {
                             ch.to_digit(10).unwrap() as usize
@@ -704,28 +642,83 @@ fn open_inventory(
                             left_sel = 3 + inv_idx;
                             detail = Some((DetailSource::LeftInv, inv_idx));
                         }
-                    }
-                }
-                KeyCode::Char('d') => {
-                    if let Some((DetailSource::LeftInv, idx)) = detail {
-                        let mut w = world!(mut);
-                        let pp = { let mut q = w.query::<(&Player, &Position)>(); q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
-                        let mut q = w.query::<(&mut Inventory,)>();
-                        if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
-                            if let Some(stack) = inv.stacks.get(idx) { let drop = ItemStack::new(stack.item_id, 1); inv.remove(idx, 1); w.spawn((ItemPickup { stack: drop.clone() }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: drop.glyph(), color: drop.color() })); detail = None; }
-                        }
-                    }
-                }
-                KeyCode::Char('u') => {
-                    if let Some((DetailSource::LeftEquip, idx)) = detail {
-                        let mut w = world!(mut); let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
-                        if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                            let slot = match idx { 0 => &mut eq.weapon, 1 => &mut eq.armor, 2 => &mut eq.ring, _ => unreachable!() };
-                            if let Some(stack) = slot.take() {
-                                let leftover = inv.add(stack.item_id, stack.count);
-                                if leftover > 0 { let pp = { let mut p = w.query::<(&Player, &Position)>(); p.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) }; w.spawn((ItemPickup { stack: ItemStack::new(stack.item_id, leftover) }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: stack.glyph(), color: stack.color() })); }
-                                detail = None;
+                    } else {
+                        // ── 详情页：功能键分派 ──
+                        match ch {
+                            'e' => {
+                                if let Some((DetailSource::LeftInv, idx)) = detail {
+                                    let mut w = world!(mut);
+                                    let item_id = {
+                                        let mut q = w.query::<(&Inventory,)>();
+                                        q.iter_mut(&mut *w).next()
+                                            .and_then(|(inv,)| inv.stacks.get(idx).map(|s| s.item_id))
+                                    };
+                                    if let Some(id) = item_id {
+                                        if let Some(def) = ItemStack::new(id, 1).def() {
+                                            if matches!(def.slot, EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring) {
+                                                let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                                                if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                                                    let slot_free = match def.slot {
+                                                        EquipmentSlot::Weapon => eq.weapon.is_none(),
+                                                        EquipmentSlot::Armor => eq.armor.is_none(),
+                                                        EquipmentSlot::Ring => eq.ring.is_none(),
+                                                        _ => false,
+                                                    };
+                                                    if slot_free {
+                                                        inv.remove(idx, 1);
+                                                        let es = ItemStack::new(id, 1);
+                                                        match def.slot {
+                                                            EquipmentSlot::Weapon => eq.weapon = Some(es),
+                                                            EquipmentSlot::Armor => eq.armor = Some(es),
+                                                            EquipmentSlot::Ring => eq.ring = Some(es),
+                                                            _ => {}
+                                                        }
+                                                    } else {
+                                                        w.resource_mut::<EventLog>().push("该装备槽位已被占用".to_string());
+                                                    }
+                                                } else {
+                                                    w.resource_mut::<EventLog>().push("找不到玩家背包/装备".to_string());
+                                                }
+                                            } else {
+                                                w.resource_mut::<EventLog>().push("该物品无法装备".to_string());
+                                            }
+                                        }
+                                    }
+                                    detail = None;
+                                }
+                            'u' => {
+                                if let Some((DetailSource::LeftEquip, idx)) = detail {
+                                    let mut w = world!(mut);
+                                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                                    if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
+                                        let slot = match idx { 0 => &mut eq.weapon, 1 => &mut eq.armor, 2 => &mut eq.ring, _ => unreachable!() };
+                                        if let Some(stack) = slot.take() {
+                                            let leftover = inv.add(stack.item_id, stack.count);
+                                            if leftover > 0 {
+                                                let pp = { let mut p = w.query::<(&Player, &Position)>(); p.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                                                w.spawn((ItemPickup { stack: ItemStack::new(stack.item_id, leftover) }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: stack.glyph(), color: stack.color() }));
+                                            }
+                                        }
+                                    }
+                                    detail = None;
+                                }
                             }
+                            'd' => {
+                                if let Some((DetailSource::LeftInv, idx)) = detail {
+                                    let mut w = world!(mut);
+                                    let pp = { let mut q = w.query::<(&Player, &Position)>(); q.iter(&mut *w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)) };
+                                    let mut q = w.query::<(&mut Inventory,)>();
+                                    if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
+                                        if let Some(stack) = inv.stacks.get(idx) {
+                                            let drop = ItemStack::new(stack.item_id, 1);
+                                            inv.remove(idx, 1);
+                                            w.spawn((ItemPickup { stack: drop.clone() }, Position { x: pp.0, y: pp.1 }, Renderable { glyph: drop.glyph(), color: drop.color() }));
+                                            detail = None;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
