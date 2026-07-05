@@ -677,14 +677,6 @@ fn open_inventory(
                     let n = c.to_digit(10).unwrap() as usize;
                     if n < left_total { left_sel = n; }
                 }
-                // a-z 快捷选中（e/d/g/q/u 已有其他功能，不冲突）
-                k @ KeyCode::Char(c) if c.is_ascii_lowercase()
-                    && !matches!(c, 'e' | 'd' | 'g' | 'q' | 'u')
-                    && detail.is_none() && panel == InvPanel::Left =>
-                {
-                    let n = 10 + (c as u8 - b'a') as usize;
-                    if n < left_total { left_sel = n; }
-                }
                 KeyCode::Char('g') => {
                     let (ppx, ppy) = {
                         let mut w = world!(mut);

@@ -45,7 +45,7 @@ pub struct CanMove {
 
 impl CanMove {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 0.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 300.0, cooldown_remaining: 0.0, priority }
     }
 
     pub fn condition(target_is_walkable: bool, target_is_occupied_by_enemy: bool) -> bool {
@@ -63,7 +63,7 @@ pub struct CanChase {
 
 impl CanChase {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 0.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 250.0, cooldown_remaining: 0.0, priority }
     }
 
     pub fn condition(can_see_player: bool) -> bool {
@@ -81,7 +81,7 @@ pub struct CanFlee {
 
 impl CanFlee {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 0.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 250.0, cooldown_remaining: 0.0, priority }
     }
 
     pub fn condition(hp_ratio: f32) -> bool {
