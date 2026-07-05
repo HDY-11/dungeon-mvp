@@ -59,6 +59,7 @@ fn run(
 ) -> io::Result<()> {
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
+    update_visible_memory();
     terminal.draw(|frame| render_ui(frame, game_start))?;
 
     // ── 独立输入线程：16ms 限流轮询，250ms 按键去重 ──
@@ -380,6 +381,7 @@ fn title_screen(
                     dungeon_core::global::set_world(world);
                     world!(mut).run_system_once(fov_system);
                     update_map_memory();
+                    update_visible_memory();
                     return Ok(Instant::now());
                 }
                 KeyCode::F(9) => {
@@ -388,6 +390,7 @@ fn title_screen(
                             save.restore();
                             world!(mut).run_system_once(fov_system);
                             update_map_memory();
+                            update_visible_memory();
                             return Ok(Instant::now());
                         }
                     }
