@@ -200,12 +200,9 @@ impl ActionQueue {
         self.entries.iter().any(|e| e.entity == entity)
     }
 
-    /// 入队或替换：如果实体已在队列中，替换其行动和 AV
-    pub fn enqueue_or_replace(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.entity == entity) {
-            entry.kind = kind;
-            entry.av_remaining = av;
-        } else {
+    /// 入队或跳过：如果实体已在队列中，忽略（保留已有行动的 av）
+    pub fn enqueue_if_absent(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
+        if !self.entries.iter().any(|e| e.entity == entity) {
             self.entries.push(ActionEntry { entity, kind, av_remaining: av });
         }
     }

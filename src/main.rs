@@ -114,10 +114,28 @@ fn run(
     }
 }
 
-fn advance_and_settle() {
-    use dungeon_core::action::{advance_action_queue, run_monster_decision};
+/// 持续推进直到玩家的行动被执行
+fn advance_until_player_acted() {
+    use dungeon_core::action::{advance_action_queue, ActionQueue};
+    loop {
+        let dist = advance_action_queue();
+        if dist <= 0.0 { break; }
+        let player_done = {
+            let mut w = world!(mut);
+            let player = w.query::<(Entity, &Player)>().iter(&mut *w).next().map(|(e, _)| e);
+            match player {
+                Some(p) => !w.resource::<ActionQueue>().has_entity(p),
+                None => true,
+            }
+        };
+        if player_done { break; }
+    }
+}
 
-    advance_action_queue();
+fn advance_and_settle() {
+    use dungeon_core::action::run_monster_decision;
+
+    advance_until_player_acted();
     run_monster_decision();
 
     rebuild_occupancy();
@@ -301,7 +319,7 @@ fn handle_timed_action(entity: Entity, kind: ActionKindV3, av: f32) -> bool {
     };
 
     if is_confirm {
-        world!(mut).resource_mut::<ActionQueue>().enqueue_or_replace(entity, kind, av);
+        world!(mut).resource_mut::<ActionQueue>().enqueue_if_absent(entity, kind, av);
         world!(mut).resource_mut::<PlayerPreview>().kind = None;
         true
     } else {
