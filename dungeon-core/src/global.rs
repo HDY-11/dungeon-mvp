@@ -42,7 +42,7 @@ pub fn write_world() -> std::sync::RwLockWriteGuard<'static, World> {
         .unwrap()
 }
 
-/// 线程局部的随机数生成器（用于仲裁时随机选择相同优先级的行动）
+// 线程局部的随机数生成器（用于仲裁时随机选择相同优先级的行动）
 std::thread_local! {
     static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::seed_from_u64(0));
 }
