@@ -2,6 +2,65 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+// ── 物品分类（显示用） ──────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ItemClass {
+    Weapon,
+    Armor,
+    Ring,
+    Consumable,
+    Material,
+    Quest,
+}
+
+impl ItemClass {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ItemClass::Weapon => "武器",
+            ItemClass::Armor => "防具",
+            ItemClass::Ring => "戒指",
+            ItemClass::Consumable => "消耗品",
+            ItemClass::Material => "材料",
+            ItemClass::Quest => "任务物品",
+        }
+    }
+
+    /// 便捷图标（终端友好的 ASCII 字符）
+    pub fn icon(&self) -> &'static str {
+        match self {
+            ItemClass::Weapon => "/",
+            ItemClass::Armor => "]",
+            ItemClass::Ring => "=",
+            ItemClass::Consumable => "!",
+            ItemClass::Material => "&",
+            ItemClass::Quest => "*",
+        }
+    }
+}
+
+// ── 稀有度 ──────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Rarity {
+    #[default]
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+}
+
+impl Rarity {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Rarity::Common => "普通",
+            Rarity::Uncommon => "优秀",
+            Rarity::Rare => "稀有",
+            Rarity::Epic => "传说",
+        }
+    }
+}
+
 // ── 物品槽位 ────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,7 +68,6 @@ pub enum EquipmentSlot {
     Weapon,
     Armor,
     Ring,
-    Material,
 }
 
 // ── 属性加成 ────────────────────────────────────────
@@ -34,9 +92,22 @@ pub struct ItemDef {
     pub description: String,
     pub glyph: char,
     pub color: (u8, u8, u8),
-    pub slot: EquipmentSlot,
+    pub class: ItemClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<EquipmentSlot>,
     pub max_stack: u32,
     pub bonus: StatBonus,
+    #[serde(default)]
+    pub rarity: Rarity,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl ItemDef {
+    /// 检查是否属于某标签
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags.iter().any(|t| t == tag)
+    }
 }
 
 // ── 注册表（OnceLock 全局单例）─────────────────────

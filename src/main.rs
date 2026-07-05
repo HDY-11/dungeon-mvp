@@ -505,7 +505,12 @@ fn open_inventory(
                         lines.push(Line::from(Span::styled(format!(" 数量: {}", item.count), Style::default().fg(Color::White))));
                     }
                     if let Some(d) = item.def() {
-                        lines.push(Line::from(Span::styled(format!(" 槽位: {:?}", d.slot), Style::default().fg(Color::DarkGray))));
+                        let class_str = d.class.display_name();
+                        let slot_str = d.slot.map(|s| format!("{:?}", s)).unwrap_or_default();
+                        lines.push(Line::from(vec![
+                            Span::styled(format!(" 类别: {}", class_str), Style::default().fg(Color::DarkGray)),
+                            if !slot_str.is_empty() { Span::styled(format!(" [{}]", slot_str), Style::default().fg(Color::DarkGray)) } else { Span::raw("") },
+                        ]));
                         let b = &d.bonus;
                         let mut parts = Vec::new();
                         if b.attack != 0 { parts.push(format!("攻击{:+}", b.attack)); }
@@ -527,7 +532,7 @@ fn open_inventory(
                     match dsrc {
                         DetailSource::LeftEquip => lines.push(Line::from(Span::styled(" u:卸载装备", Style::default().fg(Color::DarkGray)))),
                         DetailSource::LeftInv => {
-                            if item.def().map_or(false, |d| !matches!(d.slot, EquipmentSlot::Material)) {
+                            if item.def().map_or(false, |d| d.slot.is_some()) {
                                 lines.push(Line::from(Span::styled(" e:装备  d:丢弃", Style::default().fg(Color::DarkGray))));
                             } else {
                                 lines.push(Line::from(Span::styled(" d:丢弃", Style::default().fg(Color::DarkGray))));
@@ -673,23 +678,21 @@ fn open_inventory(
                     };
                     if let Some(id) = item_id {
                         if let Some(def) = ItemStack::new(id, 1).def() {
-                            if matches!(def.slot, EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring) {
+                            if def.slot.is_some() {
                                 let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
                                 if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                                    let slot_free = match def.slot {
+                                    let slot_free = match def.slot.unwrap() {
                                         EquipmentSlot::Weapon => eq.weapon.is_none(),
                                         EquipmentSlot::Armor => eq.armor.is_none(),
                                         EquipmentSlot::Ring => eq.ring.is_none(),
-                                        _ => false,
                                     };
                                     if slot_free {
                                         inv.remove(*idx, 1);
                                         let es = ItemStack::new(id, 1);
-                                        match def.slot {
+                                        match def.slot.unwrap() {
                                             EquipmentSlot::Weapon => eq.weapon = Some(es),
                                             EquipmentSlot::Armor => eq.armor = Some(es),
                                             EquipmentSlot::Ring => eq.ring = Some(es),
-                                            _ => {}
                                         }
                                     } else {
                                         w.resource_mut::<EventLog>().push("该装备槽位已被占用".to_string());
