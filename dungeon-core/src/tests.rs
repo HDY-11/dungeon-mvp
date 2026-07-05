@@ -64,17 +64,17 @@ fn test_player_preview_tap_tap() {
         assert!(matches!(w.resource::<PlayerPreview>().kind, Some(ActionKindV3::Move { dx: 1, dy: 0 })));
     }
     // 第二次 tap
-    let reaction;
-    let duration;
+    let av;
     {
         let w = world!();
-        reaction = w.get::<Reaction>(player).unwrap().time;
-        duration = w.get::<CanMove>(player).unwrap().duration;
+        let reaction = w.get::<Reaction>(player).unwrap().time;
+        let duration = w.get::<CanMove>(player).unwrap().duration;
+        av = reaction + duration;
     }
     {
         let mut w = world!(mut);
         w.resource_mut::<ActionQueue>().enqueue(
-            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction, duration,
+            player, ActionKindV3::Move { dx: 1, dy: 0 }, av,
         );
         w.resource_mut::<PlayerPreview>().kind = None;
     }
@@ -92,25 +92,25 @@ fn test_action_queue_advance() {
     crate::global::set_world(fresh_world());
     // 获取 entity 和数据
     let player;
-    let reaction_time;
-    let duration;
+    let av;
     {
         let mut w = world!(mut);
         player = w.query::<(Entity, &Player)>().iter(&mut w).next().map(|(e, _)| e).unwrap();
-        reaction_time = w.get::<Reaction>(player).unwrap().time;
-        duration = w.get::<CanMove>(player).unwrap().duration;
+        let reaction_time = w.get::<Reaction>(player).unwrap().time;
+        let duration = w.get::<CanMove>(player).unwrap().duration;
+        av = reaction_time + duration;
     }
     // 入队
     {
         let mut w = world!(mut);
         w.resource_mut::<ActionQueue>().enqueue(
-            player, ActionKindV3::Move { dx: 1, dy: 0 }, reaction_time, duration,
+            player, ActionKindV3::Move { dx: 1, dy: 0 }, av,
         );
     }
     // 推进一半
     {
         let mut w = world!(mut);
-        w.resource_mut::<ActionQueue>().advance(reaction_time / 2.0);
+        w.resource_mut::<ActionQueue>().advance(av / 2.0);
     }
     {
         let w = world!();
@@ -119,7 +119,7 @@ fn test_action_queue_advance() {
     // 推进全部 → pop_ready
     {
         let mut w = world!(mut);
-        w.resource_mut::<ActionQueue>().advance(reaction_time);
+        w.resource_mut::<ActionQueue>().advance(av);
         let ready = w.resource_mut::<ActionQueue>().pop_ready();
         assert_eq!(ready.len(), 1);
     }

@@ -76,20 +76,15 @@ fn run(
 
 /// 每 tick 最低冷却推进量（队列为空时使用）
 fn advance_and_settle() {
-    use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
+    use dungeon_core::action::{run_monster_decision, advance_action_queue};
 
-    let dist = advance_action_queue();
-
-    if dist > 0.0 {
-        tick_all_cooldowns(dist);
-    }
-
+    advance_action_queue();
     run_monster_decision();
 
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     update_map_memory();
-    update_visible_memory(); // 视野实体记忆（保留）
+    update_visible_memory();
     world!(mut).run_system_once(check_death_system);
 }
 
@@ -156,7 +151,7 @@ fn handle_input(
             if let Some(e) = player_entity() {
                 let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
                 let duration = world!().get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
-                handle_timed_action(e, ActionKindV3::Wait, reaction_time, duration);
+                handle_timed_action(e, ActionKindV3::Wait, reaction_time + duration);
             }
         }
         KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
@@ -164,7 +159,7 @@ fn handle_input(
             let (idx, _) = skill_info(key);
             if let Some(e) = player_entity() {
                 let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-                handle_timed_action(e, ActionKindV3::Skill(idx), reaction_time, 600.0);
+                handle_timed_action(e, ActionKindV3::Skill(idx), reaction_time + 600.0);
             }
         }
         KeyCode::Char('q') | KeyCode::Esc => {
@@ -202,7 +197,7 @@ fn handle_input(
     Ok(())
 }
 
-fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, duration: f32) {
+fn handle_timed_action(entity: Entity, kind: ActionKindV3, av: f32) {
     use dungeon_core::action::{PlayerPreview, ActionQueue};
 
     let is_confirm = {
@@ -219,7 +214,7 @@ fn handle_timed_action(entity: Entity, kind: ActionKindV3, reaction_time: f32, d
     };
 
     if is_confirm {
-        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, reaction_time, duration);
+        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, av);
         world!(mut).resource_mut::<PlayerPreview>().kind = None;
     } else {
         world!(mut).resource_mut::<PlayerPreview>().kind = Some(kind);
@@ -250,7 +245,7 @@ fn handle_player_direction(dx: isize, dy: isize) {
 
     let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
     let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
-    handle_timed_action(entity, kind, reaction_time, duration);
+    handle_timed_action(entity, kind, reaction_time + duration);
 }
 
 fn skill_info(key: crossterm::event::KeyEvent) -> (usize, Option<String>) {

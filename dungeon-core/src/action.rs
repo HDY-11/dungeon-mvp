@@ -4,7 +4,7 @@
 //! 系统收集条件满足的行动 → 仲裁 → 入全局队列 → 推进执行。
 
 use crate::world;
-use crate::{Stats, Viewshed, Player, Position, EntityName, Monster};
+use crate::{Stats, Viewshed, Player, Position, EntityName, Monster, EventLog};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 
@@ -29,23 +29,22 @@ pub fn agility_to_reaction(agility: u32) -> f32 {
 // ══════════════════════════════════════════════════════
 //
 // 每个 Action 组件包含：
-//   - duration: 该行动的动作耗时（即执行后的冷却值）
-//   - cooldown_remaining: 当前剩余冷却
+//   - duration: 该行动的耗时
 //   - priority: 仲裁优先级
 //
+// AV = reaction_time + duration，作为单一值入队倒计时。
 // 反应时（reaction_time）不在此处——它是实体的属性（见 Reaction 组件）。
 
 /// 移动行动
 #[derive(Component, Clone, Debug)]
 pub struct CanMove {
     pub duration: f32,
-    pub cooldown_remaining: f32,
     pub priority: u32,
 }
 
 impl CanMove {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 300.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 300.0, priority }
     }
 
     pub fn condition(target_is_walkable: bool, target_is_occupied_by_enemy: bool) -> bool {
@@ -57,13 +56,12 @@ impl CanMove {
 #[derive(Component, Clone, Debug)]
 pub struct CanChase {
     pub duration: f32,
-    pub cooldown_remaining: f32,
     pub priority: u32,
 }
 
 impl CanChase {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 250.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 250.0, priority }
     }
 
     pub fn condition(can_see_player: bool) -> bool {
@@ -75,13 +73,12 @@ impl CanChase {
 #[derive(Component, Clone, Debug)]
 pub struct CanFlee {
     pub duration: f32,
-    pub cooldown_remaining: f32,
     pub priority: u32,
 }
 
 impl CanFlee {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 250.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 250.0, priority }
     }
 
     pub fn condition(hp_ratio: f32) -> bool {
@@ -93,13 +90,12 @@ impl CanFlee {
 #[derive(Component, Clone, Debug)]
 pub struct CanWander {
     pub duration: f32,
-    pub cooldown_remaining: f32,
     pub priority: u32,
 }
 
 impl CanWander {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 500.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 500.0, priority }
     }
 
     pub fn condition() -> bool {
@@ -111,13 +107,12 @@ impl CanWander {
 #[derive(Component, Clone, Debug)]
 pub struct CanWait {
     pub duration: f32,
-    pub cooldown_remaining: f32,
     pub priority: u32,
 }
 
 impl CanWait {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 800.0, cooldown_remaining: 0.0, priority }
+        Self { duration: 800.0, priority }
     }
 
     pub fn condition() -> bool {
@@ -145,10 +140,8 @@ pub enum ActionKindV3 {
 pub struct ActionEntry {
     pub entity: Entity,
     pub kind: ActionKindV3,
-    /// 反应时剩余（来自实体的 Reaction.time，入队时填入）
-    pub reaction_remaining: f32,
-    /// 冷却剩余（来自动作的 duration，执行后填入）
-    pub cooldown_remaining: f32,
+    /// AV 剩余 = reaction_time + duration，单一倒计时
+    pub av_remaining: f32,
 }
 
 /// 全局行动队列（FIFO）
@@ -162,45 +155,37 @@ impl Default for ActionQueue {
 }
 
 impl ActionQueue {
-    pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, reaction_time: f32, duration: f32) {
+    /// 入队：av = reaction_time + duration
+    pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
         self.entries.push(ActionEntry {
             entity,
             kind,
-            reaction_remaining: reaction_time,
-            cooldown_remaining: 0.0, // 执行后才填入 duration
+            av_remaining: av,
         });
     }
 
     pub fn advance(&mut self, amount: f32) {
         for entry in &mut self.entries {
-            if entry.reaction_remaining > 0.0 {
-                entry.reaction_remaining = (entry.reaction_remaining - amount).max(0.0);
-            } else if entry.cooldown_remaining > 0.0 {
-                entry.cooldown_remaining = (entry.cooldown_remaining - amount).max(0.0);
+            if entry.av_remaining > 0.0 {
+                entry.av_remaining = (entry.av_remaining - amount).max(0.0);
             }
         }
     }
 
-    /// 找最小正 reaction_remaining 或 cooldown_remaining（= 下一次事件的距离）
+    /// 找最小正 av_remaining（= 下一次事件的距离）
     pub fn next_event_distance(&self) -> Option<f32> {
         self.entries
             .iter()
-            .filter(|e| e.reaction_remaining > 0.0 || e.cooldown_remaining > 0.0)
-            .map(|e| {
-                if e.reaction_remaining > 0.0 {
-                    e.reaction_remaining
-                } else {
-                    e.cooldown_remaining
-                }
-            })
+            .filter(|e| e.av_remaining > 0.0)
+            .map(|e| e.av_remaining)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
     }
 
-    /// 取出所有 reaction_remaining ≤ 0 且 cooldown_remaining ≤ 0 的条目
+    /// 取出所有 av_remaining ≤ 0 的条目
     pub fn pop_ready(&mut self) -> Vec<ActionEntry> {
         let mut ready = Vec::new();
         self.entries.retain(|e| {
-            if e.reaction_remaining <= 0.0 && e.cooldown_remaining <= 0.0 {
+            if e.av_remaining <= 0.0 {
                 ready.push(e.clone());
                 false
             } else {
@@ -279,8 +264,8 @@ impl Default for PlayerPreview {
 
 /// 遍历所有怪物，检查各 Action 组件的条件，收集就绪行动，按优先级入队
 pub fn run_monster_decision() {
-    // 阶段 1：收集 (entity, priority, reaction_time, duration, kind)
-    let mut collected: Vec<(Entity, u32, f32, f32, ActionKindV3)> = Vec::new();
+    // 阶段 1：收集 (entity, priority, av, kind)
+    let mut collected: Vec<(Entity, u32, f32, ActionKindV3)> = Vec::new();
     {
         let mut w = world!(mut);
         let player_pos = w.query::<(&Player, &Position)>().iter(&mut *w).next().map(|(_, p)| (p.x, p.y));
@@ -289,10 +274,10 @@ pub fn run_monster_decision() {
         for (entity, chase, stats, view, reaction) in
             w.query::<(Entity, &CanChase, &Stats, &Viewshed, &Reaction)>().iter(&mut *w)
         {
-            if chase.cooldown_remaining > 0.0 { continue; }
             let can_see = player_pos.map_or(false, |pp| view.visible_tiles.contains(&pp));
             if CanChase::condition(can_see) {
-                collected.push((entity, chase.priority, reaction.time, chase.duration, ActionKindV3::Chase));
+                let av = reaction.time + chase.duration;
+                collected.push((entity, chase.priority, av, ActionKindV3::Chase));
             }
         }
 
@@ -300,10 +285,10 @@ pub fn run_monster_decision() {
         for (entity, flee, stats, reaction) in
             w.query::<(Entity, &CanFlee, &Stats, &Reaction)>().iter(&mut *w)
         {
-            if flee.cooldown_remaining > 0.0 { continue; }
             let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
             if CanFlee::condition(hp_ratio) {
-                collected.push((entity, flee.priority, reaction.time, flee.duration, ActionKindV3::Flee));
+                let av = reaction.time + flee.duration;
+                collected.push((entity, flee.priority, av, ActionKindV3::Flee));
             }
         }
 
@@ -311,24 +296,24 @@ pub fn run_monster_decision() {
         for (entity, wander, reaction) in
             w.query::<(Entity, &CanWander, &Reaction)>().iter(&mut *w)
         {
-            if wander.cooldown_remaining > 0.0 { continue; }
-            if !collected.iter().any(|(e, _, _, _, _)| *e == entity) && CanWander::condition() {
-                collected.push((entity, wander.priority, reaction.time, wander.duration, ActionKindV3::Wander));
+            if !collected.iter().any(|(e, _, _, _)| *e == entity) && CanWander::condition() {
+                let av = reaction.time + wander.duration;
+                collected.push((entity, wander.priority, av, ActionKindV3::Wander));
             }
         }
     }
 
     // 阶段 2：按 priority 排序，相同时随机
-    collected.sort_by(|(_, pa, _, _, _), (_, pb, _, _, _)| {
+    collected.sort_by(|(_, pa, _, _), (_, pb, _, _)| {
         pb.cmp(pa).then_with(|| crate::global::rand_u8().cmp(&crate::global::rand_u8()))
     });
 
     // 阶段 3：入队（已在队列中的实体不再重复入队）
     let mut w = world!(mut);
     let mut queue = w.resource_mut::<ActionQueue>();
-    for (entity, _priority, reaction_time, duration, kind) in &collected {
+    for (entity, _priority, av, kind) in &collected {
         if !queue.has_entity(*entity) {
-            queue.enqueue(*entity, kind.clone(), *reaction_time, *duration);
+            queue.enqueue(*entity, kind.clone(), *av);
         }
     }
 }
@@ -337,8 +322,7 @@ pub fn run_monster_decision() {
 // 行动执行引擎：推进队列 + 保活检查 + 执行
 // ══════════════════════════════════════════════════════
 
-/// 推进一次事件（到下一个 reaction 结束或 cooldown 结束）
-/// 推进行动队列，返回实际推进量（用于同步冷却递减）
+/// 推进行动队列，返回实际推进量
 pub fn advance_action_queue() -> f32 {
     // 阶段 1：推进队列（持有写锁）
     let dist;
@@ -354,15 +338,48 @@ pub fn advance_action_queue() -> f32 {
         ready = w.resource_mut::<ActionQueue>().pop_ready();
     }
 
-    // 阶段 2：执行就绪条目（每个条目执行后立即结算经验）
+    // 阶段 2：保活检查 + 执行就绪条目
     for entry in &ready {
-        execute_entry(entry);
-        let _ = world!(mut).run_system_once(crate::systems::apply_exp_system);
+        if check_condition(entry) {
+            execute_entry(entry);
+            let _ = world!(mut).run_system_once(crate::systems::apply_exp_system);
+        } else {
+            // 条件不再满足，丢弃行动（实体已损失 AV）
+            world!(mut).resource_mut::<EventLog>().push(format!("行动被取消"));
+        }
     }
     dist
 }
 
-/// 执行一个行动条目（保活检查 + 调用 execute）
+/// 保活检查：执行前回调组件验证条件是否仍满足
+fn check_condition(entry: &ActionEntry) -> bool {
+    let mut w = world!(mut);
+    match &entry.kind {
+        ActionKindV3::Chase => {
+            // 玩家是否仍在视野内
+            let player_pos = w.query::<(&Player, &Position)>().iter(&mut *w).next().map(|(_, p)| (p.x, p.y));
+            let Some((px, py)) = player_pos else { return false };
+            w.get::<Viewshed>(entry.entity)
+                .map(|v| v.visible_tiles.contains(&(px, py)))
+                .unwrap_or(false)
+        }
+        ActionKindV3::Flee => {
+            // HP 比率是否仍低于阈值
+            w.get::<Stats>(entry.entity)
+                .map(|s| (s.hp as f32 / s.max_hp as f32) < 0.25)
+                .unwrap_or(false)
+        }
+        ActionKindV3::Wander | ActionKindV3::Wait => true,
+        ActionKindV3::Move { .. } => true, // 玩家行动不检查
+        ActionKindV3::Attack { target } => {
+            // 目标是否仍存在且是怪物
+            w.get::<Monster>(*target).is_some()
+        }
+        ActionKindV3::Skill(_) => true, // MP 检查在 execute 中
+    }
+}
+
+/// 执行一个行动条目（保活检查通过后调用）
 fn execute_entry(entry: &ActionEntry) {
     match &entry.kind {
         ActionKindV3::Chase => execute_chase(entry.entity),
@@ -371,7 +388,7 @@ fn execute_entry(entry: &ActionEntry) {
         ActionKindV3::Wait => execute_wait(entry.entity),
         ActionKindV3::Move { dx, dy } => execute_player_move(entry.entity, *dx, *dy),
         ActionKindV3::Attack { target } => execute_attack(entry.entity, *target),
-        ActionKindV3::Skill(_) => {} // TODO
+        ActionKindV3::Skill(idx) => execute_skill(entry.entity, *idx),
     }
 }
 
@@ -424,11 +441,6 @@ fn execute_chase(entity: Entity) {
             }
         }
     }
-
-    // 设置冷却（耗时）
-    if let Some(mut chase) = w.get_mut::<CanChase>(entity) {
-        chase.cooldown_remaining = chase.duration;
-    }
 }
 
 fn execute_flee(entity: Entity) {
@@ -459,9 +471,6 @@ fn execute_flee(entity: Entity) {
             p.x = nx; p.y = ny;
         }
     }
-    if let Some(mut flee) = w.get_mut::<CanFlee>(entity) {
-        flee.cooldown_remaining = flee.duration;
-    }
 }
 
 fn execute_wander(entity: Entity) {
@@ -482,15 +491,11 @@ fn execute_wander(entity: Entity) {
             }
         }
     }
-    if let Some(mut wander) = w.get_mut::<CanWander>(entity) {
-        wander.cooldown_remaining = wander.duration;
-    }
 }
 
 fn execute_wait(entity: Entity) {
-    if let Some(mut wait) = world!(mut).get_mut::<CanWait>(entity) {
-        wait.cooldown_remaining = wait.duration;
-    }
+    // 纯等待，无副作用
+    let _ = entity;
 }
 
 fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
@@ -522,10 +527,6 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
             p.x = pos.0;
             p.y = pos.1;
         }
-    }
-    let mut w = world!(mut);
-    if let Some(mut m) = w.get_mut::<CanMove>(entity) {
-        m.cooldown_remaining = m.duration;
     }
 }
 
@@ -588,42 +589,103 @@ fn execute_attack(attacker: Entity, target: Entity) {
             w.resource_mut::<EventLog>().push(format!("你{}了{}{}，造成{}点伤害", atk_name, name, if crit { "！暴击" } else { "" }, dmg));
         }
     };
-
-    // 设置冷却
-    {
-        let mut w = world!(mut);
-        if let Some(mut m) = w.get_mut::<CanMove>(attacker) {
-            m.cooldown_remaining = m.duration;
-        }
-    }
 }
 
-/// 对所有实体递减冷却计时器（每 tick 调用）
-pub fn tick_all_cooldowns(amount: f32) {
-    let mut w = world!(mut);
-    for mut move_ in w.query::<&mut CanMove>().iter_mut(&mut *w) {
-        if move_.cooldown_remaining > 0.0 {
-            move_.cooldown_remaining = (move_.cooldown_remaining - amount).max(0.0);
+fn execute_skill(entity: Entity, skill_idx: usize) {
+    use crate::{Stats, Skills};
+    // 读取技能数据和玩家属性
+    let (skill_kind, cost_mp, skill_name);
+    {
+        let w = world!();
+        let Some(skills) = w.get::<Skills>(entity) else { return };
+        let Some(skill) = skills.list.get(skill_idx) else { return };
+        let Some(stats) = w.get::<Stats>(entity) else { return };
+        if stats.mp < skill.cost_mp {
+            let msg = format!("MP不足，无法施放{}", skill.name);
+            drop(w);
+            world!(mut).resource_mut::<EventLog>().push(msg);
+            return;
+        }
+        skill_kind = skill.kind.clone();
+        cost_mp = skill.cost_mp;
+        skill_name = skill.name.clone();
+    }
+
+    // 扣 MP
+    {
+        let mut w = world!(mut);
+        if let Some(mut stats) = w.get_mut::<Stats>(entity) {
+            stats.mp -= cost_mp;
         }
     }
-    for mut chase in w.query::<&mut CanChase>().iter_mut(&mut *w) {
-        if chase.cooldown_remaining > 0.0 {
-            chase.cooldown_remaining = (chase.cooldown_remaining - amount).max(0.0);
+
+    // 执行技能效果
+    match skill_kind {
+        crate::SkillKind::Firebolt { damage } => {
+            // 先读取需要的数据
+            let (pp, magic_bonus, crit_rate, crit_dmg);
+            {
+                let mut w = world!(mut);
+                pp = w.query::<(&Player, &Position)>().iter(&mut *w).next().map(|(_, p)| (p.x, p.y));
+                let stats = w.get::<Stats>(entity);
+                magic_bonus = stats.map(|s| (s.magic_mastery as f32 * 0.5) as i32).unwrap_or(0);
+                crit_rate = stats.map(|s| s.crit_rate).unwrap_or(0.0);
+                crit_dmg = stats.map(|s| s.crit_damage).unwrap_or(0.0);
+            }
+            // 计算伤害并收集目标
+            let mut hits: Vec<(Entity, i32)> = Vec::new();
+            let mut hit_any = false;
+            {
+                let mut w = world!(mut);
+                for (me, mut ms, mp, mn) in w.query::<(Entity, &mut Stats, &Position, &EntityName)>().iter_mut(&mut *w) {
+                    if let Some((px, py)) = pp {
+                        if mp.x.abs_diff(px) + mp.y.abs_diff(py) <= 1 {
+                            let is_crit = crit_rate > rand::random::<f32>();
+                            let mut dmg = (damage + magic_bonus - ms.defense as i32).max(1);
+                            if is_crit { dmg = (dmg as f32 * (1.0 + crit_dmg)).round() as i32; }
+                            ms.hp -= dmg;
+                            hits.push((me, dmg));
+                            hit_any = true;
+                        }
+                    }
+                }
+            }
+            // 日志和清理
+            {
+                let mut w = world!(mut);
+                for (me, dmg) in &hits {
+                    let name = w.get::<EntityName>(*me).map(|n| n.0.clone()).unwrap_or("怪物".into());
+                    let hp = w.get::<Stats>(*me).map(|s| s.hp).unwrap_or(0);
+                    w.resource_mut::<EventLog>().push(format!("火球击中 {}！{}伤", name, dmg));
+                    if hp <= 0 {
+                        w.entity_mut(*me).despawn();
+                    }
+                }
+                if !hit_any { w.resource_mut::<EventLog>().push(String::from("附近没有敌人")); }
+            }
         }
-    }
-    for mut flee in w.query::<&mut CanFlee>().iter_mut(&mut *w) {
-        if flee.cooldown_remaining > 0.0 {
-            flee.cooldown_remaining = (flee.cooldown_remaining - amount).max(0.0);
+        crate::SkillKind::Heal { amount } => {
+            let mut w = world!(mut);
+            if let Some(mut stats) = w.get_mut::<Stats>(entity) {
+                stats.hp = (stats.hp + amount).min(stats.max_hp);
+            }
+            w.resource_mut::<EventLog>().push(format!("{}恢复了{}HP", skill_name, amount));
         }
-    }
-    for mut wander in w.query::<&mut CanWander>().iter_mut(&mut *w) {
-        if wander.cooldown_remaining > 0.0 {
-            wander.cooldown_remaining = (wander.cooldown_remaining - amount).max(0.0);
+        crate::SkillKind::Shield { def_boost, duration } => {
+            let mut w = world!(mut);
+            if let Some(mut buffs) = w.get_mut::<crate::Buffs>(entity) {
+                buffs.shield_turns = duration as i32;
+                buffs.shield_def = def_boost;
+            }
+            w.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}回合", skill_name, def_boost, duration));
         }
-    }
-    for mut wait in w.query::<&mut CanWait>().iter_mut(&mut *w) {
-        if wait.cooldown_remaining > 0.0 {
-            wait.cooldown_remaining = (wait.cooldown_remaining - amount).max(0.0);
+        crate::SkillKind::Berserk { atk_boost, duration } => {
+            let mut w = world!(mut);
+            if let Some(mut buffs) = w.get_mut::<crate::Buffs>(entity) {
+                buffs.berserk_turns = duration as i32;
+                buffs.berserk_atk = atk_boost;
+            }
+            w.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}回合", skill_name, atk_boost, duration));
         }
     }
 }

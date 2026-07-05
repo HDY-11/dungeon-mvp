@@ -45,8 +45,8 @@ src/main.rs           ← 应用层：主循环、输入处理、模式切换
 怪物: run_monster_decision() → 条件检查 → 仲裁(priority) → 入队
 
 advance_action_queue():
-  next_event_distance() → 同步推进所有条目 → pop_ready() → execute_*()
-  → 返回推进量 → tick_all_cooldowns(推进量) 同步冷却
+  next_event_distance() → 推进所有条目 av_remaining → pop_ready()
+  → check_condition() 保活检查 → execute_*()
 ```
 
 ### 输入模型

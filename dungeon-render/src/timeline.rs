@@ -58,7 +58,7 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'stat
                 .map(|r| renderable_color(r.color))
                 .unwrap_or(Color::DarkGray);
 
-            let (action_label, timer) = action_display(&entry.kind, entry.reaction_remaining);
+            let (action_label, timer) = action_display(&entry.kind, entry.av_remaining);
 
             out.push(Line::from(vec![
                 Span::styled(format!("{} ", name), Style::default().fg(color)),
@@ -78,14 +78,14 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'stat
     out
 }
 
-fn action_display(kind: &ActionKindV3, reaction: f32) -> (String, f32) {
+fn action_display(kind: &ActionKindV3, av: f32) -> (String, f32) {
     match kind {
-        ActionKindV3::Move { .. } => ("移动".into(), reaction),
-        ActionKindV3::Chase => ("追击".into(), reaction),
-        ActionKindV3::Flee => ("逃跑".into(), reaction),
-        ActionKindV3::Wander => ("游荡".into(), reaction),
-        ActionKindV3::Wait => ("等待".into(), reaction),
-        ActionKindV3::Attack { .. } => ("攻击".into(), reaction),
-        ActionKindV3::Skill(i) => (format!("技能{}", i), reaction),
+        ActionKindV3::Move { .. } => ("移动".into(), av),
+        ActionKindV3::Chase => ("追击".into(), av),
+        ActionKindV3::Flee => ("逃跑".into(), av),
+        ActionKindV3::Wander => ("游荡".into(), av),
+        ActionKindV3::Wait => ("等待".into(), av),
+        ActionKindV3::Attack { .. } => ("攻击".into(), av),
+        ActionKindV3::Skill(i) => (format!("技能{}", i + 1), av),
     }
 }
