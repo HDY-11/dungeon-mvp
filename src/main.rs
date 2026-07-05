@@ -10,7 +10,7 @@ use crossterm::ExecutableCommand;
 use dungeon_core::{
     check_death_system, descend,
     fov_system, rebuild_occupancy, save::GameSave,
-    setup_world, update_map_memory,
+    setup_world, update_map_memory, update_visible_memory,
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
     Player, Position, Renderable, Skills, Stairs, TurnManager,
 };
@@ -74,20 +74,23 @@ fn run(
     }
 }
 
+/// 每 tick 最低冷却推进量（队列为空时使用）
+const BASE_TICK: f32 = 50.0;
+
 fn advance_and_settle() {
     use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
 
     let dist = advance_action_queue();
 
-    if dist > 0.0 {
-        tick_all_cooldowns(dist);
-    }
+    // 即使队列为空，也至少推进 BASE_TICK，确保怪物冷却持续衰减
+    tick_all_cooldowns(dist.max(BASE_TICK));
 
     run_monster_decision();
 
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     update_map_memory();
+    update_visible_memory();
     world!(mut).run_system_once(check_death_system);
 }
 

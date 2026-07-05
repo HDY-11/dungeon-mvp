@@ -53,6 +53,12 @@ pub struct FloorNumber(pub u32);
 #[derive(Resource, Default)]
 pub struct PendingLevelUp { pub points: u32 }
 
+/// 最后看到的实体信息（用于视野外灰色显示）
+#[derive(Resource, Default)]
+pub struct VisibleMemory {
+    pub entries: std::collections::HashMap<Entity, (usize, usize, char, (u8, u8, u8))>,
+}
+
 #[derive(Resource)]
 pub struct OccupancyMap {
     pub cells: [[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],

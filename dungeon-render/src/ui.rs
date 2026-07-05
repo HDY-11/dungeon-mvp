@@ -1,6 +1,6 @@
 use dungeon_core::{
     Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
-    Position, Renderable, Skills, Stats, TurnManager, Viewshed,
+    Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, effective_attack, effective_defense, Tile, collect_renderables,
 };
 use dungeon_core::world;
@@ -21,7 +21,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant) {
     let inner = inner_rect(area, 1);
 
     // ── 读取数据阶段（持有锁，读完就放） ──
-    let (game_over, player_visible, tiles, explored, px, py, room_count, monster_count) = {
+    let (game_over, player_visible, tiles, explored, px, py, room_count, monster_count, visible_mem) = {
         let mut w = world!(mut);
         let go = w.resource::<TurnManager>().game_over;
         let pv: HashSet<(usize, usize)> = {
@@ -37,7 +37,8 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant) {
         let mc = w.query::<(&Position, &Renderable)>().iter(&mut *w)
             .filter(|(_, r)| r.glyph != '@').count();
         let rc = w.resource::<Map>().rooms.len();
-        (go, pv, ts, ex, pp.0, pp.1, rc, mc)
+        let vm: Vec<(usize, usize, char, (u8, u8, u8))> = w.resource::<VisibleMemory>().entries.values().copied().collect();
+        (go, pv, ts, ex, pp.0, pp.1, rc, mc, vm)
     };
 
     // ── 边框 ──
@@ -86,6 +87,12 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant) {
     for &(ex, ey, glyph, (r, g, b)) in &renderables {
         if player_visible.contains(&(ex, ey)) && ey < MAP_HEIGHT && ex < MAP_WIDTH {
             lines[ey][ex] = (glyph, renderable_color((r, g, b)));
+        }
+    }
+    // 视野外的实体以灰色显示最后已知位置
+    for &(mx, my, glyph, _) in &visible_mem {
+        if !player_visible.contains(&(mx, my)) && explored[my][mx] && my < MAP_HEIGHT && mx < MAP_WIDTH {
+            lines[my][mx] = (glyph, Color::DarkGray);
         }
     }
     let styled_lines: Vec<Line> = lines.into_iter()

@@ -71,6 +71,33 @@ pub fn update_map_memory() {
     for &(x, y) in &visible { memory.explored[y][x] = true; }
 }
 
+/// 更新可见实体记忆（记录视野内的实体，用于视野外灰色显示）
+pub fn update_visible_memory() {
+    let player_visible: std::collections::HashSet<(usize, usize)>;
+    let entities: Vec<(Entity, usize, usize, char, (u8, u8, u8))>;
+    {
+        let mut w = world!(mut);
+        player_visible = {
+            let mut q = w.query::<(&Player, &Viewshed)>();
+            q.iter(&mut *w).next()
+                .map(|(_, v)| v.visible_tiles.iter().copied().collect())
+                .unwrap_or_default()
+        };
+        entities = {
+            let mut q = w.query::<(Entity, &Position, &Renderable)>();
+            q.iter(&mut *w)
+                .filter(|(_, pos, _)| player_visible.contains(&(pos.x, pos.y)))
+                .map(|(e, pos, rend)| (e, pos.x, pos.y, rend.glyph, rend.color))
+                .collect()
+        };
+    }
+    let mut w = world!(mut);
+    let mut memory = w.resource_mut::<VisibleMemory>();
+    for (entity, x, y, glyph, color) in entities {
+        memory.entries.insert(entity, (x, y, glyph, color));
+    }
+}
+
 pub fn rebuild_occupancy() {
     let mut w = world!(mut);
     // 排除地上物品（ItemPickup），它们不阻挡移动
@@ -146,6 +173,7 @@ pub fn setup_world() -> World {
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
+    world.insert_resource(VisibleMemory::default());
     world.insert_resource(crate::action::ActionQueue::default());
     world.insert_resource(crate::action::InputBuffer::default());
     world.insert_resource(crate::action::PlayerPreview::default());
