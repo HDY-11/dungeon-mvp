@@ -75,22 +75,21 @@ fn run(
 }
 
 /// 每 tick 最低冷却推进量（队列为空时使用）
-const BASE_TICK: f32 = 50.0;
-
 fn advance_and_settle() {
     use dungeon_core::action::{tick_all_cooldowns, run_monster_decision, advance_action_queue};
 
     let dist = advance_action_queue();
 
-    // 即使队列为空，也至少推进 BASE_TICK，确保怪物冷却持续衰减
-    tick_all_cooldowns(dist.max(BASE_TICK));
+    if dist > 0.0 {
+        tick_all_cooldowns(dist);
+    }
 
     run_monster_decision();
 
     rebuild_occupancy();
     world!(mut).run_system_once(fov_system);
     update_map_memory();
-    update_visible_memory();
+    update_visible_memory(); // 视野实体记忆（保留）
     world!(mut).run_system_once(check_death_system);
 }
 
