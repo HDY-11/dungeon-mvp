@@ -61,19 +61,29 @@ fn run(
     world!(mut).run_system_once(fov_system);
     terminal.draw(|frame| render_ui(frame, game_start))?;
 
-    // ── 独立输入线程：16ms 限流轮询 ──
+    // ── 独立输入线程：16ms 限流轮询，250ms 按键去重 ──
     let (tx, rx) = mpsc::channel::<KeyCode>();
     let modal_flag = Arc::new(AtomicBool::new(false));
     let thread_flag = modal_flag.clone();
-    thread::spawn(move || loop {
-        if thread_flag.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(16));
-            continue;
-        }
-        if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
-            if let Event::Key(key) = crossterm::event::read().unwrap() {
-                if tx.send(key.code).is_err() {
-                    break;
+    thread::spawn(move || {
+        let mut last_code: KeyCode = KeyCode::Null;
+        let mut last_time = Instant::now();
+        loop {
+            if thread_flag.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(16));
+                continue;
+            }
+            if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
+                if let Event::Key(key) = crossterm::event::read().unwrap() {
+                    let now = Instant::now();
+                    if key.code == last_code && now - last_time < Duration::from_millis(250) {
+                        continue; // 250ms 内相同按键 → 去重
+                    }
+                    last_code = key.code;
+                    last_time = now;
+                    if tx.send(key.code).is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -291,7 +301,7 @@ fn handle_timed_action(entity: Entity, kind: ActionKindV3, av: f32) -> bool {
     };
 
     if is_confirm {
-        world!(mut).resource_mut::<ActionQueue>().enqueue(entity, kind, av);
+        world!(mut).resource_mut::<ActionQueue>().enqueue_or_replace(entity, kind, av);
         world!(mut).resource_mut::<PlayerPreview>().kind = None;
         true
     } else {

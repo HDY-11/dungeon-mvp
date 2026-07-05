@@ -199,6 +199,16 @@ impl ActionQueue {
     pub fn has_entity(&self, entity: Entity) -> bool {
         self.entries.iter().any(|e| e.entity == entity)
     }
+
+    /// 入队或替换：如果实体已在队列中，替换其行动和 AV
+    pub fn enqueue_or_replace(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.entity == entity) {
+            entry.kind = kind;
+            entry.av_remaining = av;
+        } else {
+            self.entries.push(ActionEntry { entity, kind, av_remaining: av });
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════
