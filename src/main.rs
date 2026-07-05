@@ -92,14 +92,6 @@ fn run(
 
     // ── 主循环 ──
     loop {
-        // 检查游戏状态
-        {
-            let w = world!();
-            if w.resource::<TurnManager>().game_over || w.resource::<TurnManager>().wants_quit {
-                break Ok(());
-            }
-        }
-
         // 接收输入（16ms 超时 = 至少 60fps 渲染）
         let has_action = match rx.try_recv() {
             Ok(code) => process_key(code, terminal, &modal_flag)?,
@@ -114,7 +106,16 @@ fn run(
             advance_and_settle();
         }
 
+        // 先渲染再检查退出，确保死亡画面/下楼画面能显示
         terminal.draw(|frame| render_ui(frame, game_start))?;
+
+        // 退出检查放在渲染之后
+        {
+            let w = world!();
+            if w.resource::<TurnManager>().wants_quit {
+                break Ok(());
+            }
+        }
     }
 }
 
@@ -243,7 +244,14 @@ fn process_key(
                 modal_flag.store(true, Ordering::Relaxed);
                 let ok = open_modal(terminal, "确认下楼？");
                 modal_flag.store(false, Ordering::Relaxed);
-                if ok { descend(); }
+                if ok {
+                    descend();
+                    // 下楼后立即刷新视野和碰撞图，无需等待下一次行动
+                    let _ = world!(mut).run_system_once(fov_system);
+                    update_map_memory();
+                    update_visible_memory();
+                    rebuild_occupancy();
+                }
             }
             Ok(false)
         }
