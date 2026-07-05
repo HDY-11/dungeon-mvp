@@ -19,11 +19,8 @@ pub struct GameRng { pub rng: rand::rngs::SmallRng }
 #[derive(Resource, Default)]
 pub struct PendingExp { pub amount: u64 }
 
-#[derive(Resource, Default)]
-pub struct PendingPickup { pub entries: Vec<(Entity, crate::items::ItemStack)> }
-
-#[derive(Resource, Default)]
-pub struct PendingSkill { pub idx: Option<usize> }
+// PendingSkill 已移除（技能通过 ActionQueue execute_skill 执行）
+// PendingPickup 已移除（拾取由 main.rs pickup_ground 直接处理）
 
 #[derive(Resource)]
 pub struct EventLog {

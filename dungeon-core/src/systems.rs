@@ -5,7 +5,7 @@ use crate::{
     effective_attack,
     calculate_visible_tiles, MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
-use crate::world;
+// use crate::world; // 已移除
 use bevy_ecs::prelude::*;
 
 /// 玩家移动 + bump 攻击（仅在 CanMove execute 中调用）
@@ -15,13 +15,11 @@ pub fn movement_system(
         (With<Player>, Without<Monster>),
     >,
     mut monster_query: Query<(&mut Stats, &EntityName, &Position, Entity, Option<&LootTable>), (With<Monster>, Without<Player>)>,
-    item_query: Query<(Entity, &ItemPickup, &Position), (Without<Player>, Without<Monster>)>,
     map: Res<Map>,
     occupancy: Res<OccupancyMap>,
     mut commands: Commands,
     mut pending: ResMut<PendingExp>,
     mut event_log: ResMut<EventLog>,
-    mut pending_pickup: ResMut<PendingPickup>,
 ) {
     for (mut pos, mut dir, player_stats, inv, equip, buffs, player_atk) in player_query.iter_mut() {
         if dir.dx == 0 && dir.dy == 0 { continue; }
@@ -65,12 +63,6 @@ pub fn movement_system(
                 continue;
             }
         }
-        // 拾取地面物品
-        for (item_entity, pickup, item_pos) in item_query.iter() {
-            if item_pos.x == new_x && item_pos.y == new_y {
-                pending_pickup.entries.push((item_entity, pickup.stack.clone()));
-            }
-        }
         pos.x = new_x; pos.y = new_y;
     }
 }
@@ -90,28 +82,7 @@ pub fn check_death_system(
     }
 }
 
-pub fn pickup_system(
-    mut player_query: Query<&mut Inventory, With<Player>>,
-    mut pending: ResMut<PendingPickup>,
-    mut commands: Commands,
-    mut event_log: ResMut<EventLog>,
-) {
-    if pending.entries.is_empty() { return; }
-    if let Ok(mut inv) = player_query.single_mut() {
-        for (entity, stack) in pending.entries.drain(..) {
-            let name = stack.name();
-            let leftover = inv.add(stack.item_id, stack.count);
-            let picked_up = stack.count - leftover;
-            if picked_up > 0 {
-                event_log.push(format!("拾取了{}x{}", name, picked_up));
-                commands.entity(entity).despawn();
-            }
-            if leftover > 0 {
-                event_log.push(format!("背包已满，{}x{}掉落在地上", name, leftover));
-            }
-        }
-    }
-}
+
 
 pub fn apply_exp_system(
     mut player_query: Query<&mut Stats, With<Player>>,
@@ -144,44 +115,6 @@ pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
     }
 }
 
-pub fn skill_tick_system(
-    mut pending: ResMut<PendingSkill>,
-    mut player: Query<(&mut Stats, &Skills, &mut Buffs, &Position, &PlayerClass), (With<Player>, Without<Monster>)>,
-    mut monsters: Query<(&mut Stats, &Position, &EntityName), (With<Monster>, Without<Player>)>,
-    mut event_log: ResMut<EventLog>,
-    mut _game_rng: ResMut<GameRng>,
-) {
-    let Some(skill_idx) = pending.idx.take() else { return; };
-    let Ok((mut stats, skills, mut _buffs, pp, class)) = player.single_mut() else { return; };
-    let Some(sk) = skills.list.get(skill_idx) else { return; };
-    if !class.can_cast(sk) { return; }
-    if stats.mp < sk.cost_mp { event_log.push(format!("MP 不足")); return; }
-    stats.mp -= sk.cost_mp;
-    match &sk.kind {
-        SkillKind::Heal { amount } => {
-            let total = amount + (stats.magic_mastery as f32 * 1.0) as i32;
-            stats.hp = (stats.hp + total).min(stats.max_hp);
-            event_log.push(format!("释放 {}，HP+{}", sk.name, total));
-        }
-        SkillKind::Firebolt { damage } => {
-            let total_dmg = damage + (stats.magic_mastery as f32 * 0.5) as i32;
-            let mut hit = false;
-            for (mut ms, mp, mn) in monsters.iter_mut() {
-                if pp.x.abs_diff(mp.x) + pp.y.abs_diff(mp.y) <= 1 {
-                    let is_crit = stats.crit_rate > rand::random::<f32>();
-                    let mut dmg = (total_dmg - ms.defense as i32).max(1);
-                    if is_crit { dmg = (dmg as f32 * (1.0 + stats.crit_damage)).round() as i32; }
-                    ms.hp -= dmg;
-                    event_log.push(format!("火球击中 {}！{}伤", mn.0, dmg));
-                    hit = true;
-                }
-            }
-            if !hit { event_log.push(String::from("附近没有敌人")); }
-        }
-        _ => {}
-    }
-}
 
-pub fn apply_skill(skill_idx: usize) {
-    world!(mut).resource_mut::<PendingSkill>().idx = Some(skill_idx);
-}
+
+

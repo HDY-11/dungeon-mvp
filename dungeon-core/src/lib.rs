@@ -3,7 +3,7 @@ pub mod api;
 pub mod components;
 pub mod global;
 pub mod items;
-pub mod pathfinding;
+// pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
 pub mod save;
 pub mod systems;
@@ -12,7 +12,7 @@ pub mod systems;
 pub use api::*;
 pub use components::*;
 pub use items::*;
-pub use pathfinding::*;
+// pub use pathfinding::*; // 已移除
 pub use resources::*;
 pub use systems::*;
 
@@ -20,21 +20,7 @@ use rand::Rng;
 
 pub use components::EntityName;
 
-// ── 行动成本常量 ─────────────────────────────────────
-
-pub mod action_cost {
-    // 基础 AV 成本（受 speed 缩放：effective = base × 50/speed）
-    pub const MOVE: f32 = 300.0;        // 走一格
-    pub const ATTACK: f32 = 200.0;      // 普通攻击
-    pub const SKILL_CAST: f32 = 600.0;  // 施法
-    pub const SHIELD_BLOCK: f32 = 40.0; // 格挡（极短）
-    pub const USE_POTION: f32 = 80.0;   // 使用药水
-    pub const MONSTER_CHASE: f32 = 250.0;
-    pub const MONSTER_WANDER: f32 = 500.0;
-    pub const MONSTER_FLEE: f32 = 250.0;
-    pub const PICKUP: f32 = 200.0;
-    pub const WAIT: f32 = 800.0;
-}
+// ── 行动成本常量（已移除—硬编码在 action.rs 中） ──
 
 // ── 常量 ──────────────────────────────────────────────
 

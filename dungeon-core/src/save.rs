@@ -151,8 +151,6 @@ impl GameSave {
         for (i, &v) in self.explored.iter().enumerate() { explored[i / MAP_WIDTH][i % MAP_WIDTH] = v != 0; }
         w.insert_resource(MapMemory { explored });
         w.insert_resource(PendingExp::default());
-        w.insert_resource(PendingPickup::default());
-        w.insert_resource(PendingSkill::default());
         w.insert_resource(EventLog::new());
         w.insert_resource(TurnManager::new());
         w.insert_resource(PendingLevelUp::default());

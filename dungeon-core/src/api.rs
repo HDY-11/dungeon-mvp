@@ -12,7 +12,7 @@ pub fn exp_to_next_level(level: u32) -> u64 {
 }
 pub fn max_hp_for(level: u32, defense: u32) -> i32 { 20 + level as i32 * 5 + defense as i32 * 2 }
 pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mastery as i32 }
-pub fn defense_bonus(level: u32) -> u32 { (level as f64).log2().floor() as u32 }
+
 
 // ── effective_attack / effective_defense ────────────
 // (equipment_bonus 已在 items.rs 中定义)
@@ -168,8 +168,6 @@ pub fn setup_world() -> World {
     world.insert_resource(MapMemory::new());
     world.insert_resource(OccupancyMap::new());
     world.insert_resource(PendingExp::default());
-    world.insert_resource(PendingPickup::default());
-    world.insert_resource(PendingSkill::default());
     world.insert_resource(EventLog::new());
     world.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
     world.insert_resource(TurnManager::new());
