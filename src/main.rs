@@ -654,21 +654,52 @@ fn open_inventory(
                 }
                 KeyCode::Char('e') => {
                     if let Some((DetailSource::LeftInv, idx)) = detail {
-                        let item_id = { let mut w = world!(mut); let mut q = w.query::<(&Inventory,)>();
-                            q.iter_mut(&mut *w).next().and_then(|(inv,)| inv.stacks.get(idx).map(|s| s.item_id)) };
+                        let mut w = world!(mut);
+                        // 获取物品 ID
+                        let item_id = {
+                            let mut q = w.query::<(&Inventory,)>();
+                            q.iter_mut(&mut *w).next()
+                                .and_then(|(inv,)| inv.stacks.get(idx).map(|s| s.item_id))
+                        };
                         if let Some(id) = item_id {
                             if let Some(def) = ItemStack::new(id, 1).def() {
-                                let can_equip = match def.slot { EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring => true, _ => false };
+                                let can_equip = match def.slot {
+                                    EquipmentSlot::Weapon | EquipmentSlot::Armor | EquipmentSlot::Ring => true,
+                                    _ => false,
+                                };
                                 if can_equip {
-                                    let mut w = world!(mut); let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
+                                    let mut q = w.query::<(&mut Inventory, &mut Equipment)>();
                                     if let Some((mut inv, mut eq)) = q.iter_mut(&mut *w).next() {
-                                        let slot_free = match def.slot { EquipmentSlot::Weapon => eq.weapon.is_none(), EquipmentSlot::Armor => eq.armor.is_none(), EquipmentSlot::Ring => eq.ring.is_none(), _ => false };
+                                        let slot_free = match def.slot {
+                                            EquipmentSlot::Weapon => eq.weapon.is_none(),
+                                            EquipmentSlot::Armor => eq.armor.is_none(),
+                                            EquipmentSlot::Ring => eq.ring.is_none(),
+                                            _ => false,
+                                        };
                                         if slot_free {
-                                            inv.remove(idx, 1); let es = ItemStack::new(id, 1);
-                                            match def.slot { EquipmentSlot::Weapon => eq.weapon = Some(es), EquipmentSlot::Armor => eq.armor = Some(es), EquipmentSlot::Ring => eq.ring = Some(es), _ => {} }
+                                            inv.remove(idx, 1);
+                                            let es = ItemStack::new(id, 1);
+                                            match def.slot {
+                                                EquipmentSlot::Weapon => eq.weapon = Some(es),
+                                                EquipmentSlot::Armor => eq.armor = Some(es),
+                                                EquipmentSlot::Ring => eq.ring = Some(es),
+                                                _ => {}
+                                            }
+                                            detail = None; // 装备成功后退出详情页
+                                        } else {
+                                            w.resource_mut::<EventLog>()
+                                                .push("该装备槽位已被占用".to_string());
                                             detail = None;
                                         }
+                                    } else {
+                                        w.resource_mut::<EventLog>()
+                                            .push("找不到玩家背包/装备".to_string());
+                                        detail = None;
                                     }
+                                } else {
+                                    w.resource_mut::<EventLog>()
+                                        .push("该物品无法装备".to_string());
+                                    detail = None;
                                 }
                             }
                         }
