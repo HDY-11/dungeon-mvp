@@ -563,7 +563,7 @@ fn open_inventory(
                             let real = i + 3;
                             let stack = &inv_stacks[i];
                             let p = if act && left_sel == real { "▸" } else { " " };
-                            let hk = if real < 10 { char::from_digit(real as u32, 10).unwrap() } else { '?' };
+                            let hk = if i < 10 { char::from_digit(i as u32, 10).unwrap() } else { char::from(b'a' + (i - 10) as u8) };
                             let cl = if stack.count > 1 { format!(" x{}", stack.count) } else { String::new() };
                             lines.push(Line::from(vec![
                                 Span::styled(format!("{}{}", p, hk), Style::default().fg(Color::Yellow)),
@@ -571,7 +571,7 @@ fn open_inventory(
                             ]));
                         }
                     }
-                    if act { lines.push(Line::from(Span::styled(" 0-9:选中 Enter:查看 e:装备 d:丢弃", Style::default().fg(Color::DarkGray)))); }
+                    if act { lines.push(Line::from(Span::styled(" 0-9a-z:选中 Enter:查看 e:装备 d:丢弃", Style::default().fg(Color::DarkGray)))); }
                     frame.render_widget(Paragraph::new(lines), left_area);
                 }
 
@@ -623,6 +623,22 @@ fn open_inventory(
                             else if left_sel - 3 < inv_stacks.len() { detail = Some((DetailSource::LeftInv, left_sel - 3)); }
                         }
                         InvPanel::Right => { if !ground.is_empty() { detail = Some((DetailSource::Right, right_sel)); } }
+                    }
+                }
+                KeyCode::Char(ch) if ch.is_ascii_digit() || ch.is_ascii_lowercase() => {
+                    // 快捷键：0-9 → 背包索引 0-9, a-z → 背包索引 10-35
+                    if detail.is_none() {
+                        panel = InvPanel::Left;
+                        let idx = if ch.is_ascii_digit() {
+                            ch.to_digit(10).unwrap() as usize
+                        } else {
+                            (ch as usize - 'a' as usize) + 10
+                        };
+                        let inv_idx = idx; // 背包内的索引直接等于快捷键数字
+                        if inv_idx < inv_stacks.len() {
+                            left_sel = 3 + inv_idx;
+                            detail = Some((DetailSource::LeftInv, inv_idx));
+                        }
                     }
                 }
                 KeyCode::Char('g') => {
