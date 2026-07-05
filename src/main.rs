@@ -62,7 +62,7 @@ fn run(
     update_visible_memory();
     terminal.draw(|frame| render_ui(frame, game_start))?;
 
-    // ── 独立输入线程：16ms 限流轮询，250ms 按键去重 ──
+    // ── 独立输入线程：16ms 限流轮询，50ms 按键去重 ──
     let (tx, rx) = mpsc::channel::<KeyCode>();
     let modal_flag = Arc::new(AtomicBool::new(false));
     let thread_flag = modal_flag.clone();
@@ -77,8 +77,8 @@ fn run(
             if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
                 if let Event::Key(key) = crossterm::event::read().unwrap() {
                     let now = Instant::now();
-                    if key.code == last_code && now - last_time < Duration::from_millis(250) {
-                        continue; // 250ms 内相同按键 → 去重
+                    if key.code == last_code && now - last_time < Duration::from_millis(50) {
+                        continue; // 50ms 内相同按键 → 去重（仅防 OS 重复，不吞 tap-tap）
                     }
                     last_code = key.code;
                     last_time = now;

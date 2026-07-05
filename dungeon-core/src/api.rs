@@ -92,10 +92,16 @@ pub fn update_visible_memory() {
         };
     }
     let mut w = world!(mut);
+    // 移除已不存在的实体（死亡/消失）
+    let alive: std::collections::HashSet<Entity> = {
+        let mut q = w.query::<(Entity,)>();
+        q.iter(&mut *w).map(|(e,)| e).collect()
+    };
     let mut memory = w.resource_mut::<VisibleMemory>();
     for (entity, x, y, glyph, color) in entities {
         memory.entries.insert(entity, (x, y, glyph, color));
     }
+    memory.entries.retain(|&e, _| alive.contains(&e));
 }
 
 pub fn rebuild_occupancy() {
