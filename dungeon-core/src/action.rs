@@ -527,9 +527,11 @@ fn execute_wait(entity: Entity) {
 }
 
 fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
-    use crate::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, movement_system};
-    // 先读数据
-    let pos = {
+    // 注意：Move 行动仅对空地板格入队（见 handle_player_direction），
+    // 有怪物的格子会入队 Attack 行动走 execute_attack 路径。
+    // 所以这里只需处理玩家移动，无需 bump 攻击逻辑。
+    use crate::{Map, Tile, MAP_WIDTH, MAP_HEIGHT};
+    let (nx, ny) = {
         let w = world!();
         let p = match w.get::<Position>(entity) {
             Some(p) => (p.x, p.y),
@@ -538,30 +540,20 @@ fn execute_player_move(entity: Entity, dx: isize, dy: isize) {
         let nx = p.0.wrapping_add_signed(dx);
         let ny = p.1.wrapping_add_signed(dy);
         if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
-        let tile = w.resource::<Map>().tiles[ny][nx];
-        let occupied = w.resource::<OccupancyMap>().is_occupied(nx, ny);
-        if tile != Tile::Floor { return; }
-        (nx, ny, occupied)
+        if w.resource::<Map>().tiles[ny][nx] != Tile::Floor { return; }
+        (nx, ny)
     };
-    if pos.2 {
-        // 有怪物 → bump 攻击
-        crate::set_player_dir(dx, dy);
-        crate::rebuild_occupancy();
-        let _ = world!(mut).run_system_once(movement_system);
-        crate::rebuild_occupancy();
-    } else {
-        let mut w = world!(mut);
-        if let Some(mut p) = w.get_mut::<Position>(entity) {
-            p.x = pos.0;
-            p.y = pos.1;
-        }
+    let mut w = world!(mut);
+    if let Some(mut p) = w.get_mut::<Position>(entity) {
+        p.x = nx;
+        p.y = ny;
     }
 }
 
 fn execute_attack(attacker: Entity, target: Entity) {
-    use crate::{Stats, EntityName, EventLog, AttackName, Inventory, Equipment, PendingExp, LootTable, ItemPickup, Renderable, Position};
+    use crate::{Stats, EntityName, EventLog, AttackName, Inventory, Equipment, Buffs, PendingExp, LootTable, ItemPickup, Renderable, Position, effective_attack};
     // 先读取需要的数据
-    let (exp, name, atk_name, base_atk, crit_rate, crit_dmg, target_def, target_pos);
+    let (exp, name, atk_name, dmg, crit, target_pos);
     {
         let w = world!(mut);
         let Some(target_stats) = w.get::<Stats>(target).cloned() else { return };
@@ -569,23 +561,17 @@ fn execute_attack(attacker: Entity, target: Entity) {
         name = w.get::<EntityName>(target).map(|n| n.0.clone()).unwrap_or("怪物".into());
         atk_name = w.get::<AttackName>(attacker).map(|a| a.0.clone()).unwrap_or("攻击".into());
         target_pos = w.get::<Position>(target).map(|p| (p.x, p.y));
-        let inventory = w.get::<Inventory>(attacker);
-        let equipment = w.get::<Equipment>(attacker);
-        base_atk = if let (Some(inv), Some(eq)) = (inventory, equipment) {
-            crate::equipment_bonus(inv, eq).attack + attacker_stats.attack as i32
-        } else {
-            attacker_stats.attack as i32
-        };
-        crit_rate = attacker_stats.crit_rate;
-        crit_dmg = attacker_stats.crit_damage;
-        target_def = target_stats.defense as i32;
+        let inventory = w.get::<Inventory>(attacker).unwrap();
+        let equipment = w.get::<Equipment>(attacker).unwrap();
+        let buffs = w.get::<Buffs>(attacker);
+        let effective_atk = effective_attack(&attacker_stats, inventory, equipment, buffs) as i32;
+        let target_def = target_stats.defense as i32;
+        let raw_dmg = (effective_atk - target_def).max(1);
+        let is_crit = attacker_stats.crit_rate > rand::random::<f32>();
+        dmg = if is_crit { (raw_dmg as f32 * (1.0 + attacker_stats.crit_damage)).round() as i32 } else { raw_dmg };
+        crit = is_crit;
         exp = target_stats.exp;
     }
-
-    // 计算伤害
-    let raw_dmg = (base_atk - target_def).max(1);
-    let crit = crit_rate > rand::random::<f32>();
-    let dmg = if crit { (raw_dmg as f32 * (1.0 + crit_dmg)).round() as i32 } else { raw_dmg };
 
     // 应用伤害 + 掉落
     {
