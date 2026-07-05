@@ -100,16 +100,12 @@ pub fn update_visible_memory() {
 
 pub fn rebuild_occupancy() {
     let mut w = world!(mut);
-    // 排除地上物品（ItemPickup），它们不阻挡移动
-    let pickups: std::collections::HashSet<Entity> = {
-        let mut q = w.query::<(Entity, &ItemPickup)>();
-        q.iter(&mut *w).map(|(e, _)| e).collect()
-    };
+    // 收集不可通行的实体（排除 ItemPickup 和 Stairs）
     let positions: Vec<(Entity, usize, usize)> = {
-        let mut q = w.query::<(Entity, &Position)>();
+        let mut q = w.query::<(Entity, &Position, Option<&ItemPickup>, Option<&Stairs>)>();
         q.iter(&mut *w)
-            .filter(|(e, _)| !pickups.contains(e))
-            .map(|(e, p)| (e, p.x, p.y)).collect()
+            .filter(|(_, _, pickup, stairs)| pickup.is_none() && stairs.is_none())
+            .map(|(e, p, _, _)| (e, p.x, p.y)).collect()
     };
     let mut occupancy = w.resource_mut::<OccupancyMap>();
     occupancy.clear();

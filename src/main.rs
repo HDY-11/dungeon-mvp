@@ -101,10 +101,13 @@ fn run(
         }
 
         // 接收输入（16ms 超时 = 至少 60fps 渲染）
-        let has_action = match rx.recv_timeout(Duration::from_millis(16)) {
+        let has_action = match rx.try_recv() {
             Ok(code) => process_key(code, terminal, &modal_flag)?,
-            Err(mpsc::RecvTimeoutError::Timeout) => false,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
+            Err(mpsc::TryRecvError::Empty) => {
+                std::thread::sleep(Duration::from_millis(1));
+                false
+            }
+            Err(mpsc::TryRecvError::Disconnected) => break Ok(()),
         };
 
         if has_action {
@@ -144,6 +147,8 @@ fn advance_and_settle() {
     update_map_memory();
     update_visible_memory();
     world!(mut).run_system_once(check_death_system);
+    // Buff 随行动推进衰减
+    let _ = world!(mut).run_system_once(dungeon_core::buff_tick_system);
 }
 
 // ══════════════════════════════════════════════════════
