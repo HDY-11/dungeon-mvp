@@ -2,7 +2,7 @@
 
 use dungeon_core::{
     components::*, items::*, resources::*,
-    Map, Tile, MAP_WIDTH, MAP_HEIGHT, world,
+    Map, Tile, MAP_WIDTH, MAP_HEIGHT,
     ActionQueue, InputBuffer, PlayerPreview,
     ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
@@ -84,8 +84,8 @@ pub struct SavedMonster {
 pub struct SavedGroundItem { pub x: u16, pub y: u16, pub item_id: usize, pub count: u32 }
 
 impl GameSave {
-    pub fn capture() -> Self {
-        let w = world!();
+    pub fn capture(world: &World) -> Self {
+        let w = world;
         let floor = w.resource::<FloorNumber>().0;
         let explored = w.resource::<MapMemory>().explored;
         let mut map_tiles = Vec::with_capacity(MAP_WIDTH * MAP_HEIGHT);
@@ -143,8 +143,8 @@ impl GameSave {
         }
     }
 
-    pub fn restore(self) {
-        let mut w = world!(mut);
+    pub fn restore(self, world: &mut World) {
+        let w = world;
         let dead: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
             q.iter(&mut *w).map(|(e,)| e).collect() };
         for e in dead { let _ = w.despawn(e); }

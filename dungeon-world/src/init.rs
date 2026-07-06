@@ -2,7 +2,7 @@
 
 use dungeon_core::{
     components::*, items::*, resources::*,
-    Map, world,
+    Map,
     ActionQueue, InputBuffer, PlayerPreview,
     ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
@@ -106,8 +106,8 @@ pub fn setup_world() -> World {
 }
 
 /// 下楼：生成新楼层
-pub fn descend() {
-    let mut w = world!(mut);
+pub fn descend(world: &mut World) {
+    let w = world;
     let mut floor = w.resource_mut::<FloorNumber>();
     floor.0 += 1; let f = floor.0;
 

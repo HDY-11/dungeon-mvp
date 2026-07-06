@@ -5,8 +5,6 @@ use crate::{
     MAP_HEIGHT, MAP_WIDTH, Tile, Map,
 };
 
-use crate::world;
-
 // exp_to_next_level, max_hp_for, max_mp_for, effective_attack, effective_defense
 // 移至 ops.rs（通过 lib.rs pub use ops::* 导出）
 
@@ -153,91 +151,4 @@ pub fn setup_world() -> World {
     world
 }
 
-// ── descend ─────────────────────────────────────────
-
-pub fn descend() {
-    let mut w = world!(mut);
-    let mut floor = w.resource_mut::<FloorNumber>();
-    floor.0 += 1; let f = floor.0;
-
-    let player_data = {
-        let mut q = w.query::<(Entity, &Stats, &Position, &Inventory, &Equipment, &Skills, &PlayerClass, &AttackName)>();
-        let (e, s, p, inv, eq, sk, cls, atk) = q.iter(&mut *w).next().unwrap();
-        (e, s.clone(), *p, inv.stacks.clone(), inv.capacity,
-         Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
-         sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
-    };
-
-    let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
-        q.iter(&mut *w).map(|(e,)| e).collect() };
-    for e in to_despawn { let _ = w.despawn(e); }
-
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(42 + f as u64);
-    let mut map = Map::new(); map.generate(&mut rng);
-    w.insert_resource(map); w.insert_resource(MapMemory::new());
-    let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
-
-    let mut cmd = w.spawn((
-        Player, Position { x: spawn.0, y: spawn.1 },
-        Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
-        Viewshed { range: 8, visible_tiles: Vec::new() },
-        player_data.1.clone(), EntityName("冒险者".into()),
-        Inventory { stacks: player_data.3, capacity: player_data.4 },
-    ));
-    cmd.insert(player_data.5);  // Equipment
-    cmd.insert(Skills { list: player_data.6 });
-    cmd.insert(player_data.7);  // Buffs
-    cmd.insert(player_data.8.clone());
-    cmd.insert(AttackName(player_data.9.clone()));
-    cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_data.1.agility) });
-    cmd.insert(crate::action::CanMove::new(100));
-    cmd.insert(crate::action::CanWait::new(0));
-
-    let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
-    w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
-        Renderable { glyph: '>', color: (0, 255, 0) }));
-
-    let monster_templates: [(char, RgbColor, &str); 4] = [
-        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
-        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
-    ];
-    let spawn_points: Vec<(usize, usize)> = {
-        let m = w.resource::<Map>();
-        monster_templates.iter().enumerate()
-            .filter_map(|(i, _)| m.rooms.get(i + 1).map(|r| r.center())).collect()
-    };
-    for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
-        if let Some(&(mx, my)) = spawn_points.get(i) {
-            let mon_agi = Stats::monster(glyph, f).agility;
-            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
-            let mut cmd = w.spawn((
-                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 8, visible_tiles: Vec::new() },
-                Stats::monster(glyph, f), EntityName(mon_name.into()),
-                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
-                loot,
-            ));
-            cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
-            cmd.insert(crate::action::CanChase::new(100));
-            cmd.insert(crate::action::CanFlee::new(200));
-            cmd.insert(crate::action::CanWander::new(50));
-            cmd.insert(crate::action::CanWait::new(0));
-        }
-    }
-
-    // 地面物品（使用 ItemStack + ItemRegistry）
-    let ground_item_ids = [0, 1, 2, 3];
-    for (i, &item_id) in ground_item_ids.iter().enumerate() {
-        if let Some(&(ix, iy)) = spawn_points.get(i) {
-            let def = ItemRegistry::global().get(item_id).unwrap();
-            w.spawn((
-                ItemPickup { stack: ItemStack::new(item_id, 1) },
-                Position { x: ix + 1, y: iy },
-                Renderable { glyph: def.glyph, color: def.color },
-            ));
-        }
-    }
-    w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
-}
-
-// player_entity, on_stairs, pickup_ground 移至 ops.rs（通过 lib.rs pub use ops::* 导出）
+// descend 已移至 dungeon-world/init.rs

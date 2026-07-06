@@ -2,24 +2,23 @@ use dungeon_core::{
     EntityName, Position, Renderable,
     action::{ActionQueue, ActionKindV3, PlayerPreview},
 };
-use dungeon_core::world;
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
 };
 use std::collections::HashSet;
+use bevy_ecs::prelude::World;
 use crate::color::renderable_color;
 
 /// 行动表：显示视野内已确认待执行的行动
-pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'static>> {
+pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) -> Vec<Line<'static>> {
+
     let mut out: Vec<Line<'static>> = Vec::new();
 
     let preview = {
-        let w = world!();
-        w.resource::<PlayerPreview>().kind.clone()
+        world.resource::<PlayerPreview>().kind.clone()
     };
 
-    // 玩家行
     let preview_text = match &preview {
         Some(ActionKindV3::Move { dx, dy }) => format!("移动({},{})", dx, dy),
         Some(ActionKindV3::Wait) => "等待".into(),
@@ -40,21 +39,19 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>) -> Vec<Line<'stat
         Span::styled("╰──────────", Style::default().fg(Color::Yellow)),
     ]));
 
-    // 行动队列中视野内的条目
     {
-        let w = world!();
-        let queue = w.resource::<ActionQueue>();
+        let queue = world.resource::<ActionQueue>();
         for entry in &queue.entries {
-            let in_view = w.get::<Position>(entry.entity)
+            let in_view = world.get::<Position>(entry.entity)
                 .map(|p| player_visible.contains(&(p.x, p.y)))
                 .unwrap_or(false);
             if !in_view { continue; }
 
-            let name = w.get::<EntityName>(entry.entity)
+            let name = world.get::<EntityName>(entry.entity)
                 .map(|n| n.0.chars().take(5).collect::<String>())
                 .unwrap_or("?".into());
 
-            let color = w.get::<Renderable>(entry.entity)
+            let color = world.get::<Renderable>(entry.entity)
                 .map(|r| renderable_color(r.color))
                 .unwrap_or(Color::DarkGray);
 

@@ -7,7 +7,6 @@ pub mod items;
 pub mod ops;
 // pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
-pub mod save;
 pub mod systems;
 
 
@@ -96,6 +95,5 @@ impl Map {
 }
 impl Default for Map { fn default() -> Self { Self::new() } }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

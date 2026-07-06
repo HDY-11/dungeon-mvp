@@ -85,10 +85,9 @@ pub fn arbitration_system(
 }
 
 /// 向后兼容包装：顺序执行四个决策 system（非并行）
-pub fn run_monster_decision() {
-    let mut w = dungeon_core::world!(mut);
-    let _ = w.run_system_once(chase_decision_system);
-    let _ = w.run_system_once(flee_decision_system);
-    let _ = w.run_system_once(wander_decision_system);
-    let _ = w.run_system_once(arbitration_system);
+pub fn run_monster_decision(world: &mut World) {
+    let _ = world.run_system_once(chase_decision_system);
+    let _ = world.run_system_once(flee_decision_system);
+    let _ = world.run_system_once(wander_decision_system);
+    let _ = world.run_system_once(arbitration_system);
 }
