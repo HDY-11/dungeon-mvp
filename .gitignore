@@ -2,3 +2,4 @@
 .reasonix/
 *.log
 save.bin
+scenario_output/
