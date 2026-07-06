@@ -26,8 +26,8 @@ pub use components::EntityName;
 
 // ── 常量 ──────────────────────────────────────────────
 
-pub const MAP_WIDTH: usize = 40;
-pub const MAP_HEIGHT: usize = 20;
+pub const MAP_WIDTH: usize = 80;
+pub const MAP_HEIGHT: usize = 40;
 
 // ── Tile ──────────────────────────────────────────────
 
@@ -63,10 +63,10 @@ impl Map {
     pub fn generate(&mut self, rng: &mut impl Rng) {
         use rand::RngExt;
         self.tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT]; self.rooms.clear();
-        let target = rng.random_range(4..=7);
+        let target = rng.random_range(8..=14);
         for _ in 0..target * 3 {
             if self.rooms.len() >= target { break; }
-            let w = rng.random_range(4..=9); let h = rng.random_range(3..=6);
+            let w = rng.random_range(5..=12); let h = rng.random_range(4..=8);
             let x = rng.random_range(1..(MAP_WIDTH - w - 1)); let y = rng.random_range(1..(MAP_HEIGHT - h - 1));
             let room = Room { x, y, w, h };
             if !self.overlaps_any(&room) { self.carve_room(&room); self.rooms.push(room); }

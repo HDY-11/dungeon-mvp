@@ -90,7 +90,7 @@ pub fn setup_world() -> World {
     let mut cmd = world.spawn((
         Player, Position { x: spawn_x, y: spawn_y },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
-        Viewshed { range: 8, visible_tiles: Vec::new() },
+        Viewshed { range: 10, visible_tiles: Vec::new() },
         Stats::player(), EntityName("冒险者".into()),
         Inventory::new(36), Equipment::new(), Buffs::new(),
         pc.clone(), AttackName("斩击".into()),
@@ -100,9 +100,11 @@ pub fn setup_world() -> World {
     cmd.insert(crate::action_types::CanWait::new(0));
     cmd.insert(Skills { list: pc.skills() });
 
-    let monster_templates: [(char, RgbColor, &str); 4] = [
+    let monster_templates: [(char, RgbColor, &str); 8] = [
         ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
         ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
+        ('r', (200, 50, 50), "老鼠"), ('g', (50, 200, 50), "哥布林"),
+        ('r', (180, 80, 80), "老鼠"), ('g', (100, 180, 100), "哥布林"),
     ];
     let spawn_points: Vec<(usize, usize)> = {
         let map_ref = world.resource::<Map>();
@@ -116,7 +118,7 @@ pub fn setup_world() -> World {
             let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
             let mut cmd = world.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 8, visible_tiles: Vec::new() },
+                Viewshed { range: 10, visible_tiles: Vec::new() },
                 Stats::monster(glyph, 1), EntityName(mon_name.into()),
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
                 loot,
@@ -137,7 +139,7 @@ pub fn setup_world() -> World {
     }
 
     // 地面物品（使用 ItemStack + ItemRegistry）
-    let ground_item_ids = [0, 1, 2, 3]; // 锈铁剑, 木盾, 皮甲, 攻击戒指
+    let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]; // 锈铁剑, 木盾, 皮甲, 攻击戒指 ×2
     for (i, &item_id) in ground_item_ids.iter().enumerate() {
         if let Some(&(ix, iy)) = spawn_points.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();

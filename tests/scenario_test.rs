@@ -46,8 +46,8 @@ struct ScenarioRunner {
 impl ScenarioRunner {
     /// 创建一个新场景。输出到 scenario_output/<name>/
     fn new(name: &str) -> Self {
-        let width = 100;  // 足够宽，容纳地图 40 + 边栏
-        let height = 30;  // 足够高，容纳地图 20 + 边框
+        let width = 150;  // 足够宽，容纳地图 80 + 边栏
+        let height = 60;  // 足够高，容纳地图 40 + 边框
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend).expect("创建 TestBackend");
         let mut world = setup_world();
