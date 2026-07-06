@@ -207,7 +207,7 @@ pub struct Inventory {
     pub capacity: usize,
 }
 
-impl Default for Inventory { fn default() -> Self { Self::new(10) } }
+impl Default for Inventory { fn default() -> Self { Self::new(36) } }
 impl Inventory {
     pub fn new(capacity: usize) -> Self {
         Self { stacks: Vec::new(), capacity }

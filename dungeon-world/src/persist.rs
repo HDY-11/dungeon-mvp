@@ -8,7 +8,7 @@ use dungeon_core::{
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
-use crate::loot::{rat_loot, goblin_loot};
+
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,7 @@ impl GameSave {
         w.spawn((
             Player, Position { x: self.px as usize, y: self.py as usize },
             Renderable { glyph: '@', color: (255, 255, 0) },
-            MovingDir::default(), Viewshed { range: 8, visible_tiles: Vec::new() },
+            MovingDir::default(), Viewshed { range: 10, visible_tiles: Vec::new() },
             s, EntityName("冒险者".into()),
             Inventory {
                 stacks: self.inv.into_iter()
@@ -244,13 +244,14 @@ impl GameSave {
         for m in self.monsters {
             let mon_stats = m.st.into_stats();
             let agi = mon_stats.agility;
-            let loot = if m.glyph == 'g' { goblin_loot() } else { rat_loot() };
+            let kind = match m.glyph { 's' => dungeon_core::MonsterKindId::Scorpion, 'g' => dungeon_core::MonsterKindId::Goblin, _ => dungeon_core::MonsterKindId::Rat };
+            let loot = dungeon_core::monster_def::monster_loot(kind);
             w.spawn((
                 Monster, Position { x: m.x as usize, y: m.y as usize },
                 Renderable { glyph: m.glyph, color: (m.r, m.g, m.b) },
-                Viewshed { range: 8, visible_tiles: Vec::new() },
+                Viewshed { range: 10, visible_tiles: Vec::new() },
                 mon_stats, EntityName(m.name),
-                AttackName(if m.glyph == 'r' { "撕咬" } else { "重击" }.into()),
+                AttackName(if m.glyph == 'r' { "撕咬" } else if m.glyph == 's' { "螫刺" } else { "重击" }.into()),
                 loot,
                 Reaction { time: agility_to_reaction(agi) },
                 CanChase::new(100), CanFlee::new(200), CanWander::new(50), CanWait::new(0),

@@ -2,9 +2,8 @@
 
 use dungeon_core::{
     components::*, resources::*,
-    Map,
+    Map, calculate_visible_tiles,
 };
-use crate::fov::calculate_visible_tiles;
 use bevy_ecs::prelude::*;
 
 pub fn fov_system(mut query: Query<(&Position, &mut Viewshed)>, map: Res<Map>) {
