@@ -218,21 +218,4 @@ impl GameSave {
 }
 
 // 复用 api.rs 中的怪物掉落定义
-fn rat_loot() -> LootTable {
-    LootTable {
-        entries: vec![
-            crate::components::LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 2 },
-        ],
-    }
-}
-
-fn goblin_loot() -> LootTable {
-    LootTable {
-        entries: vec![
-            crate::components::LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 3 },
-            crate::components::LootEntry { item_id: 11, chance: 0.6, min_count: 1, max_count: 1 },
-            crate::components::LootEntry { item_id: 12, chance: 0.4, min_count: 1, max_count: 1 },
-            crate::components::LootEntry { item_id: 13, chance: 0.3, min_count: 1, max_count: 1 },
-        ],
-    }
-}
+use crate::api::{rat_loot, goblin_loot};

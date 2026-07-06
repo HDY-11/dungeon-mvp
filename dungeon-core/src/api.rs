@@ -136,7 +136,7 @@ pub fn collect_renderables() -> Vec<(usize, usize, char, RgbColor)> {
 
 // ── 工具函数：给怪物添加 LootTable ─────────────────
 
-fn rat_loot() -> LootTable {
+pub(crate) fn rat_loot() -> LootTable {
     LootTable {
         entries: vec![
             LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 2 }, // 生物血肉
@@ -144,7 +144,7 @@ fn rat_loot() -> LootTable {
     }
 }
 
-fn goblin_loot() -> LootTable {
+pub(crate) fn goblin_loot() -> LootTable {
     LootTable {
         entries: vec![
             LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 3 }, // 生物血肉
@@ -332,4 +332,53 @@ pub fn descend() {
         }
     }
     w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
+}
+
+// ── 工具函数 ────────────────────────────────────────
+
+/// 获取玩家实体
+pub fn player_entity() -> Option<Entity> {
+    let w = world!();
+    let mut q = w.try_query::<(Entity, &Player)>().unwrap();
+    q.iter(&w).next().map(|(e, _)| e)
+}
+
+/// 判断玩家是否站在楼梯上
+pub fn on_stairs() -> bool {
+    let w = world!();
+    let pp = *w.try_query::<&Position>().unwrap().iter(&w).next().unwrap_or(&Position { x: 0, y: 0 });
+    let mut q2 = w.try_query::<(&Stairs, &Position)>().unwrap();
+    q2.iter(&w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
+}
+
+/// 拾取玩家所在格的全部地面物品
+pub fn pickup_ground() {
+    let (ppx, ppy) = {
+        let w = world!();
+        let mut q = w.try_query::<(&Player, &Position)>().unwrap();
+        q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+    };
+    let ground: Vec<(Entity, ItemStack)> = {
+        let w = world!();
+        let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
+        q.iter(&w)
+            .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
+            .map(|(e, p, _)| (e, p.stack.clone()))
+            .collect()
+    };
+    if ground.is_empty() { return; }
+    let mut logs = Vec::new();
+    let mut despawn = Vec::new();
+    for (entity, stack) in &ground {
+        let mut w = world!(mut);
+        let mut q = w.query::<(&mut Inventory,)>();
+        if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
+            let leftover = inv.add(stack.item_id, stack.count);
+            let picked = stack.count - leftover;
+            if picked > 0 { logs.push(format!("拾取了{}x{}", stack.name(), picked)); }
+            despawn.push(*entity);
+        }
+    }
+    for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }
+    for msg in logs { let mut w = world!(mut); w.resource_mut::<EventLog>().push(msg); }
 }

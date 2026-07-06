@@ -12,13 +12,14 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    check_death_system, descend,
+    descend,
     fov_system, rebuild_occupancy, save::GameSave,
     setup_world, update_map_memory, update_visible_memory,
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position, Renderable, Stairs, TurnManager,
+    Player, Position, Renderable, TurnManager,
 };
-use dungeon_core::action::{ActionKindV3, PlayerPreview, ActionQueue};
+use dungeon_core::action::{handle_player_direction, handle_wait, handle_skill, advance_and_settle};
+use dungeon_core::api::{on_stairs, pickup_ground};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
@@ -41,12 +42,6 @@ fn main() -> io::Result<()> {
     stdout().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
-}
-
-fn player_entity() -> Option<Entity> {
-    let w = world!();
-    let mut q = w.try_query::<(Entity, &Player)>().unwrap();
-    q.iter(&w).next().map(|(e, _)| e)
 }
 
 // ══════════════════════════════════════════════════════
@@ -119,74 +114,6 @@ fn run(
     }
 }
 
-/// 持续推进直到玩家的行动被执行
-fn advance_until_player_acted() {
-    use dungeon_core::action::{advance_action_queue, ActionQueue};
-    loop {
-        let dist = advance_action_queue();
-        if dist <= 0.0 { break; }
-        let player_done = {
-            let w = world!();
-            let player = w.try_query::<(Entity, &Player)>().unwrap().iter(&w).next().map(|(e, _)| e);
-            match player {
-                Some(p) => !w.resource::<ActionQueue>().has_entity(p),
-                None => true,
-            }
-        };
-        if player_done { break; }
-    }
-}
-
-fn advance_and_settle() {
-    use dungeon_core::action::run_monster_decision;
-
-    advance_until_player_acted();
-    run_monster_decision();
-
-    rebuild_occupancy();
-    let _ = world!(mut).run_system_once(fov_system);
-    update_map_memory();
-    update_visible_memory();
-    let _ = world!(mut).run_system_once(check_death_system);
-    // Buff 随行动推进衰减
-    let _ = world!(mut).run_system_once(dungeon_core::buff_tick_system);
-}
-
-// ══════════════════════════════════════════════════════
-// 拾取地面物品（g 键）
-// ══════════════════════════════════════════════════════
-
-fn pickup_ground() {
-    let (ppx, ppy) = {
-        let w = world!();
-        let mut q = w.try_query::<(&Player, &Position)>().unwrap();
-        q.iter(&w).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
-    };
-    let ground: Vec<(Entity, ItemStack)> = {
-        let w = world!();
-        let mut q = w.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
-        q.iter(&w)
-            .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
-            .map(|(e, p, _)| (e, p.stack.clone()))
-            .collect()
-    };
-    if ground.is_empty() { return; }
-    let mut logs = Vec::new();
-    let mut despawn = Vec::new();
-    for (entity, stack) in &ground {
-        let mut w = world!(mut);
-        let mut q = w.query::<(&mut Inventory,)>();
-        if let Some((mut inv,)) = q.iter_mut(&mut *w).next() {
-            let leftover = inv.add(stack.item_id, stack.count);
-            let picked = stack.count - leftover;
-            if picked > 0 { logs.push(format!("拾取了{}x{}", stack.name(), picked)); }
-            despawn.push(*entity);
-        }
-    }
-    for e in despawn { let mut w = world!(mut); w.entity_mut(e).despawn(); }
-    for msg in logs { let mut w = world!(mut); w.resource_mut::<EventLog>().push(msg); }
-}
-
 // ══════════════════════════════════════════════════════
 // 核心输入处理（主线程）
 // ── 返回 true 表示确认了一个耗时行动，调用方应推进队列
@@ -203,9 +130,10 @@ fn process_key(
         KeyCode::Left  => Ok(handle_player_direction(-1, 0)),
         KeyCode::Right => Ok(handle_player_direction(1, 0)),
         KeyCode::Char('.') => Ok(handle_wait()),
-        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-            Ok(handle_skill(code))
-        }
+        KeyCode::Char('1') => Ok(handle_skill(0)),
+        KeyCode::Char('2') => Ok(handle_skill(1)),
+        KeyCode::Char('3') => Ok(handle_skill(2)),
+        KeyCode::Char('4') => Ok(handle_skill(3)),
         KeyCode::Char('q') | KeyCode::Esc => {
             modal_flag.store(true, Ordering::Relaxed);
             let confirmed = open_modal(terminal, "确认退出？");
@@ -283,103 +211,6 @@ fn open_modal(
             return result;
         }
     }
-}
-
-// ══════════════════════════════════════════════════════
-// 方向键 tap-tap（预览 / 确认）
-// ══════════════════════════════════════════════════════
-
-fn handle_player_direction(dx: isize, dy: isize) -> bool {
-    use dungeon_core::{Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster};
-    use dungeon_core::action::{Reaction, CanMove, ActionKindV3};
-
-    let Some(entity) = player_entity() else { return false };
-
-    let kind = {
-        let w = world!();
-        let Some(pos) = w.get::<Position>(entity) else { return false };
-        let nx = pos.x.wrapping_add_signed(dx);
-        let ny = pos.y.wrapping_add_signed(dy);
-        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return false; }
-        let tile = w.resource::<Map>().tiles[ny][nx];
-        let has_enemy = w.resource::<OccupancyMap>().cells[ny][nx]
-            .and_then(|e| if w.get::<Monster>(e).is_some() { Some(e) } else { None });
-        if tile != Tile::Floor && has_enemy.is_none() { return false; }
-        if let Some(target) = has_enemy {
-            ActionKindV3::Attack { target }
-        } else {
-            ActionKindV3::Move { dx, dy }
-        }
-    };
-
-    let reaction_time = world!().get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
-    let duration = world!().get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
-    handle_timed_action(entity, kind, reaction_time + duration)
-}
-
-/// tap-tap 核心：返回 true 表示确认入队
-fn handle_timed_action(entity: Entity, kind: ActionKindV3, av: f32) -> bool {
-    let is_confirm = {
-        let w = world!();
-        let preview = w.resource::<PlayerPreview>();
-        match (&preview.kind, &kind) {
-            (Some(ActionKindV3::Move { dx: pd, dy: pd2 }), ActionKindV3::Move { dx, dy })
-                if *pd == *dx && *pd2 == *dy => true,
-            (Some(ActionKindV3::Wait), ActionKindV3::Wait) => true,
-            (Some(ActionKindV3::Skill(a)), ActionKindV3::Skill(b)) if *a == *b => true,
-            (Some(ActionKindV3::Attack { .. }), ActionKindV3::Attack { .. }) => true,
-            _ => false,
-        }
-    };
-
-    if is_confirm {
-        world!(mut).resource_mut::<ActionQueue>().enqueue_if_absent(entity, kind, av);
-        world!(mut).resource_mut::<PlayerPreview>().kind = None;
-        true
-    } else {
-        world!(mut).resource_mut::<PlayerPreview>().kind = Some(kind);
-        false
-    }
-}
-
-/// 处理等待键
-fn handle_wait() -> bool {
-    use dungeon_core::action::{Reaction, CanWait};
-    if let Some(e) = player_entity() {
-        let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-        let duration = world!().get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
-        handle_timed_action(e, ActionKindV3::Wait, reaction_time + duration)
-    } else {
-        false
-    }
-}
-
-/// 处理技能键
-fn handle_skill(code: KeyCode) -> bool {
-    let idx = match code {
-        KeyCode::Char('1') => 0,
-        KeyCode::Char('2') => 1,
-        KeyCode::Char('3') => 2,
-        _ => 3,
-    };
-    if let Some(e) = player_entity() {
-        use dungeon_core::action::Reaction;
-        let reaction_time = world!().get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-        handle_timed_action(e, ActionKindV3::Skill(idx), reaction_time + 600.0)
-    } else {
-        false
-    }
-}
-
-// ══════════════════════════════════════════════════════
-// 工具函数
-// ══════════════════════════════════════════════════════
-
-fn on_stairs() -> bool {
-    let w = world!();
-    let pp = *w.try_query::<&Position>().unwrap().iter(&w).next().unwrap_or(&Position { x: 0, y: 0 });
-    let mut q2 = w.try_query::<(&Stairs, &Position)>().unwrap();
-    q2.iter(&w).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
 }
 
 fn title_screen(
