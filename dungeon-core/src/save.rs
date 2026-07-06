@@ -1,6 +1,6 @@
 use crate::*;
 use crate::world;
-use crate::action::{Reaction, agility_to_reaction, CanMove, CanChase, CanFlee, CanWander, CanWait, ActionQueue, InputBuffer, PlayerPreview};
+use crate::action_types::{Reaction, agility_to_reaction, CanMove, CanChase, CanFlee, CanWander, CanWait, ActionQueue, InputBuffer, PlayerPreview};
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};

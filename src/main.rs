@@ -19,7 +19,7 @@ use dungeon_core::{
     Player, Position, Renderable, TurnManager,
 };
 use dungeon_core::action::{handle_player_direction, handle_wait, handle_skill, advance_and_settle};
-use dungeon_core::api::{on_stairs, pickup_ground};
+use dungeon_core::{on_stairs, pickup_ground};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};

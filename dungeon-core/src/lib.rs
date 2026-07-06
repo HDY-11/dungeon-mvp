@@ -1,17 +1,21 @@
 pub mod action;
+pub mod action_types;
 pub mod api;
 pub mod components;
 pub mod global;
 pub mod items;
+pub mod ops;
 // pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
 pub mod save;
 pub mod systems;
 
 
+pub use action_types::*;
 pub use api::*;
 pub use components::*;
 pub use items::*;
+pub use ops::*;
 // pub use pathfinding::*; // 已移除
 pub use resources::*;
 pub use systems::*;
