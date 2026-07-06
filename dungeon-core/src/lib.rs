@@ -157,13 +157,12 @@ impl Map {
         for _ in 0..target * 6 {
             if self.rooms.len() >= target { break; }
 
-            // 随机选形状
-            let shape = match rng.random_range(0..4) {
-                0 => RoomShape::Rect,
-                1 => RoomShape::Circle,
-                2 => RoomShape::Diamond,
-                3 => RoomShape::Ellipse,
-                _ => unreachable!(),
+            // 加权随机选形状（矩形 45%，圆形 25%，菱形 20%，椭圆 10%）
+            let shape = match rng.random_range(0..100) {
+                0..=44 => RoomShape::Rect,
+                45..=69 => RoomShape::Circle,
+                70..=89 => RoomShape::Diamond,
+                _ => RoomShape::Ellipse,
             };
 
             let (x, y, w, h) = match shape {
