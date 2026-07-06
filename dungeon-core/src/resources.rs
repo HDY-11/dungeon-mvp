@@ -47,6 +47,10 @@ impl TurnManager {
 #[derive(Resource, Clone, Copy)]
 pub struct FloorNumber(pub u32);
 
+/// 地图种子（随机初始化，用于各楼层地图生成，使每次游戏地图不同）
+#[derive(Resource, Clone, Copy)]
+pub struct MapSeed(pub u64);
+
 #[derive(Resource, Default)]
 pub struct PendingLevelUp { pub points: u32 }
 

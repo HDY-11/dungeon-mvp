@@ -65,10 +65,12 @@ pub fn setup_world() -> World {
     ItemRegistry::load(); // 初始化全局物品注册表
 
     let mut world = World::new();
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
+    let map_seed: u64 = rand::random();
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(map_seed);
     let mut map = Map::new();
     map.generate(&mut rng);
 
+    world.insert_resource(MapSeed(map_seed));
     world.insert_resource(MapMemory::new());
     world.insert_resource(OccupancyMap::new());
     world.insert_resource(PendingExp::default());

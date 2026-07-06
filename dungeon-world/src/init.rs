@@ -17,10 +17,12 @@ pub fn setup_world() -> World {
     ItemRegistry::load();
 
     let mut world = World::new();
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
+    let map_seed: u64 = rand::random();
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(map_seed);
     let mut map = Map::new();
     map.generate(&mut rng);
 
+    world.insert_resource(MapSeed(map_seed));
     world.insert_resource(MapMemory::new());
     world.insert_resource(OccupancyMap::new());
     world.insert_resource(PendingExp::default());
@@ -125,7 +127,8 @@ pub fn descend(world: &mut World) {
         q.iter(&mut *w).map(|(e,)| e).collect() };
     for e in to_despawn { let _ = w.despawn(e); }
 
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(42 + f as u64);
+    let base_seed = w.resource::<MapSeed>().0;
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(base_seed.wrapping_add(f as u64));
     let mut map = Map::new(); map.generate(&mut rng);
     w.insert_resource(map); w.insert_resource(MapMemory::new());
     let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };

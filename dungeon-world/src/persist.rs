@@ -38,6 +38,7 @@ pub struct SavedActionEntry {
 #[derive(Serialize, Deserialize)]
 pub struct GameSave {
     pub floor: u32,
+    pub map_seed: u64,
     pub px: u16, pub py: u16,
     pub st: SavedStats,
     pub inv: Vec<SavedStack>,
@@ -104,6 +105,7 @@ impl GameSave {
     pub fn capture(world: &World) -> Self {
         let w = world;
         let floor = w.resource::<FloorNumber>().0;
+        let map_seed = w.resource::<MapSeed>().0;
         let explored = w.resource::<MapMemory>().explored;
         let mut map_tiles = Vec::with_capacity(MAP_WIDTH * MAP_HEIGHT);
         {
@@ -172,7 +174,7 @@ impl GameSave {
         };
 
         Self {
-            floor, px, py, st, inv,
+            floor, map_seed, px, py, st, inv,
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
             buffs,
             map_tiles, rooms,
@@ -189,6 +191,7 @@ impl GameSave {
         for e in dead { let _ = w.despawn(e); }
 
         w.insert_resource(FloorNumber(self.floor));
+        w.insert_resource(MapSeed(self.map_seed));
         let mut tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
         for (i, &v) in self.map_tiles.iter().enumerate() {
             tiles[i / MAP_WIDTH][i % MAP_WIDTH] = if v == 0 { Tile::Wall } else { Tile::Floor };
