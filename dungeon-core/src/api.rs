@@ -24,6 +24,9 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
     };
 
     let mut mark_visible = |pos: (isize, isize)| {
+        if pos.0 < 0 || pos.0 >= MAP_WIDTH as isize || pos.1 < 0 || pos.1 >= MAP_HEIGHT as isize {
+            return;
+        }
         let dx = pos.0 - origin.0;
         let dy = pos.1 - origin.1;
         if dx * dx + dy * dy <= r2 {
@@ -86,10 +89,8 @@ pub fn setup_world() -> World {
         let m = world.resource::<Map>();
         m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-    let count = crate::monster_def::floor_monster_count(1, &mut rng);
-    let kinds = crate::monster_def::pick_monster_kinds(count, 1, &mut rng);
-    for (i, &kind) in kinds.iter().enumerate() {
-        if let Some(&(mx, my)) = room_centers.get(i) {
+    let kinds = crate::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
+    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
             let glyph = crate::monster_def::monster_glyph(kind);
             let color = crate::monster_def::monster_color(kind);
             let mon_agi = crate::monster_def::monster_stats(kind, 1).agility;
@@ -108,7 +109,6 @@ pub fn setup_world() -> World {
             cmd.insert(crate::action_types::CanWander::new(50));
             cmd.insert(crate::action_types::CanWait::new(0));
         }
-    }
 
     {
         let m = world.resource::<Map>();

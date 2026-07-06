@@ -17,6 +17,9 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
     };
 
     let mut mark_visible = |pos: (isize, isize)| {
+        if pos.0 < 0 || pos.0 >= MAP_WIDTH as isize || pos.1 < 0 || pos.1 >= MAP_HEIGHT as isize {
+            return;
+        }
         let dx = pos.0 - origin.0;
         let dy = pos.1 - origin.1;
         if dx * dx + dy * dy <= r2 {

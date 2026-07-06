@@ -61,10 +61,8 @@ pub fn setup_world() -> World {
         let m = world.resource::<Map>();
         m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-    let count = dungeon_core::monster_def::floor_monster_count(1, &mut rng);
-    let kinds = dungeon_core::monster_def::pick_monster_kinds(count, 1, &mut rng);
-    for (i, &kind) in kinds.iter().enumerate() {
-        if let Some(&(mx, my)) = room_centers.get(i) {
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
+    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, 1).agility;
@@ -83,7 +81,6 @@ pub fn setup_world() -> World {
             cmd.insert(CanWander::new(50));
             cmd.insert(CanWait::new(0));
         }
-    }
 
     {
         let m = world.resource::<Map>();
@@ -156,10 +153,8 @@ pub fn descend(world: &mut World) {
         let m = w.resource::<Map>();
         m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-    let count = dungeon_core::monster_def::floor_monster_count(f, &mut rng);
-    let kinds = dungeon_core::monster_def::pick_monster_kinds(count, f, &mut rng);
-    for (i, &kind) in kinds.iter().enumerate() {
-        if let Some(&(mx, my)) = room_centers.get(i) {
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), f, &mut rng);
+    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, f).agility;
@@ -178,7 +173,6 @@ pub fn descend(world: &mut World) {
             cmd.insert(CanWander::new(50));
             cmd.insert(CanWait::new(0));
         }
-    }
 
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     for (i, &item_id) in ground_item_ids.iter().enumerate() {

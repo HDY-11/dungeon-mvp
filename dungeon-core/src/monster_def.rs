@@ -117,39 +117,23 @@ pub fn monster_spawn_weight(kind: MonsterKindId, floor: u32) -> f32 {
     }
 }
 
-/// 该楼层应生成的怪物数量（概率区间）
-pub fn floor_monster_count(floor: u32, rng: &mut impl Rng) -> u32 {
+/// 为每一间可用房间独立掷骰决定是否生成怪物。
+/// spawn_chance 随楼层递增：1 层 ≈70%（~7 只/10 间房），高层渐近 95%。
+pub fn roll_monster_kinds(room_count: usize, floor: u32, rng: &mut impl Rng) -> Vec<MonsterKindId> {
     use rand::RngExt;
-    let (min, max): (u32, u32) = match floor {
-        1 => (0, 2),
-        2 => (1, 3),
-        3 => (2, 4),
-        4 => (3, 5),
-        5 => (4, 6),
-        6 => (4, 7),
-        _ => {
-            let b = floor.min(12);
-            (b.saturating_sub(3), b)
-        }
-    };
-    if min >= max { min } else { rng.random_range(min..=max) }
-}
-
-/// 根据权重随机选择 count 个怪物种类
-pub fn pick_monster_kinds(count: u32, floor: u32, rng: &mut impl Rng) -> Vec<MonsterKindId> {
-    use rand::RngExt;
+    let spawn_chance = (0.6 + floor as f32 * 0.05).min(0.95);
     let all = [MonsterKindId::Rat, MonsterKindId::Scorpion, MonsterKindId::Goblin];
-    let mut result = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let weights: Vec<f32> = all.iter().map(|k| monster_spawn_weight(*k, floor)).collect();
-        let total: f32 = weights.iter().sum();
-        let roll = rng.random_range(0.0..total);
-        let mut acc = 0.0;
-        for (i, &w) in weights.iter().enumerate() {
-            acc += w;
-            if roll < acc {
-                result.push(all[i]);
-                break;
+    let mut result = Vec::new();
+    for _ in 0..room_count {
+        if rng.random_range(0.0..1.0) < spawn_chance {
+            // 加权随机选种类
+            let weights: Vec<f32> = all.iter().map(|k| monster_spawn_weight(*k, floor)).collect();
+            let total: f32 = weights.iter().sum();
+            let roll = rng.random_range(0.0..total);
+            let mut acc = 0.0;
+            for (i, &w) in weights.iter().enumerate() {
+                acc += w;
+                if roll < acc { result.push(all[i]); break; }
             }
         }
     }
