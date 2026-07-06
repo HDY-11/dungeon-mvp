@@ -21,6 +21,12 @@ pub fn agility_to_reaction(agility: u32) -> f32 {
     (100.0 - agility as f32 * 3.0).max(20.0)
 }
 
+/// 敏捷对耗时的修正系数：每点敏捷降低 2% 耗时，最高降低 50%。
+/// 最终 AV = reaction_time + duration × speed_factor
+pub fn agility_speed_factor(agility: u32) -> f32 {
+    (1.0 - agility as f32 * 0.02).max(0.5)
+}
+
 // ══════════════════════════════════════════════════════
 // Action 组件
 // ══════════════════════════════════════════════════════

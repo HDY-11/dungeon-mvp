@@ -51,7 +51,8 @@ pub fn handle_player_direction(world: &mut World, dx: isize, dy: isize) -> bool 
     };
 
     let reaction_time = world.get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
-    let duration = world.get::<CanMove>(entity).map(|m| m.duration).unwrap_or(300.0);
+    let agility = world.get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
+    let duration = world.get::<CanMove>(entity).map(|m| m.duration * agility_speed_factor(agility)).unwrap_or(300.0);
     handle_timed_action(world, entity, kind, reaction_time + duration)
 }
 
@@ -59,7 +60,8 @@ pub fn handle_player_direction(world: &mut World, dx: isize, dy: isize) -> bool 
 pub fn handle_wait(world: &mut World) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
         let reaction_time = world.get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-        let duration = world.get::<CanWait>(e).map(|w| w.duration).unwrap_or(800.0);
+        let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
+        let duration = world.get::<CanWait>(e).map(|w| w.duration * agility_speed_factor(agility)).unwrap_or(800.0);
         handle_timed_action(world, e, ActionKindV3::Wait, reaction_time + duration)
     } else {
         false
@@ -70,7 +72,8 @@ pub fn handle_wait(world: &mut World) -> bool {
 pub fn handle_skill(world: &mut World, idx: usize) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
         let reaction_time = world.get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
-        handle_timed_action(world, e, ActionKindV3::Skill(idx), reaction_time + 600.0)
+        let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
+        handle_timed_action(world, e, ActionKindV3::Skill(idx), reaction_time + 600.0 * agility_speed_factor(agility))
     } else {
         false
     }

@@ -18,10 +18,10 @@ pub fn chase_decision_system(
 ) {
     out.0.clear();
     let player_pos = player.iter().next().map(|p| (p.x, p.y));
-    for (entity, chase, _stats, view, reaction) in &monsters {
+    for (entity, chase, stats, view, reaction) in &monsters {
         let can_see = player_pos.map_or(false, |pp| view.visible_tiles.contains(&pp));
         if CanChase::condition(can_see) {
-            let av = reaction.time + chase.duration;
+            let av = reaction.time + chase.duration * agility_speed_factor(stats.agility);
             out.0.push((entity, chase.priority, av, ActionKindV3::Chase));
         }
     }
@@ -36,7 +36,7 @@ pub fn flee_decision_system(
     for (entity, flee, stats, reaction) in &monsters {
         let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
         if CanFlee::condition(hp_ratio) {
-            let av = reaction.time + flee.duration;
+            let av = reaction.time + flee.duration * agility_speed_factor(stats.agility);
             out.0.push((entity, flee.priority, av, ActionKindV3::Flee));
         }
     }
@@ -44,7 +44,7 @@ pub fn flee_decision_system(
 
 /// 游荡决策：有 CanWander 且尚未决定行动的怪物
 pub fn wander_decision_system(
-    monsters: Query<(Entity, &CanWander, &Reaction)>,
+    monsters: Query<(Entity, &CanWander, &Stats, &Reaction)>,
     chase_out: Res<ChaseIntents>,
     flee_out: Res<FleeIntents>,
     mut out: ResMut<WanderIntents>,
@@ -52,9 +52,9 @@ pub fn wander_decision_system(
     out.0.clear();
     // 已有追击/逃跑意图的实体，不再纳入游荡
     let already_decided: Vec<Entity> = chase_out.0.iter().chain(flee_out.0.iter()).map(|(e, _, _, _)| *e).collect();
-    for (entity, wander, reaction) in &monsters {
+    for (entity, wander, stats, reaction) in &monsters {
         if !already_decided.contains(&entity) && CanWander::condition() {
-            let av = reaction.time + wander.duration;
+            let av = reaction.time + wander.duration * agility_speed_factor(stats.agility);
             out.0.push((entity, wander.priority, av, ActionKindV3::Wander));
         }
     }
