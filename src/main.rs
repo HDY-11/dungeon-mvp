@@ -12,14 +12,12 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    descend,
-    fov_system, rebuild_occupancy, save::GameSave,
-    setup_world, update_map_memory, update_visible_memory,
+    rebuild_occupancy, update_map_memory, update_visible_memory,
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position, Renderable, TurnManager,
+    Player, Position, Renderable, TurnManager, on_stairs, pickup_ground,
 };
 use dungeon_action::{handle_player_direction, handle_wait, handle_skill, advance_and_settle};
-use dungeon_core::{on_stairs, pickup_ground};
+use dungeon_world::{setup_world, descend, GameSave, fov_system};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};

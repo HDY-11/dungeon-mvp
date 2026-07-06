@@ -1,0 +1,12 @@
+[package]
+name = "dungeon-world"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dungeon-core = { path = "../dungeon-core" }
+dungeon-action = { path = "../dungeon-action" }
+bevy_ecs = "0.16"
+rand = "0.10.1"
+serde = { version = "1", features = ["derive"] }
+symmetric-shadowcasting = "0.2"

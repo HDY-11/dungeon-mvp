@@ -625,7 +625,20 @@ dependencies = [
  "dungeon-action",
  "dungeon-core",
  "dungeon-render",
+ "dungeon-world",
  "ratatui",
+]
+
+[[package]]
+name = "dungeon-world"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "dungeon-action",
+ "dungeon-core",
+ "rand 0.10.1",
+ "serde",
+ "symmetric-shadowcasting",
 ]
 
 [[package]]
