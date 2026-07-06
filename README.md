@@ -1,28 +1,42 @@
 # Dungeon MVP
 
-Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`。
+Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 
-## 架构
+## 架构（4 crate 拆分）
 
 ```
-dungeon-core/         ← 纯逻辑（无渲染依赖）
-  action.rs           ← 行动系统 v3：Action 组件 + ActionQueue + 保活检查 + 执行引擎
-  components.rs       ← ECS 组件（Stats, Buffs, Player, Monster, LootTable, …）
-  resources.rs        ← ECS 资源（PendingExp, EventLog, VisibleMemory, …）
-  systems.rs          ← 基础系统（movement, FOV, 死亡检测, 技能, buff_tick, …）
-  items.rs            ← ItemRegistry, ItemStack, Inventory, Equipment, ItemPickup
-  api.rs              ← setup_world, descend, FOV, 碰撞图, 视野记忆
-  save.rs             ← 存档/读档
-  global.rs           ← 全局 World（OnceLock<RwLock<World>> + world!() 宏）
-  tests.rs            ← 8 个单元测试
+dungeon-core/             ← 纯数据 + 工具函数（无渲染 / 无执行依赖）
+  action_types.rs          ← 行动系统类型：ActionKindV3、ActionQueue、Reaction、CanMove/Chase/…
+  components.rs            ← ECS 组件（Stats, Buffs, Player, Monster, LootTable, …）
+  resources.rs             ← ECS 资源（PendingExp, EventLog, VisibleMemory, TurnManager, …）
+  items.rs                 ← ItemRegistry（OnceLock 单例）、ItemStack、Inventory、Equipment
+  global.rs                ← 线程局部 RNG（仅此而已 — 无全局 World）
+  ops.rs                   ← 工具函数：碰撞图 rebuild、视野记忆、拾取、渲染收集
+  systems.rs               ← 基础 ECS System（FOV、死亡检测、经验应用、buff 衰减）
+  api.rs                   ← 旧版 setup_world（仅测试使用）、FOV、掉落定义
+  tests.rs                 ← 8 个单元测试
 
-dungeon-render/       ← 渲染层（依赖 core + ratatui）
-  color.rs            ← (u8,u8,u8) → ratatui::Color 转换
-  timeline.rs         ← build_timeline（行动表）
-  ui.rs               ← render_ui + build_stats_panel（含 VisibleMemory 灰色渲染）
-  title.rs            ← draw_title
+dungeon-action/           ← 行动执行逻辑（依赖 core）
+  execute.rs               ← advance_action_queue、保活检查、execute_entry（移动/攻击/技能/怪物 AI）
+  monster.rs               ← 并行决策 system（chase / flee / wander → arbitration）
+  player.rs                ← 玩家 tap-tap 行动处理（direction / wait / skill）
+  tick.rs                  ← 串行编排：advance_until_player_acted + advance_and_settle（旧版兼容）
 
-src/main.rs           ← 应用层：独立输入线程 + 主循环 + tap-tap + 背包界面
+dungeon-world/            ← 世界生命周期 + 并行调度（依赖 action + core）
+  init.rs                  ← setup_world（正式入口）、descend（下楼）
+  persist.rs               ← GameSave（存档/读档，显式 &World 参数）
+  systems.rs               ← 世界级 ECS System 包装（fov / death / buff / exp）
+  tick.rs                  ← 并行 Schedule（advance_and_settle_parallel）
+  fov.rs                   ← 视野计算（对称阴影投射）
+  loot.rs                  ← 怪物掉落表定义
+
+dungeon-render/           ← 渲染层（依赖 core + ratatui）
+  color.rs                 ← (u8,u8,u8) → ratatui::Color 转换
+  timeline.rs              ← build_timeline（行动轴面板）
+  ui.rs                    ← render_ui + build_stats_panel（含 VisibleMemory 灰色渲染）
+  title.rs                 ← draw_title（标题画面）
+
+src/main.rs               ← 应用层：独立输入线程 + 主循环 + tap-tap + 背包界面
 ```
 
 ## 行动系统 v3
@@ -40,7 +54,7 @@ src/main.rs           ← 应用层：独立输入线程 + 主循环 + tap-tap +
 
 ```
 玩家: tap(预览) → tap(确认) → enqueue_if_absent → advance_until_player_acted
-怪物: run_monster_decision() → 条件检查 → 仲裁(priority) → enqueue → 等待推进
+怪物: 并行 Schedule（chase∥flee∥wander → arbitration）→ enqueue → 等待推进
 
 advance_action_queue():
   next_event_distance() → 推进所有条目 av_remaining → pop_ready()
@@ -49,8 +63,22 @@ advance_action_queue():
 
 advance_until_player_acted():
   循环 advance_action_queue 直到玩家行动被消费（或队列空）
-  怪物决策只在外层跑一次
+  怪物决策只在每帧开始跑一次（由 Schedule 编排）
 ```
+
+### 并行怪物决策（Schedule）
+
+```rust
+Schedule: (
+  chase_decision_system,   // 追击条件检查
+  flee_decision_system,    // 逃跑条件检查
+  wander_decision_system,  // 游荡条件检查（无 chase/flee 时才生成）
+) → arbitration_system     // 合并意图，按优先级入队
+```
+
+三个条件检查并行执行（数据无竞争），各自写入独立的意图缓冲区，仲裁 system 串行合并。
+
+旧串行入口 `run_monster_decision()` 保留兼容。
 
 ### 保活检查
 
@@ -82,10 +110,11 @@ advance_until_player_acted():
 │   try_recv()                     │
 │   有按键 → process_key()         │
 │   ├ 预览(false) → 仅设 preview   │
-│   ├ 确认(true) → advance()      │
+│   ├ 确认(true) → advance_and_settle_parallel()
 │   └ 非行动键 → 即时执行         │
 │   无按键 → sleep(1ms)            │
 │   render_ui()                    │
+│   check TurnManager.wants_quit   │
 └──────────────────────────────────┘
 ```
 
@@ -140,23 +169,19 @@ advance_until_player_acted():
 
 `VisibleMemory` 资源记录实体的最后已知位置。视野外的实体在已探索区域以灰色显示。死亡实体自动清理。
 
-## 全局 World
+## World 传递模式
 
-使用 `OnceLock<RwLock<World>>` + `world!()` 宏。
+**不再使用全局 `OnceLock<RwLock<World>>`。** 所有函数改为显式接收 `&World` / `&mut World` 参数。
 
 ```rust
-// 读
-let w = world!();
-w.resource::<T>();
-w.get::<T>(entity);
+// 读（任意函数签名）
+fn read_something(world: &World) { ... }
 
 // 写
-let mut w = world!(mut);
-w.resource_mut::<T>();
-w.get_mut::<T>(entity);
+fn write_something(world: &mut World) { ... }
 ```
 
-**注意**：`RwLock` 不可重入，持有锁时不能调另一个需要锁的函数。
+这避免了 RwLock 死锁问题，且使数据流更清晰。
 
 ### 构建
 
