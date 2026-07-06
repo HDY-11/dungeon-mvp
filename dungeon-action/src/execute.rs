@@ -100,9 +100,13 @@ fn execute_chase(world: &mut World, entity: Entity) {
     let Some((px, py)) = player_pos else { return };
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
     if pos.0.abs_diff(px) + pos.1.abs_diff(py) <= 1 {
-        let dmg = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
+        let monster_atk = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
+        let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>)>().iter(world).next()
+            .map(|(ps, inv, eq, buffs)| ops::effective_defense(ps, inv, eq, buffs) as i32)
+            .unwrap_or(0);
+        let dmg = (monster_atk - player_def).max(1);
         let name = world.get::<EntityName>(entity).map(|n| n.0.clone()).unwrap_or("怪物".into());
-        if let Some(mut ps) = world.get_mut::<Stats>(player_entity) { ps.hp -= dmg.max(1); }
+        if let Some(mut ps) = world.get_mut::<Stats>(player_entity) { ps.hp -= dmg; }
         world.resource_mut::<EventLog>().push(format!("{} 攻击了你，{}伤", name, dmg));
     } else {
         let dx = if px > pos.0 { 1 } else if px < pos.0 { -1 } else { 0 };
@@ -191,7 +195,11 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
         let equipment = world.get::<Equipment>(attacker).unwrap();
         let buffs = world.get::<Buffs>(attacker);
         let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, buffs) as i32;
-        let target_def = target_stats.defense as i32;
+        let target_def = {
+            let eq = world.get::<Equipment>(target);
+            let buffs = world.get::<Buffs>(target);
+            ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), buffs) as i32
+        };
         let raw_dmg = (effective_atk - target_def).max(1);
         let is_crit = attacker_stats.crit_rate > rand::random::<f32>();
         dmg = if is_crit { (raw_dmg as f32 * (1.0 + attacker_stats.crit_damage)).round() as i32 } else { raw_dmg };

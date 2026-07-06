@@ -50,8 +50,8 @@ pub fn handle_player_direction(world: &mut World, dx: isize, dy: isize) -> bool 
         }
     };
 
-    let reaction_time = world.get::<Reaction>(entity).map(|r| r.time).unwrap_or(50.0);
     let agility = world.get::<Stats>(entity).map(|s| s.agility).unwrap_or(10);
+    let reaction_time = agility_to_reaction(agility);
     let duration = world.get::<CanMove>(entity).map(|m| m.duration * agility_speed_factor(agility)).unwrap_or(300.0);
     handle_timed_action(world, entity, kind, reaction_time + duration)
 }
@@ -59,8 +59,8 @@ pub fn handle_player_direction(world: &mut World, dx: isize, dy: isize) -> bool 
 /// 处理等待键
 pub fn handle_wait(world: &mut World) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
-        let reaction_time = world.get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
         let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
+        let reaction_time = agility_to_reaction(agility);
         let duration = world.get::<CanWait>(e).map(|w| w.duration * agility_speed_factor(agility)).unwrap_or(800.0);
         handle_timed_action(world, e, ActionKindV3::Wait, reaction_time + duration)
     } else {
@@ -71,8 +71,8 @@ pub fn handle_wait(world: &mut World) -> bool {
 /// 处理技能键（idx: 技能索引 0..3）
 pub fn handle_skill(world: &mut World, idx: usize) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
-        let reaction_time = world.get::<Reaction>(e).map(|r| r.time).unwrap_or(50.0);
         let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
+        let reaction_time = agility_to_reaction(agility);
         handle_timed_action(world, e, ActionKindV3::Skill(idx), reaction_time + 600.0 * agility_speed_factor(agility))
     } else {
         false
