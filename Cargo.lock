@@ -587,6 +587,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
+name = "dungeon-action"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "dungeon-core",
+ "rand 0.10.1",
+]
+
+[[package]]
 name = "dungeon-core"
 version = "0.1.0"
 dependencies = [
@@ -613,6 +622,7 @@ dependencies = [
  "bevy_ecs",
  "bincode",
  "crossterm",
+ "dungeon-action",
  "dungeon-core",
  "dungeon-render",
  "ratatui",

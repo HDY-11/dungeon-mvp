@@ -125,21 +125,7 @@ fn test_action_queue_advance() {
     }
 }
 
-// ── 怪物决策 ──
-
-#[test]
-fn test_monster_decision_produces_actions() {
-    crate::global::set_world(fresh_world());
-    {
-        let w = world!();
-        assert!(w.resource::<ActionQueue>().entries.is_empty());
-    }
-    run_monster_decision();
-    {
-        let w = world!();
-        assert!(w.resource::<ActionQueue>().entries.len() > 0);
-    }
-}
+// (run_monster_decision 测试已移至 dungeon-action crate)
 
 // ── Action 条件 ──
 
