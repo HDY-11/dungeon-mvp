@@ -1,6 +1,6 @@
 use dungeon_core::{
     EntityName, Position, Renderable,
-    action::{ActionQueue, ActionKindV3, PlayerPreview},
+    ActionQueue, ActionKindV3, PlayerPreview,
 };
 use ratatui::{
     style::{Color, Style},

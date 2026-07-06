@@ -3,7 +3,7 @@
 use dungeon_core::{
     components::*, items::*, resources::*,
     Map, Tile, MAP_WIDTH, MAP_HEIGHT,
-    ActionQueue, InputBuffer, PlayerPreview,
+    ActionQueue, ActionEntry, ActionKindV3, InputBuffer, PlayerPreview,
     ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
@@ -17,6 +17,22 @@ use serde::{Deserialize, Serialize};
 pub struct SavedStack {
     pub item_id: usize,
     pub count: u32,
+}
+
+/// 可序列化的行动种类（不含 Attack — 含 Entity 引用无法跨存档）
+#[derive(Serialize, Deserialize, Clone)]
+pub enum SavedActionKind {
+    Move { dx: isize, dy: isize },
+    Chase, Flee, Wander, Wait,
+    Skill(usize),
+}
+
+/// 可序列化的行动条目（按实体位置 + 行动种类标识）
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedActionEntry {
+    pub x: u16, pub y: u16,         // 实体所在位置（用于 restore 时重映射 Entity）
+    pub kind: SavedActionKind,
+    pub av_remaining: f32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,6 +52,7 @@ pub struct GameSave {
     pub items: Vec<SavedGroundItem>,
     pub sx: u16, pub sy: u16,
     pub player_class: Option<PlayerClass>,
+    pub action_queue: Vec<SavedActionEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -133,6 +150,27 @@ impl GameSave {
             }).collect()
         };
 
+        let action_queue: Vec<SavedActionEntry> = {
+            let queue = w.resource::<ActionQueue>();
+            queue.entries.iter().filter_map(|entry| {
+                // 保存实体位置用于 restore 时重映射
+                let pos = w.get::<Position>(entry.entity)?;
+                let kind = match &entry.kind {
+                    ActionKindV3::Move { dx, dy } => SavedActionKind::Move { dx: *dx, dy: *dy },
+                    ActionKindV3::Chase => SavedActionKind::Chase,
+                    ActionKindV3::Flee => SavedActionKind::Flee,
+                    ActionKindV3::Wander => SavedActionKind::Wander,
+                    ActionKindV3::Wait => SavedActionKind::Wait,
+                    ActionKindV3::Skill(idx) => SavedActionKind::Skill(*idx),
+                    ActionKindV3::Attack { .. } => return None, // 含 Entity 引用，无法保存
+                };
+                Some(SavedActionEntry {
+                    x: pos.x as u16, y: pos.y as u16,
+                    kind, av_remaining: entry.av_remaining,
+                })
+            }).collect()
+        };
+
         Self {
             floor, px, py, st, inv,
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
@@ -140,6 +178,7 @@ impl GameSave {
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
+            action_queue,
         }
     }
 
@@ -224,6 +263,31 @@ impl GameSave {
                 Position { x: gi.x as usize, y: gi.y as usize },
                 Renderable { glyph: def.glyph, color: def.color },
             ));
+        }
+
+        // 恢复 ActionQueue：根据位置重映射 Entity
+        let mut entries: Vec<ActionEntry> = Vec::new();
+        for saved in &self.action_queue {
+            let kind = match &saved.kind {
+                SavedActionKind::Move { dx, dy } => ActionKindV3::Move { dx: *dx, dy: *dy },
+                SavedActionKind::Chase => ActionKindV3::Chase,
+                SavedActionKind::Flee => ActionKindV3::Flee,
+                SavedActionKind::Wander => ActionKindV3::Wander,
+                SavedActionKind::Wait => ActionKindV3::Wait,
+                SavedActionKind::Skill(idx) => ActionKindV3::Skill(*idx),
+            };
+            // 在当前位置找对应实体（不可变查询，不需要 &mut World）
+            let entity = w.query::<(Entity, &Position)>().iter(w).find_map(|(e, p)| {
+                if p.x as u16 == saved.x && p.y as u16 == saved.y { Some(e) } else { None }
+            });
+            if let Some(entity) = entity {
+                entries.push(ActionEntry { entity, kind, av_remaining: saved.av_remaining });
+            }
+        }
+        // 一次性写入队列
+        {
+            let mut queue = w.resource_mut::<ActionQueue>();
+            queue.entries.extend(entries);
         }
     }
 }

@@ -18,6 +18,20 @@ pub fn advance_action_queue(world: &mut World) -> f32 {
         };
         if dist <= 0.0 { return 0.0; }
         world.resource_mut::<ActionQueue>().advance(dist);
+
+        // P1: 保活检查所有 av_remaining > 0 的条目，剔除条件不满足的
+        // 防止 Chase/Flee/Move 等在等待期间条件已失效的条目白耗 AV
+        let invalid: Vec<Entity> = {
+            let queue = world.resource::<ActionQueue>();
+            queue.entries.iter()
+                .filter(|e| e.av_remaining > 0.0 && !check_condition(world, e))
+                .map(|e| e.entity)
+                .collect()
+        };
+        if !invalid.is_empty() {
+            world.resource_mut::<ActionQueue>().entries.retain(|e| !invalid.contains(&e.entity));
+        }
+
         ready = world.resource_mut::<ActionQueue>().pop_ready();
     }
 

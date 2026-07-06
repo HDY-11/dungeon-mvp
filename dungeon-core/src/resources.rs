@@ -50,10 +50,15 @@ pub struct FloorNumber(pub u32);
 #[derive(Resource, Default)]
 pub struct PendingLevelUp { pub points: u32 }
 
+/// 遗忘延迟帧数：实体离开视野后保留记忆的帧数，防边缘闪烁
+pub const VISIBLE_FORGET_DELAY: u32 = 3;
+
 /// 最后看到的实体信息（用于视野外灰色显示）
 #[derive(Resource, Default)]
 pub struct VisibleMemory {
     pub entries: std::collections::HashMap<Entity, (usize, usize, char, (u8, u8, u8))>,
+    /// 每个实体距遗忘的剩余帧数（<= VISIBLE_FORGET_DELAY，减到 0 则清除）
+    pub forget_timers: std::collections::HashMap<Entity, u32>,
 }
 
 #[derive(Resource)]

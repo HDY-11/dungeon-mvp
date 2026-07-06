@@ -78,9 +78,9 @@ pub fn setup_world() -> World {
     world.insert_resource(FloorNumber(1));
     world.insert_resource(PendingLevelUp::default());
     world.insert_resource(VisibleMemory::default());
-    world.insert_resource(crate::action::ActionQueue::default());
-    world.insert_resource(crate::action::InputBuffer::default());
-    world.insert_resource(crate::action::PlayerPreview::default());
+    world.insert_resource(crate::action_types::ActionQueue::default());
+    world.insert_resource(crate::action_types::InputBuffer::default());
+    world.insert_resource(crate::action_types::PlayerPreview::default());
 
     let (spawn_x, spawn_y) = map.rooms[0].center();
     world.insert_resource(map);
@@ -95,9 +95,9 @@ pub fn setup_world() -> World {
         Inventory::new(36), Equipment::new(), Buffs::new(),
         pc.clone(), AttackName("斩击".into()),
     ));
-    cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(player_agi) });
-    cmd.insert(crate::action::CanMove::new(100));
-    cmd.insert(crate::action::CanWait::new(0));
+    cmd.insert(crate::action_types::Reaction { time: crate::action_types::agility_to_reaction(player_agi) });
+    cmd.insert(crate::action_types::CanMove::new(100));
+    cmd.insert(crate::action_types::CanWait::new(0));
     cmd.insert(Skills { list: pc.skills() });
 
     let monster_templates: [(char, RgbColor, &str); 4] = [
@@ -121,11 +121,11 @@ pub fn setup_world() -> World {
                 AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
                 loot,
             ));
-            cmd.insert(crate::action::Reaction { time: crate::action::agility_to_reaction(mon_agi) });
-            cmd.insert(crate::action::CanChase::new(100));
-            cmd.insert(crate::action::CanFlee::new(200));
-            cmd.insert(crate::action::CanWander::new(50));
-            cmd.insert(crate::action::CanWait::new(0));
+            cmd.insert(crate::action_types::Reaction { time: crate::action_types::agility_to_reaction(mon_agi) });
+            cmd.insert(crate::action_types::CanChase::new(100));
+            cmd.insert(crate::action_types::CanFlee::new(200));
+            cmd.insert(crate::action_types::CanWander::new(50));
+            cmd.insert(crate::action_types::CanWait::new(0));
         }
     }
 

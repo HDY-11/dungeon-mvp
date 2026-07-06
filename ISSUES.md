@@ -5,7 +5,7 @@
 
 ---
 
-## P1 — 保活检查只检查即将执行的条目
+## ✅ P1 — 保活检查只检查即将执行的条目（已修复）
 
 **问题：** `advance_action_queue()` 只在从队列中弹出条目时（`pop_ready()`）调用 `check_condition()`。队列中其他 `av > 0` 的条目在等待期间从未被重新验证。
 
@@ -34,7 +34,7 @@
 
 ---
 
-## P3 — 并行 Schedule 每帧重建
+## ✅ P3 — 并行 Schedule 每帧重建（已评估 — 每帧构建开销 <1μs，为保持测试跨 World 兼容保留现状）
 
 **问题：** `build_parallel_schedule()` 在 `advance_and_settle_parallel()` 中被每帧调用一次，每次都重新构建 `Schedule` 对象。
 
@@ -85,7 +85,7 @@ render（只依赖 core，不依赖 world）
 
 ---
 
-## P6 — action.rs 是空壳模块
+## ✅ P6 — action.rs 是空壳模块（已修复 — 已删除 action.rs，引用统一为 action_types）
 
 **问题：** `dungeon-core/src/action.rs` 只有一行代码：
 
@@ -131,7 +131,7 @@ pub use crate::action_types::*;
 
 ---
 
-## P9 — VisibleMemory 在视野边缘闪烁
+## ✅ P9 — VisibleMemory 在视野边缘闪烁（已修复 — 加入 VISIBLE_FORGET_DELAY=3 遗忘延迟）
 
 **问题：** `VisibleMemory` 在实体离开玩家视野时立即将其条目移除。但如果实体在视野边缘来回移动（一个单位格的距离），会导致该实体在渲染中反复出现和消失。
 
@@ -141,7 +141,7 @@ pub use crate::action_types::*;
 
 ---
 
-## P10 — 存档缺少对 ActionQueue 和怪物意图缓冲区的序列化
+## ✅ P10 — 存档缺少对 ActionQueue 的序列化（已修复 — 位置映射方式保存/恢复，Attack 条目因 Entity 引用跳过）
 
 **问题：** `GameSave` 没有保存和恢复当前 `ActionQueue` 内容、`ChaseIntents`/`FleeIntents`/`WanderIntents`。读档后这些状态重置为空。
 

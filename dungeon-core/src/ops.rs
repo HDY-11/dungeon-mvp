@@ -91,6 +91,7 @@ pub fn update_map_memory(world: &mut World) {
 }
 
 /// 更新可见实体记忆（记录视野内的实体，用于视野外灰色显示）
+/// 实现遗忘延迟（VISIBLE_FORGET_DELAY）：实体离开视野后 N 帧内仍保留记忆，防边缘闪烁。
 pub fn update_visible_memory(world: &mut World) {
     let player_visible: std::collections::HashSet<(usize, usize)>;
     let entities: Vec<(Entity, usize, usize, char, (u8, u8, u8))>;
@@ -115,10 +116,40 @@ pub fn update_visible_memory(world: &mut World) {
         q.iter(world).map(|(e,)| e).collect()
     };
     let mut memory = world.resource_mut::<VisibleMemory>();
-    for (entity, x, y, glyph, color) in entities {
-        memory.entries.insert(entity, (x, y, glyph, color));
+
+    // 当前帧可见的实体：重置遗忘计时器 + 更新位置
+    let seen_this_frame: std::collections::HashSet<Entity> = entities.iter().map(|(e, _, _, _, _)| *e).collect();
+    for (entity, x, y, glyph, color) in &entities {
+        memory.entries.insert(*entity, (*x, *y, *glyph, *color));
+        memory.forget_timers.insert(*entity, VISIBLE_FORGET_DELAY);
     }
-    memory.entries.retain(|&e, _| alive.contains(&e));
+
+    // Step 1: 递减不在当前帧可见的遗忘计时器
+    for (_entity, timer) in memory.forget_timers.iter_mut() {
+        if !seen_this_frame.contains(_entity) && *timer > 0 {
+            *timer = timer.saturating_sub(1);
+        }
+    }
+
+    // Step 2: 收集需要移除的实体（已死亡 / 遗忘计时器归零）
+    let to_remove: Vec<Entity> = memory.entries.iter()
+        .filter(|&(&entity, _)| {
+            if !alive.contains(&entity) {
+                return true;
+            }
+            if seen_this_frame.contains(&entity) {
+                return false;
+            }
+            memory.forget_timers.get(&entity).map(|&t| t == 0).unwrap_or(true)
+        })
+        .map(|(&entity, _)| entity)
+        .collect();
+
+    // Step 3: 移除
+    for entity in &to_remove {
+        memory.entries.remove(entity);
+        memory.forget_timers.remove(entity);
+    }
 }
 
 // ── 碰撞图 ─────────────────────────────────────────
