@@ -16,8 +16,8 @@ use dungeon_core::{
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
     Player, Position, Renderable, TurnManager, on_stairs, pickup_ground,
 };
-use dungeon_action::{handle_player_direction, handle_wait, handle_skill, advance_and_settle};
-use dungeon_world::{setup_world, descend, GameSave, fov_system};
+use dungeon_action::{handle_player_direction, handle_wait, handle_skill};
+use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};

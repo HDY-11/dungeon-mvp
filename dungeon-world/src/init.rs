@@ -4,6 +4,7 @@ use dungeon_core::{
     components::*, items::*, resources::*,
     Map, world,
     ActionQueue, InputBuffer, PlayerPreview,
+    ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
@@ -32,6 +33,9 @@ pub fn setup_world() -> World {
     world.insert_resource(ActionQueue::default());
     world.insert_resource(InputBuffer::default());
     world.insert_resource(PlayerPreview::default());
+    world.insert_resource(ChaseIntents::default());
+    world.insert_resource(FleeIntents::default());
+    world.insert_resource(WanderIntents::default());
 
     let (spawn_x, spawn_y) = map.rooms[0].center();
     world.insert_resource(map);

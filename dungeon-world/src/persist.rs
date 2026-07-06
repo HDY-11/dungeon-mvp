@@ -4,6 +4,7 @@ use dungeon_core::{
     components::*, items::*, resources::*,
     Map, Tile, MAP_WIDTH, MAP_HEIGHT, world,
     ActionQueue, InputBuffer, PlayerPreview,
+    ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
@@ -165,6 +166,9 @@ impl GameSave {
         w.insert_resource(ActionQueue::default());
         w.insert_resource(InputBuffer::default());
         w.insert_resource(PlayerPreview::default());
+        w.insert_resource(ChaseIntents::default());
+        w.insert_resource(FleeIntents::default());
+        w.insert_resource(WanderIntents::default());
         w.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
 
         let s = self.st.into_stats();

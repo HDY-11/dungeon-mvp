@@ -261,3 +261,19 @@ pub struct PlayerPreview {
 impl Default for PlayerPreview {
     fn default() -> Self { Self { kind: None } }
 }
+
+// ══════════════════════════════════════════════════════
+// 怪物意图收集（用于并行决策）
+// ══════════════════════════════════════════════════════
+
+/// 追击意图缓冲区（chase_decision_system 写入，arbitration_system 读取）
+#[derive(Resource, Default)]
+pub struct ChaseIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);
+
+/// 逃跑意图缓冲区（flee_decision_system 写入，arbitration_system 读取）
+#[derive(Resource, Default)]
+pub struct FleeIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);
+
+/// 游荡意图缓冲区（wander_decision_system 写入，arbitration_system 读取）
+#[derive(Resource, Default)]
+pub struct WanderIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);
