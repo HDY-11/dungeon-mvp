@@ -1,7 +1,8 @@
 use dungeon_core::{
     Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
     Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
-    MAP_HEIGHT, MAP_WIDTH, effective_attack, effective_defense, collect_renderables,
+    MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
+    effective_attack, effective_defense, collect_renderables,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -55,23 +56,31 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(timeline_width), Constraint::Length(1),
-            Constraint::Length(MAP_WIDTH as u16), Constraint::Length(1),
+            Constraint::Length(VIEWPORT_WIDTH as u16), Constraint::Length(1),
             Constraint::Min(1),
         ])
         .split(inner);
     let (timeline_area, map_area, stats_area) = (chunks[0], chunks[2],
         Rect { x: chunks[4].x, y: chunks[4].y, width: chunks[4].width, height: inner.height });
 
+    let vw = VIEWPORT_WIDTH;
+    let vh = VIEWPORT_HEIGHT;
+    // 摄像机偏移：以玩家为中心，钳制到地图边界
+    let cam_x = (px.saturating_sub(vw / 2)).min(MAP_WIDTH.saturating_sub(vw));
+    let cam_y = (py.saturating_sub(vh / 2)).min(MAP_HEIGHT.saturating_sub(vh));
+
     let renderables = collect_renderables(world);
-    let mut lines: Vec<Vec<(char, Color)>> = Vec::with_capacity(MAP_HEIGHT);
-    for y in 0..MAP_HEIGHT {
-        let mut row = Vec::with_capacity(MAP_WIDTH);
-        for x in 0..MAP_WIDTH {
-            let pos = (x, y);
-            let tile_ch = tiles[y][x].char();
+    let mut lines: Vec<Vec<(char, Color)>> = Vec::with_capacity(vh);
+    for vy in 0..vh {
+        let my = cam_y + vy;
+        let mut row = Vec::with_capacity(vw);
+        for vx in 0..vw {
+            let mx = cam_x + vx;
+            let pos = (mx, my);
+            let tile_ch = tiles[my][mx].char();
             let (glyph, fg) = if player_visible.contains(&pos) {
                 (tile_ch, Color::White)
-            } else if explored[y][x] {
+            } else if explored[my][mx] {
                 (tile_ch, Color::DarkGray)
             } else {
                 (' ', Color::DarkGray)
@@ -81,13 +90,19 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         lines.push(row);
     }
     for &(ex, ey, glyph, (r, g, b)) in &renderables {
-        if player_visible.contains(&(ex, ey)) && ey < MAP_HEIGHT && ex < MAP_WIDTH {
-            lines[ey][ex] = (glyph, renderable_color((r, g, b)));
+        if player_visible.contains(&(ex, ey))
+            && ey >= cam_y && ey < cam_y + vh
+            && ex >= cam_x && ex < cam_x + vw
+        {
+            lines[ey - cam_y][ex - cam_x] = (glyph, renderable_color((r, g, b)));
         }
     }
     for &(mx, my, glyph, _) in &visible_mem {
-        if !player_visible.contains(&(mx, my)) && explored[my][mx] && my < MAP_HEIGHT && mx < MAP_WIDTH {
-            lines[my][mx] = (glyph, Color::DarkGray);
+        if !player_visible.contains(&(mx, my)) && explored[my][mx]
+            && my >= cam_y && my < cam_y + vh
+            && mx >= cam_x && mx < cam_x + vw
+        {
+            lines[my - cam_y][mx - cam_x] = (glyph, Color::DarkGray);
         }
     }
     let styled_lines: Vec<Line> = lines.into_iter()

@@ -29,6 +29,10 @@ pub use components::EntityName;
 pub const MAP_WIDTH: usize = 80;
 pub const MAP_HEIGHT: usize = 40;
 
+/// 视窗尺寸（渲染时以玩家为中心截取此大小的区域）
+pub const VIEWPORT_WIDTH: usize = 40;
+pub const VIEWPORT_HEIGHT: usize = 20;
+
 // ── Tile ──────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
