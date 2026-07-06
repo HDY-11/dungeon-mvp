@@ -38,27 +38,6 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
 // (update_map_memory, update_visible_memory, rebuild_occupancy,
 //  set_player_dir, collect_renderables 已移至 ops.rs)
 
-// ── 工具函数：给怪物添加 LootTable ─────────────────
-
-pub(crate) fn rat_loot() -> LootTable {
-    LootTable {
-        entries: vec![
-            LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 2 }, // 生物血肉
-        ],
-    }
-}
-
-pub(crate) fn goblin_loot() -> LootTable {
-    LootTable {
-        entries: vec![
-            LootEntry { item_id: 10, chance: 1.0, min_count: 1, max_count: 3 }, // 生物血肉
-            LootEntry { item_id: 11, chance: 0.6, min_count: 1, max_count: 1 }, // 破布
-            LootEntry { item_id: 12, chance: 0.4, min_count: 1, max_count: 1 }, // 坚硬木棍
-            LootEntry { item_id: 13, chance: 0.3, min_count: 1, max_count: 1 }, // 染血兽牙
-        ],
-    }
-}
-
 // ── setup_world ─────────────────────────────────────
 
 pub fn setup_world() -> World {
@@ -102,28 +81,26 @@ pub fn setup_world() -> World {
     cmd.insert(crate::action_types::CanWait::new(0));
     cmd.insert(Skills { list: pc.skills() });
 
-    let monster_templates: [(char, RgbColor, &str); 8] = [
-        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
-        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
-        ('r', (200, 50, 50), "老鼠"), ('g', (50, 200, 50), "哥布林"),
-        ('r', (180, 80, 80), "老鼠"), ('g', (100, 180, 100), "哥布林"),
-    ];
-    let spawn_points: Vec<(usize, usize)> = {
-        let map_ref = world.resource::<Map>();
-        monster_templates.iter().enumerate()
-            .filter_map(|(i, _)| map_ref.rooms.get(i + 1).map(|r| r.center())).collect()
+    // ── 概率生成怪物 ────────────────────────────
+    let room_centers: Vec<(usize, usize)> = {
+        let m = world.resource::<Map>();
+        m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-
-    for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
-        if let Some(&(mx, my)) = spawn_points.get(i) {
-            let mon_agi = Stats::monster(glyph, 1).agility;
-            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
+    let count = crate::monster_def::floor_monster_count(1, &mut rng);
+    let kinds = crate::monster_def::pick_monster_kinds(count, 1, &mut rng);
+    for (i, &kind) in kinds.iter().enumerate() {
+        if let Some(&(mx, my)) = room_centers.get(i) {
+            let glyph = crate::monster_def::monster_glyph(kind);
+            let color = crate::monster_def::monster_color(kind);
+            let mon_agi = crate::monster_def::monster_stats(kind, 1).agility;
+            let loot = crate::monster_def::monster_loot(kind);
+            let attk = crate::monster_def::monster_attack_name(kind);
+            let name = crate::monster_def::monster_name(kind);
             let mut cmd = world.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 10, visible_tiles: Vec::new() },
-                Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
-                loot,
+                crate::monster_def::monster_stats(kind, 1), EntityName(name.into()),
+                AttackName(attk.into()), loot,
             ));
             cmd.insert(crate::action_types::Reaction { time: crate::action_types::agility_to_reaction(mon_agi) });
             cmd.insert(crate::action_types::CanChase::new(100));
@@ -143,7 +120,7 @@ pub fn setup_world() -> World {
     // 地面物品（使用 ItemStack + ItemRegistry）
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]; // 锈铁剑, 木盾, 皮甲, 攻击戒指 ×2
     for (i, &item_id) in ground_item_ids.iter().enumerate() {
-        if let Some(&(ix, iy)) = spawn_points.get(i) {
+        if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             world.spawn((
                 ItemPickup { stack: ItemStack::new(item_id, 1) },

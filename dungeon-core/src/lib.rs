@@ -3,6 +3,7 @@ pub mod api;
 pub mod components;
 pub mod global;
 pub mod items;
+pub mod monster_def;
 pub mod ops;
 // pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
@@ -14,6 +15,7 @@ pub use api::*;
 pub use components::*;
 pub use items::*;
 pub use ops::*;
+pub use monster_def::*;
 // pub use pathfinding::*; // 已移除
 pub use resources::*;
 pub use systems::*;

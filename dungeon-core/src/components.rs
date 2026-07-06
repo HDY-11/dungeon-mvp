@@ -72,6 +72,14 @@ pub struct Viewshed {
 #[derive(Component)]
 pub struct Monster;
 
+/// 怪物种类标识（用于概率生成和属性查询）
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MonsterKindId {
+    Rat,
+    Scorpion,
+    Goblin,
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct EntityName(pub String);
 

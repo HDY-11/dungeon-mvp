@@ -8,7 +8,6 @@ use dungeon_core::{
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
-use crate::loot::{rat_loot, goblin_loot};
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 
@@ -57,28 +56,26 @@ pub fn setup_world() -> World {
     cmd.insert(CanWait::new(0));
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
 
-    let monster_templates: [(char, (u8, u8, u8), &str); 8] = [
-        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
-        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
-        ('r', (200, 50, 50), "老鼠"), ('g', (50, 200, 50), "哥布林"),
-        ('r', (180, 80, 80), "老鼠"), ('g', (100, 180, 100), "哥布林"),
-    ];
-    let spawn_points: Vec<(usize, usize)> = {
-        let map_ref = world.resource::<Map>();
-        monster_templates.iter().enumerate()
-            .filter_map(|(i, _)| map_ref.rooms.get(i + 1).map(|r| r.center())).collect()
+    // ── 概率生成怪物 ────────────────────────────
+    let room_centers: Vec<(usize, usize)> = {
+        let m = world.resource::<Map>();
+        m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-
-    for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
-        if let Some(&(mx, my)) = spawn_points.get(i) {
-            let mon_agi = Stats::monster(glyph, 1).agility;
-            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
+    let count = dungeon_core::monster_def::floor_monster_count(1, &mut rng);
+    let kinds = dungeon_core::monster_def::pick_monster_kinds(count, 1, &mut rng);
+    for (i, &kind) in kinds.iter().enumerate() {
+        if let Some(&(mx, my)) = room_centers.get(i) {
+            let glyph = dungeon_core::monster_def::monster_glyph(kind);
+            let color = dungeon_core::monster_def::monster_color(kind);
+            let mon_agi = dungeon_core::monster_def::monster_stats(kind, 1).agility;
+            let loot = dungeon_core::monster_def::monster_loot(kind);
+            let attk = dungeon_core::monster_def::monster_attack_name(kind);
+            let name = dungeon_core::monster_def::monster_name(kind);
             let mut cmd = world.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 10, visible_tiles: Vec::new() },
-                Stats::monster(glyph, 1), EntityName(mon_name.into()),
-                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
-                loot,
+                dungeon_core::monster_def::monster_stats(kind, 1), EntityName(name.into()),
+                AttackName(attk.into()), loot,
             ));
             cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
             cmd.insert(CanChase::new(100));
@@ -95,9 +92,10 @@ pub fn setup_world() -> World {
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
+    // ── 地面物品（独立于怪物数量，使用房间中心）──
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     for (i, &item_id) in ground_item_ids.iter().enumerate() {
-        if let Some(&(ix, iy)) = spawn_points.get(i) {
+        if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             world.spawn((
                 ItemPickup { stack: ItemStack::new(item_id, 1) },
@@ -153,27 +151,26 @@ pub fn descend(world: &mut World) {
     w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
 
-    let monster_templates: [(char, (u8, u8, u8), &str); 8] = [
-        ('r', (255, 0, 0), "老鼠"), ('g', (0, 255, 0), "哥布林"),
-        ('r', (255, 128, 128), "老鼠"), ('g', (144, 238, 144), "哥布林"),
-        ('r', (200, 50, 50), "老鼠"), ('g', (50, 200, 50), "哥布林"),
-        ('r', (180, 80, 80), "老鼠"), ('g', (100, 180, 100), "哥布林"),
-    ];
-    let spawn_points: Vec<(usize, usize)> = {
+    // ── 概率生成怪物（楼层 f）──────────────────
+    let room_centers: Vec<(usize, usize)> = {
         let m = w.resource::<Map>();
-        monster_templates.iter().enumerate()
-            .filter_map(|(i, _)| m.rooms.get(i + 1).map(|r| r.center())).collect()
+        m.rooms.iter().skip(1).map(|r| r.center()).collect()
     };
-    for (i, &(glyph, color, mon_name)) in monster_templates.iter().enumerate() {
-        if let Some(&(mx, my)) = spawn_points.get(i) {
-            let mon_agi = Stats::monster(glyph, f).agility;
-            let loot = if glyph == 'g' { goblin_loot() } else { rat_loot() };
+    let count = dungeon_core::monster_def::floor_monster_count(f, &mut rng);
+    let kinds = dungeon_core::monster_def::pick_monster_kinds(count, f, &mut rng);
+    for (i, &kind) in kinds.iter().enumerate() {
+        if let Some(&(mx, my)) = room_centers.get(i) {
+            let glyph = dungeon_core::monster_def::monster_glyph(kind);
+            let color = dungeon_core::monster_def::monster_color(kind);
+            let mon_agi = dungeon_core::monster_def::monster_stats(kind, f).agility;
+            let loot = dungeon_core::monster_def::monster_loot(kind);
+            let attk = dungeon_core::monster_def::monster_attack_name(kind);
+            let name = dungeon_core::monster_def::monster_name(kind);
             let mut cmd = w.spawn((
                 Monster, Position { x: mx, y: my }, Renderable { glyph, color },
                 Viewshed { range: 10, visible_tiles: Vec::new() },
-                Stats::monster(glyph, f), EntityName(mon_name.into()),
-                AttackName(if glyph == 'r' { "撕咬" } else { "重击" }.into()),
-                loot,
+                dungeon_core::monster_def::monster_stats(kind, f), EntityName(name.into()),
+                AttackName(attk.into()), loot,
             ));
             cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
             cmd.insert(CanChase::new(100));
@@ -185,7 +182,7 @@ pub fn descend(world: &mut World) {
 
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     for (i, &item_id) in ground_item_ids.iter().enumerate() {
-        if let Some(&(ix, iy)) = spawn_points.get(i) {
+        if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             w.spawn((
                 ItemPickup { stack: ItemStack::new(item_id, 1) },
