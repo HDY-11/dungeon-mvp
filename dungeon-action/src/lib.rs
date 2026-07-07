@@ -10,4 +10,7 @@ pub use monster::{
     wander_decision_system, arbitration_system,
 };
 pub use player::{handle_timed_action, handle_player_direction, handle_wait, handle_skill};
-pub use tick::{advance_until_player_acted, advance_and_settle};
+pub use tick::advance_until_player_acted;
+
+#[cfg(test)]
+mod tests;

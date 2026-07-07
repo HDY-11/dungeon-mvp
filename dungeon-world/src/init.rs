@@ -93,7 +93,7 @@ pub fn setup_world() -> World {
     {
         let (spx, spy) = world.resource::<Map>().rooms[0].center();
         let mut map = world.resource_mut::<Map>();
-        map.ensure_connection_between(&mut rng, (spx, spy), (stairs_x, stairs_y));
+        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, (spx, spy), (stairs_x, stairs_y));
     }
 
     // ── 地面物品（使用房间中心位置）──
@@ -169,7 +169,7 @@ pub fn descend(world: &mut World) {
     {
         let (spx, spy) = w.resource::<Map>().rooms[0].center();
         let mut map = w.resource_mut::<Map>();
-        map.ensure_connection_between(&mut rng, (spx, spy), (stairs_pos.0, stairs_pos.1));
+        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, (spx, spy), (stairs_pos.0, stairs_pos.1));
     }
 
     // ── 噪声+元胞生成怪物（楼层 f）────────────

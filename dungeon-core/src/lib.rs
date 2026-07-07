@@ -1,6 +1,7 @@
 pub mod action_types;
 pub mod components;
 pub mod items;
+pub mod map_gen;
 pub mod monster_def;
 pub mod ops;
 // pub mod pathfinding; // 已移除（find_path 未使用）
@@ -253,7 +254,7 @@ impl Map {
         }
 
         // ── 从洞穴中检测连通区域 → 房间列表（用于怪物/物品放置） ──
-        self.rooms = self.detect_cave_regions(12);
+        self.rooms = crate::map_gen::detect_cave_regions(self, 12);
         if self.rooms.is_empty() {
             // 极端情况：无足够大区域，放一个默认房间在地图中央
             self.rooms.push(Room {
@@ -268,233 +269,17 @@ impl Map {
         }
 
         // ── 环境修饰：水域 + 钟乳石 + 连通性 ──
-        self.generate_water(rng, seed.wrapping_add(100));
-        self.carve_expand(rng, seed.wrapping_add(150));
-        self.generate_stalactites(rng, seed.wrapping_add(200));
-        self.ensure_connectivity(rng, seed.wrapping_add(300));
-        self.ensure_spawn_accessible(rng, seed.wrapping_add(350));
+        crate::map_gen::generate_water(self, rng, seed.wrapping_add(100));
+        crate::map_gen::carve_expand(self, rng, seed.wrapping_add(150));
+        crate::map_gen::generate_stalactites(self, rng, seed.wrapping_add(200));
+        crate::map_gen::ensure_connectivity(self, rng, seed.wrapping_add(300));
+        crate::map_gen::ensure_spawn_accessible(self, rng, seed.wrapping_add(350));
     }
 
     /// 用噪声在水域放置深水种子 → 元胞扩散（75% 浅水 / 25% 深水）
-    pub fn generate_water(&mut self, _rng: &mut impl Rng, seed: u64) {
-        use rand::{RngExt, SeedableRng};
-        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
-
-        // ── Phase 1: 噪声深水种子（2% 概率） ──
-        for y in 0..MAP_HEIGHT {
-            for x in 0..MAP_WIDTH {
-                if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..1000) < 20
-                    && self.is_away_from_rooms(x, y, 6)
-                {
-                    self.tiles[y][x] = Tile::DeepWater;
-                }
-            }
-        }
-
-        // ── Phase 2: 深水→扩散（8 方向独立判定） ──
-        let deep_count = self.count_tile(Tile::DeepWater) as f32;
-        let expand_chance = (0.25 - deep_count * 0.002).max(0.02);
-        {
-            let mut next = self.tiles;
-            for y in 0..MAP_HEIGHT {
-                for x in 0..MAP_WIDTH {
-                    if self.tiles[y][x] != Tile::DeepWater { continue; }
-                    for (dx, dy) in &[(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)] {
-                        let nx = x.wrapping_add_signed(*dx);
-                        let ny = y.wrapping_add_signed(*dy);
-                        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT || self.tiles[ny][nx] != Tile::Floor { continue; }
-                        next[ny][nx] = if rng2.random_range(0.0..1.0) < expand_chance {
-                            Tile::DeepWater
-                        } else {
-                            Tile::ShallowWater
-                        };
-                    }
-                }
-            }
-            self.tiles = next;
-        }
-
-        // ── Phase 3: 浅水→扩散（8 方向 10% 概率） ──
-        {
-            let mut next = self.tiles;
-            for y in 0..MAP_HEIGHT {
-                for x in 0..MAP_WIDTH {
-                    if self.tiles[y][x] != Tile::ShallowWater { continue; }
-                    for (dx, dy) in &[(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)] {
-                        let nx = x.wrapping_add_signed(*dx);
-                        let ny = y.wrapping_add_signed(*dy);
-                        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { continue; }
-                        // 浅水不覆盖深水和墙体
-                        if next[ny][nx] != Tile::Floor { continue; }
-                        if rng2.random_range(0..100) < 10 {
-                            next[ny][nx] = Tile::ShallowWater;
-                        }
-                    }
-                }
-            }
-            self.tiles = next;
-        }
-    }
-
-    /// 元胞扩张：对每格墙，若邻接可行走格则 25% 概率挖成 Floor（拓宽通道）
-    pub fn carve_expand(&mut self, _rng: &mut impl Rng, seed: u64) {
-        use rand::{RngExt, SeedableRng};
-        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
-        let mut next = self.tiles;
-        for y in 0..MAP_HEIGHT {
-            for x in 0..MAP_WIDTH {
-                if self.tiles[y][x].walkable() { continue; }
-                let walkable_near = self.count_walkable_neighbors(x, y);
-                if walkable_near >= 1 && rng2.random_range(0..100) < 25 {
-                    next[y][x] = Tile::Floor;
-                }
-            }
-        }
-        self.tiles = next;
-    }
-
-    /// 在每个房间中随机放置钟乳石（# 黄色，约 7% 密度）
-    pub fn generate_stalactites(&mut self, _rng: &mut impl Rng, seed: u64) {
-        use rand::{RngExt, SeedableRng};
-        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
-        for room in &self.rooms.clone() {
-            for y in room.y..room.y + room.h {
-                for x in room.x..room.x + room.w {
-                    if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..100) < 7 {
-                        self.tiles[y][x] = Tile::Stalactite;
-                    }
-                }
-            }
-        }
-    }
-
-    /// 检查最大连通区是否覆盖大部分可行走区域；若不连通，用醉汉游走挖 2-3 条通道
-    pub fn ensure_connectivity(&mut self, _rng: &mut impl Rng, seed: u64) {
-        use rand::{RngExt, SeedableRng};
-        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
-        let regions = self.collect_walkable_regions();
-        if regions.len() <= 1 { return; }
-
-        let passages = rng2.random_range(2..=3);
-        for p in 0..passages {
-            let from_idx = p % regions.len();
-            let to_idx = (p + 1) % regions.len();
-            if from_idx >= regions.len() || to_idx >= regions.len() { break; }
-
-            let from = regions[from_idx][regions[from_idx].len() / 2];
-            let to = regions[to_idx][0];
-
-            // 醉汉游走（宽度 2）
-            let (mut cx, mut cy) = (from.0 as isize, from.1 as isize);
-            let (tx, ty) = (to.0 as isize, to.1 as isize);
-            for _ in 0..500 {
-                if (cx - tx).abs() + (cy - ty).abs() < 3 { break; }
-                let dx = if rng2.random_range(0..100) < 50 { (tx - cx).signum() } else { rng2.random_range(-1i32..2) as isize };
-                let dy = if rng2.random_range(0..100) < 50 { (ty - cy).signum() } else { rng2.random_range(-1i32..2) as isize };
-                cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
-                cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
-                // 挖 2 格宽通道
-                for (ox, oy) in &[(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let (ux, uy) = ((cx + ox) as usize, (cy + oy) as usize);
-                    if ux < MAP_WIDTH && uy < MAP_HEIGHT && !self.tiles[uy][ux].walkable() {
-                        self.tiles[uy][ux] = Tile::Floor;
-                    }
-                }
-            }
-        }
-    }
-
-    /// 确保出生点不会被封闭在墙壁中。
-    /// 如果出生点 8 方向都没有可行走格，就用醉汉游走凿一条路出去。
-    pub fn ensure_spawn_accessible(&mut self, _rng: &mut impl Rng, seed: u64) {
-        use rand::{RngExt, SeedableRng};
-        if self.rooms.is_empty() { return; }
-        let (sx, sy) = self.rooms[0].center();
-        // 检查 8 方向是否有 walkable
-        for dy in -1isize..=1 {
-            for dx in -1isize..=1 {
-                if dx == 0 && dy == 0 { continue; }
-                let nx = sx.wrapping_add_signed(dx);
-                let ny = sy.wrapping_add_signed(dy);
-                if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() {
-                    return; // 已经有出口
-                }
-            }
-        }
-        // 被困住了 → 醉汉游走
-        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
-        let (mut cx, mut cy) = (sx as isize, sy as isize);
-        for _ in 0..100 {
-            let dx = rng2.random_range(-1i32..2) as isize;
-            let dy = rng2.random_range(-1i32..2) as isize;
-            if dx == 0 && dy == 0 { continue; }
-            cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
-            cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
-            let (ux, uy) = (cx as usize, cy as usize);
-            if !self.tiles[uy][ux].walkable() {
-                self.tiles[uy][ux] = Tile::Floor;
-            }
-            // 一旦打通就停止
-            if ux.abs_diff(sx) + uy.abs_diff(sy) > 3 {
-                // 检查当前点是否已经有通路
-                let mut free = false;
-                for dy in -1isize..=1 {
-                    for dx in -1isize..=1 {
-                        let nx = ux.wrapping_add_signed(dx);
-                        let ny = uy.wrapping_add_signed(dy);
-                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() && (nx != sx || ny != sy) {
-                            free = true;
-                        }
-                    }
-                }
-                if free { break; }
-            }
-        }
-    }
-
-    /// 确保 from 到 to 之间有 walkable 路径。
-    /// 若无路径，用加权醉汉游走从 from 向 to 方向挖掘。
-    /// 每步 70% 概率向目标方向走（signum），30% 随机。
-    pub fn ensure_connection_between(&mut self, rng: &mut impl Rng, from: (usize, usize), to: (usize, usize)) {
-        use rand::RngExt;
-        if self.has_path_between(from, to) { return; }
-
-        let (mut cx, mut cy) = (from.0 as isize, from.1 as isize);
-        let (tx, ty) = (to.0 as isize, to.1 as isize);
-        for _ in 0..500 {
-            if (cx - tx).abs() + (cy - ty).abs() < 3 { break; }
-            let dx = if rng.random_range(0..100) < 70 { (tx - cx).signum() } else { rng.random_range(-1i32..2) as isize };
-            let dy = if rng.random_range(0..100) < 70 { (ty - cy).signum() } else { rng.random_range(-1i32..2) as isize };
-            if dx == 0 && dy == 0 { continue; }
-            cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
-            cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
-            let (ux, uy) = (cx as usize, cy as usize);
-            if !self.tiles[uy][ux].walkable() {
-                self.tiles[uy][ux] = Tile::Floor;
-            }
-        }
-    }
-
-    /// BFS 检查 from 到 to 是否有 walkable 路径
-    pub fn has_path_between(&self, from: (usize, usize), to: (usize, usize)) -> bool {
-        if !self.tiles[from.1][from.0].walkable() || !self.tiles[to.1][to.0].walkable() {
-            return false;
-        }
-        let mut visited = [[false; MAP_WIDTH]; MAP_HEIGHT];
-        let mut stack = vec![from];
-        while let Some((x, y)) = stack.pop() {
-            if (x, y) == to { return true; }
-            if visited[y][x] { continue; }
-            visited[y][x] = true;
-            for (ny, nx) in [(y.wrapping_sub(1), x), (y + 1, x), (y, x.wrapping_sub(1)), (y, x + 1)] {
-                if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx].walkable() {
-                    stack.push((nx, ny));
-                }
-            }
-        }
-        false
-    }
-
+    /// 
+    /// 已迁移至 `crate::map_gen::generate_water`。
+    pub fn generate_water(&mut self, rng: &mut impl Rng, seed: u64) { crate::map_gen::generate_water(self, rng, seed); }
     // ── 工具函数 ──
 
     /// 统计地图中某种 tile 的数量

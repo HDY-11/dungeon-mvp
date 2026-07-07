@@ -2,7 +2,6 @@
 
 use dungeon_core::ops;
 use bevy_ecs::prelude::*;
-use bevy_ecs::system::RunSystemOnce;
 use dungeon_action::{
     advance_until_player_acted,
     chase_decision_system, flee_decision_system,
@@ -44,15 +43,4 @@ pub fn advance_and_settle_parallel(world: &mut World) {
     ops::update_visible_memory(world);
 }
 
-/// 旧版串行 tick（保持兼容，供对比）
-pub fn advance_and_settle_serial(world: &mut World) {
-    advance_until_player_acted(world);
-    dungeon_action::run_monster_decision(world);
 
-    ops::rebuild_occupancy(world);
-    let _ = world.run_system_once(fov_system);
-    ops::update_map_memory(world);
-    ops::update_visible_memory(world);
-    let _ = world.run_system_once(check_death_system);
-    let _ = world.run_system_once(buff_tick_system);
-}

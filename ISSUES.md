@@ -42,6 +42,48 @@
 
 **教训：** 同一功能的跨入口实现（title_screen vs process_key 的 F9）应提取为公共方法，或至少确保双方逻辑一致。"一个地方修了、另一个没修"是重复代码的经典隐患。
 
+### P8 — 测试覆盖不全 ✅已修复
+
+**修复前：** `dungeon-action` 和 `dungeon-world` 零测试。仅 `dungeon-core` 有 6 个单元测试 + 3 个场景集成测试。
+
+**修复后：**
+| crate | 前 | 后 | 新增内容 |
+|-------|-----|-----|---------|
+| dungeon-core | 6 | 6 | 不变 |
+| dungeon-action | 0 | 6 | 队列推进/等待/保活检查/tap-tap 方向/tap-tap 等待/攻击流程 |
+| dungeon-world | 0 | 2 | 存档读档回环（Tile+Stats+Inventory+Equipment）、下楼数据保持 |
+| 场景测试 | 3 | 3 | 不变 |
+| **总计** | **9** | **17** | |
+
+**教训：** 测试编写中的两个关键发现：
+1. `rooms[0].center()` 可能返回非 walkable 格（矩形 bounding box 的墙点）——这是生成流程中一个隐藏的脆弱点，测试迫使它暴露
+2. `world.get_mut()` 不能同时借两个不同组件——须分两步操作（取物品 → 再装备），这和主流程中 `descend` 的做法一致
+
+### A3 — action/world tick 边界清理 ✅已修复
+
+**修复前：** `dungeon-action/src/tick.rs` 的串行 `advance_and_settle()` 与 `dungeon-world/src/tick.rs` 的并行版功能重复。串行版从未被调用（`main.rs` 使用并行版，`scenario_test.rs` 也使用并行版），属于死代码。
+
+**修复后：** 
+- 删除 `dungeon-action/src/tick.rs` 中的 `advance_and_settle()`（action 只保留 `advance_until_player_acted`）
+- 删除 `dungeon-world/src/tick.rs` 中的 `advance_and_settle_serial()`（world 只暴露并行版）
+- 更新两个 crate 的 `lib.rs` 导出
+
+职责边界：action 负责"队列推进和执行"，world 负责"编排和状态同步"。
+
+### A4 — 环境修饰从 Map impl 提取到独立模块 ✅已修复
+
+**修复前：** `generate_water`、`carve_expand`、`generate_stalactites`、`ensure_connectivity`、`ensure_spawn_accessible`、`ensure_connection_between`、`has_path_between`、`collect_walkable_regions`、`is_away_from_rooms`、`detect_cave_regions` 等 ~450 行代码全部在 `Map` 的 `impl` 块中。Map 职责膨胀——既要容纳 tile 数据还要管理完整的生成管线。
+
+**修复后：** 新建 `dungeon-core/src/map_gen.rs` 模块，将上述方法全部移入作为自由函数（如 `map_gen::generate_water(map, ...)`）。Map 只保留 `generate()` 入口 + 基础查询方法（`count_tile`、`count_walkable_neighbors`、`count_neighbor_tile`、`carve_corridor`、`render`）。
+
+**统计：**
+| Map impl | 前 | 后 |
+|----------|-----|-----|
+| 方法数 | ~18 | ~7 |
+| 行数 | ~600 | ~160 |
+
+**教训：** 序列化合约和生成管线都应从核心类型中分离——Serialize/Deserialize 归 Tile、生成管线归 map_gen、基本查询留 Map。
+
 ### A5 — global.rs 空壳模块 ✅已修复
 
 **修复前：** `dungeon-core/src/global.rs` 仅含两行注释（"全局 World 不再使用 OnceLock"、"线程局部 RNG 已移除"），无任何代码。`lib.rs` 仍 `pub mod global;`，全局无引用。
@@ -188,22 +230,6 @@
 
 ---
 
-### 🟡 A3 — action/tick.rs 与 world/tick.rs 任务边界模糊
-
-**问题：** `dungeon-action/src/tick.rs` 的串行 `advance_and_settle()` 包含怪物决策、碰撞图重建、FOV、视野记忆等，与 `dungeon-world/src/tick.rs` 的并行版本有重复。action 应只负责"推进和执行"，world 负责"编排和状态同步"，当前边界有重叠。
-
-**位置：** `dungeon-action/src/tick.rs`、`dungeon-world/src/tick.rs`
-
----
-
-### 🟡 A4 — 环境修饰方法全部塞在 Map 的 impl 块中
-
-**问题：** `generate_water`、`carve_expand`、`generate_stalactites`、`ensure_connectivity`、`ensure_spawn_accessible` 等 ~350 行代码全在 Map 的 impl 块中。Map 的职责应为"容纳 tile 数据 + 基本查询"，而非完整的生成管线。
-
-**位置：** `dungeon-core/src/lib.rs:170-500`
-
----
-
 ---
 
 ## 三、实现层面（Implementation）
@@ -240,6 +266,3 @@
 
 **说明：** 事件帧模式（D5）部分解决了此问题——事件帧模式下玩家可以在自己行动执行前切换方向。
 
-### P8 — 测试覆盖不全
-
-`cargo test -p dungeon-core` 中 6 个测试只覆盖核心类型层。`dungeon-action` 和 `dungeon-world` 没有任何测试。
