@@ -157,7 +157,7 @@ core ──→ action ──→ world
 
 ---
 
-### 🔴 A1（旧 P2）— dungeon-core 与 dungeon-world 大量代码重复
+### ✅ A1（旧 P2）— dungeon-core 与 dungeon-world 大量代码重复
 
 **问题：** 以下函数在 `dungeon-core` 和 `dungeon-world` 中各有一份近乎相同的实现：
 
@@ -171,7 +171,13 @@ core ──→ action ──→ world
 
 **根因：** 重构到一半——`dungeon-world` 被创建来承接世界生命周期逻辑，但旧文件未清理。core 副本保留是为了 `cargo test -p dungeon-core` 可用。
 
-**建议方向：** 让 core 以 dev-dependency 依赖 dungeon-world，测试改用 `dungeon_world::setup_world()`，然后删除 core 中的重复项。
+**修复：**
+- 将 `calculate_visible_tiles` 从 `api.rs` 移入 `ops.rs`（通过 `pub use ops::*` 保持与原来一致的路径）
+- 删除 `dungeon-core/src/api.rs`（`setup_world` 移入 `tests.rs`，仅用于测试）
+- 删除 `dungeon-world/src/systems.rs`（重复的 system 定义）
+- `dungeon-world/src/tick.rs` 改为引用 `dungeon_core::systems::*`
+- `dungeon-world/src/lib.rs` 通过 `pub use dungeon_core::systems::*` 重新导出
+- 测试保留在 `dungeon-core` 内部，不引入循环依赖
 
 ---
 

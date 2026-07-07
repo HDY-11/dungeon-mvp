@@ -21,9 +21,8 @@ use dungeon_action::{
 };
 use dungeon_render::render_ui;
 use dungeon_world::{
-    setup_world,
+    setup_world, fov_system,
     advance_and_settle_parallel,
-    systems::fov_system,
 };
 use bevy_ecs::system::RunSystemOnce;
 

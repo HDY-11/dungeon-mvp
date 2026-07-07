@@ -2,9 +2,92 @@
 use crate::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
+use rand::SeedableRng;
 
+/// 为测试创建世界（与 dungeon-world::setup_world 一致）
 fn fresh_world() -> World {
-    setup_world()
+    ItemRegistry::load();
+
+    let mut world = World::new();
+    let map_seed: u64 = 42;
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(map_seed);
+    let mut map = Map::new();
+    map.generate(&mut rng);
+
+    world.insert_resource(MapSeed(map_seed));
+    world.insert_resource(MapMemory::new());
+    world.insert_resource(OccupancyMap::new());
+    world.insert_resource(PendingExp::default());
+    world.insert_resource(EventLog::new());
+    world.insert_resource(GameRng::new(map_seed.wrapping_add(42)));
+    world.insert_resource(TurnManager::new());
+    world.insert_resource(FloorNumber(1));
+    world.insert_resource(VisibleMemory::default());
+    world.insert_resource(crate::action_types::ActionQueue::default());
+    world.insert_resource(crate::action_types::InputBuffer::default());
+    world.insert_resource(crate::action_types::PlayerPreview::default());
+
+    let (spawn_x, spawn_y) = map.rooms[0].center();
+    world.insert_resource(map);
+    let player_agi = 10;
+
+    let pc = PlayerClass::Warrior;
+    let mut cmd = world.spawn((
+        Player, Position { x: spawn_x, y: spawn_y },
+        Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
+        Viewshed { range: 10, visible_tiles: Vec::new() },
+        Stats::player(), EntityName("冒险者".into()),
+        Inventory::new(36), Equipment::new(), Buffs::new(),
+        pc.clone(), AttackName("斩击".into()),
+    ));
+    cmd.insert(crate::action_types::Reaction { time: crate::action_types::agility_to_reaction(player_agi) });
+    cmd.insert(crate::action_types::CanMove::new(100));
+    cmd.insert(crate::action_types::CanWait::new(0));
+    cmd.insert(Skills { list: pc.skills() });
+
+    let map_tiles = world.resource::<Map>().tiles;
+    let population = crate::monster_def::generate_monster_population(&map_tiles, 1, &mut rng);
+    for &(kind, mx, my) in &population {
+            let glyph = crate::monster_def::monster_glyph(kind);
+            let color = crate::monster_def::monster_color(kind);
+            let mon_agi = crate::monster_def::monster_stats(kind, 1).agility;
+            let loot = crate::monster_def::monster_loot(kind);
+            let attk = crate::monster_def::monster_attack_name(kind);
+            let name = crate::monster_def::monster_name(kind);
+            let mut cmd = world.spawn((
+                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
+                Viewshed { range: 10, visible_tiles: Vec::new() },
+                crate::monster_def::monster_stats(kind, 1), EntityName(name.into()),
+                AttackName(attk.into()), loot,
+            ));
+            cmd.insert(crate::action_types::Reaction { time: crate::action_types::agility_to_reaction(mon_agi) });
+            cmd.insert(crate::action_types::CanChase::new(100));
+            cmd.insert(crate::action_types::CanFlee::new(200));
+            cmd.insert(crate::action_types::CanWander::new(50));
+            cmd.insert(crate::action_types::CanWait::new(0));
+        }
+
+    {
+        let m = world.resource::<Map>();
+        let last = m.rooms.len() - 1;
+        let (sx, sy) = m.rooms[last].center();
+        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
+    }
+
+    let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
+    let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
+    let item_count = room_centers.len().min(ground_item_ids.len());
+    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
+        if let Some(&(ix, iy)) = room_centers.get(i) {
+            let def = ItemRegistry::global().get(item_id).unwrap();
+            world.spawn((
+                ItemPickup { stack: ItemStack::new(item_id, 1) },
+                Position { x: ix + 1, y: iy },
+                Renderable { glyph: def.glyph, color: def.color },
+            ));
+        }
+    }
+    world
 }
 
 #[test]
@@ -37,11 +120,9 @@ fn test_player_preview_tap_tap() {
     let mut world = fresh_world();
     let player = world.query::<(Entity, &Player)>().iter(&world).next().map(|(e, _)| e).unwrap();
 
-    // 第一次 tap
     world.resource_mut::<action_types::PlayerPreview>().kind = Some(action_types::ActionKindV3::Move { dx: 1, dy: 0 });
     assert!(matches!(world.resource::<action_types::PlayerPreview>().kind, Some(action_types::ActionKindV3::Move { dx: 1, dy: 0 })));
 
-    // 第二次 tap
     let reaction = world.get::<action_types::Reaction>(player).unwrap().time;
     let duration = world.get::<action_types::CanMove>(player).unwrap().duration;
     let av = reaction + duration;

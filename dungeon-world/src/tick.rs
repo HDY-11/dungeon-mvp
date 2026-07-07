@@ -8,7 +8,7 @@ use dungeon_action::{
     chase_decision_system, flee_decision_system,
     wander_decision_system, arbitration_system,
 };
-use crate::systems::{fov_system, check_death_system, buff_tick_system};
+use dungeon_core::systems::{fov_system, check_death_system, buff_tick_system};
 
 /// 构建并行调度器（每帧调用 — 开销 <1μs，测试兼容各 World）
 fn build_parallel_schedule() -> Schedule {
