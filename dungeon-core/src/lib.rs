@@ -72,16 +72,16 @@ impl Tile {
             Tile::Wall => (180, 180, 180),
             Tile::Stalactite => (255, 255, 0),
             Tile::Floor => (200, 200, 200),
-            Tile::ShallowWater => (160, 215, 255),
-            Tile::DeepWater => (20, 70, 160),
+            Tile::ShallowWater => (220, 240, 255),
+            Tile::DeepWater => (80, 150, 220),
         }
     }
 
     /// 渲染背景色（仅水域有特殊背景）
     pub fn bg_color(self) -> Option<(u8, u8, u8)> {
         match self {
-            Tile::ShallowWater => Some((215, 240, 255)),
-            Tile::DeepWater => Some((30, 90, 190)),
+            Tile::ShallowWater => Some((120, 190, 250)),
+            Tile::DeepWater => Some((20, 60, 140)),
             _ => None,
         }
     }
