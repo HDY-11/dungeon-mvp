@@ -63,7 +63,7 @@ impl Tile {
 
     /// 是否阻挡视线（用于 FOV）
     pub fn blocks_vision(self) -> bool {
-        matches!(self, Tile::Wall | Tile::DeepWater | Tile::Stalactite)
+        matches!(self, Tile::Wall | Tile::Stalactite)
     }
 
     /// 渲染前景色（正常可见时）
