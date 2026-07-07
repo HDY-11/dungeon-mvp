@@ -437,7 +437,60 @@ if has_action {
 
 ---
 
-### 🟢 G7 — 水体生成保护距离可能过大（优先级低）
+### 🔴 G7 — 楼梯不可达（生成在不可连通区域）
+
+**问题：** 楼梯有时无法到达——要么楼梯格生成在了不可行走的位置，要么楼梯所在的连通区域与出生点所在的区域没有通路。
+
+**根因分析：**
+楼梯位置代码 [init.rs:107-116]：
+
+```rust
+let (sx, sy) = m.rooms.iter()
+    .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
+    .max_by_key(|(_, d)| *d)
+    .map(|(p, _)| p)
+    .unwrap_or(m.rooms[0].center());
+```
+
+楼梯选在距出生房间曼哈顿距离最远的**房间中心**。但这里的"房间"是通过 `detect_cave_regions(12)` 从 walkable 连通区中检测出的 bounding box。可能存在的情况：
+
+1. 选中的房间与出生房间**属于不同连通区**，且 `ensure_connectivity` 未能成功打通
+2. 楼梯中心格在后续的环境修饰（水体/钟乳石）中被覆盖为不可行走格
+3. 房间中心恰好在墙体上（bounding box 的 center 可能落在 wall 上而非 walkable 区域）
+
+**位置：** `dungeon-world/src/init.rs:107-116`、`dungeon-core/src/lib.rs`（Map::generate）
+
+**建议方向（暂不修复，先记录）：**
+地图生成完成后，添加一步 `ensure_stairs_accessible`：
+
+1. 在楼梯位置确定后，检查从玩家出生点到楼梯是否有 walkable 路径（用 BFS 或 A*）
+2. 如果无路径，用醉汉游走从楼梯位置向出生点方向挖掘
+3. 醉汉游走的每一步增加**指向出生点方向的概率权重**（`signum` 偏向），使通道趋向出生点
+4. 挖到连通为止（与出生区域相遇）
+
+```rust
+// 伪代码
+fn ensure_stairs_accessible(&mut self, rng: &mut impl Rng, spawn: (usize, usize), stairs: (usize, usize)) {
+    if has_path(spawn, stairs) { return; }
+    let (mut cx, mut cy) = (stairs.0 as isize, stairs.1 as isize);
+    let (sx, sy) = (spawn.0 as isize, spawn.1 as isize);
+    for _ in 0..500 {
+        // 70% 概率指向出生点方向，30% 随机
+        let dx = if rng.random_range(0..100) < 70 { (sx - cx).signum() } else { rng.random_range(-1..2) };
+        let dy = if rng.random_range(0..100) < 70 { (sy - cy).signum() } else { rng.random_range(-1..2) };
+        cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
+        cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
+        if !self.tiles[cy as usize][cx as usize].walkable() {
+            self.tiles[cy as usize][cx as usize] = Tile::Floor;
+        }
+        if has_path((cx as usize, cy as usize), spawn) { break; }
+    }
+}
+```
+
+---
+
+### 🟢 G8 — 水体生成保护距离可能过大（优先级低）
 
 **问题：** `generate_water` 使用 `is_away_from_rooms(x, y, 6)` [lib.rs:241] 保护房间中心不被水体覆盖。曼哈顿距离 `min_dist=6` 对于半径 4-6 的圆形/菱形房间可能过大，导致水体永远无法出现在合理位置。
 
