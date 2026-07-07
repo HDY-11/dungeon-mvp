@@ -86,13 +86,18 @@
 
 ---
 
-### 🟡 D2 — 存档/读档丢弃 Intent 缓冲区状态
+### ✅ D2 — 存档/读档丢弃 Intent 缓冲区状态
 
 **问题：** `GameSave::capture()` 保存了 `ActionQueue`（Attack 条目因 Entity 引用被跳过），但 `ChaseIntents` / `FleeIntents` / `WanderIntents` 三个意图缓冲区未保存。`restore()` 直接重置为 `default()`。
 
-**影响：** 读档后怪物需等下一次并行决策（下一帧）才能行动。对于 MVP 可接受，但频繁存档/读档时体验不佳。
+**修复：** 
+- `GameSave` 新增 `chase_intents` / `flee_intents` / `wander_intents` 字段
+- `capture()` 按位置保存意图缓冲区
+- `restore()` 通过 position→entity 重映射恢复
+- 新字段 `#[serde(default)]` 兼容旧存档
+- 意图保存排除 Attack 类型（含 Entity 引用，与 ActionQueue 一致）
 
-**位置：** `dungeon-world/src/persist.rs:171-176`
+**位置：** `dungeon-world/src/persist.rs`
 
 ---
 

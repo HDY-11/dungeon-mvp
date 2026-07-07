@@ -34,6 +34,15 @@ pub struct SavedActionEntry {
     pub av_remaining: f32,
 }
 
+/// 可序列化的意图条目（按实体位置 + 优先级 + AV + 种类）
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedIntentEntry {
+    pub x: u16, pub y: u16,
+    pub priority: u32,
+    pub av: f32,
+    pub kind: SavedActionKind,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GameSave {
     pub floor: u32,
@@ -53,6 +62,12 @@ pub struct GameSave {
     pub sx: u16, pub sy: u16,
     pub player_class: Option<PlayerClass>,
     pub action_queue: Vec<SavedActionEntry>,
+    #[serde(default)]
+    pub chase_intents: Vec<SavedIntentEntry>,
+    #[serde(default)]
+    pub flee_intents: Vec<SavedIntentEntry>,
+    #[serde(default)]
+    pub wander_intents: Vec<SavedIntentEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -172,6 +187,22 @@ impl GameSave {
             }).collect()
         };
 
+        let save_intent = |entries: &Vec<(Entity, u32, f32, ActionKindV3)>| {
+            entries.iter().filter_map(|(e, pri, av, kind)| {
+                let pos = w.get::<Position>(*e)?;
+                let sk = match kind {
+                    ActionKindV3::Chase => SavedActionKind::Chase,
+                    ActionKindV3::Flee => SavedActionKind::Flee,
+                    ActionKindV3::Wander => SavedActionKind::Wander,
+                    _ => return None,
+                };
+                Some(SavedIntentEntry { x: pos.x as u16, y: pos.y as u16, priority: *pri, av: *av, kind: sk })
+            }).collect()
+        };
+        let chase_intents = save_intent(&w.resource::<ChaseIntents>().0);
+        let flee_intents = save_intent(&w.resource::<FleeIntents>().0);
+        let wander_intents = save_intent(&w.resource::<WanderIntents>().0);
+
         Self {
             floor, map_seed, px, py, st, inv,
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
@@ -180,6 +211,7 @@ impl GameSave {
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
             action_queue,
+            chase_intents, flee_intents, wander_intents,
         }
     }
 
@@ -291,5 +323,25 @@ impl GameSave {
             let mut queue = w.resource_mut::<ActionQueue>();
             queue.entries.extend(entries);
         }
+
+        // 恢复意图缓冲区：根据位置重映射 Entity
+        // 先收集所有 entity→position 映射
+        let pos_map: Vec<(Entity, u16, u16)> = w.query::<(Entity, &Position)>().iter(w)
+            .map(|(e, p)| (e, p.x as u16, p.y as u16)).collect();
+        let remap = |saved: &[SavedIntentEntry]| -> Vec<(Entity, u32, f32, ActionKindV3)> {
+            saved.iter().filter_map(|entry| {
+                let entity = pos_map.iter().find(|(_, px, py)| *px == entry.x && *py == entry.y)?.0;
+                let kind = match &entry.kind {
+                    SavedActionKind::Chase => ActionKindV3::Chase,
+                    SavedActionKind::Flee => ActionKindV3::Flee,
+                    SavedActionKind::Wander => ActionKindV3::Wander,
+                    _ => return None,
+                };
+                Some((entity, entry.priority, entry.av, kind))
+            }).collect()
+        };
+        w.resource_mut::<ChaseIntents>().0 = remap(&self.chase_intents);
+        w.resource_mut::<FleeIntents>().0 = remap(&self.flee_intents);
+        w.resource_mut::<WanderIntents>().0 = remap(&self.wander_intents);
     }
 }
