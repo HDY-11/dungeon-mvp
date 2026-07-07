@@ -109,14 +109,11 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     for &(ex, ey, glyph, (r, g, b)) in &renderables {
         if ey >= cam_y && ey < cam_y + vh
             && ex >= cam_x && ex < cam_x + vw
+            && player_visible.contains(&(ex, ey))
         {
             let (idx, jdx) = (ey - cam_y, ex - cam_x);
             let bg = lines[idx][jdx].2;
-            if player_visible.contains(&(ex, ey)) {
-                lines[idx][jdx] = (glyph, renderable_color((r, g, b)), bg);
-            } else if explored[ey][ex] {
-                lines[idx][jdx] = (glyph, Color::Rgb(dim(r, 0.55), dim(g, 0.55), dim(b, 0.55)), bg);
-            }
+            lines[idx][jdx] = (glyph, renderable_color((r, g, b)), bg);
         }
     }
     for &(mx, my, glyph, _) in &visible_mem {
