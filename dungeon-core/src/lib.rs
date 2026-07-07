@@ -228,6 +228,18 @@ impl Map {
 
         // ── 从洞穴中检测连通区域 → 房间列表（用于怪物/物品放置） ──
         self.rooms = self.detect_cave_regions(12);
+        if self.rooms.is_empty() {
+            // 极端情况：无足够大区域，放一个默认房间在地图中央
+            self.rooms.push(Room {
+                x: MAP_WIDTH / 2 - 5, y: MAP_HEIGHT / 2 - 5,
+                w: 10, h: 10, shape: RoomShape::Rect,
+            });
+            for y in self.rooms[0].y..self.rooms[0].y + self.rooms[0].h {
+                for x in self.rooms[0].x..self.rooms[0].x + self.rooms[0].w {
+                    if x < MAP_WIDTH && y < MAP_HEIGHT { self.tiles[y][x] = Tile::Floor; }
+                }
+            }
+        }
 
         // ── 环境修饰：水域 + 钟乳石 + 连通性 ──
         self.generate_water(rng, seed.wrapping_add(100));

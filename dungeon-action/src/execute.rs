@@ -114,18 +114,17 @@ fn execute_chase(world: &mut World, entity: Entity) {
         if let Some(mut ps) = world.get_mut::<Stats>(player_entity) { ps.hp -= dmg; }
         world.resource_mut::<EventLog>().push(format!("{} 攻击了你，{}伤", name, dmg));
     } else {
-        let dx = if px > pos.0 { 1 } else if px < pos.0 { -1 } else { 0 };
-        let dy = if py > pos.1 { 1 } else if py < pos.1 { -1 } else { 0 };
-        let attempts = [(dx, 0), (0, dy), (dx, dy)];
-        let target = {
+        // A* 寻路至玩家，取第一步
+        let next_step = {
             let map = world.resource::<Map>();
             let occ = world.resource::<OccupancyMap>();
-            attempts.iter().find_map(|&(ndx, ndy)|
-                can_move_to(map, occ, pos.0, pos.1, ndx, ndy)
-                    .then_some((pos.0.wrapping_add_signed(ndx), pos.1.wrapping_add_signed(ndy)))
-            )
+            ops::astar(pos, (px, py), &map.tiles, Some(occ))
+                .and_then(|path| {
+                    // 跳过第一步如果它等于当前位置（A* 不含起点）
+                    path.first().copied()
+                })
         };
-        if let Some((nx, ny)) = target {
+        if let Some((nx, ny)) = next_step {
             if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
         }
     }
