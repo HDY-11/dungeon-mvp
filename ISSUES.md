@@ -12,6 +12,48 @@
 
 ## ✅ 已修复
 
+### I19 — 提取 setup_world/descend 共享函数 + 修复 G9/G10/I16 ✅已修复
+
+**修复内容（四项在同一个重构中完成）：**
+
+**I16 — 单房间物品为 0**：`place_ground_items` 当 `rooms.len() == 1` 时退回到 `rooms[0]` 内随机偏移放置。
+
+**G9 — 玩家与楼梯重合**：`pick_stair_pos` 当 `rooms.len() <= 1` 时用醉汉游走从出生点走 60 步，找到 ≥15 格外的 walkable 格作为楼梯位置。
+
+**G10 — 怪物阻挡关键位置**：`generate_monster_population` 新增 `exclude: &[(usize, usize)]` 参数，收集和随机补充阶段跳过排除坐标。`setup_world` 和 `descend` 传入 `[spawn, stairs_pos]`。
+
+**I19 — 重复代码**：提取 `spawn_monsters`、`place_ground_items`、`pick_stair_pos` 三个共享函数，`setup_world` 和 `descend` 分别调用。消除 ~55 行重复代码。
+
+**教训：** 三个不同的问题（重合、阻挡、缺物品）共享同一根因（单房间退化）和同一修复点（init.rs）。将其一次性解决比分开修更高效。共享函数提取应在修复的同时进行，而非先提取再修复——否则两次修改同一区域。
+
+### I18 — `on_stairs()` 修复：过滤 Player 组件 ✅已修复
+
+**修复前：** `try_query::<&Position>()` 查询任意实体位置，迭代顺序不确定性导致可能读到怪物/物品的位置而非玩家，使下楼判定失效。
+
+**修复后：** 改为 `try_query::<(&Player, &Position)>()`，只查询玩家的位置。无玩家时返回 false。
+
+**教训：** 任何"判断玩家状态"的函数都应在查询组件时显式加入 Player filter。`&Position` 可能匹配到任何实体——编译器不会警告，行为在运行时才暴露。
+
+### I20 — 移除 `advance_and_settle_parallel` 末位重复 rebuild ✅已修复
+
+**修复前：** `advance_until_player_acted`（内部每 action 后 rebuild）→ schedule.run → `rebuild_occupancy`（末位）。调度器不改变实体位置，末位 rebuild 冗余。
+
+**修复后：** 删除末位 `rebuild_occupancy` 调用。碰撞图仅由 `advance_action_queue` 在每 action 后维护，职责清晰。
+
+### D7 — EventLog 容量提升至 50 ✅已修复
+
+**修复前：** max=10，战斗密集时关键信息 2-3 回合后被滚出屏幕。
+
+**修复后：** max=50。
+
+### I21 — Position 增加 `#[derive(PartialEq, Eq)]` ✅已修复
+
+**修复前：** `Position` 无 PartialEq，测试中需逐字段比较 x 和 y。
+
+**修复后：** 增加 `#[derive(PartialEq, Eq)]`。测试代码可直接 `assert_eq!(pos1, pos2)`。
+
+**教训：** 值类型（所有字段都是 Copy 的简单结构体）应默认实现 PartialEq + Eq，无需等待测试需要时才加。
+
 ### D6 — GAME.md 升级描述与代码一致 ✅已修复
 
 **修复前：** GAME.md 仍写着"获得 3 个属性点（待分配）"，但 PendingLevelUp 已在 I7 中删除。
@@ -325,155 +367,18 @@
 
 ---
 
-### 🟢 I16 — 仅1个房间时地面物品为0
+### 🟡 I17 — 少量 `.unwrap()` 调用待处理（约 10 处）
 
-**问题：** `setup_world` 和 `descend` 中地面物品位置列表通过 `rooms.iter().skip(1)` 获取（跳过出生房间）。若 `rooms.len() == 1`，`skip(1)` 后列表为空，导致 **0 个地面物品**生成。
+**当前状态：** 约 25 处 `try_query().unwrap()` 已替换为 `try_query().expect("...")`（共 6 个文件：ops/ui/inventory/persist/execute/tick）。剩余约 10 处非 try_query unwrap：
 
-```rust
-let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
-let item_count = room_centers.len().min(ground_item_ids.len());
-```
-
-`room_centers.len()` = 0 → `item_count` = 0 → 无物品。
-
-**用户反馈：** 第二层没有生成任何道具。
-
-**位置：** `dungeon-world/src/init.rs:108`（setup_world）、`dungeon-world/src/init.rs:199`（descend）
-
-**建议修复方向：** 当 `rooms.len() == 1` 时，退回到 `rooms[0]` 内部放置物品，但用 `is_away_from_spawn` 或随机偏移避免与出生点/楼梯完全重叠。或直接为单房间场景准备一份备用位置列表。
+| 模式 | 数量 | 风险 |
+|------|------|------|
+| `get::<T>(entity).unwrap()` | ~4 | execute.rs（Inventory/Equipment on attacker） |
+| `ItemRegistry::global().get(id).unwrap()` | ~3 | init.rs（物品生成） |
+| `query().next().unwrap()` | ~1 | init.rs descend |
+| 其他杂项 | ~3 | action_types.rs f32 partial_cmp、inventory.rs slot.take() |
 
 ---
-
-### 🟡 I17 — 大量 `.unwrap()` 调用（未处理错误路径约 35 处）
-
-**问题：** 整个代码库的生产代码中散布着约 **35 处 `.unwrap()` 调用**，分布在 8 个文件中。任何一处 panic 都会导致整个游戏崩溃（无错误恢复机制）。
-
-**分类统计：**
-
-| 模式 | 数量 | 代表位置 | 风险 |
-|------|------|---------|------|
-| `try_query().unwrap()` | ~25 | ops.rs、ui.rs、inventory.rs、persist.rs | 理论上安全（组件提前注册），但违背"失败路径应被显式处理"的原则 |
-| `get::<T>(entity).unwrap()` | ~4 | execute.rs（Inventory/Equipment on attacker） | 若实体缺少组件则 panic；攻击者必有装备/背包的假设目前成立，但扩展后易破 |
-| `ItemRegistry::global().get(id).unwrap()` | ~3 | init.rs（物品生成） | items.json 若缺 id 直接 panic |
-| `query().next().unwrap()` | ~1 | init.rs descend | rooms 为空或玩家不存在时 panic |
-| 其他杂项 | ~3 | action_types.rs f32 partial_cmp、inventory.rs slot.take() | 低风险但无信息量 |
-
-**建议修复方向：** 见 I17 各分类的具体方案。
-
----
-
-### 🔴 I18 — `on_stairs()` 未过滤玩家，可能读取错误实体
-
-**问题：** `ops::on_stairs()` 用于判断玩家是否站在楼梯上，但实现中查询的是任意实体的位置：
-
-```rust
-pub fn on_stairs(world: &World) -> bool {
-    let pp = *world.try_query::<&Position>().unwrap().iter(world).next()
-        .unwrap_or(&Position { x: 0, y: 0 });
-    // ...
-}
-```
-
-`try_query::<&Position>()` 返回所有带 Position 组件的实体（玩家、怪物、物品、楼梯……），`iter(world).next()` 取迭代器第一个——**不保证是玩家**。如果任意怪物或物品的迭代顺序在玩家之前，`on_stairs` 将返回该实体是否在楼梯上，而非玩家。
-
-**影响：** 玩家站在楼梯上按 `>` 可能不会触发下楼（因为读取的是怪物位置）；或玩家远离楼梯时误判可下楼（因为怪物恰好在楼梯上）。
-
-**根因：** 22 行简单函数，编写时未指定 Player filter。
-
-**位置：** `dungeon-core/src/ops.rs:48-52`
-
-**修复：** 将查询改为 `try_query::<(&Player, &Position)>()`。
-
----
-
-### 🟢 I19 — `setup_world` 与 `descend` 存在大量重复代码
-
-**问题：** `setup_world`（~110 行）和 `descend`（~120 行）中以下逻辑被完整复制：
-
-1. **怪物生成循环**（~25 行）：`for &(kind, mx, my) in &population { ... }` 内含 spawn + insert 5 个组件
-2. **地面物品放置循环**（~15 行）：`for (i, &item_id) in ground_item_ids[...].iter().enumerate() { ... }`
-3. **楼梯位置选择逻辑**（~10 行）：`rooms.iter().map(|r| (r.center(), ...)).max_by_key(..)`
-4. **连通性保障**（~5 行）：`ensure_connection_between`
-
-总计约 **55 行重复代码**（两个副本）。任何对怪物行为组件或物品放置逻辑的修改都需要在两地同步更改。
-
-**位置：** `dungeon-world/src/init.rs`
-
-**建议修复方向：** 将共享逻辑提取为 `spawn_monsters(world, floor)`、`place_items(world)`、`place_stairs(world) -> (usize, usize)` 等函数，`setup_world` 和 `descend` 各自调用。
-
----
-
-### 🟢 I20 — `rebuild_occupancy` 每 tick 重复调用
-
-**问题：** `advance_and_settle_parallel` 中，碰撞图在 `advance_until_player_acted`（内部每个 action 执行后都会 rebuild）和调度器运行后再次 rebuild。相当于每 tick 末位额外重建一次——如果本次 tick 内没有新实体生成（没有怪物死亡/出生），这次重建是纯浪费。
-
-```rust
-pub fn advance_and_settle_parallel(world: &mut World) {
-    advance_until_player_acted(world);       // ← 内部每 action 后 rebuild
-    { let mut s = build_parallel_schedule(); s.run(world); }
-    ops::rebuild_occupancy(world);            // ← 第 N+1 次 rebuild
-    // ...
-}
-```
-
-80×60=4800 格的全量重建开销 <1μs（设计文档说明），性能损失可忽略，但逻辑上不干净。
-
-**位置：** `dungeon-world/src/tick.rs`、`dungeon-action/src/execute.rs`
-
-**建议修复方向：** 在 `advance_until_player_acted` 中跳过每 action 后的 rebuild，仅在 `advance_and_settle_parallel` 末位统一重建一次；或反之在 schedule 后不再重复调用。
-
----
-
-### 🟢 D7 — EventLog 容量 10，历史消息易丢失
-
-**问题：** `EventLog` 的 `max` 设置为 10，超过时丢弃最早的消息。玩家无法回溯 10 条之前的战斗/事件记录。在战斗密集的楼层中，关键信息（暴击、掉落、升级）可能在 2-3 个回合内被滚出屏幕。
-
-**位置：** `dungeon-core/src/resources.rs:37`
-
-**建议修复方向：** 将 `max` 提升至 30-50，或改为动态容量（无上限，只在渲染时截断最后 N 条）。
-
----
-
-### 🟢 I21 — `Position` 未实现 `PartialEq`，测试中需逐字段比较
-
-**问题：** `Position` 是一个 `pub struct Position { pub x: usize, pub y: usize }` 的简单值类型，但未派生 `PartialEq`。测试代码中无法直接 `assert_eq!(pos1, pos2)`，需手写 `assert_eq!(pos1.x, pos2.x); assert_eq!(pos1.y, pos2.y)`。
-
-**位置：** `dungeon-core/src/components.rs:48`
-
-**修复：** 为 Position 添加 `#[derive(PartialEq)]`。
-
----
-
-## 四、游戏逻辑层面（Game Logic）
-
----
-
-### 🟡 G9 — 仅1个连通房间时玩家出生在楼梯上（重合）
-
-**问题：** 下楼后 `detect_cave_regions` 可能只检测出 1 个连通区域（尤其深层地图经水体/钟乳石/连通性处理后）。此时 `setup_world` 和 `descend` 中玩家和楼梯均使用 `rooms[0].center()`。`max_by_key` 在只有 1 个房间时返回自身，结果楼梯和玩家挤在同一格。
-
-**根因链：** terrain-forge 生成 → 水体/钟乳石切割 → ensure_connectivity 连接所有区域 → 只剩 1 个超大连通区 → `detect_cave_regions` 返回 1 个 Room → 玩家和楼梯位置相同。
-
-**用户反馈：** 下到第二层后发现出生在楼梯上，界面显示"房间1"。
-
-**位置：** `dungeon-world/src/init.rs`（stairs_pos 选择逻辑）、`dungeon-world/src/init.rs`（descend 中 stairs_pos 同样逻辑）
-
-**建议修复方向：**
-1. 玩家出生时，5 格范围内不能有其他怪物（怪物生成排除玩家邻域）
-2. 楼梯在玩家 15-25 格外随机生成，而非依赖 `rooms` 列表
-
-### 🟡 G10 — 怪物阻挡楼梯/物品（怪物生成未排除关键位置）
-
-**问题：** `generate_monster_population` 基于噪声密度层 + 元胞扩散在全地图 walkable 格上放置怪物，但**不排除楼梯位置和物品位置**。下楼后：
-
-1. **楼梯被怪物堵住**：怪物生成在楼梯格 → `OccupancyMap` 标记该格被占用（怪物没有 Stairs/ItemPickup 组件，不会被 `rebuild_occupancy` 过滤）→ 玩家走开后无法走回楼梯 → 表现为"楼梯不可行走"。
-2. **物品格被怪物堵住**：同���，怪物站在物品上 → `handle_player_direction` 检查 `OccupancyMap` 发现该格有实体且是 Monster → `has_enemy = Some` → 转为攻击而非拾取。
-
-**用户反馈：** 从楼梯上走开后无法走回；有时道具（地面物品）也不能走到上面。
-
-**位置：** `dungeon-core/src/monster_def.rs:generate_monster_population`
-
-**建议修复方向：** `generate_monster_population` 增加排除列表参数（stairs_pos、spawn_pos、ground_item_positions），对应坐标不放置怪物。
 
 ---
 

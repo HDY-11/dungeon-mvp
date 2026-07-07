@@ -46,7 +46,7 @@ fn fresh_world() -> World {
     cmd.insert(Skills { list: pc.skills() });
 
     let map_tiles = world.resource::<Map>().tiles;
-    let population = crate::monster_def::generate_monster_population(&map_tiles, 1, &mut rng);
+    let population = crate::monster_def::generate_monster_population(&map_tiles, 1, &mut rng, &[]);
     for &(kind, mx, my) in &population {
             let glyph = crate::monster_def::monster_glyph(kind);
             let color = crate::monster_def::monster_color(kind);

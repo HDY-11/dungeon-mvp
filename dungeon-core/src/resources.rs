@@ -47,7 +47,7 @@ pub struct EventLog {
     max: usize,
 }
 impl EventLog {
-    pub fn new() -> Self { Self { messages: Vec::new(), max: 10 } }
+    pub fn new() -> Self { Self { messages: Vec::new(), max: 50 } }
     pub fn push(&mut self, msg: impl Into<String>) {
         self.messages.push(msg.into());
         if self.messages.len() > self.max { self.messages.remove(0); }

@@ -2,14 +2,123 @@
 
 use dungeon_core::{
     components::*, items::*, resources::*,
-    Map,
+    Map, MAP_WIDTH, MAP_HEIGHT,
     ActionQueue, InputBuffer, PlayerPreview,
     ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
 use bevy_ecs::prelude::*;
-use rand::SeedableRng;
+use rand::{Rng, RngExt, SeedableRng};
+
+// ══════════════════════════════════════════════════════
+// 共享辅助函数（setup_world 与 descend 共用）
+// ══════════════════════════════════════════════════════
+
+/// 在 walkable 格上放置怪物种群，避开 exclude 坐标
+fn spawn_monsters(world: &mut World, floor: u32, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
+    let tiles = world.resource::<Map>().tiles;
+    let population = dungeon_core::monster_def::generate_monster_population(&tiles, floor, rng, exclude);
+    for &(kind, mx, my) in &population {
+        let glyph = dungeon_core::monster_def::monster_glyph(kind);
+        let color = dungeon_core::monster_def::monster_color(kind);
+        let mon_agi = dungeon_core::monster_def::monster_stats(kind, floor).agility;
+        let loot = dungeon_core::monster_def::monster_loot(kind);
+        let attk = dungeon_core::monster_def::monster_attack_name(kind);
+        let name = dungeon_core::monster_def::monster_name(kind);
+        let mut cmd = world.spawn((
+            Monster, Position { x: mx, y: my }, Renderable { glyph, color },
+            Viewshed { range: 10, visible_tiles: Vec::new() },
+            dungeon_core::monster_def::monster_stats(kind, floor), EntityName(name.into()),
+            AttackName(attk.into()), loot,
+        ));
+        cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
+        cmd.insert(CanChase::new(100));
+        cmd.insert(CanFlee::new(200));
+        cmd.insert(CanWander::new(50));
+        cmd.insert(CanWait::new(0));
+    }
+}
+
+/// 在地图中放置地面物品。
+/// 优先使用非出生房间的中心，若仅有 1 个房间则退回到出生房间内偏移放置。
+fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, usize)]) {
+    use rand::RngExt;
+    let room_centers: Vec<(usize, usize)> = {
+        let rooms = &world.resource::<Map>().rooms;
+        if rooms.len() > 1 {
+            rooms.iter().skip(1).map(|r| r.center()).collect()
+        } else {
+            // I16: 单房间时从房间内随机找偏离中心的 walkable 格
+            let r = &rooms[0];
+            let mut alt = Vec::new();
+            let mut rng2 = rand::rngs::SmallRng::seed_from_u64(42);
+            for _ in 0..20 {
+                let ox = rng2.random_range(2..r.w.saturating_sub(2));
+                let oy = rng2.random_range(2..r.h.saturating_sub(2));
+                let px = r.x + ox as usize;
+                let py = r.y + oy as usize;
+                if px < MAP_WIDTH && py < MAP_HEIGHT
+                    && world.resource::<Map>().tiles[py][px].walkable()
+                    && !exclude.contains(&(px, py))
+                {
+                    alt.push((px, py));
+                }
+            }
+            alt
+        }
+    };
+
+    let item_count = room_centers.len().min(item_ids.len());
+    for (i, &item_id) in item_ids[..item_count].iter().enumerate() {
+        if let Some(&(ix, iy)) = room_centers.get(i) {
+            let def = ItemRegistry::global().get(item_id).expect("item_id exists in registry");
+            world.spawn((
+                ItemPickup { stack: ItemStack::new(item_id, 1) },
+                Position { x: ix + 1, y: iy },
+                Renderable { glyph: def.glyph, color: def.color },
+            ));
+        }
+    }
+}
+
+/// 选择楼梯位置：尽量远离 spawn_pos，至少 15 格。
+/// 当 rooms 仅 1 个时，用醉汉游走从 spawn 出发走 20 步找位置（G9）。
+fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (usize, usize) {
+    use rand::RngExt;
+    let (spx, spy) = spawn_pos;
+
+    // 优先选最远房间
+    if map.rooms.len() > 1 {
+        if let Some(best) = map.rooms.iter()
+            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
+            .max_by_key(|(_, d)| *d)
+            .map(|(p, _)| p)
+        {
+            return best;
+        }
+    }
+
+    // G9: 单房间/无房间 → 醉汉游走 20 步
+    let (mut cx, mut cy) = (spx as isize, spy as isize);
+    for _ in 0..60 {
+        let dx = rng.random_range(-1i32..2) as isize;
+        let dy = rng.random_range(-1i32..2) as isize;
+        if dx == 0 && dy == 0 { continue; }
+        cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
+        cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
+        let dist = (cx as usize).abs_diff(spx) + (cy as usize).abs_diff(spy);
+        if dist >= 15 && map.tiles[cy as usize][cx as usize].walkable() {
+            return (cx as usize, cy as usize);
+        }
+    }
+    // fallback
+    (spx, spy)
+}
+
+// ══════════════════════════════════════════════════════
+// 公共 API
+// ══════════════════════════════════════════════════════
 
 /// 创建并初始化游戏世界
 pub fn setup_world() -> World {
@@ -55,61 +164,25 @@ pub fn setup_world() -> World {
     cmd.insert(CanWait::new(0));
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
 
-    // ── 噪声+元胞生成怪物 ──────────────────────
-    let map_tiles = world.resource::<Map>().tiles;
-    let population = dungeon_core::monster_def::generate_monster_population(&map_tiles, 1, &mut rng);
-    for &(kind, mx, my) in &population {
-            let glyph = dungeon_core::monster_def::monster_glyph(kind);
-            let color = dungeon_core::monster_def::monster_color(kind);
-            let mon_agi = dungeon_core::monster_def::monster_stats(kind, 1).agility;
-            let loot = dungeon_core::monster_def::monster_loot(kind);
-            let attk = dungeon_core::monster_def::monster_attack_name(kind);
-            let name = dungeon_core::monster_def::monster_name(kind);
-            let mut cmd = world.spawn((
-                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 10, visible_tiles: Vec::new() },
-                dungeon_core::monster_def::monster_stats(kind, 1), EntityName(name.into()),
-                AttackName(attk.into()), loot,
-            ));
-            cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
-            cmd.insert(CanChase::new(100));
-            cmd.insert(CanFlee::new(200));
-            cmd.insert(CanWander::new(50));
-            cmd.insert(CanWait::new(0));
-        }
-
-    let (stairs_x, stairs_y) = {
+    // ── 楼梯放置（避开出生点，G9） ──
+    let stairs_pos = {
         let m = world.resource::<Map>();
-        let (spx, spy) = m.rooms[0].center();
-        let (sx, sy) = m.rooms.iter()
-            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
-            .max_by_key(|(_, d)| *d)
-            .map(|(p, _)| p)
-            .unwrap_or(m.rooms[0].center());
-        world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
-        (sx, sy)
+        pick_stair_pos(m, (spawn_x, spawn_y), &mut rng)
     };
-    // 确保楼梯与出生点连通
+    world.spawn((Stairs, Position { x: stairs_pos.0, y: stairs_pos.1 },
+        Renderable { glyph: '>', color: (0, 255, 0) }));
     {
-        let (spx, spy) = world.resource::<Map>().rooms[0].center();
         let mut map = world.resource_mut::<Map>();
-        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, (spx, spy), (stairs_x, stairs_y));
+        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, (spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1));
     }
 
-    // ── 地面物品（使用房间中心位置）──
-    let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
+    // ── 怪物生成（排除楼梯和出生点，G10） ──
+    spawn_monsters(&mut world, 1, &mut rng, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
+
+    // ── 地面物品 ──
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
-    let item_count = room_centers.len().min(ground_item_ids.len());
-    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
-        if let Some(&(ix, iy)) = room_centers.get(i) {
-            let def = ItemRegistry::global().get(item_id).unwrap();
-            world.spawn((
-                ItemPickup { stack: ItemStack::new(item_id, 1) },
-                Position { x: ix + 1, y: iy },
-                Renderable { glyph: def.glyph, color: def.color },
-            ));
-        }
-    }
+    place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
+
     world
 }
 
@@ -121,7 +194,7 @@ pub fn descend(world: &mut World) {
 
     let player_data = {
         let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName)>();
-        let (e, s, inv, eq, cls, atk) = q.iter(&mut *w).next().unwrap();
+        let (e, s, inv, eq, cls, atk) = q.iter(&mut *w).next().expect("Player exists for descend");
         (e, s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
          Buffs::new(), cls.clone(), atk.0.clone())
@@ -135,8 +208,9 @@ pub fn descend(world: &mut World) {
     let mut rng = rand::rngs::SmallRng::seed_from_u64(base_seed.wrapping_add(f as u64));
     let mut map = Map::new(); map.generate(&mut rng);
     w.insert_resource(map); w.insert_resource(MapMemory::new());
-    let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
 
+    // ── 重建玩家 ──
+    let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
     let mut cmd = w.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
@@ -153,60 +227,24 @@ pub fn descend(world: &mut World) {
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
 
+    // ── 楼梯放置（避开出生点，G9） ──
     let stairs_pos = {
         let m = w.resource::<Map>();
-        let (spx, spy) = m.rooms[0].center();
-        m.rooms.iter()
-            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
-            .max_by_key(|(_, d)| *d)
-            .map(|(p, _)| p)
-            .unwrap_or(m.rooms[0].center())
+        pick_stair_pos(m, spawn, &mut rng)
     };
     w.spawn((Stairs, Position { x: stairs_pos.0, y: stairs_pos.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
-
-    // 确保楼梯与出生点连通
     {
-        let (spx, spy) = w.resource::<Map>().rooms[0].center();
         let mut map = w.resource_mut::<Map>();
-        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, (spx, spy), (stairs_pos.0, stairs_pos.1));
+        dungeon_core::map_gen::ensure_connection_between(&mut map, &mut rng, spawn, (stairs_pos.0, stairs_pos.1));
     }
 
-    // ── 噪声+元胞生成怪物（楼层 f）────────────
-    let map_tiles = w.resource::<Map>().tiles;
-    let population = dungeon_core::monster_def::generate_monster_population(&map_tiles, f, &mut rng);
-    for &(kind, mx, my) in &population {
-            let glyph = dungeon_core::monster_def::monster_glyph(kind);
-            let color = dungeon_core::monster_def::monster_color(kind);
-            let mon_agi = dungeon_core::monster_def::monster_stats(kind, f).agility;
-            let loot = dungeon_core::monster_def::monster_loot(kind);
-            let attk = dungeon_core::monster_def::monster_attack_name(kind);
-            let name = dungeon_core::monster_def::monster_name(kind);
-            let mut cmd = w.spawn((
-                Monster, Position { x: mx, y: my }, Renderable { glyph, color },
-                Viewshed { range: 10, visible_tiles: Vec::new() },
-                dungeon_core::monster_def::monster_stats(kind, f), EntityName(name.into()),
-                AttackName(attk.into()), loot,
-            ));
-            cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
-            cmd.insert(CanChase::new(100));
-            cmd.insert(CanFlee::new(200));
-            cmd.insert(CanWander::new(50));
-            cmd.insert(CanWait::new(0));
-        }
+    // ── 怪物生成（排除楼梯和出生点，G10） ──
+    spawn_monsters(w, f, &mut rng, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
-    let room_centers: Vec<(usize, usize)> = w.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
+    // ── 地面物品 ──
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
-    let item_count = room_centers.len().min(ground_item_ids.len());
-    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
-        if let Some(&(ix, iy)) = room_centers.get(i) {
-            let def = ItemRegistry::global().get(item_id).unwrap();
-            w.spawn((
-                ItemPickup { stack: ItemStack::new(item_id, 1) },
-                Position { x: ix + 1, y: iy },
-                Renderable { glyph: def.glyph, color: def.color },
-            ));
-        }
-    }
+    place_ground_items(w, &ground_item_ids, &[spawn, (stairs_pos.0, stairs_pos.1)]);
+
     w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
 }

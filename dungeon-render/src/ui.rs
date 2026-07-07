@@ -24,16 +24,16 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let (game_over, player_visible, tiles, explored, px, py, room_count, monster_count, visible_mem) = {
         let go = world.resource::<TurnManager>().game_over;
         let pv: HashSet<(usize, usize)> = {
-            let mut q = world.try_query::<(&Player, &Viewshed)>().unwrap();
+            let mut q = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init");
             q.iter(world).next()
                 .map(|(_, v)| v.visible_tiles.iter().copied().collect())
                 .unwrap_or_default()
         };
         let ts = world.resource::<Map>().tiles;
         let ex = world.resource::<MapMemory>().explored;
-        let pp = world.try_query::<(&Player, &Position)>().unwrap().iter(world)
+        let pp = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world)
             .next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-        let mc = world.try_query::<(&Monster,)>().unwrap().iter(world).count();
+        let mc = world.try_query::<(&Monster,)>().expect("Monster registered at init").iter(world).count();
         let rc = world.resource::<Map>().rooms.len();
         let vm: Vec<(usize, usize, char, (u8, u8, u8))> = world.resource::<VisibleMemory>().entries.values().copied().collect();
         (go, pv, ts, ex, pp.0, pp.1, rc, mc, vm)
@@ -151,7 +151,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
 
 pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count: usize, game_start: Instant, world: &World) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
-    let stats: Option<Stats> = world.try_query::<(&Player, &Stats)>().unwrap().iter(world).next().map(|(_, s)| s.clone());
+    let stats: Option<Stats> = world.try_query::<(&Player, &Stats)>().expect("Player+Stats registered at init").iter(world).next().map(|(_, s)| s.clone());
     let Some(ref s) = stats else {
         out.push(Line::from(Span::raw("(无数据)"))); return out;
     };
@@ -175,11 +175,11 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     ]));
     out.push(Line::from(Span::raw("")));
     let eff_atk = {
-        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().unwrap();
+        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().expect("Inventory+Equipment+Buffs registered at init");
         q.iter(world).next().map(|(inv, eq, bu)| effective_attack(s, inv, eq, bu)).unwrap_or(s.attack)
     };
     let eff_def = {
-        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().unwrap();
+        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>)>().expect("Inventory+Equipment+Buffs registered at init");
         q.iter(world).next().map(|(inv, eq, bu)| effective_defense(s, inv, eq, bu)).unwrap_or(s.defense)
     };
     out.push(Line::from(vec![
@@ -205,7 +205,7 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     out.push(Line::from(Span::styled(format!(" ⏱ {:>2}:{:02}", elapsed.as_secs() / 60, elapsed.as_secs() % 60), Style::default().fg(Color::DarkGray))));
     out.push(Line::from(Span::raw("")));
     {
-        let mut q = world.try_query::<(&Skills, &Stats)>().unwrap();
+        let mut q = world.try_query::<(&Skills, &Stats)>().expect("Skills+Stats registered at init");
         if let Some((sk, st)) = q.iter(world).next() {
             out.push(Line::from(Span::styled("── 技能 ──", Style::default().fg(Color::DarkGray))));
             for sk in &sk.list {
@@ -217,7 +217,7 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
             }
         }
     }
-    if let Some(b) = world.try_query::<&Buffs>().unwrap().iter(world).next() {
+    if let Some(b) = world.try_query::<&Buffs>().expect("Buffs registered at init").iter(world).next() {
         let parts: Vec<String> = [b.shield_turns > 0, b.berserk_turns > 0].iter().enumerate()
             .filter(|&(_, v)| *v).map(|(i, _)| if i == 0 { format!("🛡{}", b.shield_turns) } else { format!("⚔{}", b.berserk_turns) }).collect();
         if !parts.is_empty() {
@@ -231,9 +231,9 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
         for msg in log.messages.iter().rev().take(5) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
     }
     {
-        let pv: HashSet<(usize, usize)> = world.try_query::<(&Player, &Viewshed)>().unwrap().iter(world)
+        let pv: HashSet<(usize, usize)> = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init").iter(world)
             .next().map(|(_, v)| v.visible_tiles.iter().copied().collect()).unwrap_or_default();
-        let ents: Vec<(String, i32, i32, usize, usize, Color)> = world.try_query::<(&Position, &EntityName, &Stats, &Renderable)>().unwrap()
+        let ents: Vec<(String, i32, i32, usize, usize, Color)> = world.try_query::<(&Position, &EntityName, &Stats, &Renderable)>().expect("Pos+Name+Stats+Renderable reg at init")
             .iter(world)
             .filter(|(p, _, _, _)| pv.contains(&(p.x, p.y)))
             .filter(|(_, n, _, _)| n.0 != "冒险者")

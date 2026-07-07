@@ -44,7 +44,7 @@ impl LootTable {
 
 // ── 基础 ECS 组件 ─────────────────────────────────
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Position {
     pub x: usize,
     pub y: usize,

@@ -40,25 +40,27 @@ pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, buff
 
 /// 获取玩家实体
 pub fn player_entity(world: &World) -> Option<Entity> {
-    let mut q = world.try_query::<(Entity, &Player)>().unwrap();
+    let mut q = world.try_query::<(Entity, &Player)>().expect("Entity+Player registered at init");
     q.iter(world).next().map(|(e, _)| e)
 }
 
 /// 判断玩家是否站在楼梯上
 pub fn on_stairs(world: &World) -> bool {
-    let pp = *world.try_query::<&Position>().unwrap().iter(world).next().unwrap_or(&Position { x: 0, y: 0 });
-    let mut q2 = world.try_query::<(&Stairs, &Position)>().unwrap();
+    let pp = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init")
+        .iter(world).next().map(|(_, p)| *p);
+    let Some(pp) = pp else { return false };
+    let mut q2 = world.try_query::<(&Stairs, &Position)>().expect("Stairs+Position registered at init");
     q2.iter(world).any(|(_, sp)| sp.x == pp.x && sp.y == pp.y)
 }
 
 /// 拾取玩家所在格的全部地面物品
 pub fn pickup_ground(world: &mut World) {
     let (ppx, ppy) = {
-        let mut q = world.try_query::<(&Player, &Position)>().unwrap();
+        let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init");
         q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
     };
     let ground: Vec<(Entity, ItemStack)> = {
-        let mut q = world.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
+        let mut q = world.try_query::<(Entity, &ItemPickup, &Position)>().expect("Entity+ItemPickup+Position registered at init");
         q.iter(world)
             .filter(|(_, _, pos)| pos.x == ppx && pos.y == ppy)
             .map(|(e, p, _)| (e, p.stack.clone()))
@@ -147,7 +149,7 @@ pub fn rebuild_occupancy(world: &mut World) {
 // ── 渲染数据收集 ───────────────────────────────────
 
 pub fn collect_renderables(world: &World) -> Vec<(usize, usize, char, RgbColor)> {
-    let mut query = world.try_query::<(&Position, &Renderable)>().unwrap();
+    let mut query = world.try_query::<(&Position, &Renderable)>().expect("Position+Renderable registered at init");
     let mut v: Vec<(usize, usize, char, RgbColor)> = query.iter(world)
         .map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect();
     // 玩家 (@) 最后渲染，确保显示在最上层

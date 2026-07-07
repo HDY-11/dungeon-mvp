@@ -131,12 +131,12 @@ impl GameSave {
         let rooms = { let map = w.resource::<Map>(); map.rooms.clone() };
 
         let (sx, sy) = {
-            let mut sq = w.try_query::<(&Stairs, &Position)>().unwrap();
+            let mut sq = w.try_query::<(&Stairs, &Position)>().expect("Stairs+Position registered at init");
             sq.iter(&w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
         let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, player_class) = {
-            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>().unwrap();
+            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+Buffs+Class reg at init");
             let (pos, st, inv, eq, bu, cls) = q.iter(&w).next().unwrap();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
@@ -148,7 +148,7 @@ impl GameSave {
         };
 
         let monsters = {
-            let mut mq = w.try_query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>().unwrap();
+            let mut mq = w.try_query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>().expect("Mon+Pos+Stats+Name+Rend reg at init");
             mq.iter(&w).map(|(_, pos, st, name, rend)| {
                 let (r, g, b) = rend.color;
                 SavedMonster {
@@ -159,7 +159,7 @@ impl GameSave {
         };
 
         let items = {
-            let mut iq = w.try_query::<(&ItemPickup, &Position)>().unwrap();
+            let mut iq = w.try_query::<(&ItemPickup, &Position)>().expect("ItemPickup+Position registered at init");
             iq.iter(&w).map(|(item, pos)| SavedGroundItem {
                 x: pos.x as u16, y: pos.y as u16,
                 item_id: item.stack.item_id, count: item.stack.count,

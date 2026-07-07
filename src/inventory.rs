@@ -30,9 +30,9 @@ enum Page {
 }
 
 fn collect_ground_items_in(world: &World) -> Vec<(ItemStack, Entity)> {
-    let pp = world.try_query::<(&Player, &Position)>().unwrap().iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
+    let pp = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
     let mut items = Vec::new();
-    let mut q = world.try_query::<(Entity, &ItemPickup, &Position)>().unwrap();
+    let mut q = world.try_query::<(Entity, &ItemPickup, &Position)>().expect("Entity+ItemPickup+Position registered at init");
     for (entity, pickup, pos) in q.iter(world) {
         if pos.x == pp.0 && pos.y == pp.1 {
             items.push((pickup.stack.clone(), entity));
@@ -53,7 +53,7 @@ pub fn open_inventory(
 
     loop {
         let (inv_stacks, inv_cap, equip, ground) = {
-            let mut q = world.try_query::<(&Inventory, &Equipment)>().unwrap();
+            let mut q = world.try_query::<(&Inventory, &Equipment)>().expect("Inventory+Equipment registered at init");
             let (inv, eq) = q.iter(world).next()
                 .map(|(i, e)| (i.clone(), e.clone())).unwrap_or_default();
             let ground = collect_ground_items_in(world);
@@ -293,8 +293,8 @@ pub fn open_inventory(
                 }
                 (Page::Detail(DetailSource::Right, _idx), KeyCode::Char('g')) => {
                     let mut collected = Vec::new();
-                    let ppx = world.try_query::<(&Player, &Position)>().unwrap().iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-                    for (e, pu, po) in world.try_query::<(Entity, &ItemPickup, &Position)>().unwrap().iter(world) {
+                    let ppx = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
+                    for (e, pu, po) in world.try_query::<(Entity, &ItemPickup, &Position)>().expect("Entity+ItemPickup+Position registered at init").iter(world) {
                         if po.x == ppx.0 && po.y == ppx.1 { collected.push((e, pu.stack.clone())); }
                     }
                     let mut logs = Vec::new();

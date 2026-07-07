@@ -31,14 +31,14 @@ fn build_parallel_schedule() -> Schedule {
 
 /// 使用并行 Schedule 的 tick
 pub fn advance_and_settle_parallel(world: &mut World) {
-    advance_until_player_acted(world);
+    advance_until_player_acted(world);  // 内部每 action 后已 rebuild_occupancy
 
     {
         let mut schedule = build_parallel_schedule();
-        schedule.run(world);
+        schedule.run(world);  // 调度器只产生意图，不改实体位置
     }
 
-    ops::rebuild_occupancy(world);
+    // 碰撞图已在 advance_action_queue 中重建，此处不再重复
     ops::update_map_memory(world);
     ops::update_visible_memory(world);
 }

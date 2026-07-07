@@ -9,7 +9,7 @@ pub fn advance_until_player_acted(world: &mut World) {
         let dist = advance_action_queue(world);
         if dist <= 0.0 { break; }
         let player_done = {
-            let player = world.try_query::<(Entity, &dungeon_core::Player)>().unwrap().iter(world).next().map(|(e, _)| e);
+            let player = world.try_query::<(Entity, &dungeon_core::Player)>().expect("Entity+Player registered at init").iter(world).next().map(|(e, _)| e);
             match player {
                 Some(p) => !world.resource::<dungeon_core::ActionQueue>().has_entity(p),
                 None => true,

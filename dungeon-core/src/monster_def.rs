@@ -152,6 +152,7 @@ pub fn generate_monster_population(
     tiles: &[[crate::Tile; crate::MAP_WIDTH]; crate::MAP_HEIGHT],
     floor: u32,
     rng: &mut impl Rng,
+    exclude: &[(usize, usize)],
 ) -> Vec<(MonsterKindId, usize, usize)> {
     use rand::RngExt;
 
@@ -216,21 +217,21 @@ pub fn generate_monster_population(
         if added == 0 { break; }
     }
 
-    // ── Phase 4: 收集并钳制数量 ──
+    // ── Phase 4: 收集并钳制数量（排除 exclude 中的坐标）──
     let mut positions: Vec<(usize, usize)> = Vec::new();
     for y in 0..crate::MAP_HEIGHT {
         for x in 0..crate::MAP_WIDTH {
-            if is_monster[y][x] {
+            if is_monster[y][x] && !exclude.contains(&(x, y)) {
                 positions.push((x, y));
             }
         }
     }
 
-    // 低于下限 → 在可行走格上随机补充
+    // 低于下限 → 在可行走格上随机补充（避开 exclude）
     while positions.len() < min_count {
         let x = rng.random_range(3..crate::MAP_WIDTH - 3);
         let y = rng.random_range(3..crate::MAP_HEIGHT - 3);
-        if tiles[y][x].walkable() && !positions.contains(&(x, y)) {
+        if tiles[y][x].walkable() && !positions.contains(&(x, y)) && !exclude.contains(&(x, y)) {
             positions.push((x, y));
         }
     }
