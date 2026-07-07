@@ -325,43 +325,6 @@
 
 ---
 
-## 四、游戏逻辑层面（Game Logic）
-
----
-
-### 🟡 G9 — 仅1个连通房间时玩家出生在楼梯上（重合）
-
-**问题：** 下楼后 `detect_cave_regions` 可能只检测出 1 个连通区域（尤其深层地图经水体/钟乳石/连通性处理后）。此时 `setup_world` 和 `descend` 中玩家和楼梯均使用 `rooms[0].center()`。`max_by_key` 在只有 1 个房间时返回自身，结果楼梯和玩家挤在同一格。
-
-**根因链：** terrain-forge 生成 → 水体/钟乳石切割 → ensure_connectivity 连接所有区域 → 只剩 1 个超大连通区 → `detect_cave_regions` 返回 1 个 Room → 玩家和楼梯位置相同。
-
-**用户反馈：** 下到第二层后发现出生在楼梯上，界面显示"房间1"。
-
-**位置：** `dungeon-world/src/init.rs`（stairs_pos 选择逻辑）、`dungeon-world/src/init.rs`（descend 中 stairs_pos 同样逻辑）
-
-**建议修复方向：**
-1. 玩家出生时，5 格范围内不能有其他怪物（怪物生成排除玩家邻域）
-2. 楼梯在玩家 15-25 格外随机生成，而非依赖 `rooms` 列表
-
-### 🟡 G10 — 怪物阻挡楼梯/物品（怪物生成未排除关键位置）
-
-**问题：** `generate_monster_population` 基于噪声密度层 + 元胞扩散在全地图 walkable 格上放置怪物，但**不排除楼梯位置和物品位置**。下楼后：
-
-1. **楼梯被怪物堵住**：怪物生成在楼梯格 → `OccupancyMap` 标记该格被占用（怪物没有 Stairs/ItemPickup 组件，不会被 `rebuild_occupancy` 过滤）→ 玩家走开后无法走回楼梯 → 表现为"楼梯不可行走"。
-2. **物品格被怪物堵住**：同���，怪物站在物品上 → `handle_player_direction` 检查 `OccupancyMap` 发现该格有实体且是 Monster → `has_enemy = Some` → 转为攻击而非拾取。
-
-**用户反馈：** 从楼梯上走开后无法走回；有时道具（地面物品）也不能走到上面。
-
-**位置：** `dungeon-core/src/monster_def.rs:generate_monster_population`
-
-**建议修复方向：** `generate_monster_population` 增加排除列表参数（stairs_pos、spawn_pos、ground_item_positions），对应坐标不放置怪物。
-
----
-
-## 三、实现层面（Implementation）
-
----
-
 ### 🟢 I16 — 仅1个房间时地面物品为0
 
 **问题：** `setup_world` 和 `descend` 中地面物品位置列表通过 `rooms.iter().skip(1)` 获取（跳过出生房间）。若 `rooms.len() == 1`，`skip(1)` 后列表为空，导致 **0 个地面物品**生成。
@@ -395,20 +358,122 @@ let item_count = room_centers.len().min(ground_item_ids.len());
 | `query().next().unwrap()` | ~1 | init.rs descend | rooms 为空或玩家不存在时 panic |
 | 其他杂项 | ~3 | action_types.rs f32 partial_cmp、inventory.rs slot.take() | 低风险但无信息量 |
 
-**根因：** 项目早期使用 `.unwrap()` 作为"快速原型"手段。随着代码增长的稳定，这些临时桩一直没有被替换为有信息量的错误处理。
+**建议修复方向：** 见 I17 各分类的具体方案。
 
-**建议修复方向（逐步）：**
+---
 
-1. `try_query().unwrap()` → `try_query().expect("component X registered at init")` — 零成本改动，崩溃时提供调试信息
-2. `get::<T>(entity).unwrap()` → 改用 `if let Some(t) = world.get::<T>(entity)` 或 `expect()`
-3. `ItemRegistry::global().get(id).unwrap()` → `expect("item {id} exists in registry")` 或 `unwrap_or_else` 提供应急默认值
-4. 关键路径（execute_attack、descend）中的 `.unwrap()` 应优先处理
+### 🔴 I18 — `on_stairs()` 未过滤玩家，可能读取错误实体
 
-**优先级说明：** 标记为 🟡 而非 🔴 是因为大部分 unwrap 在当前架构下不会实际触发（组件已注册、物品 ID 已定义）。但它们是**定时炸弹**——任何组件注册顺序变化或 items.json 疏漏都会无声地转为 panic。长远目标是**零 unwrap**（测试代码除外）。
+**问题：** `ops::on_stairs()` 用于判断玩家是否站在楼梯上，但实现中查询的是任意实体的位置：
+
+```rust
+pub fn on_stairs(world: &World) -> bool {
+    let pp = *world.try_query::<&Position>().unwrap().iter(world).next()
+        .unwrap_or(&Position { x: 0, y: 0 });
+    // ...
+}
+```
+
+`try_query::<&Position>()` 返回所有带 Position 组件的实体（玩家、怪物、物品、楼梯……），`iter(world).next()` 取迭代器第一个——**不保证是玩家**。如果任意怪物或物品的迭代顺序在玩家之前，`on_stairs` 将返回该实体是否在楼梯上，而非玩家。
+
+**影响：** 玩家站在楼梯上按 `>` 可能不会触发下楼（因为读取的是怪物位置）；或玩家远离楼梯时误判可下楼（因为怪物恰好在楼梯上）。
+
+**根因：** 22 行简单函数，编写时未指定 Player filter。
+
+**位置：** `dungeon-core/src/ops.rs:48-52`
+
+**修复：** 将查询改为 `try_query::<(&Player, &Position)>()`。
+
+---
+
+### 🟢 I19 — `setup_world` 与 `descend` 存在大量重复代码
+
+**问题：** `setup_world`（~110 行）和 `descend`（~120 行）中以下逻辑被完整复制：
+
+1. **怪物生成循环**（~25 行）：`for &(kind, mx, my) in &population { ... }` 内含 spawn + insert 5 个组件
+2. **地面物品放置循环**（~15 行）：`for (i, &item_id) in ground_item_ids[...].iter().enumerate() { ... }`
+3. **楼梯位置选择逻辑**（~10 行）：`rooms.iter().map(|r| (r.center(), ...)).max_by_key(..)`
+4. **连通性保障**（~5 行）：`ensure_connection_between`
+
+总计约 **55 行重复代码**（两个副本）。任何对怪物行为组件或物品放置逻辑的修改都需要在两地同步更改。
+
+**位置：** `dungeon-world/src/init.rs`
+
+**建议修复方向：** 将共享逻辑提取为 `spawn_monsters(world, floor)`、`place_items(world)`、`place_stairs(world) -> (usize, usize)` 等函数，`setup_world` 和 `descend` 各自调用。
+
+---
+
+### 🟢 I20 — `rebuild_occupancy` 每 tick 重复调用
+
+**问题：** `advance_and_settle_parallel` 中，碰撞图在 `advance_until_player_acted`（内部每个 action 执行后都会 rebuild）和调度器运行后再次 rebuild。相当于每 tick 末位额外重建一次——如果本次 tick 内没有新实体生成（没有怪物死亡/出生），这次重建是纯浪费。
+
+```rust
+pub fn advance_and_settle_parallel(world: &mut World) {
+    advance_until_player_acted(world);       // ← 内部每 action 后 rebuild
+    { let mut s = build_parallel_schedule(); s.run(world); }
+    ops::rebuild_occupancy(world);            // ← 第 N+1 次 rebuild
+    // ...
+}
+```
+
+80×60=4800 格的全量重建开销 <1μs（设计文档说明），性能损失可忽略，但逻辑上不干净。
+
+**位置：** `dungeon-world/src/tick.rs`、`dungeon-action/src/execute.rs`
+
+**建议修复方向：** 在 `advance_until_player_acted` 中跳过每 action 后的 rebuild，仅在 `advance_and_settle_parallel` 末位统一重建一次；或反之在 schedule 后不再重复调用。
+
+---
+
+### 🟢 D7 — EventLog 容量 10，历史消息易丢失
+
+**问题：** `EventLog` 的 `max` 设置为 10，超过时丢弃最早的消息。玩家无法回溯 10 条之前的战斗/事件记录。在战斗密集的楼层中，关键信息（暴击、掉落、升级）可能在 2-3 个回合内被滚出屏幕。
+
+**位置：** `dungeon-core/src/resources.rs:37`
+
+**建议修复方向：** 将 `max` 提升至 30-50，或改为动态容量（无上限，只在渲染时截断最后 N 条）。
+
+---
+
+### 🟢 I21 — `Position` 未实现 `PartialEq`，测试中需逐字段比较
+
+**问题：** `Position` 是一个 `pub struct Position { pub x: usize, pub y: usize }` 的简单值类型，但未派生 `PartialEq`。测试代码中无法直接 `assert_eq!(pos1, pos2)`，需手写 `assert_eq!(pos1.x, pos2.x); assert_eq!(pos1.y, pos2.y)`。
+
+**位置：** `dungeon-core/src/components.rs:48`
+
+**修复：** 为 Position 添加 `#[derive(PartialEq)]`。
 
 ---
 
 ## 四、游戏逻辑层面（Game Logic）
+
+---
+
+### 🟡 G9 — 仅1个连通房间时玩家出生在楼梯上（重合）
+
+**问题：** 下楼后 `detect_cave_regions` 可能只检测出 1 个连通区域（尤其深层地图经水体/钟乳石/连通性处理后）。此时 `setup_world` 和 `descend` 中玩家和楼梯均使用 `rooms[0].center()`。`max_by_key` 在只有 1 个房间时返回自身，结果楼梯和玩家挤在同一格。
+
+**根因链：** terrain-forge 生成 → 水体/钟乳石切割 → ensure_connectivity 连接所有区域 → 只剩 1 个超大连通区 → `detect_cave_regions` 返回 1 个 Room → 玩家和楼梯位置相同。
+
+**用户反馈：** 下到第二层后发现出生在楼梯上，界面显示"房间1"。
+
+**位置：** `dungeon-world/src/init.rs`（stairs_pos 选择逻辑）、`dungeon-world/src/init.rs`（descend 中 stairs_pos 同样逻辑）
+
+**建议修复方向：**
+1. 玩家出生时，5 格范围内不能有其他怪物（怪物生成排除玩家邻域）
+2. 楼梯在玩家 15-25 格外随机生成，而非依赖 `rooms` 列表
+
+### 🟡 G10 — 怪物阻挡楼梯/物品（怪物生成未排除关键位置）
+
+**问题：** `generate_monster_population` 基于噪声密度层 + 元胞扩散在全地图 walkable 格上放置怪物，但**不排除楼梯位置和物品位置**。下楼后：
+
+1. **楼梯被怪物堵住**：怪物生成在楼梯格 → `OccupancyMap` 标记该格被占用（怪物没有 Stairs/ItemPickup 组件，不会被 `rebuild_occupancy` 过滤）→ 玩家走开后无法走回楼梯 → 表现为"楼梯不可行走"。
+2. **物品格被怪物堵住**：同���，怪物站在物品上 → `handle_player_direction` 检查 `OccupancyMap` 发现该格有实体且是 Monster → `has_enemy = Some` → 转为攻击而非拾取。
+
+**用户反馈：** 从楼梯上走开后无法走回；有时道具（地面物品）也不能走到上面。
+
+**位置：** `dungeon-core/src/monster_def.rs:generate_monster_population`
+
+**建议修复方向：** `generate_monster_population` 增加排除列表参数（stairs_pos、spawn_pos、ground_item_positions），对应坐标不放置怪物。
 
 ---
 
