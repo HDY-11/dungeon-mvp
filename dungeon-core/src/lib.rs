@@ -29,7 +29,7 @@ pub use components::EntityName;
 // ── 常量 ──────────────────────────────────────────────
 
 pub const MAP_WIDTH: usize = 80;
-pub const MAP_HEIGHT: usize = 40;
+pub const MAP_HEIGHT: usize = 60;
 
 /// 视窗尺寸（渲染时以玩家为中心截取此大小的区域）
 pub const VIEWPORT_WIDTH: usize = 40;

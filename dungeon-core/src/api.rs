@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use rand::SeedableRng;
 use crate::{
     components::*, items::*, resources::*,
-    MAP_HEIGHT, MAP_WIDTH, Tile, Map,
+    MAP_HEIGHT, MAP_WIDTH, Map,
 };
 
 // exp_to_next_level, max_hp_for, max_mp_for, effective_attack, effective_defense
