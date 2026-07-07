@@ -230,6 +230,85 @@
 
 ---
 
+### 🟡 A6 — `dungeon-core` 职责膨胀（行动类型不应在 core 中）
+
+**问题：** `dungeon-core/src/action_types.rs` 定义了 `ActionQueue`、`ActionKindV3`、`CanMove`/`Chase`/`Flee`/`Wander`/`Wait`、`Reaction`、`InputBuffer`、`PlayerPreview`、`ChaseIntents`/`FleeIntents`/`WanderIntents`。这些是**行动系统的领域类型**，不是"核心数据"。
+
+它们被放在 core 中的唯一原因是依赖链方向：`core ← action`。如果 action 持有自己的类型，core 无法引用它们，但 action 需要这些类型被 core 中的 `ops.rs` 和 `systems.rs` 使用。结果是：**core 的变化速度被行动系统拖快**——添加新行动时 core 要 recompile。
+
+**位置：** `dungeon-core/src/action_types.rs`（整个文件）
+
+**建议修复方向：**
+1. 将 `action_types.rs` 迁移到 `dungeon-action` crate
+2. 或新增 `dungeon-action-types` 中间 crate 同时被 core 和 action 引用
+3. 短期：至少将 `InputBuffer` / `PlayerPreview` 移入 dungeon-action（它们只在 action 和 main.rs 中使用）
+
+---
+
+### 🟡 A7 — `ops.rs` 是万能工具袋（低内聚）
+
+**问题：** `dungeon-core/src/ops.rs` 包含以下互不相关的功能：
+
+| 功能 | 消费方 | 主题 |
+|------|--------|------|
+| 经验/HP/MP 公式 | core、render | 数值 |
+| 有效属性计算 | action、render | 战斗 |
+| 实体查询（player_entity、on_stairs） | action、world、render、main | 查询 |
+| 拾取逻辑（pickup_ground） | main | 交互 |
+| 视野记忆更新 | world、main | 状态 |
+| 碰撞图重建 | action、world | 物理 |
+| 渲染数据收集 | render | 渲染 |
+| FOV | core（system） | 视野 |
+| A* 寻路 | action | 寻路 |
+
+这些函数没有主题关联，唯一的共同点是"被多个 crate 使用"——这是**实现共享**而非**概念内聚**。新功能自然地被塞入 ops.rs，进一步膨胀。
+
+**位置：** `dungeon-core/src/ops.rs`
+
+**建议修复方向：** 按主题拆分：`fov.rs`、`pathfinding.rs`、`formulas.rs`、`world_query.rs`。
+
+---
+
+### 🟢 A8 — `monster_def.rs` 混合定义与算法
+
+**问题：** `dungeon-core/src/monster_def.rs` 名义上是"怪物定义"模块，包含外观、属性、掉落表等数据定义。但其中也包含了 `generate_monster_population()`——一个约 80 行的**世界初始化算法**（噪声密度层 → 元胞扩散 → 数量钳制）。这属于 `dungeon-world/src/init.rs` 的职责范畴。
+
+**根因：** `setup_world` 和 `descend` 都需要生成怪物种群，所以这个函数被放在了 core 中。但"被两个地方调用"不应成为把算法塞入数据模块的理由。
+
+**位置：** `dungeon-core/src/monster_def.rs:103-188`
+
+**建议修复方向：** 将 `generate_monster_population` 移至 `dungeon-world/src/init.rs` 或独立 `population.rs`。
+
+---
+
+### 🟢 A9 — 渲染层与 ECS 组件布局的隐式耦合
+
+**问题：** `dungeon-render` 通过 `try_query::<(&Player, &Viewshed)>()` 等直接查询 ECS 组件。DESIGN.md 明确这是有意设计，但代价是：
+
+1. core 中任何组件结构变化都可能无声破坏 render——无编译期隔离
+2. render 中有 10+ 处 `try_query().unwrap()`（见 I17），全部假设组件存在
+
+**位置：** `dungeon-render/src/ui.rs`
+
+**建议修复方向：**
+1. 为 render 定义专用的"视图数据"结构体，由 world 的 tick 在渲染前填充
+2. 短期：将所有 `try_query().unwrap()` 替换为 `try_query().expect("...")` 提供 panic 信息
+
+---
+
+### 🟢 A10 — world init 直接操作 Map 内部细节
+
+**问题：** `dungeon-world/src/init.rs` 中的 `setup_world` 和 `descend` 直接访问 `map.rooms[0].center()` 和 `map.tiles`。Map 的生成细节泄漏到 world 初始化逻辑中：
+
+- `rooms[0].center()` 的语义是"出生点"，但 Map 没有提供 `spawn_point()` 方法
+- `rooms.iter().skip(1)` 依赖调用方知道 rooms[0] 是出生房间
+- 楼梯选择逻辑 `max_by_key` 直接操作 rooms 的内部结构
+
+**位置：** `dungeon-world/src/init.rs`
+
+**建议修复方向：**
+1. Map 增加 `spawn_point() -> (usize, usize)` 和 `farthest_room_from(point) -> (usize, usize)` 方法，封装 rooms 内部细节
+2. `generate_monster_population` 改为接收 `&Map` 而非裸 tiles 数组
 ---
 
 ## 三、实现层面（Implementation）
