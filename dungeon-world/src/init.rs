@@ -84,8 +84,12 @@ pub fn setup_world() -> World {
 
     {
         let m = world.resource::<Map>();
-        let last = m.rooms.len() - 1;
-        let (sx, sy) = m.rooms[last].center();
+        let (spx, spy) = m.rooms[0].center();
+        let (sx, sy) = m.rooms.iter()
+            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
+            .max_by_key(|(_, d)| *d)
+            .map(|(p, _)| p)
+            .unwrap_or(m.rooms[0].center());
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
@@ -144,8 +148,16 @@ pub fn descend(world: &mut World) {
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
 
-    let last_room = { let m = w.resource::<Map>(); let idx = m.rooms.len() - 1; m.rooms[idx].center() };
-    w.spawn((Stairs, Position { x: last_room.0, y: last_room.1 },
+    let stairs_pos = {
+        let m = w.resource::<Map>();
+        let (spx, spy) = m.rooms[0].center();
+        m.rooms.iter()
+            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
+            .max_by_key(|(_, d)| *d)
+            .map(|(p, _)| p)
+            .unwrap_or(m.rooms[0].center())
+    };
+    w.spawn((Stairs, Position { x: stairs_pos.0, y: stairs_pos.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
 
     // ── 概率生成怪物（楼层 f）──────────────────
