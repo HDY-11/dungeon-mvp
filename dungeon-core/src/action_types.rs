@@ -89,6 +89,9 @@ impl CanFlee {
     }
 }
 
+// 注意：check_condition 中 Flee 的退出条件是 hp_ratio < 0.30（滞回区间），
+// 见 dungeon-action/src/execute.rs。进入条件（CanFlee::condition）保持 0.25。
+
 /// 游荡行动（怪物专用）
 #[derive(Component, Clone, Debug)]
 pub struct CanWander {

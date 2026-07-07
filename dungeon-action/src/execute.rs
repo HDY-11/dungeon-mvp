@@ -67,8 +67,9 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
                 .unwrap_or(false)
         }
         ActionKindV3::Flee => {
+            // 滞回区间：进入逃跑 HP<25%，退出逃跑 HP>30%
             world.get::<Stats>(entry.entity)
-                .map(|s| (s.hp as f32 / s.max_hp as f32) < 0.25)
+                .map(|s| (s.hp as f32 / s.max_hp as f32) < 0.30)
                 .unwrap_or(false)
         }
         ActionKindV3::Wander | ActionKindV3::Wait => true,
