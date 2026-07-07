@@ -117,25 +117,130 @@ pub fn monster_spawn_weight(kind: MonsterKindId, floor: u32) -> f32 {
     }
 }
 
-/// 为每一间可用房间独立掷骰决定是否生成怪物。
-/// spawn_chance 随楼层递增：1 层 ≈70%（~7 只/10 间房），高层渐近 95%。
-pub fn roll_monster_kinds(room_count: usize, floor: u32, rng: &mut impl Rng) -> Vec<MonsterKindId> {
+/// 按楼层缩放加权选一种怪物种类
+fn roll_one_kind(floor: u32, rng: &mut impl Rng) -> MonsterKindId {
     use rand::RngExt;
-    let spawn_chance = (0.85 + floor as f32 * 0.025).min(0.95);
     let all = [MonsterKindId::Rat, MonsterKindId::Scorpion, MonsterKindId::Goblin];
-    let mut result = Vec::new();
-    for _ in 0..room_count {
-        if rng.random_range(0.0..1.0) < spawn_chance {
-            // 加权随机选种类
-            let weights: Vec<f32> = all.iter().map(|k| monster_spawn_weight(*k, floor)).collect();
-            let total: f32 = weights.iter().sum();
-            let roll = rng.random_range(0.0..total);
-            let mut acc = 0.0;
-            for (i, &w) in weights.iter().enumerate() {
-                acc += w;
-                if roll < acc { result.push(all[i]); break; }
+    let weights: Vec<f32> = all.iter().map(|k| monster_spawn_weight(*k, floor)).collect();
+    let total: f32 = weights.iter().sum();
+    let roll = rng.random_range(0.0..total);
+    let mut acc = 0.0;
+    for (i, &w) in weights.iter().enumerate() {
+        acc += w;
+        if roll < acc { return all[i]; }
+    }
+    all[0]
+}
+
+/// 用噪声密度层 + 元胞扩散生成怪物种群。
+///
+/// # 流程
+/// 1. 对每格 walkable 地形生成伪随机密度值 → 密度层
+/// 2. 密度 > 阈值的格子成为初始种子
+/// 3. 邻接种子的 walkable 格以一定概率扩展为怪物格（元胞扩散，聚类）
+/// 4. 数量钳制到 [min_count, max_count] 区间
+/// 5. 每只独立按楼层加权分配种类
+///
+/// # 参数
+/// - `tiles`: 地图地形，walkable 格才是候选
+/// - `floor`: 当前楼层，影响密度阈值和数量区间
+/// - `rng`: 随机源
+///
+/// # 返回
+/// `Vec<(MonsterKindId, usize, usize)>` — (种类, x, y)
+pub fn generate_monster_population(
+    tiles: &[[crate::Tile; crate::MAP_WIDTH]; crate::MAP_HEIGHT],
+    floor: u32,
+    rng: &mut impl Rng,
+) -> Vec<(MonsterKindId, usize, usize)> {
+    use rand::RngExt;
+
+    // ── 参数 ──
+    // 密度阈值：楼层越高阈值越低（深层怪物更密集）
+    let threshold = (0.38 - floor as f32 * 0.012).max(0.15);
+    // 元胞扩散概率
+    let expand_chance = 0.35;
+    // 数量上下限：随楼层线性增长
+    let min_count = (floor as usize).saturating_mul(2).saturating_add(4);
+    let max_count = (floor as usize).saturating_mul(4).saturating_add(8);
+
+    // ── Phase 1: 噪声密度层（仅 walkable 格）──
+    let mut density = [[0.0f32; crate::MAP_WIDTH]; crate::MAP_HEIGHT];
+    for y in 0..crate::MAP_HEIGHT {
+        for x in 0..crate::MAP_WIDTH {
+            if tiles[y][x].walkable() {
+                density[y][x] = rng.random_range(0.0..1.0);
             }
         }
     }
-    result
+
+    // ── Phase 2: 初始种子（密度 > 阈值）──
+    let mut is_monster = [[false; crate::MAP_WIDTH]; crate::MAP_HEIGHT];
+    for y in 0..crate::MAP_HEIGHT {
+        for x in 0..crate::MAP_WIDTH {
+            if density[y][x] > threshold {
+                is_monster[y][x] = true;
+            }
+        }
+    }
+
+    // ── Phase 3: 元胞扩散（聚类）──
+    // 最多扩散 3 轮，每轮邻接种子的 walkable 格以 expand_chance 变成怪物格
+    for _pass in 0..3 {
+        let snapshot = is_monster;
+        let mut added = 0usize;
+        for y in 0..crate::MAP_HEIGHT {
+            for x in 0..crate::MAP_WIDTH {
+                if snapshot[y][x] || !tiles[y][x].walkable() { continue; }
+                // 检查 8 方向是否有怪物邻居
+                let has_neighbor = {
+                    let mut n = false;
+                    for dy in [-1isize, 0, 1] {
+                        for dx in [-1isize, 0, 1] {
+                            if dx == 0 && dy == 0 { continue; }
+                            let ny = y.wrapping_add_signed(dy);
+                            let nx = x.wrapping_add_signed(dx);
+                            if nx < crate::MAP_WIDTH && ny < crate::MAP_HEIGHT && snapshot[ny][nx] {
+                                n = true;
+                            }
+                        }
+                    }
+                    n
+                };
+                if has_neighbor && rng.random_range(0.0..1.0) < expand_chance {
+                    is_monster[y][x] = true;
+                    added += 1;
+                }
+            }
+        }
+        if added == 0 { break; }
+    }
+
+    // ── Phase 4: 收集并钳制数量 ──
+    let mut positions: Vec<(usize, usize)> = Vec::new();
+    for y in 0..crate::MAP_HEIGHT {
+        for x in 0..crate::MAP_WIDTH {
+            if is_monster[y][x] {
+                positions.push((x, y));
+            }
+        }
+    }
+
+    // 低于下限 → 在可行走格上随机补充
+    while positions.len() < min_count {
+        let x = rng.random_range(3..crate::MAP_WIDTH - 3);
+        let y = rng.random_range(3..crate::MAP_HEIGHT - 3);
+        if tiles[y][x].walkable() && !positions.contains(&(x, y)) {
+            positions.push((x, y));
+        }
+    }
+
+    // 高于上限 → 随机裁剪
+    while positions.len() > max_count {
+        let idx = rng.random_range(0..positions.len());
+        positions.swap_remove(idx);
+    }
+
+    // ── Phase 5: 分配种类 ──
+    positions.into_iter().map(|(x, y)| (roll_one_kind(floor, rng), x, y)).collect()
 }

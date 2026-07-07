@@ -9,7 +9,7 @@ use dungeon_core::{
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
 use bevy_ecs::prelude::*;
-use rand::{RngExt, SeedableRng};
+use rand::SeedableRng;
 
 /// 创建并初始化游戏世界
 pub fn setup_world() -> World {
@@ -55,28 +55,10 @@ pub fn setup_world() -> World {
     cmd.insert(CanWait::new(0));
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
 
-    // ── 概率生成怪物 ────────────────────────────
-    let (room_centers, spawn_base) = {
-        let m = world.resource::<Map>();
-        let centers: Vec<(usize, usize)> = m.rooms.iter().skip(1).map(|r| r.center()).collect();
-        let (sx, sy) = m.rooms[0].center();
-        (centers, (sx, sy))
-    };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
-    // 先在房间中心放，不够则找随机可行走格
-    for (i, &kind) in kinds.iter().enumerate() {
-        let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
-            let map_tiles = world.resource::<Map>().tiles;
-            let mut pos = None;
-            for _ in 0..200 {
-                let tx = rng.random_range(3..dungeon_core::MAP_WIDTH - 3);
-                let ty = rng.random_range(3..dungeon_core::MAP_HEIGHT - 3);
-                if map_tiles[ty][tx].walkable() && (tx.abs_diff(spawn_base.0) + ty.abs_diff(spawn_base.1)) > 6 {
-                    pos = Some((tx, ty)); break;
-                }
-            }
-            pos.unwrap_or((10 + i * 3, 10 + i * 3))
-        };
+    // ── 噪声+元胞生成怪物 ──────────────────────
+    let map_tiles = world.resource::<Map>().tiles;
+    let population = dungeon_core::monster_def::generate_monster_population(&map_tiles, 1, &mut rng);
+    for &(kind, mx, my) in &population {
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, 1).agility;
@@ -107,7 +89,8 @@ pub fn setup_world() -> World {
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
-    // ── 地面物品（使用房间中心，数量随可用房间数变化）──
+    // ── 地面物品（使用房间中心位置）──
+    let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     let item_count = room_centers.len().min(ground_item_ids.len());
     for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
@@ -175,27 +158,10 @@ pub fn descend(world: &mut World) {
     w.spawn((Stairs, Position { x: stairs_pos.0, y: stairs_pos.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
 
-    // ── 概率生成怪物（楼层 f）──────────────────
-    let (room_centers, spawn_base, map) = {
-        let m = w.resource::<Map>();
-        let centers: Vec<(usize, usize)> = m.rooms.iter().skip(1).map(|r| r.center()).collect();
-        let (sx, sy) = m.rooms[0].center();
-        let map = m.tiles;
-        (centers, (sx, sy), map)
-    };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), f, &mut rng);
-    for (i, &kind) in kinds.iter().enumerate() {
-        let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
-            let mut pos = None;
-            for _ in 0..200 {
-                let tx = rng.random_range(3..dungeon_core::MAP_WIDTH - 3);
-                let ty = rng.random_range(3..dungeon_core::MAP_HEIGHT - 3);
-                if map[ty][tx].walkable() && (tx.abs_diff(spawn_base.0) + ty.abs_diff(spawn_base.1)) > 6 {
-                    pos = Some((tx, ty)); break;
-                }
-            }
-            pos.unwrap_or((10 + i * 3, 10 + i * 3))
-        };
+    // ── 噪声+元胞生成怪物（楼层 f）────────────
+    let map_tiles = w.resource::<Map>().tiles;
+    let population = dungeon_core::monster_def::generate_monster_population(&map_tiles, f, &mut rng);
+    for &(kind, mx, my) in &population {
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, f).agility;
@@ -215,6 +181,7 @@ pub fn descend(world: &mut World) {
             cmd.insert(CanWait::new(0));
         }
 
+    let room_centers: Vec<(usize, usize)> = w.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     let item_count = room_centers.len().min(ground_item_ids.len());
     for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {

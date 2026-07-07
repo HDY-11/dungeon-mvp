@@ -83,13 +83,10 @@ pub fn setup_world() -> World {
     cmd.insert(crate::action_types::CanWait::new(0));
     cmd.insert(Skills { list: pc.skills() });
 
-    // ── 概率生成怪物 ────────────────────────────
-    let room_centers: Vec<(usize, usize)> = {
-        let m = world.resource::<Map>();
-        m.rooms.iter().skip(1).map(|r| r.center()).collect()
-    };
-    let kinds = crate::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
-    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
+    // ── 噪声+元胞生成怪物 ──────────────────────
+    let map_tiles = world.resource::<Map>().tiles;
+    let population = crate::monster_def::generate_monster_population(&map_tiles, 1, &mut rng);
+    for &(kind, mx, my) in &population {
             let glyph = crate::monster_def::monster_glyph(kind);
             let color = crate::monster_def::monster_color(kind);
             let mon_agi = crate::monster_def::monster_stats(kind, 1).agility;
@@ -116,7 +113,8 @@ pub fn setup_world() -> World {
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
-    // 地面物品（使用 ItemStack + ItemRegistry）
+    // 地面物品（使用房间中心位置）
+    let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]; // 锈铁剑, 木盾, 皮甲, 攻击戒指 ×2
     let item_count = room_centers.len().min(ground_item_ids.len());
     for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
