@@ -38,11 +38,52 @@ pub const VIEWPORT_HEIGHT: usize = 20;
 // ── Tile ──────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tile { Wall, Floor }
+pub enum Tile {
+    Wall,
+    Floor,
+    ShallowWater,   // ~ 浅蓝，可行走
+    DeepWater,      // ≈ 深蓝，不可行走
+    Stalactite,     // # 黄色，不可行走（装饰性墙壁）
+}
 
 impl Tile {
-    pub fn char(self) -> char {
-        match self { Tile::Wall => '#', Tile::Floor => '.' }
+    pub fn glyph(self) -> char {
+        match self {
+            Tile::Wall | Tile::Stalactite => '#',
+            Tile::Floor => '.',
+            Tile::ShallowWater => '~',
+            Tile::DeepWater => '≈',
+        }
+    }
+
+    /// 是否可通行（用于移动逻辑）
+    pub fn walkable(self) -> bool {
+        matches!(self, Tile::Floor | Tile::ShallowWater)
+    }
+
+    /// 是否阻挡视线（用于 FOV）
+    pub fn blocks_vision(self) -> bool {
+        matches!(self, Tile::Wall | Tile::DeepWater | Tile::Stalactite)
+    }
+
+    /// 渲染前景色（正常可见时）
+    pub fn fg_color(self) -> (u8, u8, u8) {
+        match self {
+            Tile::Wall => (180, 180, 180),
+            Tile::Stalactite => (255, 255, 0),
+            Tile::Floor => (200, 200, 200),
+            Tile::ShallowWater => (100, 180, 255),
+            Tile::DeepWater => (0, 80, 180),
+        }
+    }
+
+    /// 渲染背景色（仅水域有特殊背景）
+    pub fn bg_color(self) -> Option<(u8, u8, u8)> {
+        match self {
+            Tile::ShallowWater => Some((200, 230, 255)),
+            Tile::DeepWater => Some((0, 100, 180)),
+            _ => None,
+        }
     }
 }
 
@@ -179,9 +220,159 @@ impl Map {
 
         // ── 从洞穴中检测连通区域 → 房间列表（用于怪物/物品放置） ──
         self.rooms = self.detect_cave_regions(12);
+
+        // ── 环境修饰：水域 + 钟乳石 + 连通性 ──
+        self.generate_water(rng, seed.wrapping_add(100));
+        self.generate_stalactites(rng, seed.wrapping_add(200));
+        self.ensure_connectivity(rng, seed.wrapping_add(300));
     }
 
-    /// 从洞穴 Floor 中检测连通区域，返回按大小降序排列的房间列表。
+    /// 用噪声在水域放置深水种子 → 元胞扩散（75% 浅水 / 25% 深水）
+    pub fn generate_water(&mut self, _rng: &mut impl Rng, seed: u64) {
+        use rand::{RngExt, SeedableRng};
+        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
+
+        // 在洞穴中随机选 3-6 个深水种子
+        let pool_count = rng2.random_range(3..=6);
+        for _ in 0..pool_count * 10 {
+            if self.count_tile(Tile::DeepWater) >= pool_count * 15 { break; }
+            let x = rng2.random_range(3..MAP_WIDTH - 3);
+            let y = rng2.random_range(3..MAP_HEIGHT - 3);
+            if self.tiles[y][x] == Tile::Floor && self.is_away_from_spawn(x, y, 8) {
+                self.tiles[y][x] = Tile::DeepWater;
+            }
+        }
+
+        // 元胞扩散：深水周围 → 75% 浅水 / 25% 深水
+        for _ in 0..3 {
+            let mut next = self.tiles;
+            for y in 0..MAP_HEIGHT {
+                for x in 0..MAP_WIDTH {
+                    if self.tiles[y][x] == Tile::Floor {
+                        let deep_near = self.count_neighbor_tile(x, y, Tile::DeepWater);
+                        let water_near = deep_near + self.count_neighbor_tile(x, y, Tile::ShallowWater);
+                        if water_near > 0 && deep_near > 0 {
+                            next[y][x] = if rng2.random_range(0..100) < 25 {
+                                Tile::DeepWater
+                            } else {
+                                Tile::ShallowWater
+                            };
+                        } else if water_near > 0 {
+                            next[y][x] = Tile::ShallowWater;
+                        }
+                    }
+                }
+            }
+            self.tiles = next;
+        }
+    }
+
+    /// 在每个房间中随机放置钟乳石（# 黄色，约 10% 密度）
+    pub fn generate_stalactites(&mut self, _rng: &mut impl Rng, seed: u64) {
+        use rand::{RngExt, SeedableRng};
+        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
+        for room in &self.rooms.clone() {
+            for y in room.y..room.y + room.h {
+                for x in room.x..room.x + room.w {
+                    if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..100) < 10 {
+                        self.tiles[y][x] = Tile::Stalactite;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 检查最大连通区是否覆盖大部分可行走区域；若不连通，用醉汉游走挖 2-3 条通道
+    pub fn ensure_connectivity(&mut self, _rng: &mut impl Rng, seed: u64) {
+        use rand::{RngExt, SeedableRng};
+        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
+        let regions = self.collect_walkable_regions();
+        if regions.len() <= 1 { return; }
+
+        let passages = rng2.random_range(2..=3);
+        for p in 0..passages {
+            let from_idx = p % regions.len();
+            let to_idx = (p + 1) % regions.len();
+            if from_idx >= regions.len() || to_idx >= regions.len() { break; }
+
+            let from = regions[from_idx][regions[from_idx].len() / 2];
+            let to = regions[to_idx][0];
+
+            // 醉汉游走
+            let (mut cx, mut cy) = (from.0 as isize, from.1 as isize);
+            let (tx, ty) = (to.0 as isize, to.1 as isize);
+            for _ in 0..500 {
+                if (cx - tx).abs() + (cy - ty).abs() < 3 { break; }
+                let dx = if rng2.random_range(0..100) < 50 { (tx - cx).signum() } else { rng2.random_range(-1i32..2) as isize };
+                let dy = if rng2.random_range(0..100) < 50 { (ty - cy).signum() } else { rng2.random_range(-1i32..2) as isize };
+                cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
+                cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
+                let (ux, uy) = (cx as usize, cy as usize);
+                if !self.tiles[uy][ux].walkable() {
+                    self.tiles[uy][ux] = Tile::Floor;
+                }
+            }
+        }
+    }
+
+    // ── 工具函数 ──
+
+    /// 统计地图中某种 tile 的数量
+    pub fn count_tile(&self, tile: Tile) -> usize {
+        self.tiles.iter().flatten().filter(|&&t| t == tile).count()
+    }
+
+    /// 统计 (x,y) 的 8 邻域中某种 tile 的数量
+    pub fn count_neighbor_tile(&self, x: usize, y: usize, tile: Tile) -> usize {
+        let mut n = 0;
+        for dy in -1isize..=1 {
+            for dx in -1isize..=1 {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = x.wrapping_add_signed(dx);
+                let ny = y.wrapping_add_signed(dy);
+                if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx] == tile {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// 判断 (x,y) 是否远离出生点（不破坏玩家出生区）
+    pub fn is_away_from_spawn(&self, x: usize, y: usize, min_dist: usize) -> bool {
+        self.rooms.first().map(|r| {
+            let (sx, sy) = r.center();
+            x.abs_diff(sx) + y.abs_diff(sy) >= min_dist
+        }).unwrap_or(true)
+    }
+
+    /// BFS 收集所有可行走连通区，按大小降序返回
+    pub fn collect_walkable_regions(&self) -> Vec<Vec<(usize, usize)>> {
+        let mut visited = [[false; MAP_WIDTH]; MAP_HEIGHT];
+        let mut regions = Vec::new();
+        for sy in 0..MAP_HEIGHT {
+            for sx in 0..MAP_WIDTH {
+                if visited[sy][sx] || !self.tiles[sy][sx].walkable() { continue; }
+                let mut stack = vec![(sx, sy)];
+                let mut region = Vec::new();
+                while let Some((x, y)) = stack.pop() {
+                    if visited[y][x] { continue; }
+                    visited[y][x] = true;
+                    region.push((x, y));
+                    for (ny, nx) in [(y.wrapping_sub(1), x), (y + 1, x), (y, x.wrapping_sub(1)), (y, x + 1)] {
+                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx].walkable() {
+                            stack.push((nx, ny));
+                        }
+                    }
+                }
+                if region.len() >= 6 { regions.push(region); }
+            }
+        }
+        regions.sort_by(|a, b| b.len().cmp(&a.len()));
+        regions
+    }
+
+    /// 从洞穴 walkable 区域中检测连通区域，返回按大小降序排列的房间列表。，返回按大小降序排列的房间列表。
     /// `max_rooms` 限制最大房间数。返回的房间用 Room 近似（bounding box）。
     /// 扩展：后续可加入区域分类（入口区/战斗区/Boss 区）。
     pub fn detect_cave_regions(&self, max_rooms: usize) -> Vec<Room> {
@@ -190,7 +381,7 @@ impl Map {
 
         for sy in 0..MAP_HEIGHT {
             for sx in 0..MAP_WIDTH {
-                if visited[sy][sx] || self.tiles[sy][sx] != Tile::Floor { continue; }
+                if visited[sy][sx] || !self.tiles[sy][sx].walkable() { continue; }
 
                 // BFS 找连通区
                 let mut stack = vec![(sx, sy)];
@@ -201,7 +392,7 @@ impl Map {
                     region.push((x, y));
 
                     for (ny, nx) in [(y.wrapping_sub(1), x), (y + 1, x), (y, x.wrapping_sub(1)), (y, x + 1)] {
-                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx] == Tile::Floor {
+                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx].walkable() {
                             stack.push((nx, ny));
                         }
                     }
@@ -238,7 +429,7 @@ impl Map {
     }
 
     pub fn render(&self) -> Vec<String> {
-        (0..MAP_HEIGHT).map(|row| (0..MAP_WIDTH).map(|col| self.tiles[row][col].char()).collect()).collect()
+        (0..MAP_HEIGHT).map(|row| (0..MAP_WIDTH).map(|col| self.tiles[row][col].glyph()).collect()).collect()
     }
 }
 impl Default for Map { fn default() -> Self { Self::new() } }

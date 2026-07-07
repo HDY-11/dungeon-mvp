@@ -2,7 +2,7 @@
 
 use dungeon_core::{
     action_types::*, components::*,
-    Map, Tile, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster,
+    Map, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster,
 };
 use bevy_ecs::prelude::*;
 
@@ -42,7 +42,7 @@ pub fn handle_player_direction(world: &mut World, dx: isize, dy: isize) -> bool 
         let tile = world.resource::<Map>().tiles[ny][nx];
         let has_enemy = world.resource::<OccupancyMap>().cells[ny][nx]
             .and_then(|e| if world.get::<Monster>(e).is_some() { Some(e) } else { None });
-        if tile != Tile::Floor && has_enemy.is_none() { return false; }
+        if !tile.walkable() && has_enemy.is_none() { return false; }
         if let Some(target) = has_enemy {
             ActionKindV3::Attack { target }
         } else {

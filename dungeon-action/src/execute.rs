@@ -2,7 +2,7 @@
 
 use dungeon_core::{
     action_types::*, ops, components::*, items::*, resources::*,
-    Map, Tile, MAP_WIDTH, MAP_HEIGHT,
+    Map, MAP_WIDTH, MAP_HEIGHT,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
@@ -68,7 +68,7 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
                 let ny = pos.y.wrapping_add_signed(*dy);
                 if nx < MAP_WIDTH && ny < MAP_HEIGHT {
                     let map = world.resource::<Map>();
-                    if map.tiles[ny][nx] != Tile::Floor { return false; }
+                    if !map.tiles[ny][nx].walkable() { return false; }
                     let occ = world.resource::<OccupancyMap>();
                     if occ.is_occupied(nx, ny) { return false; }
                     true
@@ -120,7 +120,7 @@ fn execute_chase(world: &mut World, entity: Entity) {
             let nx = pos.0.wrapping_add_signed(ndx);
             let ny = pos.1.wrapping_add_signed(ndy);
             if nx < MAP_WIDTH && ny < MAP_HEIGHT
-                && world.resource::<Map>().tiles[ny][nx] == Tile::Floor
+                && world.resource::<Map>().tiles[ny][nx].walkable()
                 && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
             {
                 if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
@@ -141,7 +141,7 @@ fn execute_flee(world: &mut World, entity: Entity) {
         let nx = pos.0.wrapping_add_signed(dx);
         let ny = pos.1.wrapping_add_signed(dy);
         if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && world.resource::<Map>().tiles[ny][nx] == Tile::Floor
+            && world.resource::<Map>().tiles[ny][nx].walkable()
             && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
         {
             let d = nx.abs_diff(px) + ny.abs_diff(py);
@@ -161,7 +161,7 @@ fn execute_wander(world: &mut World, entity: Entity) {
         let nx = pos.x.wrapping_add_signed(dx);
         let ny = pos.y.wrapping_add_signed(dy);
         if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && world.resource::<Map>().tiles[ny][nx] == Tile::Floor
+            && world.resource::<Map>().tiles[ny][nx].walkable()
             && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
         {
             if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
@@ -177,7 +177,7 @@ fn execute_player_move(world: &mut World, entity: Entity, dx: isize, dy: isize) 
         let nx = p.0.wrapping_add_signed(dx);
         let ny = p.1.wrapping_add_signed(dy);
         if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
-        if world.resource::<Map>().tiles[ny][nx] != Tile::Floor { return; }
+        if !world.resource::<Map>().tiles[ny][nx].walkable() { return; }
         (nx, ny)
     };
     if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }

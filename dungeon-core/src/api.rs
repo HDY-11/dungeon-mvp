@@ -20,7 +20,7 @@ pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> V
         if pos.0 < 0 || pos.0 >= MAP_WIDTH as isize || pos.1 < 0 || pos.1 >= MAP_HEIGHT as isize {
             return true;
         }
-        map.tiles[pos.1 as usize][pos.0 as usize] == Tile::Wall
+        map.tiles[pos.1 as usize][pos.0 as usize].blocks_vision()
     };
 
     let mut mark_visible = |pos: (isize, isize)| {

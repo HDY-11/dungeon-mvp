@@ -70,22 +70,25 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let cam_y = (py.saturating_sub(vh / 2)).min(MAP_HEIGHT.saturating_sub(vh));
 
     let renderables = collect_renderables(world);
-    let mut lines: Vec<Vec<(char, Color)>> = Vec::with_capacity(vh);
+    // (glyph, fg, bg)
+    let mut lines: Vec<Vec<(char, Color, Color)>> = Vec::with_capacity(vh);
     for vy in 0..vh {
         let my = cam_y + vy;
         let mut row = Vec::with_capacity(vw);
         for vx in 0..vw {
             let mx = cam_x + vx;
             let pos = (mx, my);
-            let tile_ch = tiles[my][mx].char();
-            let (glyph, fg) = if player_visible.contains(&pos) {
-                (tile_ch, Color::White)
+            let tile = tiles[my][mx];
+            if player_visible.contains(&pos) {
+                let (r, g, b) = tile.fg_color();
+                let fg = Color::Rgb(r, g, b);
+                let bg = tile.bg_color().map(|(r, g, b)| Color::Rgb(r, g, b)).unwrap_or(Color::Reset);
+                row.push((tile.glyph(), fg, bg));
             } else if explored[my][mx] {
-                (tile_ch, Color::DarkGray)
+                row.push((tile.glyph(), Color::DarkGray, Color::Reset));
             } else {
-                (' ', Color::DarkGray)
-            };
-            row.push((glyph, fg));
+                row.push((' ', Color::DarkGray, Color::Reset));
+            }
         }
         lines.push(row);
     }
@@ -94,7 +97,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             && ey >= cam_y && ey < cam_y + vh
             && ex >= cam_x && ex < cam_x + vw
         {
-            lines[ey - cam_y][ex - cam_x] = (glyph, renderable_color((r, g, b)));
+            lines[ey - cam_y][ex - cam_x] = (glyph, renderable_color((r, g, b)), Color::Reset);
         }
     }
     for &(mx, my, glyph, _) in &visible_mem {
@@ -102,12 +105,12 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             && my >= cam_y && my < cam_y + vh
             && mx >= cam_x && mx < cam_x + vw
         {
-            lines[my - cam_y][mx - cam_x] = (glyph, Color::DarkGray);
+            lines[my - cam_y][mx - cam_x] = (glyph, Color::DarkGray, Color::Reset);
         }
     }
     let styled_lines: Vec<Line> = lines.into_iter()
         .map(|row| Line::from(row.into_iter()
-            .map(|(g, c)| Span::styled(g.to_string(), Style::default().fg(c)))
+            .map(|(g, fg, bg)| Span::styled(g.to_string(), Style::default().fg(fg).bg(bg)))
             .collect::<Vec<_>>()))
         .collect();
     frame.render_widget(Paragraph::new(styled_lines).style(Style::default().fg(Color::White)), map_area);
