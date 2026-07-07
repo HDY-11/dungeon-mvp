@@ -121,7 +121,7 @@ pub fn monster_spawn_weight(kind: MonsterKindId, floor: u32) -> f32 {
 /// spawn_chance 随楼层递增：1 层 ≈70%（~7 只/10 间房），高层渐近 95%。
 pub fn roll_monster_kinds(room_count: usize, floor: u32, rng: &mut impl Rng) -> Vec<MonsterKindId> {
     use rand::RngExt;
-    let spawn_chance = (0.7 + floor as f32 * 0.04).min(0.95);
+    let spawn_chance = (0.78 + floor as f32 * 0.03).min(0.95);
     let all = [MonsterKindId::Rat, MonsterKindId::Scorpion, MonsterKindId::Goblin];
     let mut result = Vec::new();
     for _ in 0..room_count {

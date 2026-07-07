@@ -201,8 +201,16 @@ impl Map {
 
         // ── 用 terrain-forge 生成洞穴 ──
         let mut grid = terrain_forge::Grid::new(MAP_WIDTH, MAP_HEIGHT);
-        // room_accretion: Brogue 风格的有机洞穴
-        if terrain_forge::ops::generate("room_accretion", &mut grid, Some(seed), None).is_err() {
+        // room_accretion: Brogue 风格的有机洞穴（缩小模板尺寸）
+        let mut params = terrain_forge::ops::Params::new();
+        params.insert("templates".into(), serde_json::json!([
+            {"Rectangle": {"min": 4, "max": 9}},
+            {"Circle": {"min_radius": 2, "max_radius": 4}},
+            {"Blob": {"size": 6, "smoothing": 2}},
+        ]));
+        params.insert("max_rooms".into(), serde_json::json!(14));
+        params.insert("loop_chance".into(), serde_json::json!(0.05));
+        if terrain_forge::ops::generate("room_accretion", &mut grid, Some(seed), Some(&params)).is_err() {
             // 如果算法失败，回退到简单的噪声+CA
             let _ = terrain_forge::ops::generate("cellular", &mut grid, Some(seed.wrapping_add(1)), None);
         }
