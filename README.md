@@ -2,19 +2,22 @@
 
 Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 
-## 架构（4 crate 拆分）
+## 架构（5 crate 拆分）
 
 ```
+terrain-forge/            ← 程序化地图生成引擎（15 种算法）
+  src/algorithms/           ← room_accretion（Brogue 风格）、cellular、bsp、maze……
+  src/grid.rs              ← Grid<C> 核心：泛型 Cell 特质、BFS 连通区分析
+
 dungeon-core/             ← 纯数据 + 工具函数（无渲染 / 无执行依赖）
   action_types.rs          ← 行动系统类型：ActionKindV3、ActionQueue、Reaction、CanMove/Chase/…
   components.rs            ← ECS 组件（Stats, Buffs, Player, Monster, LootTable, …）
   resources.rs             ← ECS 资源（PendingExp, EventLog, VisibleMemory, TurnManager, …）
   items.rs                 ← ItemRegistry（OnceLock 单例）、ItemStack、Inventory、Equipment
-  global.rs                ← 线程局部 RNG（仅此而已 — 无全局 World）
+  monster_def.rs           ← 怪物定义：MonsterKindId、属性公式、掉落、生成权重
   ops.rs                   ← 工具函数：碰撞图 rebuild、视野记忆、拾取、渲染收集
   systems.rs               ← 基础 ECS System（FOV、死亡检测、经验应用、buff 衰减）
-  api.rs                   ← 旧版 setup_world（仅测试使用）、FOV、掉落定义
-  tests.rs                 ← 8 个单元测试
+  api.rs                   ← 旧版 setup_world（仅测试使用）
 
 dungeon-action/           ← 行动执行逻辑（依赖 core）
   execute.rs               ← advance_action_queue、保活检查、execute_entry（移动/攻击/技能/怪物 AI）
@@ -165,6 +168,15 @@ Schedule: (
 
 详细数值见 [GAME.md](GAME.md)。
 
+## 地图生成
+
+80 × 40 的洞穴地图由 **terrain-forge** 引擎生成。
+
+- **算法**：`room_accretion` — Brogue 风格有机洞穴，滑动房间直到贴合已有结构
+- **房间检测**：BFS flood-fill 找出连通 Floor 区域，按大小排序作为房间列表
+- **随机化**：每局使用随机种子（`MapSeed` 资源），存档保存种子保证下楼一致性
+- **扩展预留**：可按 biome 切换算法（bsp/ cellular/ room_accretion）
+
 ## 视野记忆
 
 `VisibleMemory` 资源记录实体的最后已知位置。视野外的实体在已探索区域以灰色显示。死亡实体自动清理。
@@ -196,3 +208,5 @@ cargo test -p dungeon-core -- --test-threads=1
 - FFX CTB（Conditional Turn-Based）：队列增量模型
 - DCSS aut 系统：事件式时间片推进
 - Dota 2 / Overwatch Ability Component：行动即组件模式
+- Brogue：有机洞穴 + vault 模板 + 细胞自动机
+- terrain-forge（EliasVahlberg）：room_accretion 算法、Grid<C> 泛型系统
