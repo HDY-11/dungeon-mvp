@@ -51,8 +51,6 @@ pub struct FloorNumber(pub u32);
 #[derive(Resource, Clone, Copy)]
 pub struct MapSeed(pub u64);
 
-#[derive(Resource, Default)]
-pub struct PendingLevelUp { pub points: u32 }
 
 /// 最后看到的实体信息（用于视野外灰色显示）。
 /// 实体离开视野后永久保留记忆，直到再次被看到或实体被销毁。

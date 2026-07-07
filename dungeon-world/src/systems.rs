@@ -24,7 +24,6 @@ pub fn check_death_system(
 pub fn apply_exp_system(
     mut player_query: Query<&mut Stats, With<Player>>,
     mut pending: ResMut<PendingExp>,
-    mut pending_lv: ResMut<PendingLevelUp>,
     mut event_log: ResMut<EventLog>,
 ) {
     if pending.amount == 0 { return; }
@@ -35,7 +34,6 @@ pub fn apply_exp_system(
             if player.exp < player.exp_to_next { break; }
             player.exp -= player.exp_to_next;
             player.level += 1;
-            pending_lv.points += 3;
             player.max_hp = dungeon_core::ops::max_hp_for(player.level, player.defense);
             player.max_mp = dungeon_core::ops::max_mp_for(player.level, player.magic_mastery);
             player.hp = player.max_hp; player.mp = player.max_mp;

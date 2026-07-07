@@ -60,7 +60,6 @@ pub fn setup_world() -> World {
     world.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
-    world.insert_resource(PendingLevelUp::default());
     world.insert_resource(VisibleMemory::default());
     world.insert_resource(crate::action_types::ActionQueue::default());
     world.insert_resource(crate::action_types::InputBuffer::default());
