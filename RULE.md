@@ -129,6 +129,37 @@
 
 每个 commit 对应一个逻辑变更。修复 + 相关文档更新放在同一个 commit。
 
+两条经验细则：
+
+1. **跨 crate、逻辑独立的修复**，各自一个 commit。核心逻辑（战斗公式、行动系统）与边缘清理（文档、注释）不应混在同一 commit 中。
+
+2. **同一轮 ISSUES 驱动修复中对 ISSUES.md 的多次移动/新增操作**，合并为一个 commit。因为 ISSUES.md 是增量的；5 个小 fix 各提交一次会导致同一文件相邻区域被反复修改，历史反而模糊。合并后 ISSUES.md 从"5 个开放"到"5 个已修复"的状态跃迁只出现一次，更易回溯。
+
+### 提交流程
+
+```bash
+# 检查状态
+git status
+
+# 暂存
+git add -A
+
+# 提交（消息格式：<前缀>: <简要说明>）
+# 多个逻辑变更的合并提交用多行正文：
+#
+#   refactor: 修复 5 个存档/文档/清理问题
+#
+#   - I15: Tile 自定义 serde，统一序列化合约
+#   - I12: F9 读档后刷新视野记忆
+#   - A5: 删除 global.rs 空壳模块
+#   - I14: 下楼 Skills 从 PlayerClass 推导
+#   - D6: GAME.md 升级描述标记已移除
+git commit -m "..."
+
+# 推送到远程仓库（Gitee 默认 remote 为 origin）
+git push origin
+```
+
 ---
 
 ## 六、设计决策记录

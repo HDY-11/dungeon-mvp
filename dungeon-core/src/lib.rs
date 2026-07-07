@@ -1,6 +1,5 @@
 pub mod action_types;
 pub mod components;
-pub mod global;
 pub mod items;
 pub mod monster_def;
 pub mod ops;
@@ -35,6 +34,9 @@ pub const VIEWPORT_HEIGHT: usize = 20;
 
 // ── Tile ──────────────────────────────────────────────
 
+/// Tile 用自定义 Serde 以 u8 序列化（兼容 bincode Vec<u8> 存档格式）。
+/// 数值映射：Wall=0, Floor=1, ShallowWater=2, DeepWater=3, Stalactite=4。
+/// 如需添加新变体请在末尾追加，不要插入或重排已有项——否则旧存档无声损坏。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tile {
     Wall,
@@ -42,6 +44,32 @@ pub enum Tile {
     ShallowWater,   // ~ 浅蓝，可行走
     DeepWater,      // ≈ 深蓝，不可行走
     Stalactite,     // # 黄色，不可行走（装饰性墙壁）
+}
+
+impl serde::Serialize for Tile {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(match self {
+            Tile::Wall => 0,
+            Tile::Floor => 1,
+            Tile::ShallowWater => 2,
+            Tile::DeepWater => 3,
+            Tile::Stalactite => 4,
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Tile {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let v = u8::deserialize(deserializer)?;
+        match v {
+            0 => Ok(Tile::Wall),
+            1 => Ok(Tile::Floor),
+            2 => Ok(Tile::ShallowWater),
+            3 => Ok(Tile::DeepWater),
+            4 => Ok(Tile::Stalactite),
+            _ => Err(serde::de::Error::custom(format!("invalid Tile discriminant: {}", v))),
+        }
+    }
 }
 
 impl Tile {

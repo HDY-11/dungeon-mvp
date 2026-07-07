@@ -120,11 +120,11 @@ pub fn descend(world: &mut World) {
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = w.query::<(Entity, &Stats, &Position, &Inventory, &Equipment, &dungeon_core::Skills, &PlayerClass, &AttackName)>();
-        let (e, s, p, inv, eq, sk, cls, atk) = q.iter(&mut *w).next().unwrap();
-        (e, s.clone(), *p, inv.stacks.clone(), inv.capacity,
+        let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName)>();
+        let (e, s, inv, eq, cls, atk) = q.iter(&mut *w).next().unwrap();
+        (e, s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
-         sk.list.clone(), Buffs::new(), cls.clone(), atk.0.clone())
+         Buffs::new(), cls.clone(), atk.0.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
@@ -142,13 +142,13 @@ pub fn descend(world: &mut World) {
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 10, visible_tiles: Vec::new() },
         player_data.1.clone(), EntityName("冒险者".into()),
-        Inventory { stacks: player_data.3, capacity: player_data.4 },
+        Inventory { stacks: player_data.2, capacity: player_data.3 },
     ));
-    cmd.insert(player_data.5);  // Equipment
-    cmd.insert(dungeon_core::Skills { list: player_data.6 });
-    cmd.insert(player_data.7);  // Buffs
-    cmd.insert(player_data.8.clone());
-    cmd.insert(AttackName(player_data.9.clone()));
+    cmd.insert(player_data.4);  // Equipment
+    cmd.insert(dungeon_core::Skills { list: player_data.6.skills() });
+    cmd.insert(player_data.5);  // Buffs
+    cmd.insert(player_data.6.clone());  // PlayerClass
+    cmd.insert(AttackName(player_data.7.clone()));
     cmd.insert(Reaction { time: agility_to_reaction(player_data.1.agility) });
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));

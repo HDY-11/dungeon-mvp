@@ -162,6 +162,10 @@ fn process_key(
             if let Ok(data) = std::fs::read("save.bin") {
                 if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
                     save.restore(world);
+                    let _ = world.run_system_once(fov_system);
+                    ops::update_map_memory(world);
+                    ops::update_visible_memory(world);
+                    ops::rebuild_occupancy(world);
                     world.resource_mut::<EventLog>().push("已读档");
                 }
             }

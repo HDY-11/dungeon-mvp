@@ -203,3 +203,25 @@ av_remaining ≤ 0 → pop_ready()       // 执行
 ### L26 — 新字段用 `#[serde(default)]` 兼容旧存档
 
 每次新增字段时，如果存档结构发生变化，用 `#[serde(default)]` 保证旧存档可以反序列化。
+
+### L27 — enum 的序列化合约由类型自身管理，而非调用方
+
+用 `tile as u8` 将 enum 转为 u8 序列化依赖编译器分配的隐式判别值，且 restore 端需要重复 match 逻辑。改由类型实现自定义 `Serialize`/`Deserialize`：
+
+```rust
+impl serde::Serialize for Tile {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(match self {
+            Tile::Wall => 0,
+            Tile::Floor => 1,
+            // ...
+        })
+    }
+}
+```
+
+**收益：**
+- 序列化合约与类型定义共处一处，不会 drift
+- 调用方（capture/restore）只需 push/pull Tile，不需知道内部编码
+- `Vec<Tile>` 与 `Vec<u8>` 二进制格式一致，无需迁移旧存档
+- 新增变体时只需改这一处，编译器会提醒 match 未覆盖

@@ -54,7 +54,7 @@ pub struct GameSave {
     pub armor_item_id: Option<usize>, pub armor_count: Option<u32>,
     pub ring_item_id: Option<usize>, pub ring_count: Option<u32>,
     pub buffs: SavedBuffs,
-    pub map_tiles: Vec<u8>,
+    pub map_tiles: Vec<Tile>,
     pub rooms: Vec<dungeon_core::Room>,
     pub explored: Vec<u8>,
     pub monsters: Vec<SavedMonster>,
@@ -125,7 +125,7 @@ impl GameSave {
         {
             let map = w.resource::<Map>();
             for row in 0..MAP_HEIGHT {
-                for col in 0..MAP_WIDTH { map_tiles.push(map.tiles[row][col] as u8); }
+                for col in 0..MAP_WIDTH { map_tiles.push(map.tiles[row][col]); }
             }
         }
         let rooms = { let map = w.resource::<Map>(); map.rooms.clone() };
@@ -225,7 +225,7 @@ impl GameSave {
         w.insert_resource(MapSeed(self.map_seed));
         let mut tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
         for (i, &v) in self.map_tiles.iter().enumerate() {
-            tiles[i / MAP_WIDTH][i % MAP_WIDTH] = if v == 0 { Tile::Wall } else { Tile::Floor };
+            tiles[i / MAP_WIDTH][i % MAP_WIDTH] = v;
         }
         w.insert_resource(Map { tiles, rooms: self.rooms });
         let mut explored = [[false; MAP_WIDTH]; MAP_HEIGHT];
