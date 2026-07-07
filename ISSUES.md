@@ -281,9 +281,11 @@ if leftover > 0 {
 
 ---
 
-### 🟡 I8 — 怪物生成数量固定 12 只，地面物品固定 8 件，不随楼层递增
+### ✅ I8 — 怪物生成数量固定 12 只，地面物品固定 8 件，不随楼层递增
 
 **问题：** `roll_monster_kinds(12, ...)` 在 `setup_world` 和 `descend` 中都写死 `room_count=12`。地面物品 `ground_item_ids` 固定为 `[0,1,2,3,0,1,3,2]`。即使地图有更多房间或楼层层数增加，密度不变。
+
+**修复：** 怪物数量改为 `room_centers.len()`，地面物品数量改为 `room_centers.len().min(8)`，随可用房间数自动变化。
 
 **位置：** `dungeon-world/src/init.rs:67`、`dungeon-world/src/init.rs:141`
 

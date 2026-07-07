@@ -118,7 +118,8 @@ pub fn setup_world() -> World {
 
     // 地面物品（使用 ItemStack + ItemRegistry）
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]; // 锈铁剑, 木盾, 皮甲, 攻击戒指 ×2
-    for (i, &item_id) in ground_item_ids.iter().enumerate() {
+    let item_count = room_centers.len().min(ground_item_ids.len());
+    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
         if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             world.spawn((

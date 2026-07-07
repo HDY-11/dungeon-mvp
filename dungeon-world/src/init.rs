@@ -62,7 +62,7 @@ pub fn setup_world() -> World {
         let (sx, sy) = m.rooms[0].center();
         (centers, (sx, sy))
     };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(12, 1, &mut rng);
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
     // 先在房间中心放，不够则找随机可行走格
     for (i, &kind) in kinds.iter().enumerate() {
         let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
@@ -107,9 +107,10 @@ pub fn setup_world() -> World {
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
     }
 
-    // ── 地面物品（独立于怪物数量，使用房间中心）──
+    // ── 地面物品（使用房间中心，数量随可用房间数变化）──
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
-    for (i, &item_id) in ground_item_ids.iter().enumerate() {
+    let item_count = room_centers.len().min(ground_item_ids.len());
+    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
         if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             world.spawn((
@@ -182,7 +183,7 @@ pub fn descend(world: &mut World) {
         let map = m.tiles;
         (centers, (sx, sy), map)
     };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(12, f, &mut rng);
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), f, &mut rng);
     for (i, &kind) in kinds.iter().enumerate() {
         let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
             let mut pos = None;
@@ -215,7 +216,8 @@ pub fn descend(world: &mut World) {
         }
 
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
-    for (i, &item_id) in ground_item_ids.iter().enumerate() {
+    let item_count = room_centers.len().min(ground_item_ids.len());
+    for (i, &item_id) in ground_item_ids[..item_count].iter().enumerate() {
         if let Some(&(ix, iy)) = room_centers.get(i) {
             let def = ItemRegistry::global().get(item_id).unwrap();
             w.spawn((
