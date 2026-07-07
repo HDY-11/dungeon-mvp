@@ -232,15 +232,7 @@ pub fn astar(
             let ny = node.y.wrapping_add_signed(dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { continue; }
             if !map_tiles[ny][nx].walkable() { continue; }
-            // 对角穿墙角检查
-            if dx != 0 && dy != 0 {
-                let cx1 = node.x.wrapping_add_signed(dx);
-                let cx2 = node.y.wrapping_add_signed(dy);
-                let clear1 = cx1 < MAP_WIDTH && map_tiles[node.y][cx1].walkable();
-                let clear2 = cx2 < MAP_HEIGHT && map_tiles[cx2][node.x].walkable();
-                if !clear1 && !clear2 { continue; }
-            }
-            // 检查是否被占据（终点不算阻挡）——已经是不可占用的了
+            // 检查是否被占据（终点不算阻挡）
             if let Some(occ) = occupied {
                 if (nx, ny) != goal && occ.is_occupied(nx, ny) { continue; }
             }
