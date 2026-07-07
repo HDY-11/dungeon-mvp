@@ -149,86 +149,89 @@ pub struct Map {
 impl Map {
     pub fn new() -> Self { Self { tiles: [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT], rooms: Vec::new() } }
 
-    /// 随机生成地图：矩形/圆形/菱形/椭圆房间混合 + 走廊连接
+    /// 使用 terrain-forge 生成洞穴地图。
+    /// 保留 `self.rooms` 给外部使用（玩家出生、怪物/物品放置）。
+    /// 扩展：将来可按 biome 切换算法（bsp / cellular / room_accretion）。
     pub fn generate(&mut self, rng: &mut impl Rng) {
         use rand::RngExt;
+        let seed: u64 = rng.random();
         self.tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
         self.rooms.clear();
-        let target = rng.random_range(8..=14);
 
-        for _ in 0..target * 6 {
-            if self.rooms.len() >= target { break; }
+        // ── 用 terrain-forge 生成洞穴 ──
+        let mut grid = terrain_forge::Grid::new(MAP_WIDTH, MAP_HEIGHT);
+        // room_accretion: Brogue 风格的有机洞穴
+        if terrain_forge::ops::generate("room_accretion", &mut grid, Some(seed), None).is_err() {
+            // 如果算法失败，回退到简单的噪声+CA
+            let _ = terrain_forge::ops::generate("cellular", &mut grid, Some(seed.wrapping_add(1)), None);
+        }
 
-            // 加权随机选形状（矩形 45%，圆形 25%，菱形 20%，椭圆 10%）
-            let shape = match rng.random_range(0..100) {
-                0..=44 => RoomShape::Rect,
-                45..=69 => RoomShape::Circle,
-                70..=89 => RoomShape::Diamond,
-                _ => RoomShape::Ellipse,
-            };
-
-            let (x, y, w, h) = match shape {
-                RoomShape::Rect => {
-                    let w = rng.random_range(5..=12);
-                    let h = rng.random_range(4..=8);
-                    let x = rng.random_range(1..(MAP_WIDTH - w - 1));
-                    let y = rng.random_range(1..(MAP_HEIGHT - h - 1));
-                    (x, y, w, h)
-                }
-                RoomShape::Circle | RoomShape::Diamond => {
-                    let r = rng.random_range(4..=8);
-                    let x = rng.random_range(r..(MAP_WIDTH - r));
-                    let y = rng.random_range(r..(MAP_HEIGHT - r));
-                    (x, y, r, r)
-                }
-                RoomShape::Ellipse => {
-                    let a = rng.random_range(4..=8);
-                    let b = rng.random_range(3..=6);
-                    let x = rng.random_range(a..(MAP_WIDTH - a));
-                    let y = rng.random_range(b..(MAP_HEIGHT - b));
-                    (x, y, a, b)
-                }
-            };
-
-            let room = Room { x, y, w, h, shape };
-            let tiles = room.tiles();
-
-            if !self.overlaps_existing(&tiles, 1) {
-                for &(tx, ty) in &tiles {
-                    self.tiles[ty][tx] = Tile::Floor;
-                }
-                self.rooms.push(room);
+        // ── 转换到我的 Tile ──
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                self.tiles[y][x] = if grid[(x, y)].is_floor() {
+                    Tile::Floor
+                } else {
+                    Tile::Wall
+                };
             }
         }
 
-        // 走廊连接相邻房间（从第一个房间依次连接）
-        for i in 1..self.rooms.len() {
-            let prev = self.rooms[i - 1].center();
-            let curr = self.rooms[i].center();
-            self.carve_corridor(prev, curr);
-        }
+        // ── 从洞穴中检测连通区域 → 房间列表（用于怪物/物品放置） ──
+        self.rooms = self.detect_cave_regions(12);
     }
 
-    /// 格子级碰撞检测：检查 tiles 是否与已有 Floor 重叠（含 margin 格边距）
-    fn overlaps_existing(&self, tiles: &[(usize, usize)], margin: usize) -> bool {
-        for &(x, y) in tiles {
-            if self.tiles[y][x] == Tile::Floor { return true; }
-            for dy in -(margin as isize)..=margin as isize {
-                for dx in -(margin as isize)..=margin as isize {
-                    if dx == 0 && dy == 0 { continue; }
-                    let nx = x.wrapping_add_signed(dx);
-                    let ny = y.wrapping_add_signed(dy);
-                    if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx] == Tile::Floor {
-                        return true;
+    /// 从洞穴 Floor 中检测连通区域，返回按大小降序排列的房间列表。
+    /// `max_rooms` 限制最大房间数。返回的房间用 Room 近似（bounding box）。
+    /// 扩展：后续可加入区域分类（入口区/战斗区/Boss 区）。
+    pub fn detect_cave_regions(&self, max_rooms: usize) -> Vec<Room> {
+        let mut visited = [[false; MAP_WIDTH]; MAP_HEIGHT];
+        let mut regions: Vec<Vec<(usize, usize)>> = Vec::new();
+
+        for sy in 0..MAP_HEIGHT {
+            for sx in 0..MAP_WIDTH {
+                if visited[sy][sx] || self.tiles[sy][sx] != Tile::Floor { continue; }
+
+                // BFS 找连通区
+                let mut stack = vec![(sx, sy)];
+                let mut region = Vec::new();
+                while let Some((x, y)) = stack.pop() {
+                    if visited[y][x] { continue; }
+                    visited[y][x] = true;
+                    region.push((x, y));
+
+                    for (ny, nx) in [(y.wrapping_sub(1), x), (y + 1, x), (y, x.wrapping_sub(1)), (y, x + 1)] {
+                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx] == Tile::Floor {
+                            stack.push((nx, ny));
+                        }
                     }
                 }
+
+                // 过滤极小区域（噪声碎片），合并到结果
+                if region.len() >= 6 {
+                    regions.push(region);
+                }
             }
         }
-        false
+
+        // 按大小降序
+        regions.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        regions.into_iter().take(max_rooms).map(|r| {
+            let min_x = r.iter().map(|&(x, _)| x).min().unwrap_or(0);
+            let max_x = r.iter().map(|&(x, _)| x).max().unwrap_or(0);
+            let min_y = r.iter().map(|&(_, y)| y).min().unwrap_or(0);
+            let max_y = r.iter().map(|&(_, y)| y).max().unwrap_or(0);
+            Room {
+                x: min_x, y: min_y,
+                w: max_x - min_x + 1, h: max_y - min_y + 1,
+                shape: RoomShape::Rect, // 统一用矩形近似
+            }
+        }).collect()
     }
 
-    /// L 形走廊
-    fn carve_corridor(&mut self, from: (usize, usize), to: (usize, usize)) {
+    /// L 形走廊（保留供外部调用/未来使用）
+    pub fn carve_corridor(&mut self, from: (usize, usize), to: (usize, usize)) {
         let (x1, y1) = from; let (x2, y2) = to;
         for x in x1.min(x2)..=x1.max(x2) { self.tiles[y1][x] = Tile::Floor; }
         for y in y1.min(y2)..=y1.max(y2) { self.tiles[y][x2] = Tile::Floor; }

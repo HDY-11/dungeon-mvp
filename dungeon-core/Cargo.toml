@@ -9,3 +9,4 @@ rand = "0.10.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 symmetric-shadowcasting = "0.2"
+terrain-forge = { path = "../terrain-forge" }
