@@ -3,10 +3,7 @@ use crate::{
     resources::*,
     calculate_visible_tiles, Map,
 };
-// use crate::world; // 已移除
 use bevy_ecs::prelude::*;
-
-
 
 pub fn fov_system(mut query: Query<(&Position, &mut Viewshed)>, map: Res<Map>) {
     for (pos, mut viewshed) in query.iter_mut() {
@@ -53,7 +50,4 @@ pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
         if b.berserk_turns > 0 { b.berserk_turns -= 1; if b.berserk_turns <= 0 { b.berserk_atk = 0; } }
     }
 }
-
-
-
 

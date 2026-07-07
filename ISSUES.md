@@ -291,9 +291,11 @@ if leftover > 0 {
 
 ---
 
-### 🟢 I9 — 废弃注释和空白行
+### ✅ I9 — 废弃注释和空白行
 
 **问题：** `dungeon-core/src/systems.rs` 中存在 `// use crate::world; // 已移除` 注释和连续空行。
+
+**修复：** 删除废弃注释和多余空行。
 
 **位置：** `dungeon-core/src/systems.rs:3`
 
