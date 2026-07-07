@@ -26,7 +26,7 @@ pub fn setup_world() -> World {
     world.insert_resource(OccupancyMap::new());
     world.insert_resource(PendingExp::default());
     world.insert_resource(EventLog::new());
-    world.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
+    world.insert_resource(GameRng::new(map_seed.wrapping_add(42)));
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(VisibleMemory::default());

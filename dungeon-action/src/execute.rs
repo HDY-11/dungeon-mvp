@@ -163,8 +163,8 @@ fn execute_wander(world: &mut World, entity: Entity) {
         (0, -1), (0, 1), (-1, 0), (1, 0),
         (-1, -1), (1, -1), (-1, 1), (1, 1),
     ];
-    let r = rand::random::<u8>() % 8;
-    let (dx, dy) = dirs[r as usize];
+    let r = world.resource_mut::<GameRng>().random_range(0, 8) as usize;
+    let (dx, dy) = dirs[r];
     let target = if let Some(pos) = world.get::<Position>(entity) {
         let map = world.resource::<Map>();
         let occ = world.resource::<OccupancyMap>();
@@ -207,7 +207,8 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
             ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), buffs) as i32
         };
         let raw_dmg = (effective_atk - target_def).max(1);
-        let is_crit = attacker_stats.crit_rate > rand::random::<f32>();
+        let crit_roll = world.resource_mut::<GameRng>().random_f32();
+        let is_crit = attacker_stats.crit_rate > crit_roll;
         dmg = if is_crit { (raw_dmg as f32 * (1.0 + attacker_stats.crit_damage)).round() as i32 } else { raw_dmg };
         crit = is_crit;
         exp = target_stats.exp;
@@ -218,7 +219,11 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
         if target_stats.hp <= 0 {
             world.resource_mut::<PendingExp>().amount += exp;
             world.resource_mut::<EventLog>().push(format!("你{}击杀了{}！获得{}经验", atk_name, name, exp));
-            let loot_stacks = world.get::<LootTable>(target).map(|lt| lt.roll()).unwrap_or_default();
+            let loot_lt = world.get::<LootTable>(target).cloned();
+            let loot_stacks = if let Some(lt) = loot_lt {
+                let mut rng = world.resource_mut::<GameRng>();
+                lt.roll(&mut rng.rng)
+            } else { Vec::new() };
             if let Some((px, py)) = target_pos {
                 for stack in &loot_stacks {
                     let sname = stack.name();

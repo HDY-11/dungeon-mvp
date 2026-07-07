@@ -58,7 +58,7 @@
 
 ---
 
-### 🔴 D1（旧 P4）— 三套 RNG 并存，游戏不可复现
+### ✅ D1（旧 P4）— 三套 RNG 并存，游戏不可复现
 
 **问题：** 项目中有三套独立的随机数生成器：
 
@@ -74,9 +74,15 @@
 - 掉落用 `rand::random()` [components.rs:35] 和 `dungeon_core::global::rand_u8()` [global.rs:19] 两种——仲裁使用线程局部 RNG
 - `GameRng { rng: SmallRng }` ECS 资源在 `setup_world` 初始化 [init.rs:20] 后从未被消费
 
-**结论：** 同样的种子不可能复现同一场战斗。统一使用 `GameRng` 并移除线程局部 RNG 是正确方向但需要较大改动。
+**修复：** 
+- `GameRng` 作为统一随机源，新增 `random_f32()`、`random_range()` 便捷方法
+- `LootTable::roll()` 改为接受 `&mut impl Rng` 参数
+- `execute_attack`（暴击）、`execute_wander`（游荡方向）改用 `GameRng`
+- 仲裁 system 改用 `ResMut<GameRng>` 替代线程局部 RNG
+- 删除 `global.rs` 中的线程局部 `RefCell<SmallRng>`
+- `GameRng` 种子从硬编码 `0` 改为 `map_seed.wrapping_add(42)`
 
-**位置：** `dungeon-core/src/global.rs:11`、`dungeon-core/src/components.rs:35`、`dungeon-action/src/execute.rs:131`、`dungeon-world/src/init.rs:20`、`dungeon-world/src/persist.rs:168`
+**位置：** `dungeon-core/src/resources.rs`、`dungeon-core/src/global.rs`、`dungeon-core/src/components.rs`、`dungeon-action/src/execute.rs`、`dungeon-action/src/monster.rs`
 
 ---
 

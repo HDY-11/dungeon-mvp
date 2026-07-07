@@ -10,7 +10,6 @@ use dungeon_core::{
 };
 
 use bevy_ecs::prelude::*;
-use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -210,7 +209,7 @@ impl GameSave {
         w.insert_resource(ChaseIntents::default());
         w.insert_resource(FleeIntents::default());
         w.insert_resource(WanderIntents::default());
-        w.insert_resource(GameRng { rng: rand::rngs::SmallRng::seed_from_u64(0) });
+        w.insert_resource(GameRng::new(self.map_seed.wrapping_add(42)));
 
         let s = self.st.into_stats();
         let pc = self.player_class.unwrap_or(PlayerClass::Warrior);

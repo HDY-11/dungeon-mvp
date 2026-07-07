@@ -1,5 +1,6 @@
 use crate::{MAP_HEIGHT, MAP_WIDTH};
 use bevy_ecs::prelude::*;
+use rand::SeedableRng;
 // use serde::{Deserialize, Serialize};
 
 // ── 资源定义 ───────────────────────────────────────
@@ -15,6 +16,24 @@ impl Default for MapMemory { fn default() -> Self { Self::new() } }
 
 #[derive(Resource)]
 pub struct GameRng { pub rng: rand::rngs::SmallRng }
+
+impl GameRng {
+    pub fn new(seed: u64) -> Self {
+        Self { rng: rand::rngs::SmallRng::seed_from_u64(seed) }
+    }
+
+    /// 生成 [0, 1) 随机浮点
+    pub fn random_f32(&mut self) -> f32 {
+        use rand::RngExt;
+        self.rng.random_range(0.0..1.0)
+    }
+
+    /// 生成 [lo, hi) 随机整数
+    pub fn random_range(&mut self, lo: u8, hi: u8) -> u8 {
+        use rand::RngExt;
+        self.rng.random_range(lo..hi)
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct PendingExp { pub amount: u64 }

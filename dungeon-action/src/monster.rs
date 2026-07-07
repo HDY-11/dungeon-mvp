@@ -5,7 +5,7 @@
 //! bevy 调度器自动并行执行互不冲突的 system。
 
 use dungeon_core::{
-    action_types::*, components::*,
+    action_types::*, components::*, resources::GameRng,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
@@ -66,6 +66,7 @@ pub fn arbitration_system(
     flee_out: Res<FleeIntents>,
     wander_out: Res<WanderIntents>,
     mut queue: ResMut<ActionQueue>,
+    mut rng: ResMut<GameRng>,
 ) {
     let mut all: Vec<(Entity, u32, f32, ActionKindV3)> = Vec::new();
     all.extend(chase_out.0.iter().cloned());
@@ -74,7 +75,7 @@ pub fn arbitration_system(
 
     // 按 priority 降序，相同 priority 随机
     all.sort_by(|(_, pa, _, _), (_, pb, _, _)| {
-        pb.cmp(pa).then_with(|| dungeon_core::global::rand_u8().cmp(&dungeon_core::global::rand_u8()))
+        pb.cmp(pa).then_with(|| rng.random_range(0, 255).cmp(&rng.random_range(0, 255)))
     });
 
     for (entity, _priority, av, kind) in &all {

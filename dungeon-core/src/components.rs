@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 pub type RgbColor = (u8, u8, u8);
@@ -21,15 +22,16 @@ pub struct LootEntry {
 
 impl LootTable {
     /// 掷骰决定掉落物，返回掉落的 ItemStack 列表
-    pub fn roll(&self) -> Vec<crate::items::ItemStack> {
+    pub fn roll(&self, rng: &mut impl Rng) -> Vec<crate::items::ItemStack> {
+        use rand::RngExt;
         let mut results = Vec::new();
         for entry in &self.entries {
-            if rand::random::<f32>() < entry.chance {
+            if rng.random_range(0.0..1.0) < entry.chance {
                 let count = if entry.min_count == entry.max_count {
                     entry.min_count
                 } else {
                     let range = entry.max_count - entry.min_count + 1;
-                    entry.min_count + (rand::random::<u32>() % range)
+                    entry.min_count + (rng.random_range(0u32..range))
                 };
                 if count > 0 {
                     results.push(crate::items::ItemStack::new(entry.item_id, count));
