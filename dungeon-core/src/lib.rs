@@ -246,6 +246,7 @@ impl Map {
         self.carve_expand(rng, seed.wrapping_add(150));
         self.generate_stalactites(rng, seed.wrapping_add(200));
         self.ensure_connectivity(rng, seed.wrapping_add(300));
+        self.ensure_spawn_accessible(rng, seed.wrapping_add(350));
     }
 
     /// 用噪声在水域放置深水种子 → 元胞扩散（75% 浅水 / 25% 深水）
@@ -377,6 +378,54 @@ impl Map {
         }
     }
 
+    /// 确保出生点不会被封闭在墙壁中。
+    /// 如果出生点 8 方向都没有可行走格，就用醉汉游走凿一条路出去。
+    pub fn ensure_spawn_accessible(&mut self, _rng: &mut impl Rng, seed: u64) {
+        use rand::{RngExt, SeedableRng};
+        if self.rooms.is_empty() { return; }
+        let (sx, sy) = self.rooms[0].center();
+        // 检查 8 方向是否有 walkable
+        for dy in -1isize..=1 {
+            for dx in -1isize..=1 {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = sx.wrapping_add_signed(dx);
+                let ny = sy.wrapping_add_signed(dy);
+                if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() {
+                    return; // 已经有出口
+                }
+            }
+        }
+        // 被困住了 → 醉汉游走
+        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
+        let (mut cx, mut cy) = (sx as isize, sy as isize);
+        for _ in 0..100 {
+            let dx = rng2.random_range(-1i32..2) as isize;
+            let dy = rng2.random_range(-1i32..2) as isize;
+            if dx == 0 && dy == 0 { continue; }
+            cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
+            cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
+            let (ux, uy) = (cx as usize, cy as usize);
+            if !self.tiles[uy][ux].walkable() {
+                self.tiles[uy][ux] = Tile::Floor;
+            }
+            // 一旦打通就停止
+            if ux.abs_diff(sx) + uy.abs_diff(sy) > 3 {
+                // 检查当前点是否已经有通路
+                let mut free = false;
+                for dy in -1isize..=1 {
+                    for dx in -1isize..=1 {
+                        let nx = ux.wrapping_add_signed(dx);
+                        let ny = uy.wrapping_add_signed(dy);
+                        if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() && (nx != sx || ny != sy) {
+                            free = true;
+                        }
+                    }
+                }
+                if free { break; }
+            }
+        }
+    }
+
     // ── 工具函数 ──
 
     /// 统计地图中某种 tile 的数量
@@ -451,7 +500,7 @@ impl Map {
                         }
                     }
                 }
-                if region.len() >= 20 { regions.push(region); }
+                if region.len() >= 6 { regions.push(region); }
             }
         }
         regions.sort_by(|a, b| b.len().cmp(&a.len()));
@@ -485,7 +534,7 @@ impl Map {
                 }
 
                 // 过滤过小区域（避免玩家卡在 3×3 隔间里）
-                if region.len() >= 20 {
+                if region.len() >= 6 {
                     regions.push(region);
                 }
             }
