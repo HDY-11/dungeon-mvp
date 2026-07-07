@@ -157,7 +157,6 @@ impl Stats {
 #[derive(Clone, Debug)]
 pub enum SkillKind {
     Heal { amount: i32 },
-    Firebolt { damage: i32 },
     Shield { def_boost: i32, duration: i32 },
     Berserk { atk_boost: i32, duration: i32 },
 }
@@ -185,7 +184,7 @@ impl PlayerClass {
     pub fn can_cast(&self, skill: &Skill) -> bool {
         match self {
             PlayerClass::Warrior => matches!(skill.kind, SkillKind::Shield { .. } | SkillKind::Berserk { .. }),
-            PlayerClass::Mage => matches!(skill.kind, SkillKind::Firebolt { .. }),
+            PlayerClass::Mage => matches!(skill.kind, SkillKind::Shield { .. } | SkillKind::Berserk { .. }),
             PlayerClass::Priest => matches!(skill.kind, SkillKind::Heal { .. } | SkillKind::Shield { .. }),
         }
     }
@@ -201,7 +200,8 @@ impl PlayerClass {
                 Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
             ],
             PlayerClass::Mage => vec![
-                Skill { name: "火球", key: '1', cost_mp: 10, description: "对邻接敌人造成15伤害", kind: SkillKind::Firebolt { damage: 15 } },
+                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
+                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
             ],
             PlayerClass::Priest => vec![
                 Skill { name: "治愈", key: '1', cost_mp: 6, description: "HP+15", kind: SkillKind::Heal { amount: 15 } },

@@ -255,41 +255,6 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
         if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.mp -= cost_mp; }
     }
     match skill_kind {
-        dungeon_core::SkillKind::Firebolt { damage } => {
-            let (pp, magic_bonus, crit_rate, crit_dmg);
-            {
-                pp = world.query::<(&Player, &Position)>().iter(world).next().map(|(_, p)| (p.x, p.y));
-                let stats = world.get::<Stats>(entity);
-                magic_bonus = stats.map(|s| (s.magic_mastery as f32 * 0.5) as i32).unwrap_or(0);
-                crit_rate = stats.map(|s| s.crit_rate).unwrap_or(0.0);
-                crit_dmg = stats.map(|s| s.crit_damage).unwrap_or(0.0);
-            }
-            let mut hits: Vec<(Entity, i32)> = Vec::new();
-            let mut hit_any = false;
-            {
-                for (me, mut ms, mp, _mn) in world.query::<(Entity, &mut Stats, &Position, &EntityName)>().iter_mut(world) {
-                    if let Some((px, py)) = pp {
-                        if mp.x.abs_diff(px) + mp.y.abs_diff(py) <= 1 {
-                            let is_crit = crit_rate > rand::random::<f32>();
-                            let mut dmg = (damage + magic_bonus - ms.defense as i32).max(1);
-                            if is_crit { dmg = (dmg as f32 * (1.0 + crit_dmg)).round() as i32; }
-                            ms.hp -= dmg;
-                            hits.push((me, dmg));
-                            hit_any = true;
-                        }
-                    }
-                }
-            }
-            {
-                for (me, dmg) in &hits {
-                    let name = world.get::<EntityName>(*me).map(|n| n.0.clone()).unwrap_or("怪物".into());
-                    let hp = world.get::<Stats>(*me).map(|s| s.hp).unwrap_or(0);
-                    world.resource_mut::<EventLog>().push(format!("火球击中 {}！{}伤", name, dmg));
-                    if hp <= 0 { world.entity_mut(*me).despawn(); }
-                }
-                if !hit_any { world.resource_mut::<EventLog>().push(String::from("附近没有敌人")); }
-            }
-        }
         dungeon_core::SkillKind::Heal { amount } => {
             if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.hp = (stats.hp + amount).min(stats.max_hp); }
             world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP", skill_name, amount));
