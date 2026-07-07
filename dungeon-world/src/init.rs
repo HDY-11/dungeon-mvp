@@ -78,7 +78,7 @@ pub fn setup_world() -> World {
             cmd.insert(CanWait::new(0));
         }
 
-    {
+    let (stairs_x, stairs_y) = {
         let m = world.resource::<Map>();
         let (spx, spy) = m.rooms[0].center();
         let (sx, sy) = m.rooms.iter()
@@ -87,6 +87,13 @@ pub fn setup_world() -> World {
             .map(|(p, _)| p)
             .unwrap_or(m.rooms[0].center());
         world.spawn((Stairs, Position { x: sx, y: sy }, Renderable { glyph: '>', color: (0, 255, 0) }));
+        (sx, sy)
+    };
+    // 确保楼梯与出生点连通
+    {
+        let (spx, spy) = world.resource::<Map>().rooms[0].center();
+        let mut map = world.resource_mut::<Map>();
+        map.ensure_connection_between(&mut rng, (spx, spy), (stairs_x, stairs_y));
     }
 
     // ── 地面物品（使用房间中心位置）──
@@ -157,6 +164,13 @@ pub fn descend(world: &mut World) {
     };
     w.spawn((Stairs, Position { x: stairs_pos.0, y: stairs_pos.1 },
         Renderable { glyph: '>', color: (0, 255, 0) }));
+
+    // 确保楼梯与出生点连通
+    {
+        let (spx, spy) = w.resource::<Map>().rooms[0].center();
+        let mut map = w.resource_mut::<Map>();
+        map.ensure_connection_between(&mut rng, (spx, spy), (stairs_pos.0, stairs_pos.1));
+    }
 
     // ── 噪声+元胞生成怪物（楼层 f）────────────
     let map_tiles = w.resource::<Map>().tiles;

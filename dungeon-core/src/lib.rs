@@ -424,6 +424,49 @@ impl Map {
         }
     }
 
+    /// 确保 from 到 to 之间有 walkable 路径。
+    /// 若无路径，用加权醉汉游走从 from 向 to 方向挖掘。
+    /// 每步 70% 概率向目标方向走（signum），30% 随机。
+    pub fn ensure_connection_between(&mut self, rng: &mut impl Rng, from: (usize, usize), to: (usize, usize)) {
+        use rand::RngExt;
+        if self.has_path_between(from, to) { return; }
+
+        let (mut cx, mut cy) = (from.0 as isize, from.1 as isize);
+        let (tx, ty) = (to.0 as isize, to.1 as isize);
+        for _ in 0..500 {
+            if (cx - tx).abs() + (cy - ty).abs() < 3 { break; }
+            let dx = if rng.random_range(0..100) < 70 { (tx - cx).signum() } else { rng.random_range(-1i32..2) as isize };
+            let dy = if rng.random_range(0..100) < 70 { (ty - cy).signum() } else { rng.random_range(-1i32..2) as isize };
+            if dx == 0 && dy == 0 { continue; }
+            cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
+            cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
+            let (ux, uy) = (cx as usize, cy as usize);
+            if !self.tiles[uy][ux].walkable() {
+                self.tiles[uy][ux] = Tile::Floor;
+            }
+        }
+    }
+
+    /// BFS 检查 from 到 to 是否有 walkable 路径
+    pub fn has_path_between(&self, from: (usize, usize), to: (usize, usize)) -> bool {
+        if !self.tiles[from.1][from.0].walkable() || !self.tiles[to.1][to.0].walkable() {
+            return false;
+        }
+        let mut visited = [[false; MAP_WIDTH]; MAP_HEIGHT];
+        let mut stack = vec![from];
+        while let Some((x, y)) = stack.pop() {
+            if (x, y) == to { return true; }
+            if visited[y][x] { continue; }
+            visited[y][x] = true;
+            for (ny, nx) in [(y.wrapping_sub(1), x), (y + 1, x), (y, x.wrapping_sub(1)), (y, x + 1)] {
+                if nx < MAP_WIDTH && ny < MAP_HEIGHT && !visited[ny][nx] && self.tiles[ny][nx].walkable() {
+                    stack.push((nx, ny));
+                }
+            }
+        }
+        false
+    }
+
     // ── 工具函数 ──
 
     /// 统计地图中某种 tile 的数量
