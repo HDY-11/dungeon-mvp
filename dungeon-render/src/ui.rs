@@ -70,6 +70,20 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let cam_y = (py.saturating_sub(vh / 2)).min(MAP_HEIGHT.saturating_sub(vh));
 
     let renderables = collect_renderables(world);
+
+    /// 将颜色降饱和+变暗（灰色滤镜）
+    fn dim(c: u8, factor: f32) -> u8 {
+        (c as f32 * (1.0 - factor) + 96.0 * factor) as u8
+    }
+    fn dim_tile(tile: dungeon_core::Tile) -> (Color, Color) {
+        let (r, g, b) = tile.fg_color();
+        let fg = Color::Rgb(dim(r, 0.55), dim(g, 0.55), dim(b, 0.55));
+        let bg = tile.bg_color().map(|(r, g, b)|
+            Color::Rgb(dim(r, 0.7), dim(g, 0.7), dim(b, 0.7))
+        ).unwrap_or(Color::Reset);
+        (fg, bg)
+    }
+
     // (glyph, fg, bg)
     let mut lines: Vec<Vec<(char, Color, Color)>> = Vec::with_capacity(vh);
     for vy in 0..vh {
@@ -85,7 +99,8 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
                 let bg = tile.bg_color().map(|(r, g, b)| Color::Rgb(r, g, b)).unwrap_or(Color::Reset);
                 row.push((tile.glyph(), fg, bg));
             } else if explored[my][mx] {
-                row.push((tile.glyph(), Color::DarkGray, Color::Reset));
+                let (fg, bg) = dim_tile(tile);
+                row.push((tile.glyph(), fg, bg));
             } else {
                 row.push((' ', Color::DarkGray, Color::Reset));
             }
@@ -93,11 +108,16 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         lines.push(row);
     }
     for &(ex, ey, glyph, (r, g, b)) in &renderables {
-        if player_visible.contains(&(ex, ey))
-            && ey >= cam_y && ey < cam_y + vh
+        if ey >= cam_y && ey < cam_y + vh
             && ex >= cam_x && ex < cam_x + vw
         {
-            lines[ey - cam_y][ex - cam_x] = (glyph, renderable_color((r, g, b)), Color::Reset);
+            let (idx, jdx) = (ey - cam_y, ex - cam_x);
+            let bg = lines[idx][jdx].2;
+            if player_visible.contains(&(ex, ey)) {
+                lines[idx][jdx] = (glyph, renderable_color((r, g, b)), bg);
+            } else if explored[ey][ex] {
+                lines[idx][jdx] = (glyph, Color::Rgb(dim(r, 0.55), dim(g, 0.55), dim(b, 0.55)), bg);
+            }
         }
     }
     for &(mx, my, glyph, _) in &visible_mem {
@@ -105,7 +125,8 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             && my >= cam_y && my < cam_y + vh
             && mx >= cam_x && mx < cam_x + vw
         {
-            lines[my - cam_y][mx - cam_x] = (glyph, Color::DarkGray, Color::Reset);
+            let (idx, jdx) = (my - cam_y, mx - cam_x);
+            lines[idx][jdx] = (glyph, Color::Rgb(dim(160, 0.5), dim(160, 0.5), dim(160, 0.5)), lines[idx][jdx].2);
         }
     }
     let styled_lines: Vec<Line> = lines.into_iter()
