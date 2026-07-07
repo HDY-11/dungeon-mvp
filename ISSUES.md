@@ -218,19 +218,19 @@ core ──→ action ──→ world
 
 ---
 
-### 🔴 I3 — 火球技能击杀无经验/无掉落，且会伤害玩家自身（修复方式：删除火球技能）
+### ✅ I3 — 火球技能击杀无经验/无掉落，且会伤害玩家自身（已修复 — 删除火球技能）
 
 **问题：**
 1. `execute_skill::Firebolt` 击杀后直接 `world.entity_mut(*me).despawn()`，未触发 `PendingExp` 和 LootTable。
 2. 查询 `(Entity, &mut Stats, &Position, &EntityName)` 未排除玩家实体——玩家站在怪物旁释放火球时自己也会被击中并扣血 [execute.rs:218-221]。
 
-**建议方向：** 删除 Firebolt 技能条目和相关代码。当前法师职业只有火球一个技能，删除后需同时调整 `PlayerClass::Mage::skills()` 或为法师补充其他技能。
+**修复：** 删除 Firebolt 技能条目和相关代码。法师职业改为护盾+狂暴（与战士共享技能组）。
 
 **位置：** `dungeon-action/src/execute.rs:200-241`、`dungeon-core/src/components.rs:131-145`
 
 ---
 
-### 🔴 I4 — 装备卸载回滚不完整（与 DESIGN.md 第 11 条矛盾）
+### ✅ I4 — 装备卸载回滚不完整（与 DESIGN.md 第 11 条矛盾）
 
 **问题：** DESIGN.md 要求原子语义"全部成功或全部失败"。但 `inv.add()` 是"尽可能添加"——如果背包只剩 1 格但装备 `count` 为 1 则不会出问题，但如果 count > 1（虽然当前装备都是 1，但不安全）：
 
@@ -269,7 +269,7 @@ if leftover > 0 {
 
 ---
 
-### 🟡 I7 — PendingLevelUp 悬空（修复方式：删除此机制）
+### ✅ I7 — PendingLevelUp 悬空（已修复 — 删除此机制）
 
 **问题：** `PendingLevelUp { points: u32 }` 在升级时累积 3 点 [systems.rs:36]，但代码中没有"分配属性点"的任何路径。玩家实际无法使用这 3 个点数。
 
@@ -299,7 +299,7 @@ if leftover > 0 {
 
 ---
 
-### 🔴 G2/G3 — 死后游戏仍推进
+### ✅ G2/G3 — 死后游戏仍推进（已修复）
 
 **问题：** `TurnManager.game_over = true` 后，主循环仍调用 `advance_and_settle`：
 
