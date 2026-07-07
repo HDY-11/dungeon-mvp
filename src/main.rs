@@ -88,7 +88,7 @@ fn run(
             Err(mpsc::TryRecvError::Disconnected) => break Ok(()),
         };
 
-        if has_action {
+        if has_action && !world.resource::<TurnManager>().game_over {
             advance_and_settle(world);
         }
 
@@ -132,10 +132,14 @@ fn process_key(
         KeyCode::Char('3') => Ok(handle_skill(world, 2)),
         KeyCode::Char('4') => Ok(handle_skill(world, 3)),
         KeyCode::Char('q') | KeyCode::Esc => {
-            modal_flag.store(true, Ordering::Relaxed);
-            let confirmed = open_modal(terminal, "确认退出？");
-            modal_flag.store(false, Ordering::Relaxed);
-            if confirmed { world.resource_mut::<TurnManager>().wants_quit = true; }
+            if world.resource::<TurnManager>().game_over {
+                world.resource_mut::<TurnManager>().wants_quit = true;
+            } else {
+                modal_flag.store(true, Ordering::Relaxed);
+                let confirmed = open_modal(terminal, "确认退出？");
+                modal_flag.store(false, Ordering::Relaxed);
+                if confirmed { world.resource_mut::<TurnManager>().wants_quit = true; }
+            }
             Ok(false)
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
