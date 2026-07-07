@@ -47,6 +47,24 @@ pub fn advance_action_queue(world: &mut World) -> f32 {
     dist
 }
 
+/// 检查 (x,y) 能否走到 (x+dx, y+dy)，对角线额外验证不穿墙角
+fn can_move_to(map: &Map, occ: &OccupancyMap, x: usize, y: usize, dx: isize, dy: isize) -> bool {
+    let nx = x.wrapping_add_signed(dx);
+    let ny = y.wrapping_add_signed(dy);
+    if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return false; }
+    if !map.tiles[ny][nx].walkable() { return false; }
+    if occ.is_occupied(nx, ny) { return false; }
+    // 对角移动需确保不穿墙角
+    if dx != 0 && dy != 0 {
+        let cx1 = x.wrapping_add_signed(dx);
+        let cx2 = y.wrapping_add_signed(dy);
+        let clear1 = cx1 < MAP_WIDTH && map.tiles[y][cx1].walkable() && !occ.is_occupied(cx1, y);
+        let clear2 = cx2 < MAP_HEIGHT && map.tiles[cx2][x].walkable() && !occ.is_occupied(x, cx2);
+        if !clear1 && !clear2 { return false; }
+    }
+    true
+}
+
 fn check_condition(world: &World, entry: &ActionEntry) -> bool {
     match &entry.kind {
         ActionKindV3::Chase => {
@@ -64,15 +82,9 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
         ActionKindV3::Wander | ActionKindV3::Wait => true,
         ActionKindV3::Move { dx, dy } => {
             if let Some(pos) = world.get::<Position>(entry.entity) {
-                let nx = pos.x.wrapping_add_signed(*dx);
-                let ny = pos.y.wrapping_add_signed(*dy);
-                if nx < MAP_WIDTH && ny < MAP_HEIGHT {
-                    let map = world.resource::<Map>();
-                    if !map.tiles[ny][nx].walkable() { return false; }
-                    let occ = world.resource::<OccupancyMap>();
-                    if occ.is_occupied(nx, ny) { return false; }
-                    true
-                } else { false }
+                let map = world.resource::<Map>();
+                let occ = world.resource::<OccupancyMap>();
+                can_move_to(map, occ, pos.x, pos.y, *dx, *dy)
             } else { false }
         }
         ActionKindV3::Attack { target } => {
@@ -99,7 +111,8 @@ fn execute_chase(world: &mut World, entity: Entity) {
     let player_pos = world.get::<Position>(player_entity).map(|p| (p.x, p.y));
     let Some((px, py)) = player_pos else { return };
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
-    if pos.0.abs_diff(px) + pos.1.abs_diff(py) <= 1 {
+    // 邻接时攻击（含对角）
+    if pos.0.abs_diff(px) <= 1 && pos.1.abs_diff(py) <= 1 && (pos.0 != px || pos.1 != py) {
         let monster_atk = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
         let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>)>().iter(world).next()
             .map(|(ps, inv, eq, buffs)| ops::effective_defense(ps, inv, eq, buffs) as i32)
@@ -111,21 +124,17 @@ fn execute_chase(world: &mut World, entity: Entity) {
     } else {
         let dx = if px > pos.0 { 1 } else if px < pos.0 { -1 } else { 0 };
         let dy = if py > pos.1 { 1 } else if py < pos.1 { -1 } else { 0 };
-        let attempts = if px.abs_diff(pos.0) >= py.abs_diff(pos.1) {
-            vec![(dx, 0), (0, dy)]
-        } else {
-            vec![(0, dy), (dx, 0)]
+        let attempts = [(dx, 0), (0, dy), (dx, dy)];
+        let target = {
+            let map = world.resource::<Map>();
+            let occ = world.resource::<OccupancyMap>();
+            attempts.iter().find_map(|&(ndx, ndy)|
+                can_move_to(map, occ, pos.0, pos.1, ndx, ndy)
+                    .then_some((pos.0.wrapping_add_signed(ndx), pos.1.wrapping_add_signed(ndy)))
+            )
         };
-        for (ndx, ndy) in attempts {
-            let nx = pos.0.wrapping_add_signed(ndx);
-            let ny = pos.1.wrapping_add_signed(ndy);
-            if nx < MAP_WIDTH && ny < MAP_HEIGHT
-                && world.resource::<Map>().tiles[ny][nx].walkable()
-                && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
-            {
-                if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
-                break;
-            }
+        if let Some((nx, ny)) = target {
+            if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
         }
     }
 }
@@ -134,38 +143,44 @@ fn execute_flee(world: &mut World, entity: Entity) {
     let player_pos = world.query::<(&Player, &Position)>().iter(world).next().map(|(_, p)| (p.x, p.y));
     let Some((px, py)) = player_pos else { return };
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
-    let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-    let mut best: Option<(usize, usize)> = None;
-    let mut best_dist = 0usize;
-    for &(dx, dy) in &dirs {
-        let nx = pos.0.wrapping_add_signed(dx);
-        let ny = pos.1.wrapping_add_signed(dy);
-        if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && world.resource::<Map>().tiles[ny][nx].walkable()
-            && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
-        {
+    let dirs: [(isize, isize); 8] = [
+        (0, -1), (0, 1), (-1, 0), (1, 0),
+        (-1, -1), (1, -1), (-1, 1), (1, 1),
+    ];
+    let best = {
+        let map = world.resource::<Map>();
+        let occ = world.resource::<OccupancyMap>();
+        let mut best: Option<(usize, usize)> = None;
+        let mut best_dist = 0usize;
+        for &(dx, dy) in &dirs {
+            if !can_move_to(map, occ, pos.0, pos.1, dx, dy) { continue; }
+            let nx = pos.0.wrapping_add_signed(dx);
+            let ny = pos.1.wrapping_add_signed(dy);
             let d = nx.abs_diff(px) + ny.abs_diff(py);
             if d > best_dist { best_dist = d; best = Some((nx, ny)); }
         }
-    }
+        best
+    };
     if let Some((nx, ny)) = best {
         if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
     }
 }
 
 fn execute_wander(world: &mut World, entity: Entity) {
-    let dirs: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-    let r = (world.resource::<FloorNumber>().0 as usize + world.query::<(Entity, &Monster)>().iter(world).count()) % 4;
+    let dirs: [(isize, isize); 8] = [
+        (0, -1), (0, 1), (-1, 0), (1, 0),
+        (-1, -1), (1, -1), (-1, 1), (1, 1),
+    ];
+    let r = (world.resource::<FloorNumber>().0 as usize + world.query::<(Entity, &Monster)>().iter(world).count()) % 8;
     let (dx, dy) = dirs[r];
-    if let Some(pos) = world.get::<Position>(entity) {
-        let nx = pos.x.wrapping_add_signed(dx);
-        let ny = pos.y.wrapping_add_signed(dy);
-        if nx < MAP_WIDTH && ny < MAP_HEIGHT
-            && world.resource::<Map>().tiles[ny][nx].walkable()
-            && !world.resource::<OccupancyMap>().is_occupied(nx, ny)
-        {
-            if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
-        }
+    let target = if let Some(pos) = world.get::<Position>(entity) {
+        let map = world.resource::<Map>();
+        let occ = world.resource::<OccupancyMap>();
+        can_move_to(map, occ, pos.x, pos.y, dx, dy)
+            .then_some((pos.x.wrapping_add_signed(dx), pos.y.wrapping_add_signed(dy)))
+    } else { None };
+    if let Some((nx, ny)) = target {
+        if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
     }
 }
 
@@ -173,12 +188,11 @@ fn execute_wait(_entity: Entity) {}
 
 fn execute_player_move(world: &mut World, entity: Entity, dx: isize, dy: isize) {
     let (nx, ny) = {
-        let p = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
-        let nx = p.0.wrapping_add_signed(dx);
-        let ny = p.1.wrapping_add_signed(dy);
-        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return; }
-        if !world.resource::<Map>().tiles[ny][nx].walkable() { return; }
-        (nx, ny)
+        let ppos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
+        let map = world.resource::<Map>();
+        let occ = world.resource::<OccupancyMap>();
+        if !can_move_to(map, occ, ppos.0, ppos.1, dx, dy) { return; }
+        (ppos.0.wrapping_add_signed(dx), ppos.1.wrapping_add_signed(dy))
     };
     if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
 }

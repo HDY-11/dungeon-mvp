@@ -118,10 +118,14 @@ fn process_key(
     world: &mut World,
 ) -> io::Result<bool> {
     match code {
-        KeyCode::Up    => Ok(handle_player_direction(world, 0, -1)),
-        KeyCode::Down  => Ok(handle_player_direction(world, 0, 1)),
-        KeyCode::Left  => Ok(handle_player_direction(world, -1, 0)),
-        KeyCode::Right => Ok(handle_player_direction(world, 1, 0)),
+        KeyCode::Up      => Ok(handle_player_direction(world, 0, -1)),
+        KeyCode::Down    => Ok(handle_player_direction(world, 0, 1)),
+        KeyCode::Left    => Ok(handle_player_direction(world, -1, 0)),
+        KeyCode::Right   => Ok(handle_player_direction(world, 1, 0)),
+        KeyCode::Home    => Ok(handle_player_direction(world, -1, -1)),
+        KeyCode::End     => Ok(handle_player_direction(world, -1, 1)),
+        KeyCode::PageUp  => Ok(handle_player_direction(world, 1, -1)),
+        KeyCode::PageDown => Ok(handle_player_direction(world, 1, 1)),
         KeyCode::Char('.') => Ok(handle_wait(world)),
         KeyCode::Char('1') => Ok(handle_skill(world, 0)),
         KeyCode::Char('2') => Ok(handle_skill(world, 1)),
