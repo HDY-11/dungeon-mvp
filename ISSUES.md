@@ -302,6 +302,33 @@ let item_count = room_centers.len().min(ground_item_ids.len());
 
 ---
 
+### 🟡 I17 — 大量 `.unwrap()` 调用（未处理错误路径约 35 处）
+
+**问题：** 整个代码库的生产代码中散布着约 **35 处 `.unwrap()` 调用**，分布在 8 个文件中。任何一处 panic 都会导致整个游戏崩溃（无错误恢复机制）。
+
+**分类统计：**
+
+| 模式 | 数量 | 代表位置 | 风险 |
+|------|------|---------|------|
+| `try_query().unwrap()` | ~25 | ops.rs、ui.rs、inventory.rs、persist.rs | 理论上安全（组件提前注册），但违背"失败路径应被显式处理"的原则 |
+| `get::<T>(entity).unwrap()` | ~4 | execute.rs（Inventory/Equipment on attacker） | 若实体缺少组件则 panic；攻击者必有装备/背包的假设目前成立，但扩展后易破 |
+| `ItemRegistry::global().get(id).unwrap()` | ~3 | init.rs（物品生成） | items.json 若缺 id 直接 panic |
+| `query().next().unwrap()` | ~1 | init.rs descend | rooms 为空或玩家不存在时 panic |
+| 其他杂项 | ~3 | action_types.rs f32 partial_cmp、inventory.rs slot.take() | 低风险但无信息量 |
+
+**根因：** 项目早期使用 `.unwrap()` 作为"快速原型"手段。随着代码增长的稳定，这些临时桩一直没有被替换为有信息量的错误处理。
+
+**建议修复方向（逐步）：**
+
+1. `try_query().unwrap()` → `try_query().expect("component X registered at init")` — 零成本改动，崩溃时提供调试信息
+2. `get::<T>(entity).unwrap()` → 改用 `if let Some(t) = world.get::<T>(entity)` 或 `expect()`
+3. `ItemRegistry::global().get(id).unwrap()` → `expect("item {id} exists in registry")` 或 `unwrap_or_else` 提供应急默认值
+4. 关键路径（execute_attack、descend）中的 `.unwrap()` 应优先处理
+
+**优先级说明：** 标记为 🟡 而非 🔴 是因为大部分 unwrap 在当前架构下不会实际触发（组件已注册、物品 ID 已定义）。但它们是**定时炸弹**——任何组件注册顺序变化或 items.json 疏漏都会无声地转为 panic。长远目标是**零 unwrap**（测试代码除外）。
+
+---
+
 ## 四、游戏逻辑层面（Game Logic）
 
 ---
