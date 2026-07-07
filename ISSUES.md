@@ -250,6 +250,62 @@
 
 ---
 
+### 🟡 G9 — 仅1个连通房间时玩家出生在楼梯上（重合）
+
+**问题：** 下楼后 `detect_cave_regions` 可能只检测出 1 个连通区域（尤其深层地图经水体/钟乳石/连通性处理后）。此时 `setup_world` 和 `descend` 中玩家和楼梯均使用 `rooms[0].center()`。`max_by_key` 在只有 1 个房间时返回自身，结果楼梯和玩家挤在同一格。
+
+**根因链：** terrain-forge 生成 → 水体/钟乳石切割 → ensure_connectivity 连接所有区域 → 只剩 1 个超大连通区 → `detect_cave_regions` 返回 1 个 Room → 玩家和楼梯位置相同。
+
+**用户反馈：** 下到第二层后发现出生在楼梯上，界面显示"房间1"。
+
+**位置：** `dungeon-world/src/init.rs`（stairs_pos 选择逻辑）、`dungeon-world/src/init.rs`（descend 中 stairs_pos 同样逻辑）
+
+**建议修复方向：**
+1. 玩家出生时，5 格范围内不能有其他怪物（怪物生成排除玩家邻域）
+2. 楼梯在玩家 15-25 格外随机生成，而非依赖 `rooms` 列表
+
+### 🟡 G10 — 怪物阻挡楼梯/物品（怪物生成未排除关键位置）
+
+**问题：** `generate_monster_population` 基于噪声密度层 + 元胞扩散在全地图 walkable 格上放置怪物，但**不排除楼梯位置和物品位置**。下楼后：
+
+1. **楼梯被怪物堵住**：怪物生成在楼梯格 → `OccupancyMap` 标记该格被占用（怪物没有 Stairs/ItemPickup 组件，不会被 `rebuild_occupancy` 过滤）→ 玩家走开后无法走回楼梯 → 表现为"楼梯不可行走"。
+2. **物品格被怪物堵住**：同���，怪物站在物品上 → `handle_player_direction` 检查 `OccupancyMap` 发现该格有实体且是 Monster → `has_enemy = Some` → 转为攻击而非拾取。
+
+**用户反馈：** 从楼梯上走开后无法走回；有时道具（地面物品）也不能走到上面。
+
+**位置：** `dungeon-core/src/monster_def.rs:generate_monster_population`
+
+**建议修复方向：** `generate_monster_population` 增加排除列表参数（stairs_pos、spawn_pos、ground_item_positions），对应坐标不放置怪物。
+
+---
+
+## 三、实现层面（Implementation）
+
+---
+
+### 🟢 I16 — 仅1个房间时地面物品为0
+
+**问题：** `setup_world` 和 `descend` 中地面物品位置列表通过 `rooms.iter().skip(1)` 获取（跳过出生房间）。若 `rooms.len() == 1`，`skip(1)` 后列表为空，导致 **0 个地面物品**生成。
+
+```rust
+let room_centers: Vec<(usize, usize)> = world.resource::<Map>().rooms.iter().skip(1).map(|r| r.center()).collect();
+let item_count = room_centers.len().min(ground_item_ids.len());
+```
+
+`room_centers.len()` = 0 → `item_count` = 0 → 无物品。
+
+**用户反馈：** 第二层没有生成任何道具。
+
+**位置：** `dungeon-world/src/init.rs:108`（setup_world）、`dungeon-world/src/init.rs:199`（descend）
+
+**建议修复方向：** 当 `rooms.len() == 1` 时，退回到 `rooms[0]` 内部放置物品，但用 `is_away_from_spawn` 或随机偏移避免与出生点/楼梯完全重叠。或直接为单房间场景准备一份备用位置列表。
+
+---
+
+## 四、游戏逻辑层面（Game Logic）
+
+---
+
 ### 🟢 G8 — 水体生成保护距离可能过大（优先级低）
 
 **问题：** `generate_water` 使用 `is_away_from_rooms(x, y, 6)` 保护房间中心不被水体覆盖。曼哈顿距离 6 对于半径 4-6 的圆形/菱形房间可能过大，导致水体偏少。
