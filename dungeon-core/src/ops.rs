@@ -5,7 +5,7 @@
 
 use crate::{
     components::*, items::*, resources::*,
-    Map, Tile, MAP_HEIGHT, MAP_WIDTH,
+    Tile, MAP_HEIGHT, MAP_WIDTH,
 };
 use bevy_ecs::prelude::*;
 use crate::RgbColor;
@@ -91,9 +91,9 @@ pub fn update_map_memory(world: &mut World) {
     for &(x, y) in &visible { memory.explored[y][x] = true; }
 }
 
-/// 更新可见实体记忆（记录视野内的怪物实体，用于视野外灰色显示）。
-/// 实现遗忘延迟：实体离开视野后 VISIBLE_FORGET_DELAY 帧内仍保留记忆。
-/// 不记忆 Player 自身和 ItemPickup。
+/// 更新可见实体记忆。
+/// 记录视野内所有非 Player 实体（怪物、物品、楼梯等）的最后已知位置。
+/// 实体离开视野后永久保留记忆（灰色显示），直到再次被看到或实体被销毁。
 pub fn update_visible_memory(world: &mut World) {
     let player_visible: std::collections::HashSet<(usize, usize)>;
     let entities: Vec<(Entity, usize, usize, char, (u8, u8, u8))>;
@@ -104,48 +104,29 @@ pub fn update_visible_memory(world: &mut World) {
                 .map(|(_, v)| v.visible_tiles.iter().copied().collect())
                 .unwrap_or_default()
         };
-        // 只记忆怪物（Monster 组件），排除 Player、ItemPickup
+        // 记录所有非 Player 可见实体（怪物/物品/楼梯……）
         entities = {
-            let mut q = world.query::<(Entity, &Monster, &Position, &Renderable)>();
+            let mut q = world.query::<(Entity, Option<&Player>, &Position, &Renderable)>();
             q.iter(world)
-                .filter(|(_, _, pos, _)| player_visible.contains(&(pos.x, pos.y)))
+                .filter(|(_, is_player, pos, _)| is_player.is_none() && player_visible.contains(&(pos.x, pos.y)))
                 .map(|(e, _, pos, rend)| (e, pos.x, pos.y, rend.glyph, rend.color))
                 .collect()
         };
     }
+    // 当前仍存活的实体（用于剔除已销毁的）
     let alive: std::collections::HashSet<Entity> = {
         let mut q = world.query::<(Entity,)>();
         q.iter(world).map(|(e,)| e).collect()
     };
     let mut memory = world.resource_mut::<VisibleMemory>();
 
-    // 当前帧可见的怪物：重置遗忘计时器 + 更新位置
-    let seen_this_frame: std::collections::HashSet<Entity> = entities.iter().map(|(e, _, _, _, _)| *e).collect();
+    // 更新当前帧可见的实体位置/外观
     for &(entity, x, y, glyph, color) in &entities {
         memory.entries.insert(entity, (x, y, glyph, color));
-        memory.forget_timers.insert(entity, VISIBLE_FORGET_DELAY);
     }
 
-    // Step 1: 递减遗忘计时器（仅对当前帧未见的实体）
-    for (&entity, timer) in &mut memory.forget_timers {
-        if !seen_this_frame.contains(&entity) && *timer > 0 {
-            *timer -= 1;
-        }
-    }
-
-    // Step 2: 移除已死亡或计时归零的实体
-    let to_remove: Vec<Entity> = memory.entries.iter()
-        .filter(|&(&entity, _)| {
-            if !alive.contains(&entity) { return true; }
-            if seen_this_frame.contains(&entity) { return false; }
-            memory.forget_timers.get(&entity).map_or(true, |&t| t == 0)
-        })
-        .map(|(&e, _)| e)
-        .collect();
-    for &entity in &to_remove {
-        memory.entries.remove(&entity);
-        memory.forget_timers.remove(&entity);
-    }
+    // 移除已销毁的实体（死亡/拾取/下楼被清空）
+    memory.entries.retain(|&e, _| alive.contains(&e));
 }
 
 // ── 碰撞图 ─────────────────────────────────────────
