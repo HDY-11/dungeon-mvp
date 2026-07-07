@@ -9,7 +9,7 @@ use dungeon_core::{
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
 use bevy_ecs::prelude::*;
-use rand::SeedableRng;
+use rand::{RngExt, SeedableRng};
 
 /// 创建并初始化游戏世界
 pub fn setup_world() -> World {
@@ -57,12 +57,27 @@ pub fn setup_world() -> World {
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
 
     // ── 概率生成怪物 ────────────────────────────
-    let room_centers: Vec<(usize, usize)> = {
+    let (room_centers, spawn_base) = {
         let m = world.resource::<Map>();
-        m.rooms.iter().skip(1).map(|r| r.center()).collect()
+        let centers: Vec<(usize, usize)> = m.rooms.iter().skip(1).map(|r| r.center()).collect();
+        let (sx, sy) = m.rooms[0].center();
+        (centers, (sx, sy))
     };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), 1, &mut rng);
-    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(12, 1, &mut rng);
+    // 先在房间中心放，不够则找随机可行走格
+    for (i, &kind) in kinds.iter().enumerate() {
+        let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
+            let map_tiles = world.resource::<Map>().tiles;
+            let mut pos = None;
+            for _ in 0..200 {
+                let tx = rng.random_range(3..dungeon_core::MAP_WIDTH - 3);
+                let ty = rng.random_range(3..dungeon_core::MAP_HEIGHT - 3);
+                if map_tiles[ty][tx].walkable() && (tx.abs_diff(spawn_base.0) + ty.abs_diff(spawn_base.1)) > 6 {
+                    pos = Some((tx, ty)); break;
+                }
+            }
+            pos.unwrap_or((10 + i * 3, 10 + i * 3))
+        };
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, 1).agility;
@@ -161,12 +176,26 @@ pub fn descend(world: &mut World) {
         Renderable { glyph: '>', color: (0, 255, 0) }));
 
     // ── 概率生成怪物（楼层 f）──────────────────
-    let room_centers: Vec<(usize, usize)> = {
+    let (room_centers, spawn_base, map) = {
         let m = w.resource::<Map>();
-        m.rooms.iter().skip(1).map(|r| r.center()).collect()
+        let centers: Vec<(usize, usize)> = m.rooms.iter().skip(1).map(|r| r.center()).collect();
+        let (sx, sy) = m.rooms[0].center();
+        let map = m.tiles;
+        (centers, (sx, sy), map)
     };
-    let kinds = dungeon_core::monster_def::roll_monster_kinds(room_centers.len(), f, &mut rng);
-    for (&kind, &(mx, my)) in kinds.iter().zip(room_centers.iter()) {
+    let kinds = dungeon_core::monster_def::roll_monster_kinds(12, f, &mut rng);
+    for (i, &kind) in kinds.iter().enumerate() {
+        let (mx, my) = if let Some(&c) = room_centers.get(i) { c } else {
+            let mut pos = None;
+            for _ in 0..200 {
+                let tx = rng.random_range(3..dungeon_core::MAP_WIDTH - 3);
+                let ty = rng.random_range(3..dungeon_core::MAP_HEIGHT - 3);
+                if map[ty][tx].walkable() && (tx.abs_diff(spawn_base.0) + ty.abs_diff(spawn_base.1)) > 6 {
+                    pos = Some((tx, ty)); break;
+                }
+            }
+            pos.unwrap_or((10 + i * 3, 10 + i * 3))
+        };
             let glyph = dungeon_core::monster_def::monster_glyph(kind);
             let color = dungeon_core::monster_def::monster_color(kind);
             let mon_agi = dungeon_core::monster_def::monster_stats(kind, f).agility;
