@@ -451,7 +451,7 @@ impl Map {
                         }
                     }
                 }
-                if region.len() >= 6 { regions.push(region); }
+                if region.len() >= 20 { regions.push(region); }
             }
         }
         regions.sort_by(|a, b| b.len().cmp(&a.len()));
@@ -484,8 +484,8 @@ impl Map {
                     }
                 }
 
-                // 过滤极小区域（噪声碎片），合并到结果
-                if region.len() >= 6 {
+                // 过滤过小区域（避免玩家卡在 3×3 隔间里）
+                if region.len() >= 20 {
                     regions.push(region);
                 }
             }

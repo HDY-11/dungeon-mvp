@@ -1,5 +1,5 @@
 use dungeon_core::{
-    Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, ItemPickup, Map, MapMemory, Player,
+    Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Monster, Player,
     Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
@@ -33,8 +33,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         let ex = world.resource::<MapMemory>().explored;
         let pp = world.try_query::<(&Player, &Position)>().unwrap().iter(world)
             .next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-        let mc = world.try_query::<(&Position, &Renderable, Option<&ItemPickup>)>().unwrap().iter(world)
-            .filter(|(_, r, item)| r.glyph != '@' && item.is_none()).count();
+        let mc = world.try_query::<(&Monster,)>().unwrap().iter(world).count();
         let rc = world.resource::<Map>().rooms.len();
         let vm: Vec<(usize, usize, char, (u8, u8, u8))> = world.resource::<VisibleMemory>().entries.values().copied().collect();
         (go, pv, ts, ex, pp.0, pp.1, rc, mc, vm)
