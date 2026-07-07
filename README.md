@@ -5,11 +5,9 @@ Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 ## 架构（5 crate 拆分）
 
 ```
-terrain-forge/            ← 程序化地图生成引擎（15 种算法）
-  src/algorithms/           ← room_accretion（Brogue 风格）、cellular、bsp、maze……
-  src/grid.rs              ← Grid<C> 核心：泛型 Cell 特质、BFS 连通区分析
+terrain-forge/            ← 程序化地图生成引擎（被 dungeon-core 使用）
 
-dungeon-core/             ← 纯数据 + 工具函数（无渲染 / 无执行依赖）
+dungeon-core/             ← 纯数据 + 工具函数（被所有其他 crate 依赖）
   action_types.rs          ← 行动系统类型：ActionKindV3、ActionQueue、Reaction、CanMove/Chase/…
   components.rs            ← ECS 组件（Stats, Buffs, Player, Monster, LootTable, …）
   resources.rs             ← ECS 资源（PendingExp, EventLog, VisibleMemory, TurnManager, …）
@@ -23,7 +21,7 @@ dungeon-action/           ← 行动执行逻辑（依赖 core）
   execute.rs               ← advance_action_queue、保活检查、execute_entry（移动/攻击/技能/怪物 AI）
   monster.rs               ← 并行决策 system（chase / flee / wander → arbitration）
   player.rs                ← 玩家 tap-tap 行动处理（direction / wait / skill）
-  tick.rs                  ← 串行编排：advance_until_player_acted + advance_and_settle（旧版兼容）
+  tick.rs                  ← 串行编排：advance_until_player_acted
 
 dungeon-world/            ← 世界生命周期 + 并行调度（依赖 action + core）
   init.rs                  ← setup_world（正式入口）、descend（下楼）
@@ -31,7 +29,7 @@ dungeon-world/            ← 世界生命周期 + 并行调度（依赖 action 
   systems.rs               ← 世界级 ECS System 包装（fov / death / buff / exp）
   tick.rs                  ← 并行 Schedule（advance_and_settle_parallel）
 
-dungeon-render/           ← 渲染层（依赖 core + ratatui）
+dungeon-render/           ← 渲染层（依赖 core + ratatui，**不依赖 world**）
   color.rs                 ← (u8,u8,u8) → ratatui::Color 转换
   timeline.rs              ← build_timeline（行动轴面板）
   ui.rs                    ← render_ui + build_stats_panel（含 VisibleMemory 灰色渲染）
@@ -39,6 +37,16 @@ dungeon-render/           ← 渲染层（依赖 core + ratatui）
 
 src/main.rs               ← 应用层：独立输入线程 + 主循环 + tap-tap + 背包界面
 ```
+
+### 实际依赖链
+
+```
+core ← action ← world
+  ↕
+render（只依赖 core，不依赖 world）
+```
+
+核心 crate 不依赖渲染或世界生命周期，渲染 crate 直接从 ECS World 查询组件。这意味着修改渲染逻辑不需要重新编译其他 crate，但 render 与 core 的组件布局存在隐式耦合。
 
 ## 行动系统 v3
 
@@ -52,36 +60,6 @@ src/main.rs               ← 应用层：独立输入线程 + 主循环 + tap-t
 - **`ActionQueue` 全局单队列**：玩家与怪物混排，按 av 值决定顺序
 - **8 方向移动**：玩家 Home↖ ↑ ↗ PgUp ← → End↙ ↓ ↘ PgDn，怪物 AI 使用 A* 寻路
 - **事件式推进**：`next_event_distance()` → 同步推进 → `pop_ready()` → 保活检查 → 执行
-
-### 行动流程
-
-```
-玩家: tap(预览) → tap(确认) → enqueue_if_absent → advance_until_player_acted
-怪物: 并行 Schedule（chase∥flee∥wander → arbitration）→ enqueue → 等待推进
-
-advance_action_queue():
-  next_event_distance() → 推进所有条目 av_remaining → pop_ready()
-  → 逐个 check_condition() 保活检查 → execute_entry()
-  → 每条目执行后 rebuild_occupancy()（防重叠）
-
-advance_until_player_acted():
-  循环 advance_action_queue 直到玩家行动被消费（或队列空）
-  怪物决策只在每帧开始跑一次（由 Schedule 编排）
-```
-
-### 并行怪物决策（Schedule）
-
-```rust
-Schedule: (
-  chase_decision_system,   // 追击条件检查
-  flee_decision_system,    // 逃跑条件检查
-  wander_decision_system,  // 游荡条件检查（无 chase/flee 时才生成）
-) → arbitration_system     // 合并意图，按优先级入队
-```
-
-三个条件检查并行执行（数据无竞争），各自写入独立的意图缓冲区，仲裁 system 串行合并。
-
-旧串行入口 `run_monster_decision()` 保留兼容。
 
 ### 保活检查
 

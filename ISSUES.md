@@ -90,7 +90,7 @@
 
 ---
 
-### 🟡 D3（旧 P5）— crate 依赖链文档与实际不符
+### ✅ D3（旧 P5）— crate 依赖链文档与实际不符
 
 **问题：** 文档中写的依赖链是 `core → action → world → render`，但实际：
 
@@ -103,6 +103,8 @@ core ──→ action ──→ world
 `render_ui()` 直接从 ECS World 查询组件，而非从 world crate 接收预处理的帧数据。
 
 **影响：** render 和 core 的组件布局隐式耦合——重命名 `Stats.hp` 会导致 render 静默编译失败。但好处是修改渲染逻辑不会触发 world crate 重编译。
+
+**修复：** 更新 README.md — 修正依赖链描述和 crate 划分树，移除冗余的部分。
 
 **位置：** README.md（文档）、`dungeon-render/Cargo.toml`（`dungeon-render` 不依赖 `dungeon-world`）
 
