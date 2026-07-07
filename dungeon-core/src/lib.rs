@@ -245,7 +245,7 @@ impl Map {
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..1000) < 20
-                    && self.is_away_from_spawn(x, y, 8)
+                    && self.is_away_from_rooms(x, y, 6)
                 {
                     self.tiles[y][x] = Tile::DeepWater;
                 }
@@ -370,6 +370,14 @@ impl Map {
     /// 统计地图中某种 tile 的数量
     pub fn count_tile(&self, tile: Tile) -> usize {
         self.tiles.iter().flatten().filter(|&&t| t == tile).count()
+    }
+
+    /// 判断 (x,y) 是否远离所有房间中心（保护楼梯/出生点不被水体覆盖）
+    pub fn is_away_from_rooms(&self, x: usize, y: usize, min_dist: usize) -> bool {
+        self.rooms.iter().all(|r| {
+            let (cx, cy) = r.center();
+            x.abs_diff(cx) + y.abs_diff(cy) >= min_dist
+        })
     }
 
     /// 统计 (x,y) 的 8 邻域中可行走格数量
