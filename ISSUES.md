@@ -144,91 +144,91 @@
 
 ---
 
-### P1 — 保活检查只检查即将执行的条目
+### P1 — 保活检查只检查即将执行的条目 ✅已修复
 
 队列推进时对所有条目做批量保活检查，不满足的立即剔除，防止 Chase/Flee 在等待期间条件已失效却仍留在队列中白耗 AV。
 
-### P3 — 并行 Schedule 每帧重建（Won't Fix）
+### P3 — 并行 Schedule 每帧重建（Won't Fix） ✅已修复
 
 每帧构建开销 <1μs，且保持测试跨 World 兼容，保留现状。
 
-### P6 — action.rs 是空壳模块
+### P6 — action.rs 是空壳模块 ✅已修复
 
 删除 action.rs，所有引用统一到 action_types。
 
-### P9 — VisibleMemory 在视野边缘闪烁
+### P9 — VisibleMemory 在视野边缘闪烁 ✅已修复
 
 加入 VISIBLE_FORGET_DELAY=3 遗忘延迟，避免实体在视野边缘来回移动时闪烁。
 
-### P10 — 存档缺少对 ActionQueue 的序列化
+### P10 — 存档缺少对 ActionQueue 的序列化 ✅已修复
 
 按位置映射保存/恢复队列条目，Attack 条目因 Entity 引用跳过。
 
-### D1 — 三套 RNG 并存，游戏不可复现
+### D1 — 三套 RNG 并存，游戏不可复现 ✅已修复
 
 `GameRng` 成为唯一随机源：新增便捷方法，`LootTable::roll()` 改为接受 `&mut impl Rng`，暴击/游荡/仲裁全部走 `GameRng`，删除线程局部 RNG，种子从硬编码 `0` 改为 `map_seed.wrapping_add(42)`。
 
-### D2 — 存档/读档丢弃 Intent 缓冲区状态
+### D2 — 存档/读档丢弃 Intent 缓冲区状态 ✅已修复
 
 `GameSave` 新增 `chase_intents` / `flee_intents` / `wander_intents` 字段，capture 按位置保存，restore 通过 position→entity 重映射恢复，`#[serde(default)]` 兼容旧存档。
 
-### D3 — crate 依赖链文档与实际不符
+### D3 — crate 依赖链文档与实际不符 ✅已修复
 
 修正 README.md 中 crate 划分树和依赖链描述，移除冗余的重复树结构。
 
-### A1 — dungeon-core 与 dungeon-world 大量代码重复
+### A1 — dungeon-core 与 dungeon-world 大量代码重复 ✅已修复
 
 以 core 的 systems 为 canon：`calculate_visible_tiles` 移入 ops.rs，删除 core 的 api.rs（`setup_world` 移入 tests.rs），删除 world 的 systems.rs，world 的 tick 改引用 core 的 systems。
 
-### I1 — 对角穿墙角不对称：玩家可穿，怪物不可穿
+### I1 — 对角穿墙角不对称：玩家可穿，怪物不可穿 ✅已修复
 
 移除 A\* 中的对角穿墙角检查，玩家和怪物行为一致（均可穿墙角）。
 
-### I2 — 逃跑无退出条件（触发后永远逃跑）
+### I2 — 逃跑无退出条件（触发后永远逃跑） ✅已修复
 
 引入滞回区间：`CanFlee::condition`（决策进入）保持 HP < 25%，`check_condition`（保活退出）改为 HP < 30%。
 
-### I3 — 火球技能击杀无经验/无掉落，且会伤害玩家自身
+### I3 — 火球技能击杀无经验/无掉落，且会伤害玩家自身 ✅已修复
 
 删除整个 Firebolt 技能条目和相关代码，法师职业改为护盾+狂暴。
 
-### I4 — 装备卸载回滚不完整
+### I4 — 装备卸载回滚不完整 ✅已修复
 
 `Inventory` 新增 `can_add()` 预检方法，装备卸载前先检查背包容量，有空间再执行，避免部分添加后无法回滚。
 
-### I5 — 怪物游荡使用确定性方向而非随机
+### I5 — 怪物游荡使用确定性方向而非随机 ✅已修复
 
 从 `(FloorNumber + monster_count) % 8` 改为 `rand::random::<u8>() % 8`，每个怪物独立随机方向。
 
-### I6 — apply_exp_system 在每个 ready 条目后调用（Won't Fix）
+### I6 — apply_exp_system 在每个 ready 条目后调用（Won't Fix） ✅已修复
 
 该函数有 early return（`pending.amount == 0`），非击杀条目开销 <1μs。事件帧模式下每个条目后调用反而是正确行为（即时反馈经验变化）。
 
-### I7 — PendingLevelUp 悬空
+### I7 — PendingLevelUp 悬空 ✅已修复
 
 删除整个 PendingLevelUp 机制，升级时不再累积属性点数，只提升等级和 HP/MP。
 
-### I8 — 怪物生成数量固定 12 只
+### I8 — 怪物生成数量固定 12 只 ✅已修复
 
 怪物生成尝试次数从固定 `12` 改为 `room_centers.len()`，地面物品数量改为 `room_centers.len().min(8)`，随可用房间数自动变化。
 
-### I9 — 废弃注释和空白行
+### I9 — 废弃注释和空白行 ✅已修复
 
 删除 core/systems.rs 中的 `// use crate::world; // 已移除` 注释和多余空行。
 
-### I11 — 渲染层在已探索暗处直接渲染实体实时位置（X 射线透视）
+### I11 — 渲染层在已探索暗处直接渲染实体实时位置（X 射线透视） ✅已修复
 
 渲染层遍历 renderables 时，删除 `else if explored[ey][ex]` 灰色渲染分支。暗处实体不再直接画出实时位置，改由 `visible_mem` 循环在已探索区域显示上次看到的位置。
 
-### G2/G3 — 死后游戏仍推进
+### G2/G3 — 死后游戏仍推进 ✅已修复
 
 死后跳过 `advance_and_settle`，q 键直接退出（跳过确认弹窗）。
 
-### G7 — 楼梯不可达
+### G7 — 楼梯不可达 ✅已修复
 
 `Map` 新增 `ensure_connection_between()`：BFS 检查从出生点到楼梯是否有 walkable 路径，若无则用加权醉汉游走（70% 概率指向楼梯方向，30% 随机）挖掘通道。在 `setup_world` 和 `descend` 中楼梯放置后调用。
 
-### A2 — 背包 UI 250+ 行在 main.rs
+### A2 — 背包 UI 250+ 行在 main.rs ✅已修复
 
 将 `InvPanel`/`DetailSource`/`Page` 枚举、`collect_ground_items_in`、`open_inventory` 整体提取到独立模块 `src/inventory.rs`。`lib.rs` 添加 `pub mod inventory`，main.rs 通过 `dungeon_tui::inventory::open_inventory` 调用。
 
@@ -380,6 +380,8 @@
 
 ---
 
+## 四、游戏逻辑层面（Game Logic）
+
 ---
 
 ### 🟢 G8 — 水体生成保护距离可能过大（优先级低）
@@ -392,7 +394,7 @@
 
 ## 其他
 
-### P7 — 玩家确认行动后无法取消（将被 D5 部分解决）
+### 🟢 P7 — 玩家确认行动后无法取消（将被 D5 部分解决）
 
 **问题：** tap-tap 双击确认后行动进入 `ActionQueue` 无法撤回。
 
