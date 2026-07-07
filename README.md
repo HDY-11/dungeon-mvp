@@ -195,3 +195,12 @@ cargo test -p dungeon-core -- --test-threads=1
 - terrain-forge（EliasVahlberg）：room_accretion 算法、Grid<C> 泛型系统
 - Dwarf Fortress：水体渲染（背景色为主、前景 glyph 为纹理）
 - Cogmind / Brogue：A* 寻路 + 8 方向移动
+
+## 项目文档
+
+| 文档 | 用途 |
+|------|------|
+| [GAME.md](GAME.md) | 数值设计文档 — 行动耗时、战斗公式、属性、经验、掉落 |
+| [ISSUES.md](ISSUES.md) | 问题追踪 — 设计/架构/实现/游戏逻辑层面的已知问题 |
+| [LESSONS.md](LESSONS.md) | 抽象教训 — 从已修复问题中提炼的 Rust/ECS/游戏开发经验 |
+| [RULE.md](RULE.md) | 操作规则 — 文档维护规范、工作流、设计模式、RNG 规范 |
