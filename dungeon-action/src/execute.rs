@@ -54,14 +54,6 @@ fn can_move_to(map: &Map, occ: &OccupancyMap, x: usize, y: usize, dx: isize, dy:
     if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { return false; }
     if !map.tiles[ny][nx].walkable() { return false; }
     if occ.is_occupied(nx, ny) { return false; }
-    // 对角移动需确保不穿墙角
-    if dx != 0 && dy != 0 {
-        let cx1 = x.wrapping_add_signed(dx);
-        let cx2 = y.wrapping_add_signed(dy);
-        let clear1 = cx1 < MAP_WIDTH && map.tiles[y][cx1].walkable() && !occ.is_occupied(cx1, y);
-        let clear2 = cx2 < MAP_HEIGHT && map.tiles[cx2][x].walkable() && !occ.is_occupied(x, cx2);
-        if !clear1 && !clear2 { return false; }
-    }
     true
 }
 

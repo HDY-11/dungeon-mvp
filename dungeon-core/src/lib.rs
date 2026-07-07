@@ -223,6 +223,7 @@ impl Map {
 
         // ── 环境修饰：水域 + 钟乳石 + 连通性 ──
         self.generate_water(rng, seed.wrapping_add(100));
+        self.carve_expand(rng, seed.wrapping_add(150));
         self.generate_stalactites(rng, seed.wrapping_add(200));
         self.ensure_connectivity(rng, seed.wrapping_add(300));
     }
@@ -267,14 +268,31 @@ impl Map {
         }
     }
 
-    /// 在每个房间中随机放置钟乳石（# 黄色，约 10% 密度）
+    /// 元胞扩张：对每格墙，若邻接可行走格则 25% 概率挖成 Floor（拓宽通道）
+    pub fn carve_expand(&mut self, _rng: &mut impl Rng, seed: u64) {
+        use rand::{RngExt, SeedableRng};
+        let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
+        let mut next = self.tiles;
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                if self.tiles[y][x].walkable() { continue; }
+                let walkable_near = self.count_walkable_neighbors(x, y);
+                if walkable_near >= 1 && rng2.random_range(0..100) < 25 {
+                    next[y][x] = Tile::Floor;
+                }
+            }
+        }
+        self.tiles = next;
+    }
+
+    /// 在每个房间中随机放置钟乳石（# 黄色，约 7% 密度）
     pub fn generate_stalactites(&mut self, _rng: &mut impl Rng, seed: u64) {
         use rand::{RngExt, SeedableRng};
         let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
         for room in &self.rooms.clone() {
             for y in room.y..room.y + room.h {
                 for x in room.x..room.x + room.w {
-                    if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..100) < 10 {
+                    if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..100) < 7 {
                         self.tiles[y][x] = Tile::Stalactite;
                     }
                 }
@@ -298,7 +316,7 @@ impl Map {
             let from = regions[from_idx][regions[from_idx].len() / 2];
             let to = regions[to_idx][0];
 
-            // 醉汉游走
+            // 醉汉游走（宽度 2）
             let (mut cx, mut cy) = (from.0 as isize, from.1 as isize);
             let (tx, ty) = (to.0 as isize, to.1 as isize);
             for _ in 0..500 {
@@ -307,9 +325,12 @@ impl Map {
                 let dy = if rng2.random_range(0..100) < 50 { (ty - cy).signum() } else { rng2.random_range(-1i32..2) as isize };
                 cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
                 cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
-                let (ux, uy) = (cx as usize, cy as usize);
-                if !self.tiles[uy][ux].walkable() {
-                    self.tiles[uy][ux] = Tile::Floor;
+                // 挖 2 格宽通道
+                for (ox, oy) in &[(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (ux, uy) = ((cx + ox) as usize, (cy + oy) as usize);
+                    if ux < MAP_WIDTH && uy < MAP_HEIGHT && !self.tiles[uy][ux].walkable() {
+                        self.tiles[uy][ux] = Tile::Floor;
+                    }
                 }
             }
         }
@@ -320,6 +341,22 @@ impl Map {
     /// 统计地图中某种 tile 的数量
     pub fn count_tile(&self, tile: Tile) -> usize {
         self.tiles.iter().flatten().filter(|&&t| t == tile).count()
+    }
+
+    /// 统计 (x,y) 的 8 邻域中可行走格数量
+    pub fn count_walkable_neighbors(&self, x: usize, y: usize) -> usize {
+        let mut n = 0;
+        for dy in -1isize..=1 {
+            for dx in -1isize..=1 {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = x.wrapping_add_signed(dx);
+                let ny = y.wrapping_add_signed(dy);
+                if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     /// 统计 (x,y) 的 8 邻域中某种 tile 的数量
