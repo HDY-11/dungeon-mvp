@@ -72,16 +72,16 @@ impl Tile {
             Tile::Wall => (180, 180, 180),
             Tile::Stalactite => (255, 255, 0),
             Tile::Floor => (200, 200, 200),
-            Tile::ShallowWater => (100, 180, 255),
-            Tile::DeepWater => (0, 80, 180),
+            Tile::ShallowWater => (160, 215, 255),
+            Tile::DeepWater => (20, 70, 160),
         }
     }
 
     /// 渲染背景色（仅水域有特殊背景）
     pub fn bg_color(self) -> Option<(u8, u8, u8)> {
         match self {
-            Tile::ShallowWater => Some((200, 230, 255)),
-            Tile::DeepWater => Some((0, 100, 180)),
+            Tile::ShallowWater => Some((215, 240, 255)),
+            Tile::DeepWater => Some((30, 90, 190)),
             _ => None,
         }
     }
@@ -233,33 +233,54 @@ impl Map {
         use rand::{RngExt, SeedableRng};
         let mut rng2 = rand::rngs::SmallRng::seed_from_u64(seed);
 
-        // 在洞穴中随机选 3-6 个深水种子
-        let pool_count = rng2.random_range(3..=6);
-        for _ in 0..pool_count * 10 {
-            if self.count_tile(Tile::DeepWater) >= pool_count * 15 { break; }
-            let x = rng2.random_range(3..MAP_WIDTH - 3);
-            let y = rng2.random_range(3..MAP_HEIGHT - 3);
-            if self.tiles[y][x] == Tile::Floor && self.is_away_from_spawn(x, y, 8) {
-                self.tiles[y][x] = Tile::DeepWater;
+        // ── Phase 1: 噪声深水种子（2% 概率） ──
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                if self.tiles[y][x] == Tile::Floor && rng2.random_range(0..1000) < 20
+                    && self.is_away_from_spawn(x, y, 8)
+                {
+                    self.tiles[y][x] = Tile::DeepWater;
+                }
             }
         }
 
-        // 元胞扩散：深水周围 → 75% 浅水 / 25% 深水
-        for _ in 0..3 {
+        // ── Phase 2: 深水→扩散（8 方向独立判定） ──
+        let deep_count = self.count_tile(Tile::DeepWater) as f32;
+        let expand_chance = (0.25 - deep_count * 0.002).max(0.02);
+        {
             let mut next = self.tiles;
             for y in 0..MAP_HEIGHT {
                 for x in 0..MAP_WIDTH {
-                    if self.tiles[y][x] == Tile::Floor {
-                        let deep_near = self.count_neighbor_tile(x, y, Tile::DeepWater);
-                        let water_near = deep_near + self.count_neighbor_tile(x, y, Tile::ShallowWater);
-                        if water_near > 0 && deep_near > 0 {
-                            next[y][x] = if rng2.random_range(0..100) < 25 {
-                                Tile::DeepWater
-                            } else {
-                                Tile::ShallowWater
-                            };
-                        } else if water_near > 0 {
-                            next[y][x] = Tile::ShallowWater;
+                    if self.tiles[y][x] != Tile::DeepWater { continue; }
+                    for (dx, dy) in &[(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)] {
+                        let nx = x.wrapping_add_signed(*dx);
+                        let ny = y.wrapping_add_signed(*dy);
+                        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT || self.tiles[ny][nx] != Tile::Floor { continue; }
+                        next[ny][nx] = if rng2.random_range(0.0..1.0) < expand_chance {
+                            Tile::DeepWater
+                        } else {
+                            Tile::ShallowWater
+                        };
+                    }
+                }
+            }
+            self.tiles = next;
+        }
+
+        // ── Phase 3: 浅水→扩散（8 方向 10% 概率） ──
+        {
+            let mut next = self.tiles;
+            for y in 0..MAP_HEIGHT {
+                for x in 0..MAP_WIDTH {
+                    if self.tiles[y][x] != Tile::ShallowWater { continue; }
+                    for (dx, dy) in &[(-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)] {
+                        let nx = x.wrapping_add_signed(*dx);
+                        let ny = y.wrapping_add_signed(*dy);
+                        if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { continue; }
+                        // 浅水不覆盖深水和墙体
+                        if next[ny][nx] != Tile::Floor { continue; }
+                        if rng2.random_range(0..100) < 10 {
+                            next[ny][nx] = Tile::ShallowWater;
                         }
                     }
                 }
