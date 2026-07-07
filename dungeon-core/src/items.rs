@@ -259,6 +259,27 @@ impl Inventory {
             None
         }
     }
+
+    /// 预检：是否能容纳指定数量的该物品（不修改背包）
+    pub fn can_add(&self, item_id: usize, count: u32) -> bool {
+        if count == 0 { return true; }
+        let max_stack = ItemRegistry::global().get(item_id)
+            .map(|d| d.max_stack).unwrap_or(1);
+        let mut remaining = count;
+
+        // 1. 先算已有同 ID 未满栈的剩余空间
+        for stack in &self.stacks {
+            if stack.item_id == item_id && !stack.is_full() {
+                let space = stack.max_stack() - stack.count;
+                remaining = remaining.saturating_sub(space);
+                if remaining == 0 { return true; }
+            }
+        }
+
+        // 2. 算还需要多少个空格
+        let needed_slots = (remaining + max_stack - 1) / max_stack;
+        self.stacks.len() + needed_slots as usize <= self.capacity
+    }
 }
 
 // ── 装备组件 ────────────────────────────────────────

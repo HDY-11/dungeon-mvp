@@ -517,12 +517,13 @@ fn open_inventory(
                             1 => &mut eq.armor,
                             _ => &mut eq.ring,
                         };
-                        if let Some(stack) = slot.take() {
-                            let leftover = inv.add(stack.item_id, stack.count);
-                            if leftover > 0 {
-                                slot.replace(stack);
-                                w2.resource_mut::<EventLog>().push("背包已满");
-                            }
+                        // 预检背包容量，避免部分添加后无法回滚（原子语义）
+                        let can_add = slot.as_ref().map_or(false, |s| inv.can_add(s.item_id, s.count));
+                        if can_add {
+                            let stack = slot.take().unwrap();
+                            inv.add(stack.item_id, stack.count);
+                        } else if slot.is_some() {
+                            w2.resource_mut::<EventLog>().push("背包已满");
                         }
                     }
                     page = Page::List(InvPanel::Left);
