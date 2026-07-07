@@ -163,8 +163,8 @@ fn execute_wander(world: &mut World, entity: Entity) {
         (0, -1), (0, 1), (-1, 0), (1, 0),
         (-1, -1), (1, -1), (-1, 1), (1, 1),
     ];
-    let r = (world.resource::<FloorNumber>().0 as usize + world.query::<(Entity, &Monster)>().iter(world).count()) % 8;
-    let (dx, dy) = dirs[r];
+    let r = rand::random::<u8>() % 8;
+    let (dx, dy) = dirs[r as usize];
     let target = if let Some(pos) = world.get::<Position>(entity) {
         let map = world.resource::<Map>();
         let occ = world.resource::<OccupancyMap>();

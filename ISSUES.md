@@ -248,9 +248,11 @@ if leftover > 0 {
 
 ---
 
-### 🟡 I5 — 怪物游荡使用确定性方向而非随机
+### ✅ I5 — 怪物游荡使用确定性方向而非随机
 
 **问题：** `execute_wander` 使用 `(FloorNumber + monster_count) % 8` 作为游荡方向索引。同一楼层所有怪物朝同一方向游荡。
+
+**修复：** 改用 `rand::random::<u8>() % 8`，每个怪物独立随机方向。
 
 **位置：** `dungeon-action/src/execute.rs:105`
 
