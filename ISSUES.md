@@ -320,6 +320,103 @@ if leftover > 0 {
 
 ---
 
+## 三.5 输入层面（Input）
+
+---
+
+### 🟡 I10 — 斜向键（Home/End/PgUp/PgDn）无法连续 tap-tap 确认
+
+**问题：** 输入线程的 50ms 按键去重导致斜向键的 tap-tap 二次确认经常被静默丢弃。
+
+**根因分析：**
+输入线程用 `last_code` + `last_time` 做 50ms 同键去重 [src/main.rs:70]：
+
+```rust
+if key.code == last_code && now - last_time < Duration::from_millis(50) {
+    continue;  // ← 第二下被丢弃
+}
+```
+
+tap-tap 系统的流程是"第一下预览、第二下确认"。对于**方向键**（↑↓←→），终端通常支持 OS 级 key-repeat。按住方向键时 key-repeat 持续产生事件，即使部分被 50ms 过滤，剩余的也足以完成预览→确认循环。
+
+但对于**斜向键**（Home/End/PgUp/PgDn），许多终端**不发送 key-repeat 事件**。用户必须手动连按两次。如果两次按键在输入线程侧的时间差 < 50ms，第二下被丢弃：
+
+```
+用户按键:  Home₁ ↓                  Home₂ ↓                  Home₃ ↓
+输入线程:   |--- poll ---|---------|--- poll ---|---------|--- poll ---|
+            t=0          t=16      t=20?        t=32      t=36?       t=48
+去重判断:   通过                    丢弃(16ms<50ms)           通过(48ms?)
+结果:       preview                (无)                      confirm?
+```
+
+用户实际感受到的是"按了斜向键但没反应"——第二下被吞了，需要按第三次才能确认。
+
+**与非斜向的差异：**
+
+| 按键 | 终端 key-repeat | tap-tap 体验 |
+|------|----------------|-------------|
+| `↑↓←→` | ✅ 通常支持 | 按住即可（repeat 事件自动完成预览+确认） |
+| `.` | ❌ 通常不支持 | 需手动连按两次，>50ms 即可 |
+| `1-4` | ❌ 通常不支持 | 同上 |
+| Home/End/PgUp/PgDn | ❌ 通常不支持 | **同 50ms 规则，但连按更易失误** |
+
+**建议方向：** 将去重窗口从 50ms 缩短至单轮询周期（16ms），或者改为基于物理 key-down/key-up 的去重（只过滤按住不放的 repeat 事件）。
+
+**位置：** `src/main.rs:60-74`（输入线程的去重逻辑）
+
+---
+
+### 🟡 I11 — VisibleMemory 在实体离幵视野后仍追踪实际位置
+
+**问题：** 当怪物离开玩家视野后在暗处移动，`VisibleMemory` 中该实体的位置被更新到新位置，导致玩家"看见"了不应知道的怪物位置。
+
+**根因分析：**
+`update_visible_memory` 的核心逻辑是 [ops.rs:125-143]：
+
+```rust
+let entities = world.query::<(Entity, Option<&Player>, &Position, &Renderable)>()
+    .iter(world)
+    .filter(|(_, is_player, pos, _)| {
+        is_player.is_none() && player_visible.contains(&(pos.x, pos.y))
+    })
+    //                               ↑ 只当实体当前位置在视野内才更新记忆
+    .map(|(e, _, pos, rend)| (e, pos.x, pos.y, rend.glyph, rend.color))
+    .collect();
+
+for &(entity, x, y, glyph, color) in &entities {
+    memory.entries.insert(entity, (x, y, glyph, color));
+}
+```
+
+这里 `player_visible` 是玩家当前帧的 `Viewshed.visible_tiles`，在 `fov_system` 中已更新。检查 `pos` 是实体**当前帧**的位置——所以理论上离开视野的实体不会被更新。
+
+**但存在一条隐藏路径使记忆追踪实际位置：** 查看 `update_visible_memory` 调用前的 FOV 更新顺序。
+
+在 `advance_and_settle_parallel` 中 [world/tick.rs:31-41]：
+
+```rust
+advance_until_player_acted(world);   // 所有实体移动
+schedule.run(world);                 // fov_system → 更新 Viewshed
+// ...
+ops::update_visible_memory(world);   // 读取 Viewshed
+```
+
+FOV 在所有移动**之后**计算，`player_visible` 反映的是移动结束后的视野。关键问题：**当玩家本身没有移动时**（例如怪物行动回合），玩家的 FOV 不变，但怪物的位置变了。如果怪物从视野边缘的位置 A 移动到位置 B，而 B 恰好也在视野内，记忆会被更新到 B——这是正确的行为。
+
+但场景是：怪物从 A（视野内）移动到 B（视野外）。此时 B 不在 `player_visible` 中，记忆不会更新。然而——如果 `player_visible` 的计算包含了 A（怪物旧位置所在格）在视野内，但怪物已离开，记忆中的旧条目 (A) 不会被清除。当玩家看向 A 格时，渲染层会显示灰色的怪物幽灵。
+
+**用户实际观察到的问题可能是**：怪物在暗处的移动导致其记忆被移除（`alive` 检查出错），或者多只相同种类的怪物在记忆中被混叠（glyph 相同导致视觉上感觉怪物"瞬移"了）。
+
+**确切根因需要进一步验证**，当前线索指向：
+1. 多只同 glyph 怪物的记忆条目在渲染时互相覆盖
+2. 或 `VisibleMemory` 清理逻辑与 `check_death_system` 的时序问题
+
+**建议方向：** 在渲染 visible_mem 时按距离玩家最近的原则只显示一条，或在 `update_visible_memory` 中只记录首次看见的位置而非持续覆盖。
+
+**位置：** `dungeon-core/src/ops.rs:125-143`、`dungeon-render/src/ui.rs:68-78`
+
+---
+
 ## 四、游戏逻辑层面（Game Logic）
 
 ---
