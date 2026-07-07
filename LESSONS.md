@@ -225,3 +225,44 @@ impl serde::Serialize for Tile {
 - 调用方（capture/restore）只需 push/pull Tile，不需知道内部编码
 - `Vec<Tile>` 与 `Vec<u8>` 二进制格式一致，无需迁移旧存档
 - 新增变体时只需改这一处，编译器会提醒 match 未覆盖
+
+---
+
+## 十、实体放置与边缘情况
+
+### L28 — 列表选择算法须处理单元素退化
+
+当从列表中选取"离某点最远/最近"的元素时，单元素列表会退化为自身引用：
+
+```rust
+// rooms 只有一个元素时，max_by_key 返回 rooms[0]
+m.rooms.iter()
+    .map(|r| (r.center(), dist(r.center(), sp)))
+    .max_by_key(|(_, d)| *d)
+    .map(|(p, _)| p)
+    .unwrap_or(m.rooms[0].center())
+```
+
+此时楼梯位置 = 玩家出生位置 = `rooms[0].center()`，导致重合。
+
+**教训：** 任何"从 N 个候选中挑选与基准最远/最近"的选择逻辑，都必须显式处理 N=1 的退化情况。不要依赖 `max_by_key` / `min_by_key` 在 N=1 时的语义来帮你"自然避开"。
+
+### L29 — 实体放置应始终排除关键位置
+
+`generate_monster_population` 使用噪声密度 + 元胞扩散覆盖所有 walkable 格，没有排除楼梯/出生点/物品位置。这导致：
+- 怪物站在楼梯格上 → 阻止玩家走回楼梯
+- 怪物站在物品格上 → 将玩家的"拾取意图"变成了"攻击意图"
+
+**教训：** 任何随机/噪声驱动的实体放置函数都应接受一个排除位置集合参数。怪物、陷阱、装饰物等不应生成在玩家必须交互的位置（楼梯、传送点、关键物品）。
+
+### L30 — `.skip(1)` 与单元素集合产生空结果
+
+```rust
+// rooms.len() == 1 → room_centers 为空
+let room_centers = rooms.iter().skip(1).map(|r| r.center()).collect();
+let item_count = room_centers.len().min(8);  // 0
+```
+
+`.skip(1)` 在集合大小为 1 时返回空迭代器，是一个静默的"零结果"。这种错误不会触发 panic，只是什么都不生成。
+
+**教训：** 任何"跳过第一个"的过滤操作，如果后续依赖非空结果，应当显式检查集合大小并为 N=1 提供 fallback。`.skip(N)` 返回空迭代器不是错误，但使用它的代码往往假设至少有 N+1 个元素。
