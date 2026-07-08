@@ -159,7 +159,7 @@ pub fn open_inventory(
                             let real = i + 3;
                             let stack = &inv_stacks[i];
                             let p = if act && left_sel == real { "▸" } else { " " };
-                            let hk = if i < 10 { char::from_digit(i as u32, 10).unwrap() } else { char::from(b'a' + (i - 10) as u8) };
+                            let hk = if i < 10 { char::from_digit(i as u32, 10).expect("i < 10") } else { char::from(b'a' + (i - 10) as u8) };
                             let cl = if stack.count > 1 { format!(" x{}", stack.count) } else { String::new() };
                             lines.push(Line::from(vec![
                                 Span::styled(format!("{}{}", p, hk), Style::default().fg(Color::Yellow)),
@@ -256,7 +256,7 @@ pub fn open_inventory(
                                 if let Some(old_stack) = old {
                                     inv.add(old_stack.item_id, old_stack.count);
                                 }
-                                w2.resource_mut::<EventLog>().push(format!("装备了{}", def.unwrap().name));
+                                w2.resource_mut::<EventLog>().push(format!("装备了{}", def.expect("Item def should exist").name));
                             } else {
                                 w2.resource_mut::<EventLog>().push("该物品无法装备");
                             }
@@ -283,7 +283,7 @@ pub fn open_inventory(
                         };
                         let can_add = slot.as_ref().map_or(false, |s| inv.can_add(s.item_id, s.count));
                         if can_add {
-                            let stack = slot.take().unwrap();
+                            let stack = slot.take().expect("Slot was checked as can_add");
                             inv.add(stack.item_id, stack.count);
                         } else if slot.is_some() {
                             w2.resource_mut::<EventLog>().push("背包已满");

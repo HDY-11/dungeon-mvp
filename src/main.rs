@@ -64,7 +64,7 @@ fn run(
                 continue;
             }
             if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
-                if let Event::Key(key) = crossterm::event::read().unwrap() {
+                if let Ok(Event::Key(key)) = crossterm::event::read() {
                     let now = Instant::now();
                     if key.code == last_code && now - last_time < Duration::from_millis(50) {
                         continue;

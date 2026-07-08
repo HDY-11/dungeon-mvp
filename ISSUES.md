@@ -25,6 +25,12 @@
 | `pathfinding.rs` | ~80 | A\* 8 方向寻路 |
 | `ops.rs`（剩余） | ~120 | 公式/查询/记忆/碰撞/渲染 |
 
+### D4 — 升级满血满蓝已文档化（有意设计） ✅已修复
+
+**修复前：** `apply_exp_system` 中升级后 HP/MP 全恢复，但 GAME.md 和 DESIGN.md 均未记录。属于"有意但未说明"的行为，新开发者看到会困惑。
+
+**修复后：** GAME.md 升级效果中增加 `HP/MP 全恢复（设计简化，方便体验不同楼层）` 行，并注明参见 D4。
+
 ### A6 — 行动类型从 dungeon-core 移至 dungeon-action ✅已修复
 
 **修复前：** `dungeon-core/src/action_types.rs` 包含 `ActionQueue`、`ActionKindV3`、`CanMove`/`Chase`/`Flee`等行动领域类型。它们被放在 core 中只因依赖方向限制，导致 core 被行动系统的改动拖慢。

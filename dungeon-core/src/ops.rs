@@ -5,7 +5,6 @@
 
 use crate::{
     components::*, items::*, resources::*,
-    Tile, MAP_HEIGHT, MAP_WIDTH,
 };
 use bevy_ecs::prelude::*;
 use crate::RgbColor;

@@ -139,7 +139,8 @@ impl GameSave {
 
         let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, player_class) = {
             let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+Buffs+Class reg at init");
-            let (pos, st, inv, eq, bu, cls) = q.iter(&w).next().unwrap();
+            let (pos, st, inv, eq, bu, cls) = q.iter(&w).next()
+                .expect("Player entity exists for save");
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.stacks.iter().map(|s| SavedStack { item_id: s.item_id, count: s.count }).collect(),

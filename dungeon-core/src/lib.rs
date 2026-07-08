@@ -417,6 +417,20 @@ impl Map {
         for y in y1.min(y2)..=y1.max(y2) { self.tiles[y][x2] = Tile::Floor; }
     }
 
+    /// 获取玩家出生点（第一个房间的中心）
+    pub fn spawn_point(&self) -> (usize, usize) {
+        self.rooms.first().map(|r| r.center()).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
+    }
+
+    /// 找一个距给定点最远的房间中心（用于楼梯放置）
+    pub fn farthest_room_from(&self, point: (usize, usize)) -> Option<(usize, usize)> {
+        let (px, py) = point;
+        self.rooms.iter()
+            .map(|r| (r.center(), r.center().0.abs_diff(px) + r.center().1.abs_diff(py)))
+            .max_by_key(|(_, d)| *d)
+            .map(|(p, _)| p)
+    }
+
     pub fn render(&self) -> Vec<String> {
         (0..MAP_HEIGHT).map(|row| (0..MAP_WIDTH).map(|col| self.tiles[row][col].glyph()).collect()).collect()
     }

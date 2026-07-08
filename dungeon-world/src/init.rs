@@ -20,7 +20,7 @@ use rand::{Rng, SeedableRng};
 /// 在 walkable 格上放置怪物种群，避开 exclude 坐标
 fn spawn_monsters(world: &mut World, floor: u32, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
     let tiles = world.resource::<Map>().tiles;
-    let population = dungeon_core::monster_def::generate_monster_population(&tiles, floor, rng, exclude);
+    let population = crate::population::generate_monster_population(&tiles, floor, rng, exclude);
     for &(kind, mx, my) in &population {
         let glyph = dungeon_core::monster_def::monster_glyph(kind);
         let color = dungeon_core::monster_def::monster_color(kind);
@@ -85,23 +85,16 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
 }
 
 /// 选择楼梯位置：尽量远离 spawn_pos，至少 15 格。
-/// 当 rooms 仅 1 个时，用醉汉游走从 spawn 出发走 20 步找位置（G9）。
+/// 优先选最远房间。仅 1 个房间时用醉汉游走 60 步找 ≥15 格外的位置（G9）。
 fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (usize, usize) {
     use rand::RngExt;
     let (spx, spy) = spawn_pos;
 
-    // 优先选最远房间
-    if map.rooms.len() > 1 {
-        if let Some(best) = map.rooms.iter()
-            .map(|r| (r.center(), r.center().0.abs_diff(spx) + r.center().1.abs_diff(spy)))
-            .max_by_key(|(_, d)| *d)
-            .map(|(p, _)| p)
-        {
-            return best;
-        }
+    if let Some(best) = map.farthest_room_from(spawn_pos) {
+        return best;
     }
 
-    // G9: 单房间/无房间 → 醉汉游走 20 步
+    // G9: 单房间 → 醉汉游走
     let (mut cx, mut cy) = (spx as isize, spy as isize);
     for _ in 0..60 {
         let dx = rng.random_range(-1i32..2) as isize;
@@ -109,12 +102,12 @@ fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (
         if dx == 0 && dy == 0 { continue; }
         cx = (cx + dx).clamp(0, MAP_WIDTH as isize - 1);
         cy = (cy + dy).clamp(0, MAP_HEIGHT as isize - 1);
-        let dist = (cx as usize).abs_diff(spx) + (cy as usize).abs_diff(spy);
-        if dist >= 15 && map.tiles[cy as usize][cx as usize].walkable() {
+        if (cx as usize).abs_diff(spx) + (cy as usize).abs_diff(spy) >= 15
+            && map.tiles[cy as usize][cx as usize].walkable()
+        {
             return (cx as usize, cy as usize);
         }
     }
-    // fallback
     (spx, spy)
 }
 
@@ -148,7 +141,7 @@ pub fn setup_world() -> World {
     world.insert_resource(FleeIntents::default());
     world.insert_resource(WanderIntents::default());
 
-    let (spawn_x, spawn_y) = map.rooms[0].center();
+    let (spawn_x, spawn_y) = map.spawn_point();
     world.insert_resource(map);
     let player_agi = 10;
 
@@ -212,7 +205,7 @@ pub fn descend(world: &mut World) {
     w.insert_resource(map); w.insert_resource(MapMemory::new());
 
     // ── 重建玩家 ──
-    let spawn = { let m = w.resource::<Map>(); m.rooms[0].center() };
+    let spawn = { w.resource::<Map>().spawn_point() };
     let mut cmd = w.spawn((
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),

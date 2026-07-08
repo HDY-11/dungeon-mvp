@@ -198,8 +198,10 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
         name = world.get::<EntityName>(target).map(|n| n.0.clone()).unwrap_or("怪物".into());
         atk_name = world.get::<AttackName>(attacker).map(|a| a.0.clone()).unwrap_or("攻击".into());
         target_pos = world.get::<Position>(target).map(|p| (p.x, p.y));
-        let inventory = world.get::<Inventory>(attacker).unwrap();
-        let equipment = world.get::<Equipment>(attacker).unwrap();
+        let inventory = world.get::<Inventory>(attacker)
+            .expect("Attacker has Inventory");
+        let equipment = world.get::<Equipment>(attacker)
+            .expect("Attacker has Equipment");
         let buffs = world.get::<Buffs>(attacker);
         let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, buffs) as i32;
         let target_def = {

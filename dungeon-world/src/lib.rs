@@ -1,5 +1,6 @@
 pub mod init;
 pub mod persist;
+pub mod population;
 pub mod tick;
 
 pub use dungeon_core::systems::{fov_system, check_death_system, apply_exp_system, buff_tick_system};

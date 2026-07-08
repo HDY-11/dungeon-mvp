@@ -166,7 +166,7 @@ impl ActionQueue {
         self.entries.iter()
             .filter(|e| e.av_remaining > 0.0)
             .map(|e| e.av_remaining)
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .min_by(|a, b| a.partial_cmp(b).expect("AV values should never be NaN"))
     }
 
     pub fn pop_ready(&mut self) -> Vec<ActionEntry> {
