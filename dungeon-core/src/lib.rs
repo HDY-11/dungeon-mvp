@@ -417,9 +417,28 @@ impl Map {
         for y in y1.min(y2)..=y1.max(y2) { self.tiles[y][x2] = Tile::Floor; }
     }
 
-    /// 获取玩家出生点（第一个房间的中心）
+    /// 获取玩家出生点（第一个房间的中心）。
+    /// 若中心点不可行走，螺旋向外搜索最近的可行走格作为兜底。
     pub fn spawn_point(&self) -> (usize, usize) {
-        self.rooms.first().map(|r| r.center()).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
+        let center = self.rooms.first().map(|r| r.center()).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2));
+        if center.0 < MAP_WIDTH && center.1 < MAP_HEIGHT && self.tiles[center.1][center.0].walkable() {
+            return center;
+        }
+        // 螺旋搜索：从半径 1 开始向外扩展，找最近的可行走格
+        for r in 1..=20 {
+            for dy in -(r as isize)..=r as isize {
+                for dx in -(r as isize)..=r as isize {
+                    if dx == 0 && dy == 0 { continue; }
+                    let nx = center.0.wrapping_add_signed(dx);
+                    let ny = center.1.wrapping_add_signed(dy);
+                    if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() {
+                        return (nx, ny);
+                    }
+                }
+            }
+        }
+        // 极端情况：整个地图没有可行走格（不应发生）
+        (MAP_WIDTH / 2, MAP_HEIGHT / 2)
     }
 
     /// 找一个距给定点最远的房间中心（用于楼梯放置）
