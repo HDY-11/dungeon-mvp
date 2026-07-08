@@ -25,6 +25,17 @@
 | `pathfinding.rs` | ~80 | A\* 8 方向寻路 |
 | `ops.rs`（剩余） | ~120 | 公式/查询/记忆/碰撞/渲染 |
 
+### A9 — 渲染层直接查询 ECS（Deferred — 条件触发时重新评估） ✅已修复
+
+**当前评估：** 不做 ViewData 重构。理由：
+- 当前 render 的 ~8 处 `try_query().expect()` 在 I17 后已有足够信息量
+- 组件重命名会触发编译错误（编译期隔离足够）
+- ViewData 方案会新增 ~50% 代码量并增加每帧填充开销
+
+**触发条件：** 以下任意一条满足时重新评估：
+1. render 中 `try_query` 模式超过 **15 种**（从当前 ~8 增长）
+2. **同一组件重组导致 render 连续两次以上需要修改**时
+
 ### D4 — 升级满血满蓝已文档化（有意设计） ✅已修复
 
 **修复前：** `apply_exp_system` 中升级后 HP/MP 全恢复，但 GAME.md 和 DESIGN.md 均未记录。属于"有意但未说明"的行为，新开发者看到会困惑。
@@ -351,21 +362,6 @@
 **位置：** `dungeon-core/src/monster_def.rs:103-188`
 
 **建议修复方向：** 将 `generate_monster_population` 移至 `dungeon-world/src/init.rs` 或独立 `population.rs`。
-
----
-
-### 🟢 A9 — 渲染层与 ECS 组件布局的隐式耦合
-
-**问题：** `dungeon-render` 通过 `try_query::<(&Player, &Viewshed)>()` 等直接查询 ECS 组件。DESIGN.md 明确这是有意设计，但代价是：
-
-1. core 中任何组件结构变化都可能无声破坏 render——无编译期隔离
-2. render 中有 10+ 处 `try_query().unwrap()`（见 I17），全部假设组件存在
-
-**位置：** `dungeon-render/src/ui.rs`
-
-**建议修复方向：**
-1. 为 render 定义专用的"视图数据"结构体，由 world 的 tick 在渲染前填充
-2. 短期：将所有 `try_query().unwrap()` 替换为 `try_query().expect("...")` 提供 panic 信息
 
 ---
 
