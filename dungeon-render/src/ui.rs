@@ -58,8 +58,19 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             Constraint::Min(1),
         ])
         .split(inner);
-    let (timeline_area, map_area, stats_area) = (chunks[0], chunks[2],
+    let (timeline_area, map_events_area, stats_area) = (chunks[0], chunks[2],
         Rect { x: chunks[4].x, y: chunks[4].y, width: chunks[4].width, height: inner.height });
+
+    // 地图 + 事件垂直分割：地图占 VIEWPORT_HEIGHT，剩余给事件日志
+    let map_events_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(VIEWPORT_HEIGHT as u16),
+            Constraint::Min(1),
+        ])
+        .split(map_events_area);
+    let map_area = map_events_chunks[0];
+    let events_area = map_events_chunks[1];
 
     let vw = VIEWPORT_WIDTH;
     let vh = VIEWPORT_HEIGHT;
@@ -140,6 +151,20 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             .collect::<Vec<_>>()))
         .collect();
     frame.render_widget(Paragraph::new(styled_lines).style(Style::default().fg(Color::White)), map_area);
+
+    // ── 事件日志（地图下方） ──
+    let log = world.resource::<EventLog>();
+    {
+        let mut event_lines: Vec<Line> = Vec::new();
+        event_lines.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
+        for msg in log.messages.iter().rev().take(5) {
+            event_lines.push(Line::from(Span::raw(format!(" {}", msg))));
+        }
+        frame.render_widget(
+            Paragraph::new(event_lines).style(Style::default().fg(Color::White)),
+            events_area,
+        );
+    }
 
     let timeline = build_timeline(player_visible.clone(), world);
     frame.render_widget(
@@ -224,13 +249,6 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
             }
         }
     }
-    out.push(Line::from(Span::raw("")));
-    let log = world.resource::<EventLog>();
-    if !log.messages.is_empty() {
-        out.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
-        for msg in log.messages.iter().rev().take(12) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
-    }
-
     // ── 光标查看信息 ──
     if let Some(cursor) = world.get_resource::<LookCursor>() {
     if cursor.active {
