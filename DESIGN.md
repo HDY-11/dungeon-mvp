@@ -8,23 +8,25 @@
 
 ---
 
-## 1. 四层 Crate 拆分
+## 1. 四层 Crate 拆分（A6 / A7 后更新的版本）
 
-**预期与实际依赖链：**
+**实际依赖链：**
 ```
-core ← action ← world ← render
+core ← action ← world
+  ↕        ↗
+render ───╯（依赖 core + action，因 timeline 使用行动类型）
 ```
 
 **意图：** 按**关注点变化速度**分层。游戏数据（core）变化最慢，渲染（render）变化最快。行动规则（action）独立于世界生命周期（world），世界生命周期独立于渲染。
 
-| 层 | 变化原因 | 不拆分的影响 |
+| 层 | 变化原因 | 关键依赖 |
 |---|---|---|
-| core | 很少改动（数据类型、公式） | 动渲染代码时不小心改坏战斗公式 |
-| action | 添加新行动/技能时需要改动 | — |
-| world | 添加新地图特征/怪物行为时 | — |
-| render | TUI库升级/换框架时需要改动 | — |
+| core | 很少改动（数据类型、公式） | 无内部依赖（自含） |
+| action | 添加新行动/技能时需要改动 | core（基础类型） |
+| world | 添加新地图特征/怪物行为时 | core + action（行动队列） |
+| render | TUI库升级/换框架时需要改动 | core + action（仅行动类型） |
 
-**为什么不是两个 crate（core + everything else）：** 因为行动执行逻辑（dungeon-action）没有渲染依赖，世界生命周期逻辑（dungeon-world）也没有渲染依赖。如果合在一起，一个 ui.rs 的改动会触发生命周期逻辑的重新编译。对开发迭代速度有实际影响。
+**注意：** render 自 timeline.rs 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后，增加了对 action 的依赖。这是 render 依赖链的"例外"——仅限于类型引用，不依赖行动执行逻辑。如果未来将行动类型提取为独立 crate，render 可以切到那个 crate，取消对 action 的依赖。
 
 ---
 
@@ -236,13 +238,11 @@ core ← action ← world ← render
 
 ---
 
-## 13. 线程局部 RNG + GameRng 并存
+## 13. 线程局部 RNG + GameRng 并存（已解决 — 见 D1）
 
-**设计：** `dungeon-core/src/global.rs` 中有一个线程局部的 `RefCell<SmallRng>`，同时 ECS 资源中也有 `GameRng { rng: SmallRng }`。
+**历史：** 曾经有一个线程局部的 `RefCell<SmallRng>` 与 `GameRng` 并存，用于仲裁 system 中的随机选择，因为当时仲裁 system 无法访问 `GameRng` 资源。
 
-**意图（现实而非理想）：** 线程局部 RNG 用于仲裁 system 中的随机选择（`arbitration_system` 调用 `dungeon_core::global::rand_u8()`）。这是因为仲裁 system 作为 ECS System 不能直接访问 `GameRng` 资源（资源访问在 System 签名中声明，而仲裁 system 没有声明对 `GameRng` 的依赖）。
-
-**隐患：** 两个 RNG 使用不同的种子策略，会导致难以复现的随机行为。正确设计应该是仲裁 system 也依赖 `Res<GameRng>`。当前状态是重构未完成的遗留。
+**解决（D1）：** `GameRng` 成为唯一随机源。所有随机操作（仲裁、暴击、游荡、掉落、地图生成）统一走 `GameRng` 或基于 `MapSeed` 的派生 RNG。线程局部 RNG 已删除，对应的 `global.rs` 文件已删除（A5）。
 
 ---
 
