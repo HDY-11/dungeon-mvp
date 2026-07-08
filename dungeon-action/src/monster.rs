@@ -14,14 +14,21 @@ use bevy_ecs::system::RunSystemOnce;
 /// 追击决策：有 CanChase 的怪物是否看到玩家
 pub fn chase_decision_system(
     player: Query<&Position, With<Player>>,
-    monsters: Query<(Entity, &CanChase, &Stats, &Viewshed, &Reaction)>,
+    mut monsters: Query<(Entity, &CanChase, &Stats, &Viewshed, &Reaction, &mut LastKnownPlayerPos)>,
     mut out: ResMut<ChaseIntents>,
 ) {
     out.0.clear();
     let player_pos = player.iter().next().map(|p| (p.x, p.y));
-    for (entity, chase, stats, view, _reaction) in &monsters {
+    for (entity, chase, stats, view, _reaction, mut last_known) in &mut monsters {
         let can_see = player_pos.map_or(false, |pp| view.visible_tiles.contains(&pp));
-        if CanChase::condition(can_see) {
+        if can_see {
+            // 看到玩家 → 更新记忆位置
+            if let Some(pp) = player_pos {
+                last_known.0 = Some(pp);
+            }
+        }
+        // 看到玩家 | 有记忆位置 → 追击
+        if CanChase::condition(can_see) || last_known.0.is_some() {
             let av = agility_to_reaction(stats.agility) + chase.duration * agility_speed_factor(stats.agility);
             out.0.push((entity, chase.priority, av, ActionKindV3::Chase));
         }

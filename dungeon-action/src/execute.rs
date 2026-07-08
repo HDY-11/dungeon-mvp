@@ -62,9 +62,14 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
     match &entry.kind {
         ActionKindV3::Chase => {
             let player_pos = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y));
-            let Some((px, py)) = player_pos else { return false };
-            world.get::<Viewshed>(entry.entity)
-                .map(|v| v.visible_tiles.contains(&(px, py)))
+            if let Some((px, py)) = player_pos {
+                if world.get::<Viewshed>(entry.entity)
+                    .map(|v| v.visible_tiles.contains(&(px, py)))
+                    .unwrap_or(false) { return true; }
+            }
+            // 玩家不在视野内但有记忆位置 → 继续追击
+            world.get::<LastKnownPlayerPos>(entry.entity)
+                .map(|l| l.0.is_some())
                 .unwrap_or(false)
         }
         ActionKindV3::Flee => {
@@ -103,10 +108,27 @@ fn execute_entry(world: &mut World, entry: &ActionEntry) {
 fn execute_chase(world: &mut World, entity: Entity) {
     let Some(player_entity) = world.query::<(Entity, &Player)>().iter(world).next().map(|(e, _)| e) else { return };
     let player_pos = world.get::<Position>(player_entity).map(|p| (p.x, p.y));
-    let Some((px, py)) = player_pos else { return };
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
-    // 邻接时攻击（含对角）
-    if pos.0.abs_diff(px) <= 1 && pos.1.abs_diff(py) <= 1 && (pos.0 != px || pos.1 != py) {
+
+    // 判断目标：玩家可见 → 玩家位置；不可见 → 记忆位置
+    let (target_visible, target) = if let Some((ppx, ppy)) = player_pos {
+        let can_see = world.get::<Viewshed>(entity)
+            .map(|v| v.visible_tiles.contains(&(ppx, ppy)))
+            .unwrap_or(false);
+        if can_see { (true, Some((ppx, ppy))) }
+        else { (false, world.get::<LastKnownPlayerPos>(entity).and_then(|l| l.0)) }
+    } else {
+        (false, world.get::<LastKnownPlayerPos>(entity).and_then(|l| l.0))
+    };
+
+    let Some((px, py)) = target else {
+        // 无目标 → 清除记忆
+        if let Some(mut lkp) = world.get_mut::<LastKnownPlayerPos>(entity) { lkp.0 = None; }
+        return;
+    };
+
+    // 邻接时攻击（含对角，仅当目标是玩家时）
+    if target_visible && pos.0.abs_diff(px) <= 1 && pos.1.abs_diff(py) <= 1 && (pos.0 != px || pos.1 != py) {
         let monster_atk = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
         let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>)>().iter(world).next()
             .map(|(ps, inv, eq, buffs)| ops::effective_defense(ps, inv, eq, buffs) as i32)
@@ -116,18 +138,26 @@ fn execute_chase(world: &mut World, entity: Entity) {
         if let Some(mut ps) = world.get_mut::<Stats>(player_entity) { ps.hp -= dmg; }
         world.resource_mut::<EventLog>().push(format!("{} 攻击了你，{}伤", name, dmg));
     } else {
-        // A* 寻路至玩家，取第一步
+        // A* 寻路至目标，取第一步
         let next_step = {
             let map = world.resource::<Map>();
             let occ = world.resource::<OccupancyMap>();
             dungeon_core::pathfinding::astar(pos, (px, py), &map.tiles, Some(occ))
-                .and_then(|path| {
-                    // 跳过第一步如果它等于当前位置（A* 不含起点）
-                    path.first().copied()
-                })
+                .and_then(|path| path.first().copied())
         };
         if let Some((nx, ny)) = next_step {
             if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
+        }
+    }
+
+    // 到达记忆位置附近但仍未看到玩家 → 清除记忆，进入游荡
+    if !target_visible {
+        if let Some(mut lkp) = world.get_mut::<LastKnownPlayerPos>(entity) {
+            if let Some((lkx, lky)) = lkp.0 {
+                if pos.0.abs_diff(lkx) <= 2 && pos.1.abs_diff(lky) <= 2 {
+                    lkp.0 = None;
+                }
+            }
         }
     }
 }

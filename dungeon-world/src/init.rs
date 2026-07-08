@@ -35,6 +35,7 @@ fn spawn_monsters(world: &mut World, floor: u32, rng: &mut impl Rng, exclude: &[
             AttackName(attk.into()), loot,
         ));
         cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
+        cmd.insert(LastKnownPlayerPos::default());
         cmd.insert(CanChase::new(100));
         cmd.insert(CanFlee::new(200));
         cmd.insert(CanWander::new(50));

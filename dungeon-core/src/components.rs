@@ -213,6 +213,9 @@ impl PlayerClass {
     }
 }
 
+#[derive(Component, Clone, Debug, Default)]
+pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
+
 #[derive(Component, Clone, Serialize, Deserialize)]
 pub struct Buffs {
     pub shield_turns: i32, pub shield_def: i32,
