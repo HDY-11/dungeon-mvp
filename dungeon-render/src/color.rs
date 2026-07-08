@@ -11,15 +11,16 @@ pub fn renderable_color(glyph_color: (u8, u8, u8)) -> RataColor {
 }
 
 /// 基于实体 ID 对基础颜色做微调，使同类怪物有细微差异但保留色系辨识度。
-/// 使用黄金比例哈希将相邻 ID 扩散到全 64 位空间，每通道偏移 -64..63。
+/// 以基础色为中心，在 ±40 范围内均匀采样 —— 即使通道值为 0 或 255 也能产生视觉差异。
 pub fn unique_color(base: (u8, u8, u8), id_bits: u64) -> (u8, u8, u8) {
     let hash = id_bits.wrapping_mul(0x9E3779B97F4A7C15);
-    let dr = ((hash >> 40) & 0x7F) as i16 - 64;
-    let dg = ((hash >> 20) & 0x7F) as i16 - 64;
-    let db = (hash & 0x7F) as i16 - 64;
-    (
-        (base.0 as i16 + dr).clamp(0, 255) as u8,
-        (base.1 as i16 + dg).clamp(0, 255) as u8,
-        (base.2 as i16 + db).clamp(0, 255) as u8,
-    )
+    let sample = |v: u8, h: u64| -> u8 {
+        let spread = 80u16;
+        let lo = (v as u16).saturating_sub(spread / 2);
+        let hi = (v as u16 + spread / 2).min(255);
+        let range = hi - lo + 1;
+        let offset = (h & 0xFF) as u16 % range;
+        (lo + offset) as u8
+    };
+    (sample(base.0, hash), sample(base.1, hash >> 16), sample(base.2, hash >> 32))
 }

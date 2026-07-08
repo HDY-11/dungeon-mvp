@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
-    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
+    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Monster, Player,
     Position, Skills, Stats, Tile, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
+use crate::color::{renderable_color, unique_color};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -15,7 +16,6 @@ use ratatui::{
 use std::collections::HashSet;
 use std::time::Instant;
 use bevy_ecs::prelude::World;
-use crate::color::renderable_color;
 use crate::timeline::build_timeline;
 
 pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
@@ -116,14 +116,20 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         }
         lines.push(row);
     }
-    for &(ex, ey, glyph, (r, g, b)) in &renderables {
+    for &(entity, ex, ey, glyph, (r, g, b)) in &renderables {
         if ey >= cam_y && ey < cam_y + vh
             && ex >= cam_x && ex < cam_x + vw
             && player_visible.contains(&(ex, ey))
         {
             let (idx, jdx) = (ey - cam_y, ex - cam_x);
             let bg = lines[idx][jdx].2;
-            lines[idx][jdx] = (glyph, renderable_color((r, g, b)), bg);
+            // 怪物在地图上使用 unique_color，其余实体用原始颜色
+            let color = if world.get::<Monster>(entity).is_some() {
+                renderable_color(unique_color((r, g, b), entity.to_bits()))
+            } else {
+                renderable_color((r, g, b))
+            };
+            lines[idx][jdx] = (glyph, color, bg);
         }
     }
     for &(mx, my, glyph, _) in &visible_mem {

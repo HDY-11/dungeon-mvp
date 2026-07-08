@@ -161,7 +161,7 @@ pub fn rebuild_occupancy(world: &mut World) {
 
 // ── 渲染数据收集 ───────────────────────────────────
 
-pub fn collect_renderables(world: &World) -> Vec<(usize, usize, char, RgbColor)> {
+pub fn collect_renderables(world: &World) -> Vec<(Entity, usize, usize, char, RgbColor)> {
     let mut query = world.try_query::<(Entity, &Position, &Renderable)>().expect("Entity+Position+Renderable registered at init");
     let mut items: Vec<(Entity, usize, usize, char, RgbColor)> = Vec::new();
     for (entity, pos, rend) in query.iter(world) {
@@ -173,7 +173,7 @@ pub fn collect_renderables(world: &World) -> Vec<(usize, usize, char, RgbColor)>
         else if world.get::<Monster>(*e).is_some() { 1 }
         else { 0 }
     });
-    items.into_iter().map(|(_, x, y, g, c)| (x, y, g, c)).collect()
+    items.into_iter().map(|(e, x, y, g, c)| (e, x, y, g, c)).collect()
 }
 
 pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {
