@@ -162,6 +162,7 @@ pub fn setup_world() -> World {
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
+    cmd.insert(ActiveBuffs::new());
 
     // ── 楼梯放置（避开出生点，G9） ──
     let stairs_pos = {
@@ -222,6 +223,7 @@ pub fn descend(world: &mut World) {
     cmd.insert(player_data.5);  // Buffs
     cmd.insert(player_data.6.clone());  // PlayerClass
     cmd.insert(AttackName(player_data.7.clone()));
+    cmd.insert(ActiveBuffs::new());
     cmd.insert(Reaction { time: agility_to_reaction(player_data.1.agility) });
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));

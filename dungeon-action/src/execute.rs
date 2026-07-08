@@ -20,6 +20,20 @@ pub fn advance_action_queue(world: &mut World) -> f32 {
         if dist <= 0.0 { return 0.0; }
         world.resource_mut::<ActionQueue>().advance(dist);
 
+        // 推进所有实体的 ActiveBuffs 和 ActiveCooldowns（与队列同步使用同一 dist）
+        {
+            let mut q = world.query::<&mut ActiveBuffs>();
+            for mut buffs in q.iter_mut(world) {
+                buffs.0.retain_mut(|b| { b.remaining_av -= dist; b.remaining_av > 0.0 });
+            }
+        }
+        {
+            let mut q = world.query::<&mut ActiveCooldowns>();
+            for mut cds in q.iter_mut(world) {
+                cds.0.retain_mut(|c| { c.remaining_av -= dist; c.remaining_av > 0.0 });
+            }
+        }
+
         // P1: 保活检查所有 av_remaining > 0 的条目，剔除条件不满足的
         // 防止 Chase/Flee/Move 等在等待期间条件已失效的条目白耗 AV
         let invalid: Vec<Entity> = {
@@ -130,8 +144,8 @@ fn execute_chase(world: &mut World, entity: Entity) {
     // 邻接时攻击（含对角，仅当目标是玩家时）
     if target_visible && pos.0.abs_diff(px) <= 1 && pos.1.abs_diff(py) <= 1 && (pos.0 != px || pos.1 != py) {
         let monster_atk = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
-        let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>)>().iter(world).next()
-            .map(|(ps, inv, eq, buffs)| ops::effective_defense(ps, inv, eq, buffs) as i32)
+        let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>, Option<&ActiveBuffs>)>().iter(world).next()
+            .map(|(ps, inv, eq, buffs, ab)| ops::effective_defense(ps, inv, eq, buffs, ab) as i32)
             .unwrap_or(0);
         let dmg = (monster_atk - player_def).max(1);
         let name = world.get::<EntityName>(entity).map(|n| n.0.clone()).unwrap_or("怪物".into());
@@ -233,11 +247,12 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
         let equipment = world.get::<Equipment>(attacker)
             .expect("Attacker has Equipment");
         let buffs = world.get::<Buffs>(attacker);
-        let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, buffs) as i32;
+        let ab = world.get::<ActiveBuffs>(attacker);
+        let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, buffs, ab) as i32;
         let target_def = {
             let eq = world.get::<Equipment>(target);
             let buffs = world.get::<Buffs>(target);
-            ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), buffs) as i32
+            ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), buffs, None) as i32
         };
         let raw_dmg = (effective_atk - target_def).max(1);
         let crit_roll = world.resource_mut::<GameRng>().random_f32();
@@ -299,16 +314,39 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
             world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP", skill_name, amount));
         }
         dungeon_core::SkillKind::Shield { def_boost, duration } => {
+            // 旧回合制 Buff（过渡期兼容）
             if let Some(mut buffs) = world.get_mut::<dungeon_core::Buffs>(entity) {
                 buffs.shield_turns = duration as i32; buffs.shield_def = def_boost;
             }
-            world.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}回合", skill_name, def_boost, duration));
+            // 新 AV Buff 系统
+            if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
+                let av = duration as f32 * 1000.0;
+                // 同种 Buff 刷新持续时间和效果值
+                if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Shield) {
+                    existing.remaining_av = av;
+                    existing.magnitude = def_boost;
+                } else {
+                    ab.0.push(Buff { kind: BuffKind::Shield, remaining_av: av, magnitude: def_boost, stack_type: BuffStackType::None });
+                }
+            }
+            world.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}秒", skill_name, def_boost, duration));
         }
         dungeon_core::SkillKind::Berserk { atk_boost, duration } => {
+            // 旧回合制 Buff（过渡期兼容）
             if let Some(mut buffs) = world.get_mut::<dungeon_core::Buffs>(entity) {
                 buffs.berserk_turns = duration as i32; buffs.berserk_atk = atk_boost;
             }
-            world.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}回合", skill_name, atk_boost, duration));
+            // 新 AV Buff 系统
+            if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
+                let av = duration as f32 * 1000.0;
+                if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Berserk) {
+                    existing.remaining_av = av;
+                    existing.magnitude = atk_boost;
+                } else {
+                    ab.0.push(Buff { kind: BuffKind::Berserk, remaining_av: av, magnitude: atk_boost, stack_type: BuffStackType::None });
+                }
+            }
+            world.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}秒", skill_name, atk_boost, duration));
         }
     }
 }

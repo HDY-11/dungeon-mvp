@@ -249,7 +249,7 @@ impl GameSave {
         let s = self.st.into_stats();
         let pc = self.player_class.unwrap_or(PlayerClass::Warrior);
         let agi = s.agility;
-        w.spawn((
+        let mut player_entity = w.spawn((
             Player, Position { x: self.px as usize, y: self.py as usize },
             Renderable { glyph: '@', color: (255, 255, 0) },
             MovingDir::default(), Viewshed { range: 10, visible_tiles: Vec::new() },
@@ -270,6 +270,7 @@ impl GameSave {
             Reaction { time: agility_to_reaction(agi) },
             CanMove::new(100), CanWait::new(0),
         ));
+        player_entity.insert(ActiveBuffs::new());
 
         w.spawn((Stairs, Position { x: self.sx as usize, y: self.sy as usize },
             Renderable { glyph: '>', color: (0, 255, 0) }));

@@ -21,16 +21,30 @@ pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mast
 
 // ── 有效属性计算 ────────────────────────────────────
 
-pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>) -> u32 {
+pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>, active_buffs: Option<&ActiveBuffs>) -> u32 {
     let bonus = crate::items::equipment_bonus(inv, equip);
     let mut atk = (stats.attack as i32) + bonus.attack;
+    // 新 AV Buff 系统
+    if let Some(ab) = active_buffs {
+        for b in &ab.0 {
+            if b.kind == BuffKind::Berserk { atk += b.magnitude; }
+        }
+    }
+    // 旧回合制 Buff 系统（过渡期兼容）
     if let Some(b) = buffs { atk += b.berserk_atk; }
     atk.max(1) as u32
 }
 
-pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>) -> u32 {
+pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, buffs: Option<&Buffs>, active_buffs: Option<&ActiveBuffs>) -> u32 {
     let bonus = crate::items::equipment_bonus(inv, equip);
     let mut def = (stats.defense as i32) + bonus.defense;
+    // 新 AV Buff 系统
+    if let Some(ab) = active_buffs {
+        for b in &ab.0 {
+            if b.kind == BuffKind::Shield { def += b.magnitude; }
+        }
+    }
+    // 旧回合制 Buff 系统（过渡期兼容）
     if let Some(b) = buffs { def += b.shield_def; }
     def.max(0) as u32
 }

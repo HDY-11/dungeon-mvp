@@ -213,6 +213,34 @@ impl PlayerClass {
     }
 }
 
+// ── Buff 系统（AV 制） ──────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuffKind { Shield, Berserk }
+
+/// 堆叠标记（预留，当前不实现叠加逻辑，同种 Buff 刷新增时长）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuffStackType { None }
+
+#[derive(Clone, Debug)]
+pub struct Buff {
+    pub kind: BuffKind,
+    pub remaining_av: f32,
+    pub magnitude: i32,
+    pub stack_type: BuffStackType,
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct ActiveBuffs(pub Vec<Buff>);
+impl ActiveBuffs { pub fn new() -> Self { Self(Vec::new()) } }
+
+/// 技能冷却（AV 制，与 ActiveBuffs 共享受同一推进机制）
+#[derive(Clone, Debug)]
+pub struct Cooldown { pub skill_id: usize, pub remaining_av: f32 }
+
+#[derive(Component, Clone, Debug, Default)]
+pub struct ActiveCooldowns(pub Vec<Cooldown>);
+
 #[derive(Component, Clone, Debug, Default)]
 pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
 
