@@ -11,8 +11,7 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    ops, EventLog, LookCursor, TurnManager, Map, MAP_WIDTH, MAP_HEIGHT,
-    Tile, Position, Player, EntityName, Stairs, ItemPickup, Renderable,
+    ops, EventLog, LookCursor, TurnManager, MAP_WIDTH, MAP_HEIGHT, Position, Player,
 };
 use dungeon_action::{handle_player_direction, handle_wait, handle_skill};
 use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
@@ -64,8 +63,8 @@ fn run(
                 thread::sleep(Duration::from_millis(16));
                 continue;
             }
-            if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = crossterm::event::read() {
+            if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false)
+                && let Ok(Event::Key(key)) = crossterm::event::read() {
                     let now = Instant::now();
                     if key.code == last_code && now - last_time < Duration::from_millis(50) {
                         continue;
@@ -74,7 +73,6 @@ fn run(
                     last_time = now;
                     if tx.send(key.code).is_err() { break; }
                 }
-            }
         }
     });
 
@@ -161,8 +159,8 @@ fn process_key(
             Ok(false)
         }
         KeyCode::F(9) => {
-            if let Ok(data) = std::fs::read("save.bin") {
-                if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
+            if let Ok(data) = std::fs::read("save.bin")
+                && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
                     save.restore(world);
                     let _ = world.run_system_once(fov_system);
                     ops::update_map_memory(world);
@@ -170,7 +168,6 @@ fn process_key(
                     ops::rebuild_occupancy(world);
                     world.resource_mut::<EventLog>().push("已读档");
                 }
-            }
             Ok(false)
         }
         KeyCode::Char('>') => {
@@ -256,7 +253,7 @@ fn title_screen(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<(World, Instant)> {
     loop {
-        terminal.draw(|frame| draw_title(frame))?;
+        terminal.draw(draw_title)?;
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r') => {
@@ -267,8 +264,8 @@ fn title_screen(
                     return Ok((world, Instant::now()));
                 }
                 KeyCode::F(9) => {
-                    if let Ok(data) = std::fs::read("save.bin") {
-                        if let Ok(save) = bincode::deserialize::<GameSave>(&data) {
+                    if let Ok(data) = std::fs::read("save.bin")
+                        && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
                             let mut world = setup_world();
                             save.restore(&mut world);
                             let _ = world.run_system_once(fov_system);
@@ -276,7 +273,6 @@ fn title_screen(
                             ops::update_visible_memory(&mut world);
                             return Ok((world, Instant::now()));
                         }
-                    }
                 }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     disable_raw_mode()?;

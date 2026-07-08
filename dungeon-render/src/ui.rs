@@ -222,7 +222,7 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
     }
 
     // ── 光标查看信息 ──
-    let cursor = world.resource::<LookCursor>();
+    if let Some(cursor) = world.get_resource::<LookCursor>() {
     if cursor.active {
         let (cx, cy) = (cursor.x, cursor.y);
         let explored = world.resource::<MapMemory>().explored;
@@ -255,6 +255,7 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
                 out.push(Line::from(Span::styled("  (未探索)", Style::default().fg(Color::DarkGray))));
             }
         }
+    }
     }
     out
 }

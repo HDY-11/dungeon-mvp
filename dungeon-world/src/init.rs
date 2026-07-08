@@ -138,6 +138,7 @@ pub fn setup_world() -> World {
     world.insert_resource(TurnManager::new());
     world.insert_resource(FloorNumber(1));
     world.insert_resource(VisibleMemory::default());
+    world.insert_resource(LookCursor { active: false, x: 0, y: 0 });
     world.insert_resource(ActionQueue::default());
     world.insert_resource(InputBuffer::default());
     world.insert_resource(PlayerPreview::default());

@@ -64,7 +64,7 @@ pub fn open_inventory(
         if page == Page::List(InvPanel::Left) && left_total > 0 && left_sel >= left_total {
             left_sel = left_total - 1;
         }
-        if page == Page::List(InvPanel::Right) && ground.len() > 0 && right_sel >= ground.len() {
+        if page == Page::List(InvPanel::Right) && !ground.is_empty() && right_sel >= ground.len() {
             right_sel = ground.len() - 1;
         }
 
@@ -119,7 +119,7 @@ pub fn open_inventory(
                     match dsrc {
                         DetailSource::LeftEquip => lines.push(Line::from(Span::styled(" u:卸载装备", Style::default().fg(Color::DarkGray)))),
                         DetailSource::LeftInv => {
-                            if item.def().map_or(false, |d| d.slot.is_some()) {
+                            if item.def().is_some_and(|d| d.slot.is_some()) {
                                 lines.push(Line::from(Span::styled(" e:装备  d:丢弃", Style::default().fg(Color::DarkGray))));
                             } else {
                                 lines.push(Line::from(Span::styled(" d:丢弃", Style::default().fg(Color::DarkGray))));
@@ -184,7 +184,7 @@ pub fn open_inventory(
                             let p = if act && right_sel == i { "▸" } else { " " };
                             let cl = if stack.count > 1 { format!(" x{}", stack.count) } else { String::new() };
                             lines.push(Line::from(vec![
-                                Span::styled(format!("{}", p), Style::default().fg(Color::Yellow)),
+                                Span::styled(p.to_string(), Style::default().fg(Color::Yellow)),
                                 Span::raw(format!(" {}{}", stack.name(), cl)),
                             ]));
                         }
@@ -205,8 +205,8 @@ pub fn open_inventory(
                 (Page::List(_), KeyCode::Esc | KeyCode::Char('q')) => break,
                 (Page::List(_), KeyCode::Left) => page = Page::List(InvPanel::Left),
                 (Page::List(_), KeyCode::Right) => page = Page::List(InvPanel::Right),
-                (Page::List(InvPanel::Left), KeyCode::Up) => { if left_sel > 0 { left_sel -= 1; } }
-                (Page::List(InvPanel::Right), KeyCode::Up) => { if right_sel > 0 { right_sel -= 1; } }
+                (Page::List(InvPanel::Left), KeyCode::Up) => { left_sel = left_sel.saturating_sub(1); }
+                (Page::List(InvPanel::Right), KeyCode::Up) => { right_sel = right_sel.saturating_sub(1); }
                 (Page::List(InvPanel::Left), KeyCode::Down) => { if left_sel + 1 < left_total { left_sel += 1; } }
                 (Page::List(InvPanel::Right), KeyCode::Down) => { if right_sel + 1 < ground.len() { right_sel += 1; } }
                 (Page::List(InvPanel::Left), KeyCode::Enter) => {
@@ -242,8 +242,8 @@ pub fn open_inventory(
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('e')) => {
                     let w2 = &mut *world;
                     let mut q = w2.query::<(&mut Inventory, &mut Equipment)>();
-                    if let Some((mut inv, mut eq)) = q.iter_mut(w2).next() {
-                        if let Some(stack) = inv.stacks.get(*idx) {
+                    if let Some((mut inv, mut eq)) = q.iter_mut(w2).next()
+                        && let Some(stack) = inv.stacks.get(*idx) {
                             let def = stack.def();
                             if let Some(slot) = def.and_then(|d| d.slot) {
                                 let stack = stack.clone();
@@ -261,7 +261,6 @@ pub fn open_inventory(
                                 w2.resource_mut::<EventLog>().push("该物品无法装备");
                             }
                         }
-                    }
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
@@ -281,7 +280,7 @@ pub fn open_inventory(
                             1 => &mut eq.armor,
                             _ => &mut eq.ring,
                         };
-                        let can_add = slot.as_ref().map_or(false, |s| inv.can_add(s.item_id, s.count));
+                        let can_add = slot.as_ref().is_some_and(|s| inv.can_add(s.item_id, s.count));
                         if can_add {
                             let stack = slot.take().expect("Slot was checked as can_add");
                             inv.add(stack.item_id, stack.count);
