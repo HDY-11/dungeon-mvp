@@ -22,6 +22,30 @@
 
 **位置：** `dungeon-render/src/color.rs:12-20`
 
+### I29 — 泛型 Buff 系统（ActiveBuffs + AV 推进） ✅已修复
+
+**修复前：** Buff 使用回合计数（`shield_turns: i32`），与 AV 时间轴脱钩。每帧减 1 回合，不同帧消耗速度不同。技能只能通过职业锁定。
+
+**修复后：** 新增 `ActiveBuffs(Vec<Buff>)` 和 `ActiveCooldowns(Vec<Cooldown>)` 泛型组件，`advance_action_queue` 中与队列同步推进（`remaining_av -= dist`）。`effective_attack/defense` 查询 ActiveBuffs。旧 `Buffs` 组件保留过渡期兼容。
+
+**位置：** `dungeon-core/src/components.rs`、`dungeon-action/src/execute.rs`、`dungeon-core/src/ops.rs`
+
+### I30 — UI 整合：Buff/视野/HP 标注移至行动轴 ✅已修复
+
+**修复前：** Buff 显示在 stats 面板（文本行），视野实体显示在 stats 面板底部，行动轴只显示行动名和倒计时。信息分散。
+
+**修复后：** 行动轴整合为三区：①队列条目（符号+行动+耗时）②分割线③实体状态（符号+怪物名+血量）④次级标注（Buff，dim 样式）。stats 面板移除 Buff 和视野段。
+
+**位置：** `dungeon-render/src/timeline.rs`、`dungeon-render/src/ui.rs`
+
+### I31 — x 键光标查看模式 ✅已修复
+
+**修复前：** 无查看模式，玩家无法了解地图上未知位置的详细信息。
+
+**修复后：** 新增 `LookCursor` 资源 + `open_look_mode`（方向键移动、x/Esc 退出）。地图上光标格叠加暗黄色背景高亮。stats 面板底部显示光标位置的地形名和实体名+HP。
+
+**位置：** `dungeon-core/src/resources.rs`、`src/main.rs`、`dungeon-render/src/ui.rs`
+
 ### I28 — 事件日志从 stats 面板移至地图下方 ✅已修复
 
 **修复前：** 事件日志位于右侧 stats 面板底部，占用了属性显示空间且不易阅读。
