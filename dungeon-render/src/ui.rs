@@ -1,6 +1,6 @@
 use dungeon_core::{
-    ActiveBuffs, BuffKind, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
-    Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
+    ActiveBuffs, Buffs, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
+    Position, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
@@ -48,7 +48,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         return;
     }
 
-    let timeline_width: u16 = 16;
+    let timeline_width: u16 = 26;
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -213,43 +213,11 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
             }
         }
     }
-    if let Some(b) = world.try_query::<&Buffs>().expect("Buffs registered at init").iter(world).next() {
-        let parts: Vec<String> = [b.shield_turns > 0, b.berserk_turns > 0].iter().enumerate()
-            .filter(|&(_, v)| *v).map(|(i, _)| if i == 0 { format!("🛡{}", b.shield_turns) } else { format!("⚔{}", b.berserk_turns) }).collect();
-        if !parts.is_empty() {
-            out.push(Line::from(Span::styled(format!("── Buff ── {}", parts.join(" ")), Style::default().fg(Color::Green))));
-        }
-    }
     out.push(Line::from(Span::raw("")));
     let log = world.resource::<EventLog>();
     if !log.messages.is_empty() {
         out.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
         for msg in log.messages.iter().rev().take(12) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
-    }
-    {
-        let pv: HashSet<(usize, usize)> = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init").iter(world)
-            .next().map(|(_, v)| v.visible_tiles.iter().copied().collect()).unwrap_or_default();
-        let ents: Vec<(String, i32, i32, usize, usize, Color)> = world.try_query::<(&Position, &EntityName, &Stats, &Renderable)>().expect("Pos+Name+Stats+Renderable reg at init")
-            .iter(world)
-            .filter(|(p, _, _, _)| pv.contains(&(p.x, p.y)))
-            .filter(|(_, n, _, _)| n.0 != "冒险者")
-            .map(|(p, n, st, r)| (n.0.clone(), st.hp, st.max_hp, p.x, p.y, renderable_color(r.color)))
-            .collect();
-        if !ents.is_empty() {
-            let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-            for (name, _, _, _, _, _) in &ents { *name_counts.entry(name.clone()).or_insert(0) += 1; }
-            out.push(Line::from(Span::raw("")));
-            out.push(Line::from(Span::styled("── 视野 ──", Style::default().fg(Color::DarkGray))));
-            for (en, hp, mhp, ex, ey, color) in &ents {
-                let hp_color = if *hp <= *mhp / 3 { Color::Red } else { Color::White };
-                let label = if *name_counts.get(en).unwrap_or(&1) > 1 { format!("{}({},{})", en, ex, ey) } else { en.clone() };
-                out.push(Line::from(vec![
-                    Span::styled(label, Style::default().fg(*color)),
-                    Span::raw(" "),
-                    Span::styled(format!("({}/{})", (*hp).max(0), mhp), Style::default().fg(hp_color)),
-                ]));
-            }
-        }
     }
     out
 }
