@@ -261,7 +261,7 @@ render ───╯（依赖 core + action，因 timeline 使用行动类型）
 - Buff/冷却 → 从回合计数改为 `remaining_av: f32`，在 `advance_action_queue` 中与队列同步推进
 - 冷却持续时间下限约 1000 AV，使 Buff 在战斗中有策略价值
 
-**状态下文：** 设计中，待实现。数值和具体规则见 GAME.md 对应节。
+**状态：** 已实现基础框架（ActiveBuffs 组件 + AV 推进 + 公式集成），旧回合制 Buffs 保留过渡兼容。自由组合技能系统待开发。数值和具体规则见 GAME.md 对应节。
 
 ---
 
