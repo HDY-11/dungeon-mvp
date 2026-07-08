@@ -12,6 +12,31 @@
 
 ## ✅ 已修复
 
+### A7 — 拆分 ops.rs 为 fov / pathfinding / ops ✅已修复
+
+**修复前：** `ops.rs` 是万能工具袋——FOV、A\*、公式、查询、拾取、碰撞图、渲染收集等 9 个无关功能挤在同一个文件中。
+
+**修复后：** 提取 `dungeon-core/src/fov.rs`（`calculate_visible_tiles`）和 `dungeon-core/src/pathfinding.rs`（`astar` + `AStarNode`）。ops.rs 保留剩余的紧密相关工具函数（公式、属性计算、实体查询、拾取、碰撞图、视野记忆、渲染收集）。
+
+**统计：**
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `fov.rs` | ~25 | 对称阴影投射视野计算 |
+| `pathfinding.rs` | ~80 | A\* 8 方向寻路 |
+| `ops.rs`（剩余） | ~120 | 公式/查询/记忆/碰撞/渲染 |
+
+### A6 — 行动类型从 dungeon-core 移至 dungeon-action ✅已修复
+
+**修复前：** `dungeon-core/src/action_types.rs` 包含 `ActionQueue`、`ActionKindV3`、`CanMove`/`Chase`/`Flee`等行动领域类型。它们被放在 core 中只因依赖方向限制，导致 core 被行动系统的改动拖慢。
+
+**修复后：** 整个 `action_types.rs` 迁移到 `dungeon-action/src/types.rs`。所有引用路径更新：
+- `dungeon-action` 各模块：`crate::types::*`
+- `dungeon-world`：`dungeon_action::*`
+- `dungeon-render`：新增依赖 `dungeon-action`
+- `dungeon-core`：删除 `pub mod action_types`，测试迁至 `dungeon-action`
+
+**删除文件：** `dungeon-core/src/action_types.rs`、`dungeon-core/src/tests.rs`
+
 ### I19 — 提取 setup_world/descend 共享函数 + 修复 G9/G10/I16 ✅已修复
 
 **修复内容（四项在同一个重构中完成）：**

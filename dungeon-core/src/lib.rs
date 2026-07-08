@@ -1,15 +1,15 @@
-pub mod action_types;
 pub mod components;
+pub mod fov;
 pub mod items;
 pub mod map_gen;
 pub mod monster_def;
 pub mod ops;
+pub mod pathfinding;
 // pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
 pub mod systems;
 
 
-pub use action_types::*;
 pub use components::*;
 pub use items::*;
 pub use ops::*;
@@ -423,5 +423,4 @@ impl Map {
 }
 impl Default for Map { fn default() -> Self { Self::new() } }
 
-#[cfg(test)]
-mod tests;
+

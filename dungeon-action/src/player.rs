@@ -1,7 +1,8 @@
 //! 玩家 tap-tap 行动处理
 
+use crate::types::*;
 use dungeon_core::{
-    action_types::*, components::*,
+    components::*,
     Map, OccupancyMap, MAP_WIDTH, MAP_HEIGHT, Monster,
 };
 use bevy_ecs::prelude::*;

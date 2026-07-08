@@ -5,16 +5,13 @@
 use super::*;
 use dungeon_core::{
     self as core, items::*,
-    action_types::*, Map,
-    ActionQueue, InputBuffer, PlayerPreview,
-    ChaseIntents, FleeIntents, WanderIntents,
-    Reaction, agility_to_reaction,
-    CanMove, CanWait, Stats, Buffs,
+    Map, Stats, Buffs,
     Player, Position, Renderable, MovingDir, Viewshed,
     EntityName, Monster, AttackName,
     Inventory, Equipment, Skills, PlayerClass,
     MapMemory, OccupancyMap, EventLog, TurnManager, FloorNumber,
     VisibleMemory, GameRng, PendingExp, MapSeed,
+    MonsterKindId,
 };
 use bevy_ecs::prelude::*;
 use rand::SeedableRng;
@@ -278,4 +275,31 @@ fn test_attack_execution() {
         "事件日志应有攻击/击杀记录: {:?}",
         log.messages,
     );
+}
+
+// ──────────────────────────────────────────────
+// 测试：条件函数
+// ──────────────────────────────────────────────
+#[test]
+fn test_conditions() {
+    assert!(CanMove::condition(true, false));
+    assert!(CanMove::condition(true, true));
+    assert!(!CanMove::condition(false, false));
+    assert!(CanFlee::condition(0.2));
+    assert!(!CanFlee::condition(0.5));
+    assert!(CanChase::condition(true));
+    assert!(!CanChase::condition(false));
+    assert!(CanWander::condition());
+}
+
+// ──────────────────────────────────────────────
+// 测试：敏捷→反应时公式
+// ──────────────────────────────────────────────
+#[test]
+fn test_reaction_from_agility() {
+    let r10 = agility_to_reaction(10);
+    let r20 = agility_to_reaction(20);
+    assert!(r20 < r10);
+    assert!(r10 >= 20.0);
+    assert!(r10 <= 100.0);
 }

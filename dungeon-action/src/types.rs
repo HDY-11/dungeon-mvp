@@ -1,7 +1,7 @@
 //! 行动系统类型定义（纯数据，无执行逻辑）
 //!
-//! 按关注点划分归入 dungeon-core，因为它们是"游戏中有什么行动"的数据描述。
-//! 执行逻辑在 dungeon-action crate 中。
+//! 自 dungeon-core/action_types.rs 迁移至此。行动系统的领域类型应当
+//! 定义在行动 crate 中，而非核心 crate。
 
 use bevy_ecs::prelude::*;
 
@@ -30,13 +30,6 @@ pub fn agility_speed_factor(agility: u32) -> f32 {
 // ══════════════════════════════════════════════════════
 // Action 组件
 // ══════════════════════════════════════════════════════
-//
-// 每个 Action 组件包含：
-//   - duration: 该行动的耗时
-//   - priority: 仲裁优先级
-//
-// AV = reaction_time + duration，作为单一值入队倒计时。
-// 反应时（reaction_time）不在此处——它是实体的属性（见 Reaction 组件）。
 
 /// 移动行动
 #[derive(Component, Clone, Debug)]
@@ -88,9 +81,6 @@ impl CanFlee {
         hp_ratio < 0.25
     }
 }
-
-// 注意：check_condition 中 Flee 的退出条件是 hp_ratio < 0.30（滞回区间），
-// 见 dungeon-action/src/execute.rs。进入条件（CanFlee::condition）保持 0.25。
 
 /// 游荡行动（怪物专用）
 #[derive(Component, Clone, Debug)]
@@ -146,7 +136,6 @@ pub enum ActionKindV3 {
 pub struct ActionEntry {
     pub entity: Entity,
     pub kind: ActionKindV3,
-    /// AV 剩余 = reaction_time + duration，单一倒计时
     pub av_remaining: f32,
 }
 
@@ -161,13 +150,8 @@ impl Default for ActionQueue {
 }
 
 impl ActionQueue {
-    /// 入队：av = reaction_time + duration
     pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
-        self.entries.push(ActionEntry {
-            entity,
-            kind,
-            av_remaining: av,
-        });
+        self.entries.push(ActionEntry { entity, kind, av_remaining: av });
     }
 
     pub fn advance(&mut self, amount: f32) {
@@ -178,35 +162,28 @@ impl ActionQueue {
         }
     }
 
-    /// 找最小正 av_remaining（= 下一次事件的距离）
     pub fn next_event_distance(&self) -> Option<f32> {
-        self.entries
-            .iter()
+        self.entries.iter()
             .filter(|e| e.av_remaining > 0.0)
             .map(|e| e.av_remaining)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
     }
 
-    /// 取出所有 av_remaining ≤ 0 的条目
     pub fn pop_ready(&mut self) -> Vec<ActionEntry> {
         let mut ready = Vec::new();
         self.entries.retain(|e| {
             if e.av_remaining <= 0.0 {
                 ready.push(e.clone());
                 false
-            } else {
-                true
-            }
+            } else { true }
         });
         ready
     }
 
-    /// 检查实体是否已在队列中
     pub fn has_entity(&self, entity: Entity) -> bool {
         self.entries.iter().any(|e| e.entity == entity)
     }
 
-    /// 入队或跳过：如果实体已在队列中，忽略（保留已有行动的 av）
     pub fn enqueue_if_absent(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
         if !self.entries.iter().any(|e| e.entity == entity) {
             self.entries.push(ActionEntry { entity, kind, av_remaining: av });
@@ -218,7 +195,6 @@ impl ActionQueue {
 // 输入管线
 // ══════════════════════════════════════════════════════
 
-/// 已识别但未消费的玩家输入
 #[derive(Clone, Debug)]
 pub enum RecognizedInput {
     Direction(isize, isize),
@@ -229,19 +205,14 @@ pub enum RecognizedInput {
     Confirm,
 }
 
-/// 缓冲区
 #[derive(Resource, Default)]
 pub struct InputBuffer {
-    /// 已识别待消费的输入
     pub buffer: Vec<RecognizedInput>,
 }
 
 impl InputBuffer {
     pub fn push(&mut self, input: RecognizedInput) {
-        if self.buffer.len() >= 2 {
-            self.buffer.remove(0);
-        }
-        // 去重：连续相同方向只保留一个
+        if self.buffer.len() >= 2 { self.buffer.remove(0); }
         if let Some(last) = self.buffer.last() {
             match (last, &input) {
                 (RecognizedInput::Direction(ax, ay), RecognizedInput::Direction(bx, by))
@@ -253,15 +224,10 @@ impl InputBuffer {
     }
 
     pub fn pop(&mut self) -> Option<RecognizedInput> {
-        if self.buffer.is_empty() {
-            None
-        } else {
-            Some(self.buffer.remove(0))
-        }
+        if self.buffer.is_empty() { None } else { Some(self.buffer.remove(0)) }
     }
 }
 
-/// 玩家预览态
 #[derive(Resource)]
 pub struct PlayerPreview {
     pub kind: Option<ActionKindV3>,
@@ -272,17 +238,14 @@ impl Default for PlayerPreview {
 }
 
 // ══════════════════════════════════════════════════════
-// 怪物意图收集（用于并行决策）
+// 怪物意图收集
 // ══════════════════════════════════════════════════════
 
-/// 追击意图缓冲区（chase_decision_system 写入，arbitration_system 读取）
 #[derive(Resource, Default)]
 pub struct ChaseIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);
 
-/// 逃跑意图缓冲区（flee_decision_system 写入，arbitration_system 读取）
 #[derive(Resource, Default)]
 pub struct FleeIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);
 
-/// 游荡意图缓冲区（wander_decision_system 写入，arbitration_system 读取）
 #[derive(Resource, Default)]
 pub struct WanderIntents(pub Vec<(Entity, u32, f32, ActionKindV3)>);

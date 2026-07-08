@@ -4,8 +4,9 @@
 //! 各自写入意图缓冲区 → arbitration_system 合并入 ActionQueue。
 //! bevy 调度器自动并行执行互不冲突的 system。
 
+use crate::types::*;
 use dungeon_core::{
-    action_types::*, components::*, resources::GameRng,
+    components::*, resources::GameRng,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;

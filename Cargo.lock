@@ -636,6 +636,7 @@ name = "dungeon-render"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "dungeon-action",
  "dungeon-core",
  "ratatui",
 ]

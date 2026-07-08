@@ -1,7 +1,8 @@
 //! 行动执行引擎：队列推进、保活检查、行动执行
 
+use crate::types::*;
 use dungeon_core::{
-    action_types::*, ops, components::*, items::*, resources::*,
+    ops, components::*, items::*, resources::*,
     Map, MAP_WIDTH, MAP_HEIGHT,
 };
 use bevy_ecs::prelude::*;
@@ -119,7 +120,7 @@ fn execute_chase(world: &mut World, entity: Entity) {
         let next_step = {
             let map = world.resource::<Map>();
             let occ = world.resource::<OccupancyMap>();
-            ops::astar(pos, (px, py), &map.tiles, Some(occ))
+            dungeon_core::pathfinding::astar(pos, (px, py), &map.tiles, Some(occ))
                 .and_then(|path| {
                     // 跳过第一步如果它等于当前位置（A* 不含起点）
                     path.first().copied()

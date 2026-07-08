@@ -1,13 +1,13 @@
 use crate::{
     components::*,
     resources::*,
-    calculate_visible_tiles, Map,
+    Map,
 };
 use bevy_ecs::prelude::*;
 
 pub fn fov_system(mut query: Query<(&Position, &mut Viewshed)>, map: Res<Map>) {
     for (pos, mut viewshed) in query.iter_mut() {
-        viewshed.visible_tiles = calculate_visible_tiles(pos.x, pos.y, viewshed.range, &map);
+        viewshed.visible_tiles = crate::fov::calculate_visible_tiles(pos.x, pos.y, viewshed.range, &map);
     }
 }
 

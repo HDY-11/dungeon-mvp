@@ -3,13 +3,15 @@
 use dungeon_core::{
     components::*, items::*, resources::*,
     Map, MAP_WIDTH, MAP_HEIGHT,
+};
+use dungeon_action::{
     ActionQueue, InputBuffer, PlayerPreview,
     ChaseIntents, FleeIntents, WanderIntents,
     Reaction, agility_to_reaction,
     CanMove, CanChase, CanFlee, CanWander, CanWait,
 };
 use bevy_ecs::prelude::*;
-use rand::{Rng, RngExt, SeedableRng};
+use rand::{Rng, SeedableRng};
 
 // ══════════════════════════════════════════════════════
 // 共享辅助函数（setup_world 与 descend 共用）

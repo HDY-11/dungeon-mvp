@@ -11,7 +11,7 @@ pub fn advance_until_player_acted(world: &mut World) {
         let player_done = {
             let player = world.try_query::<(Entity, &dungeon_core::Player)>().expect("Entity+Player registered at init").iter(world).next().map(|(e, _)| e);
             match player {
-                Some(p) => !world.resource::<dungeon_core::ActionQueue>().has_entity(p),
+                Some(p) => !world.resource::<crate::types::ActionQueue>().has_entity(p),
                 None => true,
             }
         };
