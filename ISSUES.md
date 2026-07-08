@@ -329,15 +329,6 @@
 
 ## 二、架构层面（Architecture）
 
-### 🟡 A4L — A4 重构遗漏：Map impl 残留两套重复方法
-
-**问题：** A4（环境修饰提取到 map_gen.rs）中将 `collect_walkable_regions` 和 `detect_cave_regions` 复制到 `map_gen.rs` 作为自由函数，但原 impl 方法**未删除**，导致 `Map` 的 `impl` 块中保留了两套完全重复的实现。
-
-**表现：** `dungeon-core/src/lib.rs:339`（`collect_walkable_regions`）和 `lib.rs:367`（`detect_cave_regions`）是死代码——所有调用方全部走 `map_gen.rs` 的自由函数版本。两套代码完全一致，任一修改需同步两处。
-
-**位置：** `dungeon-core/src/lib.rs:339-399`
-**教训：** 重构跨文件移动方法后应检查原位置是否仍有残余。A4 的统计表显示 Map impl 方法数从 ~18 降到 ~7，但实际应为 ~5——这两个方法在统计时被遗漏。
-
 ## 三、实现层面（Implementation）
 
 ### 🟡 I24 — Buff/Skill 使用回合计数而非 AV，时间轴脱钩
@@ -390,6 +381,14 @@
 
 ## 四、游戏逻辑层面（Game Logic）
 
+### A4L — A4 重构遗漏：Map impl 残留两套重复方法 ✅已修复
+
+**修复前：** A4 将 `collect_walkable_regions` 和 `detect_cave_regions` 复制到 `map_gen.rs` 作为自由函数，但原 impl 方法**未删除**。两套代码完全一致。A4 的统计表显示 Map impl 方法数从 ~18 降到 ~7，但实际应为 ~5。
+
+**修复后：** 两个 impl 方法已删除。所有调用方已走 `map_gen.rs` 自由函数版本。
+
+**教训：** 重构跨文件移动方法后应检查原位置是否仍有残余。
+
 ### I26 — arbitration_system 排序比较器违反全序契约 ✅已修复
 
 **修复前：** `arbitration_system` 中同 priority 的实体用 `random_range()` 做 tiebreaker，每次比较产生新随机值，违反 `sort_by` 的全序契约。标准库排序算法在检测到不一致比较时会 panic。下楼至第 3 层时固定触发。
@@ -412,17 +411,13 @@
 
 **位置：** `dungeon-world/src/init.rs:79-85`
 
-### 🟡 G12 — 渲染层叠顺序未定义：怪物与掉落物在同一格时谁在上层不确定
+### G12 — 渲染层叠顺序未定义：怪物与掉落物在同一格时谁在上层不确定 ✅已修复
 
-**问题：** `collect_renderables()` 查询所有 `(Position, Renderable)` 实体并按 ECS 迭代顺序返回，仅对玩家 `@` 做了特殊排序（放最后）。怪物、物品、楼梯在同一格时，**哪一层渲染在上方由迭代顺序决定，不可预测。**
+**修复前：** `collect_renderables` 查询所有 `(Position, Renderable)` 实体并按 ECS 迭代顺序返回，仅对玩家 `@` 做了特殊排序（放最后）。怪物、物品、楼梯在同一格时，哪一层渲染在上方由迭代顺序决定，不可预测。怪物站在物品上时可能被物品盖住。
 
-**表现举例：** 怪物站在地面物品上时，有时物品盖住怪物（看不到怪物 glyph），有时怪物盖住物品。楼梯上有怪物时同理。
+**修复后：** 收集时增加 Entity 查询，在排序阶段区分实体类型。图层优先级：物品/楼梯 (0) → 怪物 (1) → 玩家 (2)。同层保持原迭代顺序。
 
-**根因：** `collect_renderables` 只区分"是 player"和"不是 player"，未区分怪物/物品/楼梯。渲染管线按返回顺序依次写入格子的字符/颜色，后写入的覆盖先写入的。
-
-**位置：** `dungeon-core/src/ops.rs:150`（`collect_renderables`）
-
-**期望：** 图层优先级应为 **物品/楼梯（底层）→ 怪物（中层）→ 玩家（顶层）**，同层可任意顺序。
+**位置：** `dungeon-core/src/ops.rs:150-163`
 
 ## 其他
 

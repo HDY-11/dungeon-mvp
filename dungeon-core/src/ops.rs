@@ -148,12 +148,18 @@ pub fn rebuild_occupancy(world: &mut World) {
 // ── 渲染数据收集 ───────────────────────────────────
 
 pub fn collect_renderables(world: &World) -> Vec<(usize, usize, char, RgbColor)> {
-    let mut query = world.try_query::<(&Position, &Renderable)>().expect("Position+Renderable registered at init");
-    let mut v: Vec<(usize, usize, char, RgbColor)> = query.iter(world)
-        .map(|(pos, rend)| (pos.x, pos.y, rend.glyph, rend.color)).collect();
-    // 玩家 (@) 最后渲染，确保显示在最上层
-    v.sort_by_key(|(_, _, glyph, _)| if *glyph == '@' { 1 } else { 0 });
-    v
+    let mut query = world.try_query::<(Entity, &Position, &Renderable)>().expect("Entity+Position+Renderable registered at init");
+    let mut items: Vec<(Entity, usize, usize, char, RgbColor)> = Vec::new();
+    for (entity, pos, rend) in query.iter(world) {
+        items.push((entity, pos.x, pos.y, rend.glyph, rend.color));
+    }
+    // 图层优先级：玩家 (2) > 怪物 (1) > 物品/楼梯/其他 (0)
+    items.sort_by_key(|(e, _, _, _, _)| {
+        if world.get::<Player>(*e).is_some() { 2u8 }
+        else if world.get::<Monster>(*e).is_some() { 1 }
+        else { 0 }
+    });
+    items.into_iter().map(|(_, x, y, g, c)| (x, y, g, c)).collect()
 }
 
 pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {
