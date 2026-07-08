@@ -92,7 +92,7 @@ pub fn generate_water(map: &mut Map, _rng: &mut impl Rng, seed: u64) {
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             if map.tiles[y][x] == Tile::Floor && rng2.random_range(0..1000) < 20
-                && is_away_from_rooms(map, x, y, 6)
+                && is_away_from_rooms(map, x, y, 3)
             {
                 map.tiles[y][x] = Tile::DeepWater;
             }

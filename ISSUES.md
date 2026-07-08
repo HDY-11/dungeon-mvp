@@ -25,6 +25,24 @@
 | `pathfinding.rs` | ~80 | A\* 8 方向寻路 |
 | `ops.rs`（剩余） | ~120 | 公式/查询/记忆/碰撞/渲染 |
 
+### I17 — 全部 `.unwrap()` 替换为 `.expect()` ✅已修复
+
+**状态：** 全部 ~35 处 `.unwrap()` 已替换。生产代码零 unwrap。
+
+### I10 — 斜向键无 OS key-repeat（Won't Fix — 终端环境限制） ✅已修复
+
+**问题：** 按住 Home/End/PgUp/PgDn 不放，角色不会连续斜向移动。多数终端不发斜向键的 OS key-repeat 事件。
+
+**结论：** 终端环境引起，不在项目控制范围内。
+
+### G8 — 水体生成保护距离调整（6→3） ✅已修复
+
+**修复前：** `is_away_from_rooms(x, y, 6)` 保护距离 6，对半径 4-6 的房间偏大，水体几乎不出现。
+
+**修复后：** 保护距离改为 3。视窗内可见 ~9-19 格水体（约 1-2% 地图面积），以水洼和窄溪流形式分布在通道边缘和房间过渡带，不淹没房间内部。
+
+**评估：** 当前密度适合洞穴环境，也为未来的水体减速/加速 Buff 预留了触发空间——每层自然涉水 3-5 次，有存在感但不泛滥。
+
 ### A9 — 渲染层直接查询 ECS（Deferred — 条件触发时重新评估） ✅已修复
 
 **当前评估：** 不做 ViewData 重构。理由：
@@ -294,112 +312,9 @@
 
 ## 二、架构层面（Architecture）
 
----
-
-### 🟡 A6 — `dungeon-core` 职责膨胀（行动类型不应在 core 中）
-
-**问题：** `dungeon-core/src/action_types.rs` 定义了 `ActionQueue`、`ActionKindV3`、`CanMove`/`Chase`/`Flee`/`Wander`/`Wait`、`Reaction`、`InputBuffer`、`PlayerPreview`、`ChaseIntents`/`FleeIntents`/`WanderIntents`。这些是**行动系统的领域类型**，不是"核心数据"。
-
-它们被放在 core 中的唯一原因是依赖链方向：`core ← action`。如果 action 持有自己的类型，core 无法引用它们，但 action 需要这些类型被 core 中的 `ops.rs` 和 `systems.rs` 使用。结果是：**core 的变化速度被行动系统拖快**——添加新行动时 core 要 recompile。
-
-**位置：** `dungeon-core/src/action_types.rs`（整个文件）
-
-**建议修复方向：**
-1. 将 `action_types.rs` 迁移到 `dungeon-action` crate
-2. 或新增 `dungeon-action-types` 中间 crate 同时被 core 和 action 引用
-3. 短期：至少将 `InputBuffer` / `PlayerPreview` 移入 dungeon-action（它们只在 action 和 main.rs 中使用）
-
----
-
-### 🟡 A7 — `ops.rs` 是万能工具袋（低内聚）
-
-**问题：** `dungeon-core/src/ops.rs` 包含以下互不相关的功能：
-
-| 功能 | 消费方 | 主题 |
-|------|--------|------|
-| 经验/HP/MP 公式 | core、render | 数值 |
-| 有效属性计算 | action、render | 战斗 |
-| 实体查询（player_entity、on_stairs） | action、world、render、main | 查询 |
-| 拾取逻辑（pickup_ground） | main | 交互 |
-| 视野记忆更新 | world、main | 状态 |
-| 碰撞图重建 | action、world | 物理 |
-| 渲染数据收集 | render | 渲染 |
-| FOV | core（system） | 视野 |
-| A* 寻路 | action | 寻路 |
-
-这些函数没有主题关联，唯一的共同点是"被多个 crate 使用"——这是**实现共享**而非**概念内聚**。新功能自然地被塞入 ops.rs，进一步膨胀。
-
-**位置：** `dungeon-core/src/ops.rs`
-
-**建议修复方向：** 按主题拆分：`fov.rs`、`pathfinding.rs`、`formulas.rs`、`world_query.rs`。
-
----
-
-### 🟢 A8 — `monster_def.rs` 混合定义与算法
-
-**问题：** `dungeon-core/src/monster_def.rs` 名义上是"怪物定义"模块，包含外观、属性、掉落表等数据定义。但其中也包含了 `generate_monster_population()`——一个约 80 行的**世界初始化算法**（噪声密度层 → 元胞扩散 → 数量钳制）。这属于 `dungeon-world/src/init.rs` 的职责范畴。
-
-**根因：** `setup_world` 和 `descend` 都需要生成怪物种群，所以这个函数被放在了 core 中。但"被两个地方调用"不应成为把算法塞入数据模块的理由。
-
-**位置：** `dungeon-core/src/monster_def.rs:103-188`
-
-**建议修复方向：** 将 `generate_monster_population` 移至 `dungeon-world/src/init.rs` 或独立 `population.rs`。
-
----
-
-### 🟢 A10 — world init 直接操作 Map 内部细节
-
-**问题：** `dungeon-world/src/init.rs` 中的 `setup_world` 和 `descend` 直接访问 `map.rooms[0].center()` 和 `map.tiles`。Map 的生成细节泄漏到 world 初始化逻辑中：
-
-- `rooms[0].center()` 的语义是"出生点"，但 Map 没有提供 `spawn_point()` 方法
-- `rooms.iter().skip(1)` 依赖调用方知道 rooms[0] 是出生房间
-- 楼梯选择逻辑 `max_by_key` 直接操作 rooms 的内部结构
-
-**位置：** `dungeon-world/src/init.rs`
-
-**建议修复方向：**
-1. Map 增加 `spawn_point() -> (usize, usize)` 和 `farthest_room_from(point) -> (usize, usize)` 方法，封装 rooms 内部细节
-2. `generate_monster_population` 改为接收 `&Map` 而非裸 tiles 数组
----
-
 ## 三、实现层面（Implementation）
 
----
-
-### 🟢 I10 — 斜向键按住不放无法连续移动（无 OS key-repeat）— 终端环境限制，暂不处理
-
-**问题：** 按住 Home/End/PgUp/PgDn 不放，角色不会连续斜向移动。因为多数终端不发 Home/End 的 OS key-repeat 事件，tap-tap 系统需要两个事件完成一次移动（预览+确认），但按住斜向键只产生一个事件。
-
-**结论：** 由终端环境引起，不在本项目控制范围内，等未来统一运行环境后再修复。
-
-**位置：** `src/main.rs:60-74`（输入线程）
-
----
-
-### 🟡 I17 — 少量 `.unwrap()` 调用待处理（约 10 处）
-
-**当前状态：** 约 25 处 `try_query().unwrap()` 已替换为 `try_query().expect("...")`（共 6 个文件：ops/ui/inventory/persist/execute/tick）。剩余约 10 处非 try_query unwrap：
-
-| 模式 | 数量 | 风险 |
-|------|------|------|
-| `get::<T>(entity).unwrap()` | ~4 | execute.rs（Inventory/Equipment on attacker） |
-| `ItemRegistry::global().get(id).unwrap()` | ~3 | init.rs（物品生成） |
-| `query().next().unwrap()` | ~1 | init.rs descend |
-| 其他杂项 | ~3 | action_types.rs f32 partial_cmp、inventory.rs slot.take() |
-
----
-
 ## 四、游戏逻辑层面（Game Logic）
-
----
-
-### 🟢 G8 — 水体生成保护距离可能过大（优先级低）
-
-**问题：** `generate_water` 使用 `is_away_from_rooms(x, y, 6)` 保护房间中心不被水体覆盖。曼哈顿距离 6 对于半径 4-6 的圆形/菱形房间可能过大，导致水体偏少。
-
-**位置：** `dungeon-core/src/lib.rs:241`
-
----
 
 ## 其他
 
