@@ -1,5 +1,5 @@
 use dungeon_core::{
-    Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Monster, Player,
+    Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
     Position, Renderable, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
@@ -21,7 +21,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let area = frame.area();
     let inner = inner_rect(area, 1);
 
-    let (game_over, player_visible, tiles, explored, px, py, room_count, monster_count, visible_mem) = {
+    let (game_over, player_visible, tiles, explored, px, py, visible_mem) = {
         let go = world.resource::<TurnManager>().game_over;
         let pv: HashSet<(usize, usize)> = {
             let mut q = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init");
@@ -33,10 +33,8 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         let ex = world.resource::<MapMemory>().explored;
         let pp = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world)
             .next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-        let mc = world.try_query::<(&Monster,)>().expect("Monster registered at init").iter(world).count();
-        let rc = world.resource::<Map>().rooms.len();
         let vm: Vec<(usize, usize, char, (u8, u8, u8))> = world.resource::<VisibleMemory>().entries.values().copied().collect();
-        (go, pv, ts, ex, pp.0, pp.1, rc, mc, vm)
+        (go, pv, ts, ex, pp.0, pp.1, vm)
     };
 
     let title = if game_over { "  你死了  " } else { "  Dungeon MVP " };
@@ -50,7 +48,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         return;
     }
 
-    let timeline_width: u16 = 22;
+    let timeline_width: u16 = 16;
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -140,7 +138,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         timeline_area,
     );
 
-    let stats = build_stats_panel(px, py, room_count, monster_count, game_start, world);
+    let stats = build_stats_panel(px, py, game_start, world);
     frame.render_widget(
         Paragraph::new(stats).style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::LEFT)
@@ -149,7 +147,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     );
 }
 
-pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count: usize, game_start: Instant, world: &World) -> Vec<Line<'static>> {
+pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &World) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let stats: Option<Stats> = world.try_query::<(&Player, &Stats)>().expect("Player+Stats registered at init").iter(world).next().map(|(_, s)| s.clone());
     let Some(ref s) = stats else {
@@ -198,9 +196,7 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     out.push(Line::from(Span::raw("")));
     let floor = world.resource::<FloorNumber>().0;
     out.push(Line::from(Span::raw(format!(" 楼层 {}", floor))));
-    out.push(Line::from(Span::raw(format!(" 房间 {}", room_count))));
     out.push(Line::from(Span::raw(format!("  @ ({}, {})", px, py))));
-    out.push(Line::from(Span::raw(format!(" 怪物 {}", monster_count))));
     let elapsed = game_start.elapsed();
     out.push(Line::from(Span::styled(format!(" ⏱ {:>2}:{:02}", elapsed.as_secs() / 60, elapsed.as_secs() % 60), Style::default().fg(Color::DarkGray))));
     out.push(Line::from(Span::raw("")));
@@ -228,7 +224,7 @@ pub fn build_stats_panel(px: usize, py: usize, room_count: usize, monster_count:
     let log = world.resource::<EventLog>();
     if !log.messages.is_empty() {
         out.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
-        for msg in log.messages.iter().rev().take(5) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
+        for msg in log.messages.iter().rev().take(12) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
     }
     {
         let pv: HashSet<(usize, usize)> = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init").iter(world)
