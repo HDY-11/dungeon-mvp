@@ -78,6 +78,14 @@ pub struct VisibleMemory {
     pub entries: std::collections::HashMap<Entity, (usize, usize, char, (u8, u8, u8))>,
 }
 
+/// 光标查看模式（按 x 激活，方向键移动，x/Esc 退出）
+#[derive(Resource)]
+pub struct LookCursor {
+    pub active: bool,
+    pub x: usize,
+    pub y: usize,
+}
+
 #[derive(Resource)]
 pub struct OccupancyMap {
     pub cells: [[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],

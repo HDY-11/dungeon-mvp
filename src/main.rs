@@ -11,7 +11,8 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    ops, EventLog, TurnManager,
+    ops, EventLog, LookCursor, TurnManager, Map, MAP_WIDTH, MAP_HEIGHT,
+    Tile, Position, Player, EntityName, Stairs, ItemPickup, Renderable,
 };
 use dungeon_action::{handle_player_direction, handle_wait, handle_skill};
 use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
@@ -79,7 +80,7 @@ fn run(
 
     loop {
         let has_action = match rx.try_recv() {
-            Ok(code) => process_key(code, terminal, &modal_flag, world)?,
+            Ok(code) => process_key(code, terminal, &modal_flag, world, game_start)?,
             Err(mpsc::TryRecvError::Empty) => {
                 std::thread::sleep(Duration::from_millis(1));
                 false
@@ -115,6 +116,7 @@ fn process_key(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     modal_flag: &AtomicBool,
     world: &mut World,
+    game_start: Instant,
 ) -> io::Result<bool> {
     match code {
         KeyCode::Up      => Ok(handle_player_direction(world, 0, -1)),
@@ -186,6 +188,12 @@ fn process_key(
             }
             Ok(false)
         }
+        KeyCode::Char('x') | KeyCode::Char('X') => {
+            modal_flag.store(true, Ordering::Relaxed);
+            open_look_mode(terminal, world, game_start)?;
+            modal_flag.store(false, Ordering::Relaxed);
+            Ok(false)
+        }
         _ => Ok(false),
     }
 }
@@ -212,6 +220,36 @@ fn open_modal(
             return matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y'));
         }
     }
+}
+
+fn open_look_mode(
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    world: &mut World,
+    game_start: Instant,
+) -> io::Result<()> {
+    let (cx, cy) = {
+        let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
+        q.iter(&*world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
+    };
+    world.insert_resource(LookCursor { active: true, x: cx, y: cy });
+    loop {
+        let _ = terminal.draw(|frame| render_ui(frame, game_start, &*world));
+        if let Ok(Event::Key(k)) = event::read() {
+            let mut cursor = world.resource_mut::<LookCursor>();
+            match k.code {
+                KeyCode::Up => cursor.y = cursor.y.saturating_sub(1),
+                KeyCode::Down => cursor.y = (cursor.y + 1).min(MAP_HEIGHT - 1),
+                KeyCode::Left => cursor.x = cursor.x.saturating_sub(1),
+                KeyCode::Right => cursor.x = (cursor.x + 1).min(MAP_WIDTH - 1),
+                KeyCode::Home => { cursor.x = 0; cursor.y = 0; }
+                KeyCode::End => { cursor.x = MAP_WIDTH - 1; cursor.y = MAP_HEIGHT - 1; }
+                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => break,
+                _ => {}
+            }
+        }
+    }
+    world.resource_mut::<LookCursor>().active = false;
+    Ok(())
 }
 
 fn title_screen(

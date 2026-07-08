@@ -1,6 +1,7 @@
+use bevy_ecs::prelude::Entity;
 use dungeon_core::{
-    ActiveBuffs, Buffs, Equipment, EventLog, FloorNumber, Inventory, Map, MapMemory, Player,
-    Position, Skills, Stats, TurnManager, Viewshed, VisibleMemory,
+    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
+    Position, Skills, Stats, Tile, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
@@ -218,6 +219,42 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
     if !log.messages.is_empty() {
         out.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
         for msg in log.messages.iter().rev().take(12) { out.push(Line::from(Span::raw(format!(" {}", msg)))); }
+    }
+
+    // ── 光标查看信息 ──
+    let cursor = world.resource::<LookCursor>();
+    if cursor.active {
+        let (cx, cy) = (cursor.x, cursor.y);
+        let explored = world.resource::<MapMemory>().explored;
+        let map = world.resource::<Map>();
+        let pv: std::collections::HashSet<(usize, usize)> = world.try_query::<(&Player, &Viewshed)>()
+            .expect("Player+Viewshed reg").iter(world)
+            .next().map(|(_, v)| v.visible_tiles.iter().copied().collect())
+            .unwrap_or_default();
+        out.push(Line::from(Span::raw("")));
+        out.push(Line::from(Span::styled(format!(" x 光标 ({}, {})", cx, cy), Style::default().fg(Color::Yellow))));
+        if cx < MAP_WIDTH && cy < MAP_HEIGHT {
+            if explored[cy][cx] || pv.contains(&(cx, cy)) {
+                let tile = map.tiles[cy][cx];
+                let tile_name = match tile {
+                    Tile::Wall => "墙壁", Tile::Floor => "地板",
+                    Tile::ShallowWater => "浅水", Tile::DeepWater => "深水",
+                    Tile::Stalactite => "钟乳石",
+                };
+                out.push(Line::from(Span::styled(format!("  {}", tile_name), Style::default().fg(Color::DarkGray))));
+                // 查找光标位置的实体
+                let cursor_entities: Vec<(String, Entity)> = {
+                    let mut eq = world.try_query::<(Entity, &Position, &EntityName)>().expect("Entity+Pos+Name reg");
+                    eq.iter(world).filter(|(_, p, _)| p.x == cx && p.y == cy).map(|(e, _, n)| (n.0.clone(), e)).collect()
+                };
+                for (name, e) in &cursor_entities {
+                    let hp = world.get::<Stats>(*e).map(|s| format!(" ({}/{})", s.hp.max(0), s.max_hp)).unwrap_or_default();
+                    out.push(Line::from(Span::styled(format!("  {}{}", name, hp), Style::default().fg(Color::White))));
+                }
+            } else {
+                out.push(Line::from(Span::styled("  (未探索)", Style::default().fg(Color::DarkGray))));
+            }
+        }
     }
     out
 }
