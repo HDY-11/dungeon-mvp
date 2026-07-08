@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use bevy_ecs::prelude::{Entity, World};
-use crate::color::{renderable_color, unique_color};
+use crate::color::{entity_color, renderable_color};
 
 /// 行动表：符号 行动 耗时（无 HP），下方分割后显示符号 怪物名 血量 + Buff
 pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) -> Vec<Line<'static>> {
@@ -38,9 +38,7 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
         if !player_visible.contains(&(pos.x, pos.y)) { continue; }
         let glyph = world.get::<Renderable>(entry.entity)
             .map(|r| r.glyph).unwrap_or('?');
-        let base_color = world.get::<Renderable>(entry.entity)
-            .map(|r| r.color).unwrap_or((200, 200, 200));
-        let color = renderable_color(unique_color(base_color, entry.entity.to_bits()));
+        let color = renderable_color(entity_color(entry.entity.to_bits(), 0));
         let (action_label, timer) = action_display(&entry.kind, entry.av_remaining);
         out.push(Line::from(vec![
             Span::styled(format!(" {} ", glyph), Style::default().fg(color)),
@@ -63,7 +61,7 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     if let Some(mut q) = world.try_query::<(Entity, &Position, &EntityName, &Stats, &Renderable)>() {
         for (e, p, n, s, r) in q.iter(world) {
             if n.0 == "冒险者" || !player_visible.contains(&(p.x, p.y)) { continue; }
-            let color = renderable_color(unique_color(r.color, e.to_bits()));
+            let color = renderable_color(entity_color(e.to_bits(), 0));
             status_entries.push((r.glyph, n.0.clone(), s.hp, s.max_hp, color, e));
         }
     }

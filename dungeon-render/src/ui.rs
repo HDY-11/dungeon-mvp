@@ -5,7 +5,7 @@ use dungeon_core::{
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
-use crate::color::{renderable_color, unique_color};
+use crate::color::{entity_color, renderable_color};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -123,9 +123,9 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         {
             let (idx, jdx) = (ey - cam_y, ex - cam_x);
             let bg = lines[idx][jdx].2;
-            // 怪物在地图上使用 unique_color，其余实体用原始颜色
+            // 怪物在地图上使用 entity_color，其余实体用原始颜色
             let color = if world.get::<Monster>(entity).is_some() {
-                renderable_color(unique_color((r, g, b), entity.to_bits()))
+                renderable_color(entity_color(entity.to_bits(), 0))
             } else {
                 renderable_color((r, g, b))
             };

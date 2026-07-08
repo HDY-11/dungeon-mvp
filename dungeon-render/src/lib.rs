@@ -3,7 +3,7 @@ pub mod timeline;
 pub mod title;
 pub mod ui;
 
-pub use color::{renderable_color, unique_color};
+pub use color::{entity_color, renderable_color};
 pub use timeline::build_timeline;
 pub use title::draw_title;
 pub use ui::{build_stats_panel, render_ui};

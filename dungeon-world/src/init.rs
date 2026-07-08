@@ -98,7 +98,7 @@ fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (
         }
     }
 
-    // G9: 单房间 → 醉汉游走
+    // G9: 单房间 → 醉汉游走 60 步
     let (mut cx, mut cy) = (spx as isize, spy as isize);
     for _ in 0..60 {
         let dx = rng.random_range(-1i32..2) as isize;
@@ -112,7 +112,22 @@ fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (
             return (cx as usize, cy as usize);
         }
     }
-    (spx, spy)
+    // 兜底：从 spawn 向外螺旋搜索最近的 walkable 格（至少 15 格）
+    for r in 15..=40 {
+        for dy in -(r as isize)..=r as isize {
+            for dx in -(r as isize)..=r as isize {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = spx.wrapping_add_signed(dx);
+                let ny = spy.wrapping_add_signed(dy);
+                if nx < MAP_WIDTH && ny < MAP_HEIGHT
+                    && map.tiles[ny][nx].walkable()
+                {
+                    return (nx, ny);
+                }
+            }
+        }
+    }
+    (spx + 15, spy)
 }
 
 // ══════════════════════════════════════════════════════

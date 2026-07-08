@@ -10,17 +10,13 @@ pub fn renderable_color(glyph_color: (u8, u8, u8)) -> RataColor {
     RataColor::Rgb(glyph_color.0, glyph_color.1, glyph_color.2)
 }
 
-/// 基于实体 ID 对基础颜色做微调，使同类怪物有细微差异但保留色系辨识度。
-/// 以基础色为中心，在 ±40 范围内均匀采样 —— 即使通道值为 0 或 255 也能产生视觉差异。
-pub fn unique_color(base: (u8, u8, u8), id_bits: u64) -> (u8, u8, u8) {
-    let hash = id_bits.wrapping_mul(0x9E3779B97F4A7C15);
-    let sample = |v: u8, h: u64| -> u8 {
-        let spread = 80u16;
-        let lo = (v as u16).saturating_sub(spread / 2);
-        let hi = (v as u16 + spread / 2).min(255);
-        let range = hi - lo + 1;
-        let offset = (h & 0xFF) as u16 % range;
-        (lo + offset) as u8
-    };
-    (sample(base.0, hash), sample(base.1, hash >> 16), sample(base.2, hash >> 32))
+/// 基于实体 ID 生成颜色，无基准色，直接用 SipHash 扩散后映射 RGB。
+/// 微小 ID 变化产生大幅颜色跳跃，低碰撞率。
+pub fn entity_color(id_bits: u64, seed: u64) -> (u8, u8, u8) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id_bits.hash(&mut hasher);
+    seed.hash(&mut hasher);
+    let hash = hasher.finish();
+    ((hash >> 40) as u8, (hash >> 20) as u8, hash as u8)
 }
