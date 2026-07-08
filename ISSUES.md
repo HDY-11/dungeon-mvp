@@ -1,4 +1,4 @@
-> **⚠️ 修改前必须阅读或回忆 [RULE.md](RULE.md) 的内容，了解本文档的维护规范。**
+> **⚠️ 修改前必须阅读或回忆 [RULE.md](RULE.md)——它定义了本文档的维护规则和更新时机。**
 
 # 发现的问题记录
 
@@ -11,6 +11,23 @@
 ---
 
 ## ✅ 已修复
+
+### G13 — 玩家面板显示不应公开的调试信息（房间数/怪物数） ✅已修复
+
+**修复前：** 属性面板中显示 `房间 N` 和 `怪物 N`，这些是地图生成和种群统计的调试数据，玩家不应看到。行动轴宽度 22 偏高，压缩了地图和属性区的可用空间。事件日志仅显示 5 条，战斗密集时关键信息快速滚出屏幕。
+
+**修复后：** 删除房间/怪物数量行。行动轴收窄至 16，释放水平空间。事件日志增至 12 条。
+
+**位置：** `dungeon-render/src/ui.rs`
+
+### G11 — `rooms[0].center()` 不可行走导致出生卡墙 ✅已修复
+
+**修复前：** `spawn_point()` 直接返回 `rooms[0].center()`，不做 walkable 校验。`generate_stalactites` 在房间内每格 7% 概率将 Floor 变 Stalactite，可能覆盖房间中心点；`ensure_spawn_accessible` 只检查邻居不检查中心自身。下楼后玩家可能在不可行走格上出生，无法移动。
+
+**修复后：** `spawn_point()` 先检查中心是否 walkable，若否则以螺旋搜索（半径 1→20）寻找最近的可行走格。确保返回值永远可通行。
+
+**位置：** `dungeon-core/src/lib.rs:421-442`
+**触发条件：** `generate_stalactites` 在 room[0] 每格 7% 概率 → 约每 14 次下楼触发一次。
 
 ### A7 — 拆分 ops.rs 为 fov / pathfinding / ops ✅已修复
 
@@ -312,9 +329,78 @@
 
 ## 二、架构层面（Architecture）
 
+### 🟡 A4L — A4 重构遗漏：Map impl 残留两套重复方法
+
+**问题：** A4（环境修饰提取到 map_gen.rs）中将 `collect_walkable_regions` 和 `detect_cave_regions` 复制到 `map_gen.rs` 作为自由函数，但原 impl 方法**未删除**，导致 `Map` 的 `impl` 块中保留了两套完全重复的实现。
+
+**表现：** `dungeon-core/src/lib.rs:339`（`collect_walkable_regions`）和 `lib.rs:367`（`detect_cave_regions`）是死代码——所有调用方全部走 `map_gen.rs` 的自由函数版本。两套代码完全一致，任一修改需同步两处。
+
+**位置：** `dungeon-core/src/lib.rs:339-399`
+**教训：** 重构跨文件移动方法后应检查原位置是否仍有残余。A4 的统计表显示 Map impl 方法数从 ~18 降到 ~7，但实际应为 ~5——这两个方法在统计时被遗漏。
+
 ## 三、实现层面（Implementation）
 
+### 🟡 I24 — Buff/Skill 使用回合计数而非 AV，时间轴脱钩
+
+**问题：** 当前 Buff 系统和技能机制有三个互相关联的缺陷：
+
+| 缺陷 | 表现 | 根因 |
+|------|------|------|
+| Buff 持续时间不可预测 | `buff_tick_system` 每帧减 1 回合，与 AV 推进脱钩。同一 buff 在不同帧消耗速度不同（玩家走一步 300AV vs 等一回合 800AV，都只减 1 回合） | `shield_turns`/`berserk_turns` 是 `i32` 回合计数而非 `f32` AV 值 |
+| 技能数量少且职业锁定 | 技能通过 `PlayerClass::skills()` 硬编码，战士固定 3 技能，无法扩展，每局玩法相同 | 技能来源是职业而非道具 |
+| 无冷却维度 | 技能只有 MP 消耗，没有冷却。强技能无法通过冷却平衡 | 不存在 `Cooldown` 组件或等效机制 |
+
+**影响：** 当前系统不支持复杂战斗设计。加一个新技能需要改 `PlayerClass`、`execute_skill`、`SkillKind` 三处。自由组合、道具学习、冷却平衡均不可实现。
+
+**方案方向（设计中，见 DESIGN.md §15）：**
+- Buff/冷却改为 `remaining_av: f32`，在 `advance_action_queue` 中同步推进
+- 技能改为从道具学习，`Skills` 组件动态扩展
+- 冷却下限约 1000 AV
+
+### 🟡 I22 — clippy 警告约 40 个未处理
+
+**问题：** `cargo clippy` 报告约 40 个警告，分布在所有 crate 中。不影响运行正确性，但增加噪音、隐藏真正的问题警告。
+
+**主要类型：**
+| 类型 | 数量 | 示例 |
+|------|------|------|
+| 无意义类型转换 | ~8 | `u32 as u32`、`i32 as i32` |
+| `sort_by` → `sort_by_key` | ~5 | `sort_by(|a,b| b.len().cmp(&a.len()))` |
+| `needless_range_loop` | ~4 | 用 `for i in 0..n` 而非迭代器 |
+| `collapsible_if` | ~4 | 嵌套 `if let` 可合并 |
+| 缺少 `Default` impl | ~3 | `Buffs`、`EventLog`、`TurnManager` |
+| `needless_borrow` | ~5 | `&w` 多此一举 |
+| 复杂类型 | ~3 | 隐式复杂元组类型 |
+| 其他 | ~6 | `useless_format!`、`map_or` → `is_some_and` 等 |
+
+**建议：** 大部分可用 `cargo clippy --fix` 自动修复（约 15 个），其余需手动调整。
+
+### 🟡 I23 — 测试覆盖缺口：dungeon-core 和 dungeon-render 零单元测试
+
+**问题：** 核心 crate 的单元测试覆盖不均衡。
+| crate | 单元测试数 | 覆盖内容 |
+|-------|-----------|---------|
+| dungeon-core | 0 | ❌ 核心公式（伤害/升级/属性）、FOV、寻路、序列化均无直接测试 |
+| dungeon-render | 0 | ❌ UI 渲染逻辑无测试 |
+| dungeon-action | 8 | ✅ |
+| dungeon-world | 2 | ✅ |
+| 场景集成测试 | 3 | ✅ 间接覆盖部分 core 逻辑 |
+
+**风险：** dungeon-core 包含战斗公式、升级曲线、FOV、A* 寻路、Tile/Stats 序列化——任一公式修改都可能无声破坏平衡，无单元测试意味着只能靠手动打游戏验证。
+
 ## 四、游戏逻辑层面（Game Logic）
+
+### 🟡 G12 — 渲染层叠顺序未定义：怪物与掉落物在同一格时谁在上层不确定
+
+**问题：** `collect_renderables()` 查询所有 `(Position, Renderable)` 实体并按 ECS 迭代顺序返回，仅对玩家 `@` 做了特殊排序（放最后）。怪物、物品、楼梯在同一格时，**哪一层渲染在上方由迭代顺序决定，不可预测。**
+
+**表现举例：** 怪物站在地面物品上时，有时物品盖住怪物（看不到怪物 glyph），有时怪物盖住物品。楼梯上有怪物时同理。
+
+**根因：** `collect_renderables` 只区分"是 player"和"不是 player"，未区分怪物/物品/楼梯。渲染管线按返回顺序依次写入格子的字符/颜色，后写入的覆盖先写入的。
+
+**位置：** `dungeon-core/src/ops.rs:150`（`collect_renderables`）
+
+**期望：** 图层优先级应为 **物品/楼梯（底层）→ 怪物（中层）→ 玩家（顶层）**，同层可任意顺序。
 
 ## 其他
 
