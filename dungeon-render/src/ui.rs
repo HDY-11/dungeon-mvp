@@ -124,6 +124,16 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             lines[idx][jdx] = (glyph, Color::Rgb(dim(160, 0.5), dim(160, 0.5), dim(160, 0.5)), lines[idx][jdx].2);
         }
     }
+    // 光标高亮：黄色背景覆盖光标所在格
+    if let Some(cursor) = world.get_resource::<LookCursor>() {
+        if cursor.active && cursor.y >= cam_y && cursor.y < cam_y + vh
+            && cursor.x >= cam_x && cursor.x < cam_x + vw
+        {
+            let (idx, jdx) = (cursor.y - cam_y, cursor.x - cam_x);
+            let (g, fg, _) = lines[idx][jdx];
+            lines[idx][jdx] = (g, fg, Color::Rgb(80, 80, 40)); // 暗黄色背景
+        }
+    }
     let styled_lines: Vec<Line> = lines.into_iter()
         .map(|row| Line::from(row.into_iter()
             .map(|(g, fg, bg)| Span::styled(g.to_string(), Style::default().fg(fg).bg(bg)))
