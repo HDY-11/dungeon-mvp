@@ -6,7 +6,7 @@
 
 use crate::types::*;
 use dungeon_core::{
-    components::*, resources::GameRng,
+    components::*,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
@@ -67,17 +67,14 @@ pub fn arbitration_system(
     flee_out: Res<FleeIntents>,
     wander_out: Res<WanderIntents>,
     mut queue: ResMut<ActionQueue>,
-    mut rng: ResMut<GameRng>,
 ) {
     let mut all: Vec<(Entity, u32, f32, ActionKindV3)> = Vec::new();
     all.extend(chase_out.0.iter().cloned());
     all.extend(flee_out.0.iter().cloned());
     all.extend(wander_out.0.iter().cloned());
 
-    // 按 priority 降序，相同 priority 随机
-    all.sort_by(|(_, pa, _, _), (_, pb, _, _)| {
-        pb.cmp(pa).then_with(|| rng.random_range(0, 255).cmp(&rng.random_range(0, 255)))
-    });
+    // 按 priority 降序，相同 priority 保持插入顺序（stable sort）。移除随机 tiebreaker 避免违反全序契约
+    all.sort_by(|(_, pa, _, _), (_, pb, _, _)| pb.cmp(pa));
 
     for (entity, _priority, av, kind) in &all {
         if !queue.has_entity(*entity) {
