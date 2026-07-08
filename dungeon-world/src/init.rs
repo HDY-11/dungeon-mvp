@@ -90,8 +90,11 @@ fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (
     use rand::RngExt;
     let (spx, spy) = spawn_pos;
 
-    if let Some(best) = map.farthest_room_from(spawn_pos) {
-        return best;
+    // 仅当有多个房间时才用最远房间；单房间时 farthest_room_from 返回 spawn 本身
+    if map.rooms.len() > 1 {
+        if let Some(best) = map.farthest_room_from(spawn_pos) {
+            return best;
+        }
     }
 
     // G9: 单房间 → 醉汉游走
