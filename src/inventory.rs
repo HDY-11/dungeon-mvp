@@ -14,7 +14,7 @@ use crossterm::event::{self, Event, KeyCode};
 use bevy_ecs::prelude::*;
 use dungeon_core::{
     Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position,
+    Player, Position, Renderable,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -265,9 +265,18 @@ pub fn open_inventory(
                 }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
                     let w2 = &mut *world;
-                    let mut q = w2.query::<(&mut Inventory,)>();
-                    if let Some((mut inv,)) = q.iter_mut(w2).next() {
-                        inv.drop_stack(*idx);
+                    let mut q = w2.query::<(&mut Inventory, &Position)>();
+                    if let Some((mut inv, pos)) = q.iter_mut(w2).next() {
+                        if let Some(stack) = inv.drop_stack(*idx) {
+                            let (px, py) = (pos.x, pos.y);
+                            let name = stack.name();
+                            w2.spawn((
+                                ItemPickup { stack: stack.clone() },
+                                Position { x: px, y: py },
+                                Renderable { glyph: stack.glyph(), color: stack.color() },
+                            ));
+                            w2.resource_mut::<EventLog>().push(format!("丢弃了{}x{}在脚下", name, stack.count));
+                        }
                     }
                     page = Page::List(InvPanel::Left);
                 }

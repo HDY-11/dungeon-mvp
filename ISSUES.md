@@ -12,6 +12,14 @@
 
 ## ✅ 已修复
 
+### I33 — 丢弃物品产生地面拾取物 ✅已修复
+
+**修复前：** 背包详情页按 `d` 直接 `inv.drop_stack(idx)` 删除物品栈，物品永久消失。丢弃是唯一不可逆的物品销毁路径。
+
+**修复后：** 丢弃时获取玩家位置，在地面 spawn ItemPickup 实体（含 glyph/color）。事件日志显示"丢弃了xxx在脚下"。
+
+**位置：** `src/inventory.rs:268-280`
+
 ### I34 — ActiveBuffs 未加入存档 ✅已修复
 
 **修复前：** `GameSave` 仅保存旧 `Buffs`，玩家在 Buff 持续期间存档后，读档后 Buff 丢失。
@@ -477,21 +485,6 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 | 场景集成测试 | 3 | ✅ 间接覆盖部分 core 逻辑 |
 
 **风险：** dungeon-core 包含战斗公式、升级曲线、FOV、A* 寻路、Tile/Stats 序列化——任一公式修改都可能无声破坏平衡，无单元测试意味着只能靠手动打游戏验证。
-
-### 🟡 I33 — 丢弃物品永久消失（无地面 spawn）
-
-**问题：** 背包详情页按 `d` 丢弃物品时直接 `inv.drop_stack(idx)` 删除栈，未在地面生成 `ItemPickup` 实体。物品永久消失。
-
-```rust
-// inventory.rs — d 键处理
-(Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
-    inv.drop_stack(*idx);  // ❌ 没有 spawn ItemPickup 在玩家位置
-}
-```
-
-对比 `pickup_ground`（拾取）和怪物死亡掉落均有完整的 spawn/despawn 逻辑，丢弃是唯一不可逆的物品销毁路径。
-
-**位置：** `src/inventory.rs:221-227`
 
 ### 🟢 I35 — 行动轴怪物颜色用哈希而非 Renderable 组件
 
