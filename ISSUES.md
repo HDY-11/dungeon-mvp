@@ -8,8 +8,6 @@
 问题按维度分组：**设计 / 架构 / 实现 / 游戏逻辑**，组内按严重程度降序。
 优先级标记：🔴 高（影响正确性或游戏体验） / 🟡 中（维护性或功能缺口） / 🟢 低（整洁或边缘情况）
 
----
-
 ## ✅ 已修复
 
 ### I42 — 技能键索引与快捷键错位：已学习但按对应键无反应 ✅已修复
@@ -213,7 +211,7 @@ pub struct ItemStack {
 
 **位置：** `dungeon-core/src/components.rs:160-164`
 
-### 🔴 G14 — 护盾/狂暴技能双倍叠加（执行层移除旧系统写入） ✅已修复
+### G14 — 护盾/狂暴技能双倍叠加（执行层移除旧系统写入） ✅已修复
 
 **修复前：** `execute_skill` 同时写入旧 `Buffs` 和新 `ActiveBuffs`，`effective_attack`/`effective_defense` 对两者求和。每次使用 Shield/Berserk 时护盾/狂暴数值在 ~3 帧内翻倍（+10 而非 +5）。
 
@@ -561,6 +559,46 @@ pub struct ItemStack {
 
 ---
 
+### A4L — A4 重构遗漏：Map impl 残留两套重复方法 ✅已修复
+
+**修复前：** A4 将 `collect_walkable_regions` 和 `detect_cave_regions` 复制到 `map_gen.rs` 作为自由函数，但原 impl 方法**未删除**。两套代码完全一致。A4 的统计表显示 Map impl 方法数从 ~18 降到 ~7，但实际应为 ~5。
+
+**修复后：** 两个 impl 方法已删除。所有调用方已走 `map_gen.rs` 自由函数版本。
+
+**教训：** 重构跨文件移动方法后应检查原位置是否仍有残余。
+
+### I26 — arbitration_system 排序比较器违反全序契约 ✅已修复
+
+**修复前：** `arbitration_system` 中同 priority 的实体用 `random_range()` 做 tiebreaker，每次比较产生新随机值，违反 `sort_by` 的全序契约。标准库排序算法在检测到不一致比较时会 panic。下楼至第 3 层时固定触发。
+
+**修复后：** 移除随机 tiebreaker。仲裁器只关心**同实体**的优先级排序（同实体高优先级先入队，低优先级被 `has_entity` 过滤），跨实体同优先级的顺序无意义。直接用 `pb.cmp(pa)` 降序，稳定排序保留插入顺序即可。
+
+**教训：** `sort_by` 的比较器必须是全序（total order）——`a < b` 和 `b < a` 不能同时成立。混入随机数的比较器看似聪明，实际是未定义行为，标准库可能在任意数据分布下 panic。
+
+**位置：** `dungeon-action/src/monster.rs:67-70`
+
+### G9 — 玩家与楼梯重合 ✅已修复（三次）
+
+**修复前：** `pick_stair_pos` 用 `farthest_room_from(spawn)` 取得离出生点最远房间的中心作为楼梯位置。单房间时返回自身。
+
+**第一次修复（I19）：** 尾部加入醉汉游走，检测 rooms.len() ≤ 1。《实际上醉汉游走在 `farthest_room_from` 之后，而该方法对任意非空 rooms 都返回 `Some`，醉汉游走是死代码。》
+
+**第二次修复（G14）：** 增加 `map.rooms.len() > 1` 守卫使醉汉游走可达。但 60 步失败后的兜底 `(spx, spy)`——即出生点本身，仍未解决。
+
+**第三次修复（G14 续）：** 兜底改为螺旋搜索半径 15~40 的最近可行走格，保证不返回出生点。
+
+**教训：** 两条逻辑路径（正常 + 退化）都要确认退化路径的兜底本身是否有 bug。
+
+### G12 — 渲染层叠顺序未定义：怪物与掉落物在同一格时谁在上层不确定 ✅已修复
+
+**修复前：** `collect_renderables` 查询所有 `(Position, Renderable)` 实体并按 ECS 迭代顺序返回，仅对玩家 `@` 做了特殊排序（放最后）。怪物、物品、楼梯在同一格时，哪一层渲染在上方由迭代顺序决定，不可预测。怪物站在物品上时可能被物品盖住。
+
+**修复后：** 收集时增加 Entity 查询，在排序阶段区分实体类型。图层优先级：物品/楼梯 (0) → 怪物 (1) → 玩家 (2)。同层保持原迭代顺序。
+
+**位置：** `dungeon-core/src/ops.rs:150-163`
+
+---
+
 ## 一、设计层面（Design）
 
 ---
@@ -574,7 +612,11 @@ pub struct ItemStack {
 **当前评估：** 暂缓实现。在当前战斗系统（纯数值 chase/flee/wander）下，事件帧模式提供的信息量不足以补偿节奏损失——玩家的最优策略不会因看到每个怪物单步移动而改变。
 
 **触发条件：** 出现**足够复杂的战斗逻辑**，即新增的怪物/boss 有需要玩家在过程中作出反应的能力——例如范围攻击预警、状态效果倒计时、可打断的吟唱、地形变化。当单次 tick 内的行动序列构成决策信息时，事件帧模式从"nice to have"变为"need to have"。
+
+---
+
 ## 二、架构层面（Architecture）
+
 
 ### 🟡 A10 — 事件日志显示条数回归：代码 take(5) 而非声称的 12
 
@@ -645,7 +687,10 @@ pub trait MonsterBehavior: Send + Sync {
 
 **位置：** `dungeon-action/src/types.rs:20`（ActionKindV3 定义）、`dungeon-action/src/execute.rs` `execute_entry`+`check_condition`、`dungeon-render/src/timeline.rs` `action_display`、`dungeon-world/src/persist.rs` SavedActionKind、`dungeon-action/src/monster.rs` 决策系统、`dungeon-action/src/player.rs` `handle_timed_action`
 
+---
+
 ## 三、实现层面（Implementation）
+
 
 ### 🟡 I24 — Buff/Skill 系统缺陷（含子问题 I24a〜I24c）
 
@@ -716,7 +761,11 @@ pub mod pathfinding;
 
 **位置：** `dungeon-core/src/lib.rs:7-9`
 **位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
+
+---
+
 ## 四、游戏逻辑层面（Game Logic）
+
 
 
 ### 🟡 G15 — Buff 持续时长新旧系统差异 60 倍
@@ -748,45 +797,10 @@ let is_crit = attacker_stats.crit_rate > crit_roll;
 
 **位置：** `dungeon-action/src/execute.rs:302`、`dungeon-core/src/items.rs`（StatBonus 定义）
 
-### A4L — A4 重构遗漏：Map impl 残留两套重复方法 ✅已修复
-
-**修复前：** A4 将 `collect_walkable_regions` 和 `detect_cave_regions` 复制到 `map_gen.rs` 作为自由函数，但原 impl 方法**未删除**。两套代码完全一致。A4 的统计表显示 Map impl 方法数从 ~18 降到 ~7，但实际应为 ~5。
-
-**修复后：** 两个 impl 方法已删除。所有调用方已走 `map_gen.rs` 自由函数版本。
-
-**教训：** 重构跨文件移动方法后应检查原位置是否仍有残余。
-
-### I26 — arbitration_system 排序比较器违反全序契约 ✅已修复
-
-**修复前：** `arbitration_system` 中同 priority 的实体用 `random_range()` 做 tiebreaker，每次比较产生新随机值，违反 `sort_by` 的全序契约。标准库排序算法在检测到不一致比较时会 panic。下楼至第 3 层时固定触发。
-
-**修复后：** 移除随机 tiebreaker。仲裁器只关心**同实体**的优先级排序（同实体高优先级先入队，低优先级被 `has_entity` 过滤），跨实体同优先级的顺序无意义。直接用 `pb.cmp(pa)` 降序，稳定排序保留插入顺序即可。
-
-**教训：** `sort_by` 的比较器必须是全序（total order）——`a < b` 和 `b < a` 不能同时成立。混入随机数的比较器看似聪明，实际是未定义行为，标准库可能在任意数据分布下 panic。
-
-**位置：** `dungeon-action/src/monster.rs:67-70`
-
-### G9 — 玩家与楼梯重合 ✅已修复（三次）
-
-**修复前：** `pick_stair_pos` 用 `farthest_room_from(spawn)` 取得离出生点最远房间的中心作为楼梯位置。单房间时返回自身。
-
-**第一次修复（I19）：** 尾部加入醉汉游走，检测 rooms.len() ≤ 1。《实际上醉汉游走在 `farthest_room_from` 之后，而该方法对任意非空 rooms 都返回 `Some`，醉汉游走是死代码。》
-
-**第二次修复（G14）：** 增加 `map.rooms.len() > 1` 守卫使醉汉游走可达。但 60 步失败后的兜底 `(spx, spy)`——即出生点本身，仍未解决。
-
-**第三次修复（G14 续）：** 兜底改为螺旋搜索半径 15~40 的最近可行走格，保证不返回出生点。
-
-**教训：** 两条逻辑路径（正常 + 退化）都要确认退化路径的兜底本身是否有 bug。
-
-### G12 — 渲染层叠顺序未定义：怪物与掉落物在同一格时谁在上层不确定 ✅已修复
-
-**修复前：** `collect_renderables` 查询所有 `(Position, Renderable)` 实体并按 ECS 迭代顺序返回，仅对玩家 `@` 做了特殊排序（放最后）。怪物、物品、楼梯在同一格时，哪一层渲染在上方由迭代顺序决定，不可预测。怪物站在物品上时可能被物品盖住。
-
-**修复后：** 收集时增加 Entity 查询，在排序阶段区分实体类型。图层优先级：物品/楼梯 (0) → 怪物 (1) → 玩家 (2)。同层保持原迭代顺序。
-
-**位置：** `dungeon-core/src/ops.rs:150-163`
+---
 
 ## 其他
+
 
 ### 🟢 P7 — 玩家确认行动后无法取消（被 D5 锁定）
 
