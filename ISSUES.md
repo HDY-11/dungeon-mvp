@@ -12,7 +12,16 @@
 
 ## ✅ 已修复
 
- ✅已修复
+### I42 — 技能未学习时无声失败（无反馈） ✅已修复
+
+**问题：** 无职业设计后初始技能为空。按技能键 `handle_skill` 直接将 `ActionKindV3::Skill(idx)` 入队，`execute_skill` 中 `skills.list.get(idx)` 因列表为空返回 `None`，导致 **silently return**——不推日志、无视觉反馈，玩家按了没反应。
+
+**修复后：**
+1. `handle_skill`（`dungeon-action/src/player.rs:68`）：先查技能是否存在，未学则推日志"技能未学习"并返回 false，action 不入队
+2. `execute_skill`（`dungeon-action/src/execute.rs:302`）：兜底检查同样推日志，处理 handle_skill 之外的其他调用路径
+
+**位置：** `dungeon-action/src/player.rs:68`、`dungeon-action/src/execute.rs:302`
+
 ### D9 — 下楼不保存 ActiveBuffs ✅已修复
 
 **问题：** `descend()` 中 `player_data.5` 硬编码为 `Buffs::new()`（空），且 `ActiveBuffs` 组件完全未在 `descend` 中捕获和重建。下楼后玩家身上的护盾/狂暴 Buff 全部丢失。
@@ -31,7 +40,6 @@ cmd.insert(ActiveBuffs::new());
 **位置：** `dungeon-world/src/init.rs:193-207`
 
 
- ✅已修复
 ### D10 — buff_tick_system 已删除 ✅已修复
 
 **问题：** `buff_tick_system` 每帧修改旧 `Buffs` 组件的 `shield_turns`/`berserk_turns`/`shield_def`/`berserk_atk` 字段。但 `effective_attack`/`effective_defense` 已在 G14 修复中改为只读新 `ActiveBuffs`。旧 Buffs 的修改永远不会被消费。
@@ -52,7 +60,6 @@ pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
 
 ---
 
- ✅已修复
 ### I39 — effective_attack/defense 删除废弃 _buffs 参数 ✅已修复
 
 **问题：** `effective_attack` 和 `effective_defense` 带有 `_buffs: Option<&Buffs>` 参数，前缀下划线表示"不使用"。G14 修复时移除了求和逻辑但保留了参数占位，所有调用方仍在传入 `world.get::<Buffs>(entity)` 做无用查询。
@@ -69,7 +76,6 @@ pub fn effective_attack(
 
 **位置：** `dungeon-core/src/ops.rs:24-50`；调用点：`execute.rs:293`、`ui.rs:134`
 
- ✅已修复
 ### I40 — 物品系统行为抽象层（UsableItem trait 已定义） ✅已修复
 
 **问题：** MC 的物品系统有三层：`Registry → ItemStack → Item 虚方法`。本项目的物品只有前两层——`ItemDef` 是纯数据结构，没有任何方法。物品"能做什么"的逻辑必须散落在外部 match 中：
@@ -108,7 +114,6 @@ pub trait UsableItem {
 
 **位置：** `dungeon-core/src/items.rs`（ItemDef 定义处，无方法）
 
- ✅已修复
 ### I41 — ItemStack 增加 ItemMeta（NBT 等价物） ✅已修复
 
 **问题：** `ItemStack` 只有 `(item_id, count)` 两个字段，没有存储任意元数据的容器。MC 的 `CompoundTag`（NBT）支持自定义名称、附魔、耐久度、品质/层级等任意键值对。
