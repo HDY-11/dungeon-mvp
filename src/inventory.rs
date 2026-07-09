@@ -13,8 +13,8 @@ use crossterm::event::{self, Event, KeyCode};
 
 use bevy_ecs::prelude::*;
 use dungeon_core::{
-    Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position, Renderable,
+    ops, Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
+    Player, Position, Renderable, SkillKind,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -120,9 +120,9 @@ pub fn open_inventory(
                         DetailSource::LeftEquip => lines.push(Line::from(Span::styled(" u:卸载装备", Style::default().fg(Color::DarkGray)))),
                         DetailSource::LeftInv => {
                             if item.def().is_some_and(|d| d.slot.is_some()) {
-                                lines.push(Line::from(Span::styled(" e:装备  d:丢弃", Style::default().fg(Color::DarkGray))));
+                                lines.push(Line::from(Span::styled(" e:装备  d:丢弃  r:使用/学习", Style::default().fg(Color::DarkGray))));
                             } else {
-                                lines.push(Line::from(Span::styled(" d:丢弃", Style::default().fg(Color::DarkGray))));
+                                lines.push(Line::from(Span::styled(" d:丢弃  r:使用/学习", Style::default().fg(Color::DarkGray))));
                             }
                         }
                         DetailSource::Right => lines.push(Line::from(Span::styled(" g:拾取", Style::default().fg(Color::DarkGray)))),
@@ -277,6 +277,38 @@ pub fn open_inventory(
                             ));
                             w2.resource_mut::<EventLog>().push(format!("丢弃了{}x{}在脚下", name, stack.count));
                         }
+                    page = Page::List(InvPanel::Left);
+                }
+                (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('r')) => {
+                    // Phase 1: 只读——获取物品信息和玩家实体
+                    let (item_id, player) = {
+                        let mut q = world.query::<(&Inventory,)>();
+                        let item_id = q.iter(world).next()
+                            .and_then(|(inv,)| inv.stacks.get(*idx))
+                            .map(|s| s.item_id);
+                        let player = ops::player_entity(world);
+                        (item_id, player)
+                    };
+                    // Phase 2: 执行学习
+                    let (kind, consume) = match item_id {
+                        Some(15) => (Some(SkillKind::Heal { amount: 15 }), true),
+                        Some(16) => (Some(SkillKind::Shield { def_boost: 5, duration: 3 }), true),
+                        Some(17) => (Some(SkillKind::Berserk { atk_boost: 5, duration: 3 }), true),
+                        _ => {
+                            world.resource_mut::<EventLog>().push("无法学习该物品".to_string());
+                            (None, false)
+                        }
+                    };
+                    if consume {
+                        if let (Some(k), Some(p)) = (kind, player) {
+                            ops::learn_skill(world, p, &k);
+                            // Phase 3: 移除已使用的卷轴
+                            let mut q = world.query::<(&mut Inventory,)>();
+                            if let Some((mut inv,)) = q.iter_mut(world).next() {
+                                inv.remove(*idx, 1);
+                            }
+                        }
+                    }
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftEquip, idx), KeyCode::Char('u')) => {

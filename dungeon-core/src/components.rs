@@ -202,3 +202,18 @@ impl Default for Buffs { fn default() -> Self { Self::new() } }
 
 #[derive(Component, Clone, Debug)]
 pub struct AttackName(pub String);
+
+// ── 技能卷轴组件 ────────────────────────────────────
+
+#[derive(Component, Clone)]
+pub struct SkillScroll {
+    pub kind: SkillKind,
+}
+
+impl crate::items::UsableItem for SkillScroll {
+    fn use_on(&self, world: &mut bevy_ecs::prelude::World, user: bevy_ecs::prelude::Entity) -> bool {
+        crate::ops::learn_skill(world, user, &self.kind);
+        true
+    }
+    fn use_verb(&self) -> &'static str { "学习" }
+}

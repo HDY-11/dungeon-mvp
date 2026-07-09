@@ -270,14 +270,14 @@ impl GameSave {
             s, EntityName("冒险者".into()),
             Inventory {
                 stacks: self.inv.into_iter()
-                    .map(|s| ItemStack { item_id: s.item_id, count: s.count })
+                    .map(|s| ItemStack { item_id: s.item_id, count: s.count, meta: None })
                     .collect(),
                 capacity: 36,
             },
             Equipment {
-                weapon: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1) }),
-                armor: self.armor_item_id.map(|id| ItemStack { item_id: id, count: self.armor_count.unwrap_or(1) }),
-                ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1) }),
+                weapon: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1), meta: None }),
+                armor: self.armor_item_id.map(|id| ItemStack { item_id: id, count: self.armor_count.unwrap_or(1), meta: None }),
+                ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1), meta: None }),
             },
             pc.clone(), self.buffs.into_buffs(),
             dungeon_core::Skills { list: pc.skills() },
@@ -315,7 +315,7 @@ impl GameSave {
                 panic!("物品 ID {} 在注册表中不存在", gi.item_id)
             });
             w.spawn((
-                ItemPickup { stack: ItemStack { item_id: gi.item_id, count: gi.count } },
+                ItemPickup { stack: ItemStack { item_id: gi.item_id, count: gi.count, meta: None } },
                 Position { x: gi.x as usize, y: gi.y as usize },
                 Renderable { glyph: def.glyph, color: def.color },
             ));

@@ -177,4 +177,67 @@ pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {
     for mut dir in query.iter_mut(world) { dir.dx = dx; dir.dy = dy; }
 }
 
+// ── 技能学习与熟练度 ─────────────────────────────────
+
+/// 从 SkillKind 构造 Skill 实例（技能卷轴专用）
+pub fn skill_from_kind(kind: &SkillKind) -> crate::components::Skill {
+    use crate::components::SkillKind as SK;
+    match kind {
+        SK::Heal { amount: _ } => crate::components::Skill {
+            name: "治愈", key: '1', cost_mp: 6,
+            description: "HP恢复", kind: kind.clone(),
+            proficiency: 1,
+        },
+        SK::Shield { def_boost: _, duration: _ } => crate::components::Skill {
+            name: "护盾", key: '2', cost_mp: 5,
+            description: "防御+5", kind: kind.clone(),
+            proficiency: 1,
+        },
+        SK::Berserk { atk_boost: _, duration: _ } => crate::components::Skill {
+            name: "狂暴", key: '3', cost_mp: 5,
+            description: "攻击+5", kind: kind.clone(),
+            proficiency: 1,
+        },
+    }
+}
+
+/// 学习技能：未学则添加，已学则提高熟练度
+pub fn learn_skill(world: &mut World, entity: bevy_ecs::prelude::Entity, kind: &SkillKind) {
+    use crate::components::SkillKind as SK;
+    let skill_name = match kind {
+        SK::Heal { .. } => "治愈",
+        SK::Shield { .. } => "护盾",
+        SK::Berserk { .. } => "狂暴",
+    };
+
+    // 先检查是否已学（不可变借）→ 决定操作
+    let already_learned = {
+        let skills = world.get::<crate::components::Skills>(entity)
+            .expect("Player has Skills component");
+        skills.list.iter().any(|s| s.name == skill_name)
+    };
+
+    if already_learned {
+        // 先取 proficiency（不可变），再推日志
+        let new_prof = {
+            let mut skills = world.get_mut::<crate::components::Skills>(entity)
+                .expect("Player has Skills component");
+            if let Some(existing) = skills.list.iter_mut().find(|s| s.name == skill_name) {
+                existing.proficiency += 1;
+                existing.proficiency
+            } else {
+                return; // 不应发生
+            }
+        };
+        world.resource_mut::<crate::resources::EventLog>()
+            .push(format!("熟练度提升！{} 熟练度 {}", skill_name, new_prof));
+    } else {
+        let new_skill = skill_from_kind(kind);
+        world.get_mut::<crate::components::Skills>(entity)
+            .expect("Player has Skills component")
+            .list.push(new_skill);
+        world.resource_mut::<crate::resources::EventLog>()
+            .push(format!("学会了{}！", skill_name));
+    }
+}
 

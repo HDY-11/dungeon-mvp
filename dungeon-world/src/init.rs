@@ -90,6 +90,37 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
     }
 }
 
+/// 在地图可行走格上随机放置技能卷轴，每层 1-3 张
+fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
+    use rand::RngExt;
+    let count = rng.random_range(1u32..=3);
+    let scroll_ids = [15u32, 16, 17];
+    let kinds = [
+        dungeon_core::SkillKind::Heal { amount: 15 },
+        dungeon_core::SkillKind::Shield { def_boost: 5, duration: 3 },
+        dungeon_core::SkillKind::Berserk { atk_boost: 5, duration: 3 },
+    ];
+    for _ in 0..count {
+        let idx = rng.random_range(0usize..3);
+        let item_id = scroll_ids[idx] as usize;
+        let sk = kinds[idx].clone();
+        for _attempt in 0..30 {
+            let x = rng.random_range(3..dungeon_core::MAP_WIDTH as u16 - 3) as usize;
+            let y = rng.random_range(3..dungeon_core::MAP_HEIGHT as u16 - 3) as usize;
+            if world.resource::<dungeon_core::Map>().tiles[y][x].walkable() {
+                let def = dungeon_core::ItemRegistry::global().get(item_id).expect("scroll exists");
+                world.spawn((
+                    dungeon_core::ItemPickup { stack: dungeon_core::ItemStack::new(item_id, 1) },
+                    dungeon_core::Position { x, y },
+                    dungeon_core::Renderable { glyph: def.glyph, color: def.color },
+                    dungeon_core::SkillScroll { kind: sk },
+                ));
+                break;
+            }
+        }
+    }
+}
+
 /// 选择楼梯位置：尽量远离 spawn_pos，至少 15 格。
 /// 优先选最远房间。仅 1 个房间时用醉汉游走 60 步找 ≥15 格外的位置（G9）。
 fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (usize, usize) {
@@ -204,6 +235,9 @@ pub fn setup_world() -> World {
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
+    // ── 技能卷轴 ──
+    place_skill_scrolls(&mut world, 1, &mut rng);
+
     world
 }
 
@@ -267,6 +301,9 @@ pub fn descend(world: &mut World) {
     // ── 地面物品 ──
     let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
     place_ground_items(w, &ground_item_ids, &[spawn, (stairs_pos.0, stairs_pos.1)]);
+
+    // ── 技能卷轴 ──
+    place_skill_scrolls(w, f, &mut rng);
 
     w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
 }

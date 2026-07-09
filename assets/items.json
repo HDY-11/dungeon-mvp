@@ -4,111 +4,334 @@
     "name": "锈铁剑",
     "description": "一把生锈的铁剑。",
     "glyph": "/",
-    "color": [224, 255, 255],
+    "color": [
+      224,
+      255,
+      255
+    ],
     "class": "Weapon",
     "slot": "Weapon",
     "max_stack": 1,
     "rarity": "Common",
-    "tags": ["metal", "weapon_base", "sword"],
-    "bonus": { "attack": 3, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "metal",
+      "weapon_base",
+      "sword"
+    ],
+    "bonus": {
+      "attack": 3,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 1,
     "name": "木盾",
     "description": "简陋的木盾。",
     "glyph": "[",
-    "color": [139, 90, 43],
+    "color": [
+      139,
+      90,
+      43
+    ],
     "class": "Armor",
     "slot": "Armor",
     "max_stack": 1,
     "rarity": "Common",
-    "tags": ["wooden", "shield_base"],
-    "bonus": { "attack": 0, "defense": 2, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "wooden",
+      "shield_base"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 2,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 2,
     "name": "皮甲",
     "description": "轻便皮甲。",
     "glyph": "]",
-    "color": [255, 255, 224],
+    "color": [
+      255,
+      255,
+      224
+    ],
     "class": "Armor",
     "slot": "Armor",
     "max_stack": 1,
     "rarity": "Uncommon",
-    "tags": ["leather", "armor_base"],
-    "bonus": { "attack": 0, "defense": 1, "magic_mastery": 0, "agility": 1, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "leather",
+      "armor_base"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 1,
+      "magic_mastery": 0,
+      "agility": 1,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 3,
     "name": "攻击戒指",
     "description": "攻击之戒。",
     "glyph": "=",
-    "color": [255, 128, 128],
+    "color": [
+      255,
+      128,
+      128
+    ],
     "class": "Ring",
     "slot": "Ring",
     "max_stack": 1,
     "rarity": "Rare",
-    "tags": ["magical", "ring_base", "accessory"],
-    "bonus": { "attack": 2, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "magical",
+      "ring_base",
+      "accessory"
+    ],
+    "bonus": {
+      "attack": 2,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 10,
     "name": "生物血肉",
     "description": "怪物的血肉，散发出腥臭味。",
     "glyph": "%",
-    "color": [180, 50, 50],
+    "color": [
+      180,
+      50,
+      50
+    ],
     "class": "Material",
     "max_stack": 64,
     "rarity": "Common",
-    "tags": ["organic", "monster_drop", "raw_meat"],
-    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "organic",
+      "monster_drop",
+      "raw_meat"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 11,
     "name": "破布",
     "description": "破烂的布料，没什么用。",
     "glyph": "&",
-    "color": [180, 180, 160],
+    "color": [
+      180,
+      180,
+      160
+    ],
     "class": "Material",
     "max_stack": 64,
     "rarity": "Common",
-    "tags": ["fabric", "monster_drop"],
-    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "fabric",
+      "monster_drop"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 12,
     "name": "坚硬木棍",
     "description": "还算结实的木棍，可以当柴烧。",
     "glyph": "/",
-    "color": [139, 90, 43],
+    "color": [
+      139,
+      90,
+      43
+    ],
     "class": "Material",
     "max_stack": 64,
     "rarity": "Common",
-    "tags": ["wooden", "monster_drop", "stick"],
-    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "wooden",
+      "monster_drop",
+      "stick"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 13,
     "name": "染血兽牙",
     "description": "沾满血迹的尖牙，散发出危险的气息。",
     "glyph": "v",
-    "color": [255, 255, 240],
+    "color": [
+      255,
+      255,
+      240
+    ],
     "class": "Material",
     "max_stack": 64,
     "rarity": "Uncommon",
-    "tags": ["organic", "monster_drop", "beast_fang", "sharp"],
-    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "organic",
+      "monster_drop",
+      "beast_fang",
+      "sharp"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   },
   {
     "id": 14,
     "name": "黑色甲壳",
     "description": "变异蝎子的坚硬外壳。",
     "glyph": "o",
-    "color": [40, 40, 40],
+    "color": [
+      40,
+      40,
+      40
+    ],
     "class": "Material",
     "max_stack": 64,
     "rarity": "Common",
-    "tags": ["monster_drop", "chitin", "armor_material"],
-    "bonus": { "attack": 0, "defense": 0, "magic_mastery": 0, "agility": 0, "hp": 0, "crit_rate": 0.0, "crit_damage": 0.0 }
+    "tags": [
+      "monster_drop",
+      "chitin",
+      "armor_material"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
+  },
+  {
+    "id": 15,
+    "name": "治愈卷轴",
+    "description": "记载着治愈魔法的卷轴。",
+    "glyph": "?",
+    "color": [
+      255,
+      100,
+      100
+    ],
+    "class": "Consumable",
+    "max_stack": 1,
+    "rarity": "Common",
+    "tags": [
+      "scroll",
+      "magical"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
+  },
+  {
+    "id": 16,
+    "name": "护盾卷轴",
+    "description": "记载着护盾魔法的卷轴。",
+    "glyph": "?",
+    "color": [
+      100,
+      200,
+      255
+    ],
+    "class": "Consumable",
+    "max_stack": 1,
+    "rarity": "Common",
+    "tags": [
+      "scroll",
+      "magical"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
+  },
+  {
+    "id": 17,
+    "name": "狂暴卷轴",
+    "description": "记载着狂暴魔法的卷轴。",
+    "glyph": "?",
+    "color": [
+      255,
+      100,
+      0
+    ],
+    "class": "Consumable",
+    "max_stack": 1,
+    "rarity": "Common",
+    "tags": [
+      "scroll",
+      "magical"
+    ],
+    "bonus": {
+      "attack": 0,
+      "defense": 0,
+      "magic_mastery": 0,
+      "agility": 0,
+      "hp": 0,
+      "crit_rate": 0.0,
+      "crit_damage": 0.0
+    }
   }
 ]

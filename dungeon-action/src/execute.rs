@@ -290,7 +290,7 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
 }
 
 fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
-    let (skill_kind, cost_mp, skill_name);
+    let (skill_kind, cost_mp, skill_name, skill_proficiency);
     {
         let Some(skills) = world.get::<dungeon_core::Skills>(entity) else { return };
         let Some(skill) = skills.list.get(skill_idx) else { return };
@@ -303,40 +303,44 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
         skill_kind = skill.kind.clone();
         cost_mp = skill.cost_mp;
         skill_name = skill.name.to_string();
+        skill_proficiency = skill.proficiency;
     }
     {
         if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.mp -= cost_mp; }
     }
     match skill_kind {
         dungeon_core::SkillKind::Heal { amount } => {
-            if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.hp = (stats.hp + amount).min(stats.max_hp); }
-            world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP", skill_name, amount));
+            let effective = amount as i32 + skill_proficiency as i32 * 3;
+            if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.hp = (stats.hp + effective).min(stats.max_hp); }
+            world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP（熟练度+{}）", skill_name, effective, skill_proficiency));
         }
         dungeon_core::SkillKind::Shield { def_boost, duration } => {
             // 新 AV Buff 系统
+            let effective_def = def_boost as i32 + skill_proficiency as i32 * 2;
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;
                 if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Shield) {
                     existing.remaining_av = av;
-                    existing.magnitude = def_boost;
+                    existing.magnitude = effective_def;
                 } else {
-                    ab.0.push(Buff { kind: BuffKind::Shield, remaining_av: av, magnitude: def_boost, stack_type: BuffStackType::None });
+                    ab.0.push(Buff { kind: BuffKind::Shield, remaining_av: av, magnitude: effective_def, stack_type: BuffStackType::None });
                 }
             }
-            world.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}秒", skill_name, def_boost, duration));
+            world.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}秒（熟练度+{}）", skill_name, effective_def, duration, skill_proficiency));
         }
         dungeon_core::SkillKind::Berserk { atk_boost, duration } => {
             // 新 AV Buff 系统
+            let effective_atk = atk_boost as i32 + skill_proficiency as i32 * 2;
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;
                 if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Berserk) {
                     existing.remaining_av = av;
-                    existing.magnitude = atk_boost;
+                    existing.magnitude = effective_atk;
                 } else {
-                    ab.0.push(Buff { kind: BuffKind::Berserk, remaining_av: av, magnitude: atk_boost, stack_type: BuffStackType::None });
+                    ab.0.push(Buff { kind: BuffKind::Berserk, remaining_av: av, magnitude: effective_atk, stack_type: BuffStackType::None });
                 }
             }
-            world.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}秒", skill_name, atk_boost, duration));
+            world.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}秒（熟练度+{}）", skill_name, effective_atk, duration, skill_proficiency));
         }
     }
 }

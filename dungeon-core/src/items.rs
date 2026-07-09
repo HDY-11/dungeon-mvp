@@ -83,6 +83,37 @@ pub struct StatBonus {
     pub crit_damage: f32,
 }
 
+// ── 物品实例元数据（ItemStack 的可选附加数据）─────────
+
+/// ItemStack 实例级元数据。`None` = 模板原始状态。
+/// `#[serde(default)]` 保证旧存档兼容。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ItemMeta {
+    /// 自定义名称，覆盖模板 `ItemDef.name`
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// 品质层级（0=基础，1=+1，2=+2…）
+    #[serde(default)]
+    pub tier: u32,
+    /// 耐久度（暂缓实现）
+    #[serde(default)]
+    pub durability: Option<u32>,
+    /// 实例级标签（"已诅咒"/"已鉴定"等），不污染模板
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+// ── 物品行为 trait ───────────────────────────────────
+
+/// 可交互物品的行为抽象。
+/// 每种行为种类一个 impl，避免 match item_id。
+pub trait UsableItem: Send + Sync {
+    /// 使用物品。返回 true 表示消耗了该物品
+    fn use_on(&self, _world: &mut World, _user: Entity) -> bool { false }
+    /// 使用提示文本，如"学习"/"饮用"/"阅读"
+    fn use_verb(&self) -> &'static str { "使用" }
+}
+
 // ── 物品定义（注册表中的模板） ──────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,11 +182,14 @@ impl ItemRegistry {
 pub struct ItemStack {
     pub item_id: usize,
     pub count: u32,
+    /// 实例级元数据（I41）。None = 模板原始状态，`#[serde(default)]` 兼容旧存档
+    #[serde(default)]
+    pub meta: Option<Box<ItemMeta>>,
 }
 
 impl ItemStack {
     pub fn new(item_id: usize, count: u32) -> Self {
-        Self { item_id, count }
+        Self { item_id, count, meta: None }
     }
 
     pub fn def(&self) -> Option<&'static ItemDef> {
@@ -163,6 +197,12 @@ impl ItemStack {
     }
 
     pub fn name(&self) -> String {
+        // I41: 优先使用自定义名称
+        if let Some(ref meta) = self.meta {
+            if let Some(ref custom) = meta.display_name {
+                return custom.clone();
+            }
+        }
         self.def().map(|d| d.name.clone()).unwrap_or_else(|| format!("未知物品({})", self.item_id))
     }
 
