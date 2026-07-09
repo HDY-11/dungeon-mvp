@@ -292,6 +292,13 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
 fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
     let (skill_kind, cost_mp, skill_name, skill_proficiency);
     {
+        let has_skill = world.get::<dungeon_core::Skills>(entity)
+            .map(|s| s.list.get(skill_idx).is_some())
+            .unwrap_or(false);
+        if !has_skill {
+            world.resource_mut::<dungeon_core::EventLog>().push("技能未学习".to_string());
+            return;
+        }
         let Some(skills) = world.get::<dungeon_core::Skills>(entity) else { return };
         let Some(skill) = skills.list.get(skill_idx) else { return };
         let Some(stats) = world.get::<Stats>(entity) else { return };

@@ -72,6 +72,15 @@ pub fn handle_wait(world: &mut World) -> bool {
 /// 处理技能键（idx: 技能索引 0..3）
 pub fn handle_skill(world: &mut World, idx: usize) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
+        // 无职业设计：检查技能是否已学习
+        let has_skill = world.get::<dungeon_core::Skills>(e)
+            .map(|s| s.list.get(idx).is_some())
+            .unwrap_or(false);
+        if !has_skill {
+            world.resource_mut::<dungeon_core::EventLog>()
+                .push("技能未学习".to_string());
+            return false;
+        }
         let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
         let reaction_time = agility_to_reaction(agility);
         handle_timed_action(world, e, ActionKindV3::Skill(idx), reaction_time + 600.0 * agility_speed_factor(agility))
