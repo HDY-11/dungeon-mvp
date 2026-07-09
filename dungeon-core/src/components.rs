@@ -192,13 +192,7 @@ pub struct ActiveCooldowns(pub Vec<Cooldown>);
 #[derive(Component, Clone, Debug, Default)]
 pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
 
-#[derive(Component, Clone, Serialize, Deserialize)]
-pub struct Buffs {
-    pub shield_turns: i32, pub shield_def: i32,
-    pub berserk_turns: i32, pub berserk_atk: i32,
-}
-impl Buffs { pub fn new() -> Self { Self { shield_turns: 0, shield_def: 0, berserk_turns: 0, berserk_atk: 0 } } }
-impl Default for Buffs { fn default() -> Self { Self::new() } }
+
 
 #[derive(Component, Clone, Debug)]
 pub struct AttackName(pub String);

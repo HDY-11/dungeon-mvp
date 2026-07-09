@@ -5,7 +5,7 @@
 use super::*;
 use dungeon_core::{
     self as core, items::*,
-    Map, Stats, Buffs,
+    Map, Stats,
     Player, Position, Renderable, MovingDir, Viewshed,
     EntityName, Monster, AttackName,
     Inventory, Equipment, Skills, PlayerClass,
@@ -77,7 +77,7 @@ fn fresh_world() -> World {
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 10, visible_tiles: Vec::new() },
         Stats::player(), EntityName("冒险者".into()),
-        Inventory::new(36), Equipment::new(), Buffs::new(),
+        Inventory::new(36), Equipment::new(),
         pc.clone(), AttackName("斩击".into()),
     ));
     cmd.insert(Reaction { time: agility_to_reaction(player_agi) });

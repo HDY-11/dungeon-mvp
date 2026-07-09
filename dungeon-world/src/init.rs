@@ -94,7 +94,7 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
 fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
     use rand::RngExt;
     let count = rng.random_range(1u32..=3);
-    let scroll_ids = [15u32, 16, 17];
+    let scroll_ids = [dungeon_core::ITEM_SCROLL_HEAL as u32, dungeon_core::ITEM_SCROLL_SHIELD as u32, dungeon_core::ITEM_SCROLL_BERSERK as u32];
     let kinds = [
         dungeon_core::SkillKind::Heal { amount: 15 },
         dungeon_core::SkillKind::Shield { def_boost: 5, duration: 3 },
@@ -207,7 +207,7 @@ pub fn setup_world() -> World {
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 10, visible_tiles: Vec::new() },
         Stats::player(), EntityName("冒险者".into()),
-        Inventory::new(36), Equipment::new(), Buffs::new(),
+        Inventory::new(36), Equipment::new(),
         pc.clone(), AttackName("斩击".into()),
     ));
     cmd.insert(Reaction { time: agility_to_reaction(player_agi) });
@@ -232,7 +232,8 @@ pub fn setup_world() -> World {
     spawn_monsters(&mut world, 1, &mut rng, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
     // ── 地面物品 ──
-    let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
+    let ground_item_ids = [dungeon_core::ITEM_RUSTY_SWORD, dungeon_core::ITEM_WOOD_SHIELD, dungeon_core::ITEM_LEATHER_ARMOR, dungeon_core::ITEM_ATTACK_RING,
+                           dungeon_core::ITEM_RUSTY_SWORD, dungeon_core::ITEM_ATTACK_RING, dungeon_core::ITEM_LEATHER_ARMOR, dungeon_core::ITEM_WOOD_SHIELD];
     place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
     // ── 技能卷轴 ──
@@ -247,12 +248,12 @@ pub fn descend(world: &mut World) {
     let mut floor = w.resource_mut::<FloorNumber>();
     floor.0 += 1; let f = floor.0;
 
-    let player_data = {
+    let (player_stats, player_inv_stacks, player_inv_cap, player_equip, player_class, player_atk_name, player_active_buffs_vec) = {
         let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName, &ActiveBuffs)>();
-        let (e, s, inv, eq, cls, atk, ab) = q.iter(&*w).next().expect("Player exists for descend");
-        (e, s.clone(), inv.stacks.clone(), inv.capacity,
+        let (_, s, inv, eq, cls, atk, ab) = q.iter(&*w).next().expect("Player exists for descend");
+        (s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
-         Buffs::new(), cls.clone(), atk.0.clone(), ab.0.clone())
+         cls.clone(), atk.0.clone(), ab.0.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
@@ -270,16 +271,15 @@ pub fn descend(world: &mut World) {
         Player, Position { x: spawn.0, y: spawn.1 },
         Renderable { glyph: '@', color: (255, 255, 0) }, MovingDir::default(),
         Viewshed { range: 10, visible_tiles: Vec::new() },
-        player_data.1.clone(), EntityName("冒险者".into()),
-        Inventory { stacks: player_data.2, capacity: player_data.3 },
+        player_stats.clone(), EntityName("冒险者".into()),
+        Inventory { stacks: player_inv_stacks, capacity: player_inv_cap },
     ));
-    cmd.insert(player_data.4);  // Equipment
-    cmd.insert(dungeon_core::Skills { list: player_data.6.skills() });
-    cmd.insert(player_data.5);  // Buffs
-    cmd.insert(player_data.6.clone());  // PlayerClass
-    cmd.insert(AttackName(player_data.7.clone()));
-    cmd.insert(ActiveBuffs(player_data.8.clone()));  // D9: 保存并恢复 ActiveBuffs
-    cmd.insert(Reaction { time: agility_to_reaction(player_data.1.agility) });
+    cmd.insert(player_equip);  // Equipment
+    cmd.insert(dungeon_core::Skills { list: player_class.skills() });
+    cmd.insert(player_class.clone());  // PlayerClass
+    cmd.insert(AttackName(player_atk_name));
+    cmd.insert(ActiveBuffs(player_active_buffs_vec));  // D9: 保存并恢复 ActiveBuffs
+    cmd.insert(Reaction { time: agility_to_reaction(player_stats.agility) });
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
 
@@ -299,7 +299,8 @@ pub fn descend(world: &mut World) {
     spawn_monsters(w, f, &mut rng, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
     // ── 地面物品 ──
-    let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
+    let ground_item_ids = [dungeon_core::ITEM_RUSTY_SWORD, dungeon_core::ITEM_WOOD_SHIELD, dungeon_core::ITEM_LEATHER_ARMOR, dungeon_core::ITEM_ATTACK_RING,
+                           dungeon_core::ITEM_RUSTY_SWORD, dungeon_core::ITEM_ATTACK_RING, dungeon_core::ITEM_LEATHER_ARMOR, dungeon_core::ITEM_WOOD_SHIELD];
     place_ground_items(w, &ground_item_ids, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
     // ── 技能卷轴 ──

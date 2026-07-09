@@ -10,6 +10,63 @@
 
 ## ✅ 已修复
 
+### G16 — 暴击率纳入装备加成 ✅已修复
+
+**修复前：** `execute_attack()` 中暴击判定只用 `attacker_stats.crit_rate`（基础值 5%），`equipment_bonus()` 返回的 `StatBonus.crit_rate` 从未被使用。背包详情页显示的 crit_rate 加成不生效。
+
+**修复后：** 计算有效暴击率时加入 `bonus.crit_rate`，`total_crit_rate = attacker_stats.crit_rate + bonus.crit_rate`，上限钳制为 1.0。
+
+**位置：** `dungeon-action/src/execute.rs:302`
+
+### I25 — `CanMove::condition()` 已删除 ✅已修复
+
+**修复前：** `CanMove::condition()` 是 Action 组件中唯一有定义无调用的静态条件方法。对比 `CanChase::condition`（被 `chase_decision_system` 调用）和 `CanFlee::condition`（被 `flee_decision_system` 调用），`CanMove::condition` 处于悬空状态。
+
+**修复后：** 删除 `CanMove::condition()` 方法。Move 的保活检查由 `check_condition` 中的 `can_move_to()` 内联处理。
+
+**位置：** `dungeon-action/src/types.rs:61-65`
+
+### A14 — 地面拾取逻辑统一使用 ops::pickup_ground ✅已修复
+
+**修复前：** `inventory.rs` 的 'g' 键分支包含一份与 `ops::pickup_ground()` 几乎相同的拾取逻辑实现（查玩家位置→查同格 ItemPickup→添加 Inventory→despawn→推日志）。两处代码重复，未来变更需同步修改。
+
+**修复后：** `inventory.rs` 的 'g' 键直接调用 `ops::pickup_ground(world)`，消除重复。
+
+**位置：** `src/inventory.rs:260-280`
+
+### A13 — `descend` 中 player_data 改用具名变量 ✅已修复
+
+**修复前：** `descend()` 用一个 9 元组 `player_data` 传递玩家数据，成员通过 `.0`/`.1`/…`.8` 索引访问。索引易错、增加组件时需手动同步编号。
+
+**修复后：** 元组解构改为 7 个具名局部变量（`player_stats`/`player_inv_stacks`/`player_equip`/`player_class`/`player_atk_name`/`player_active_buffs_vec`），赋值处按名称引用。
+
+**位置：** `dungeon-world/src/init.rs:250-281`
+
+### D13 — 物品 ID 提取为命名常量 ✅已修复
+
+**修复前：** 物品 ID（0/1/2/3/10/11/12/13/14/15/16/17）在 `init.rs`（`scroll_ids` 数组和 `ground_item_ids`）、`inventory.rs`（`match item_id`）等多处以裸 `usize` 字面量出现。不可 grep、不可追踪，重构时无声错位。
+
+**修复后：** 在 `dungeon-core/src/items.rs` 中定义 `pub const ITEM_RUSTY_SWORD = 0` 等 12 个命名常量。`init.rs` 中的 `scroll_ids` 和 `ground_item_ids` 改用常量引用。`inventory.rs` 的 'r' 键不再直接引用 ID（见 D12）。
+
+**位置：** `dungeon-core/src/items.rs:7-18`（常量定义）
+
+### D12 — 物品使用行为集中分派（use_item 函数） ✅已修复
+
+**修复前：** `UsableItem` trait 和 `SkillScroll` 的 impl 已存在，但 `inventory.rs` 的 'r' 键仍然使用 `match item_id { 15 => ..., 16 => ..., 17 => ... }` 硬编码 match。trait 是悬空的抽象债务。
+
+**修复后：** `items.rs` 新增 `pub fn use_item(item_id, world, user) -> bool` 集中分派函数，内置 match 逻辑。`inventory.rs` 的 'r' 键通过 `dungeon_core::use_item(id, world, player)` 调用。所有物品使用行为集中到 items.rs 一处管理，不再散布在 UI 层。
+
+**位置：** `dungeon-core/src/items.rs`（use_item 函数）、`src/inventory.rs`（'r' 键调用方）
+
+### D11 — `Buffs` 旧组件死代码已删除 ✅已修复
+
+**修复前：** `buff_tick_system` 在 D10 中删除，但 `Buffs` 结构体（含 4 个废弃字段 `shield_turns`/`shield_def`/`berserk_turns`/`berserk_atk`）及其 impl 仍完整保留在 `components.rs` 中。`descend` 中 `Buffs::new()` 作为占位符传入，存档中的 `SavedBuffs` 仍在序列化。违反 LESSONS L39 Phase 3。
+
+**修复后：** 删除 `Buffs` 结构体、所有 impl 块、`SavedBuffs` 序列化结构。清理 `descend` 中的 `Buffs::new()` 占位参数。清理 `persist.rs` 中的 `buffs` 字段和 `SavedBuffs` 转换。清理 `tests.rs` 中的 `Buffs` 导入和 `Buffs::new()` 调用。
+
+**位置：** `dungeon-core/src/components.rs`、`dungeon-world/src/init.rs`、`dungeon-world/src/persist.rs`、`dungeon-action/src/tests.rs`
+**教训见：** `LESSONS.md L41`
+
 ### A10 — 事件日志显示条数回归（take(5)→take(12)） ✅已修复
 
 **修复前：** `ui.rs` 使用 `.take(5)`，战斗密集时事件日志关键信息快速滚出屏幕。G13 声称修复了但代码未改。
@@ -700,6 +757,16 @@ pub trait MonsterBehavior: Send + Sync {
 
 ---
 
+### 🟢 A15 — `open_look_mode` 在 main.rs 中混合渲染和状态管理
+
+**问题：** `open_look_mode` 直接在函数体内 `terminal.draw()` 渲染 + `event::read()` 处理输入，完全绕过了主循环的渲染编排。如果将来要将查看模式移至 dungeon-render crate，需提取至少两个关注点。
+
+**影响：** 🟢 低 — 当前实现（~30 行）简洁有效。仅在 render crate 架构升级时才需处理。
+
+**位置：** `src/main.rs:214-249`
+
+---
+
 ## 三、实现层面（Implementation）
 
 
@@ -767,6 +834,29 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 **位置：** `dungeon-core/src/lib.rs:7-9`
 **位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
 
+
+
+### 🟢 I26 — `place_skill_scrolls` 的 `_floor` 参数未使用
+
+**问题：** `place_skill_scrolls(world, _floor, rng)` 函数签名中 `_floor: u32` 带下划线前缀（标注"未使用"），函数体内确实从未使用该参数。GAME.md 中所有卷轴在 F1+ 均可出现，无楼层相关性——所以参数的存在是正确的设计扩展点，但当前是死参数。
+
+**影响：** 🟢 低。如果将来实现楼层滚稀有卷轴的逻辑，需要用到此参数。
+
+**位置：** `dungeon-world/src/init.rs:94`
+
+### 🟢 I27 — `descend` 中 `GameRng` 种子与 `setup_world` 不一致
+
+**问题：** `execute_attack` 中的暴击判定使用 `GameRng`。`setup_world` 中 `GameRng` 种子为 `map_seed.wrapping_add(42)`，但 `descend` 中不创建或重置 `GameRng`——下楼后旧 RNG 状态继续使用。每次下楼 RNG 状态不重置，导致两个问题：
+
+1. **不可回放性**：如果记录种子回放，下楼后玩家暴击/不暴击的结果不可复现
+2. **隐蔽的种子泄露**：下楼后 `GameRng` 的状态取决于下楼前玩家进行了多少次暴击判定
+
+对比地图生成（使用 `MapSeed + floor_number` 派生的独立 `SmallRng`，下楼后重新 seed），`GameRng` 的推进方式不一致。
+
+**影响：** 🟢 低 — 当前游戏没有"回放"功能需求，暴击判定使用旧 RNG 状态在功能上正确（只是种子不干净）。仅在引入回放功能时需要修复。
+
+**位置：** `dungeon-world/src/init.rs:79`（setup_world 的 GameRng 初始化）
+
 ---
 
 ## 四、游戏逻辑层面（Game Logic）
@@ -786,21 +876,46 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 **影响：** 🟡 中 — 旧系统实际生效时间极短（3 帧≈50ms），玩家几乎感觉不到；新系统 3s 是合理的。移除旧 `Buffs` 后此问题将自然消失。
 
-### 🟢 G16 — 暴击率不随装备变化（面板预期不一致）
+### 🟡 G17 — 材料物品无消耗渠道
 
-**问题：** `execute_attack()` 中暴击判定只用 `attacker_stats.crit_rate`（基础值 5%），不包含装备和 Buff 的暴击加成：
+**问题：** 生物血肉（id=10）、破布（11）、坚硬木棍（12）、染血兽牙（13）、黑色甲壳（14）五种材料物品只能拾取和堆积，没有任何消耗途径。背包 36 格在 4-5 层后会被材料大量占用，玩家被迫在"拾取所有材料"和"留空间给有用物品"之间做无趣的选择。
 
 ```rust
-// execute.rs:302 — 只读基础 stats
-let crit_roll = world.resource_mut::<GameRng>().random_f32();
-let is_crit = attacker_stats.crit_rate > crit_roll;
+// 当前材料的全部用途：占背包格
+// 没有任何合成/升级/交换/消耗机制消费它们
 ```
 
-但 `equipment_bonus()` 中 `StatBonus` 有 `crit_rate: f32` 字段，攻击戒指等物品可定义 `crit_rate` 加成。背包详情页会显示这些加成数据，而实际战斗不生效，给玩家错误的预期。
+**影响：** 🟡 中 — 材料的存在感为零。玩家的理性选择是"忽略所有材料掉落"。
 
-**影响：** 🟢 低 — 当前无物品带非零 `crit_rate` 加成，但不修复的话将来添加此类物品时会无声失效。
+**建议方向：** 至少为材料规划一个基础消耗渠道：交换经验值、升级装备、恢复 HP/MP 等。DESIGN.md §17 也将合成/配方标记为"暂缓"，但材料长期零消耗会腐蚀掉落系统的设计合理性。
 
-**位置：** `dungeon-action/src/execute.rs:302`、`dungeon-core/src/items.rs`（StatBonus 定义）
+**位置：** `assets/items.json` items 10-14
+
+### 🟡 G18 — 地面物品每层完全相同
+
+**问题：** `ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]` 硬编码在 `init.rs` 中，每层生成完全相同的 8 件物品（锈铁剑×2、木盾×2、皮甲×2、攻击戒指×2）。无随机变化、无楼层关联、无稀有度梯度。
+
+```rust
+// init.rs:235 — 每层都一样的物品组合
+let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
+place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
+```
+
+GAME.md 记载的是"每层约 8 件物品"——数量和描述匹配，但缺少"多样性和随机性"的设计意图。
+
+**影响：** 🟡 中 — 玩家打完第一层就见过所有可拾取物品了，下楼探索的动力之一是"找新装备"的期待落空。
+
+**建议：** 至少随机化物品种类和数量，低层出基础装备，深层引入稀有/魔法物品或更高的装备层级。
+
+**位置：** `dungeon-world/src/init.rs:235`
+
+### 🟢 G19 — 战斗公式缺乏层次深度
+
+**表现：** 当前 `max(攻击 - 防御, 1)` 的差值公式完全线性，1 点攻击永远对应 1 点伤害。无穿甲穿透、无元素属性/抗性、无距离衰减、无背后/侧击加成。装备增强集中在 +攻击/+防御 两个维度。
+
+**影响：** 🟢 低 — MVP 阶段可以接受。但扩展到 8+ 种怪物、3+ 种武器类型时，所有战斗都会感觉"差不多"——只有数值差异，没有策略差异。当需要设计"抗高攻怪"和"抗高防怪"两种不同策略时，当前公式无法提供区分度。
+
+**位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
 
 ---
 

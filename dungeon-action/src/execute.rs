@@ -254,8 +254,13 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
             ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), None) as i32
         };
         let raw_dmg = (effective_atk - target_def).max(1);
+        // G16: 暴击率纳入装备加成（equipment_bonus 已含 crit_rate）
+        let equip = world.get::<Equipment>(attacker);
+        let inv = world.get::<Inventory>(attacker);
+        let bonus = equip.zip(inv).map(|(eq, inv)| dungeon_core::equipment_bonus(inv, eq)).unwrap_or_default();
+        let total_crit_rate = (attacker_stats.crit_rate + bonus.crit_rate).min(1.0);
         let crit_roll = world.resource_mut::<GameRng>().random_f32();
-        let is_crit = attacker_stats.crit_rate > crit_roll;
+        let is_crit = total_crit_rate > crit_roll;
         dmg = if is_crit { (raw_dmg as f32 * (1.0 + attacker_stats.crit_damage)).round() as i32 } else { raw_dmg };
         crit = is_crit;
         exp = target_stats.exp;

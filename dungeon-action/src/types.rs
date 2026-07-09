@@ -42,10 +42,6 @@ impl CanMove {
     pub fn new(priority: u32) -> Self {
         Self { duration: 300.0, priority }
     }
-
-    pub fn condition(target_is_walkable: bool, target_is_occupied_by_enemy: bool) -> bool {
-        target_is_walkable || target_is_occupied_by_enemy
-    }
 }
 
 /// 追击行动（怪物专用）

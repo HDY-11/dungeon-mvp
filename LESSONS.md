@@ -434,3 +434,19 @@ let color = renderable_color(r.color);
 **为什么更好：** `Renderable.color` 被 `SavedMonster` 序列化（r/g/b 字段），读档后自动恢复。所有渲染路径读取同一来源，不受 Entity ID 变化影响。渲染层不再承担颜色计算职责。
 
 **参见 ISSUES.md #I35**
+
+### L41 — 移除废弃结构体时，必须 grep 所有 crate 中对该结构体的导入和引用
+
+**问题背景：** D11 中移除 `Buffs` 结构体时，`components.rs` 中的 struct 定义删除后，编译通过了，但 `tests.rs` 中仍有 `Buffs` 的导入和 `Buffs::new()` 调用——因为测试代码不常被检查到。
+
+**错误做法：** 只删除核心定义（struct + impl），依赖"编译会告诉我哪里还有引用"。
+
+**正确做法：** 在删除前先 grep 结构体名称（大小写敏感）在所有 `.rs` 文件中的出现，列出所有导入和引用点，逐一确认每个引用应该保留还是删除：
+
+```bash
+grep -rn "Buff\b" --include="*.rs" src/ dungeon-core/ dungeon-action/ dungeon-world/ dungeon-render/
+```
+
+**为什么更好：** `Buffs` 和 `ActiveBuffs` 名称相似，grep 结果会同时包含两者。通过检查每个命中的上下文来区分"旧系统引用（删）"和"新系统引用（留）"——不做这个检查的话，测试文件等不常运行的代码会被遗漏。
+
+**参见 ISSUES.md #D11**

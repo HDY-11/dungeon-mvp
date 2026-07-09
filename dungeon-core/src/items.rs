@@ -2,6 +2,22 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+// ── 物品 ID 常量 ────────────────────────────────────
+// 与 assets/items.json 中的 id 字段对应。
+// 用于替代裸 usize 字面量，使 grep 可追踪、重构可定位。
+pub const ITEM_RUSTY_SWORD: usize = 0;
+pub const ITEM_WOOD_SHIELD: usize = 1;
+pub const ITEM_LEATHER_ARMOR: usize = 2;
+pub const ITEM_ATTACK_RING: usize = 3;
+pub const ITEM_BIOMASS: usize = 10;
+pub const ITEM_CLOTH: usize = 11;
+pub const ITEM_STICK: usize = 12;
+pub const ITEM_FANG: usize = 13;
+pub const ITEM_CHITIN: usize = 14;
+pub const ITEM_SCROLL_HEAL: usize = 15;
+pub const ITEM_SCROLL_SHIELD: usize = 16;
+pub const ITEM_SCROLL_BERSERK: usize = 17;
+
 // ── 物品分类（显示用） ──────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +362,30 @@ impl Equipment {
         if let Some(s) = &self.armor { v.push(s); }
         if let Some(s) = &self.ring { v.push(s); }
         v
+    }
+}
+
+// ── 物品使用集中分派 ──────────────────────────────
+
+/// 使用物品的集中分派函数。
+/// 所有调用方通过此函数使用物品，避免 match item_id 散布在多个文件中。
+/// 返回 true 表示消耗了该物品。
+pub fn use_item(item_id: usize, world: &mut World, user: Entity) -> bool {
+    use crate::SkillKind;
+    match item_id {
+        ITEM_SCROLL_HEAL => {
+            crate::ops::learn_skill(world, user, &SkillKind::Heal { amount: 15 });
+            true
+        }
+        ITEM_SCROLL_SHIELD => {
+            crate::ops::learn_skill(world, user, &SkillKind::Shield { def_boost: 5, duration: 3 });
+            true
+        }
+        ITEM_SCROLL_BERSERK => {
+            crate::ops::learn_skill(world, user, &SkillKind::Berserk { atk_boost: 5, duration: 3 });
+            true
+        }
+        _ => false,
     }
 }
 

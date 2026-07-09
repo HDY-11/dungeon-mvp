@@ -14,7 +14,7 @@ use crossterm::event::{self, Event, KeyCode};
 use bevy_ecs::prelude::*;
 use dungeon_core::{
     ops, Equipment, EquipmentSlot, EventLog, Inventory, ItemPickup, ItemStack,
-    Player, Position, Renderable, SkillKind,
+    Player, Position, Renderable,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -280,34 +280,26 @@ pub fn open_inventory(
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('r')) => {
-                    // Phase 1: 只读——获取物品信息和玩家实体
+                    // Phase 1: 获取物品和玩家
                     let (item_id, player) = {
                         let mut q = world.query::<(&Inventory,)>();
                         let item_id = q.iter(world).next()
                             .and_then(|(inv,)| inv.stacks.get(*idx))
                             .map(|s| s.item_id);
-                        let player = ops::player_entity(world);
-                        (item_id, player)
+                        (item_id, ops::player_entity(world))
                     };
-                    // Phase 2: 执行学习
-                    let (kind, consume) = match item_id {
-                        Some(15) => (Some(SkillKind::Heal { amount: 15 }), true),
-                        Some(16) => (Some(SkillKind::Shield { def_boost: 5, duration: 3 }), true),
-                        Some(17) => (Some(SkillKind::Berserk { atk_boost: 5, duration: 3 }), true),
-                        _ => {
-                            world.resource_mut::<EventLog>().push("无法学习该物品".to_string());
-                            (None, false)
+                    // Phase 2: 通过集中分派函数使用物品
+                    let consumed = item_id.is_some_and(|id| {
+                        player.is_some_and(|p| dungeon_core::use_item(id, world, p))
+                    });
+                    if consumed {
+                        // Phase 3: 移除已使用的物品
+                        let mut q = world.query::<(&mut Inventory,)>();
+                        if let Some((mut inv,)) = q.iter_mut(world).next() {
+                            inv.remove(*idx, 1);
                         }
-                    };
-                    if consume {
-                        if let (Some(k), Some(p)) = (kind, player) {
-                            ops::learn_skill(world, p, &k);
-                            // Phase 3: 移除已使用的卷轴
-                            let mut q = world.query::<(&mut Inventory,)>();
-                            if let Some((mut inv,)) = q.iter_mut(world).next() {
-                                inv.remove(*idx, 1);
-                            }
-                        }
+                    } else {
+                        world.resource_mut::<EventLog>().push("无法使用该物品".to_string());
                     }
                     page = Page::List(InvPanel::Left);
                 }
@@ -331,24 +323,7 @@ pub fn open_inventory(
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::Right, _idx), KeyCode::Char('g')) => {
-                    let mut collected = Vec::new();
-                    let ppx = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-                    for (e, pu, po) in world.try_query::<(Entity, &ItemPickup, &Position)>().expect("Entity+ItemPickup+Position registered at init").iter(world) {
-                        if po.x == ppx.0 && po.y == ppx.1 { collected.push((e, pu.stack.clone())); }
-                    }
-                    let mut logs = Vec::new();
-                    let mut despawn = Vec::new();
-                    for (e, s) in &collected {
-                        let mut q = world.query::<(&mut Inventory,)>();
-                        if let Some((mut inv,)) = q.iter_mut(world).next() {
-                            let leftover = inv.add(s.item_id, s.count);
-                            let picked = s.count - leftover;
-                            if picked > 0 { logs.push(format!("拾取了{}x{}", s.name(), picked)); }
-                            despawn.push(*e);
-                        }
-                    }
-                    for e in despawn { world.entity_mut(e).despawn(); }
-                    for msg in logs { world.resource_mut::<EventLog>().push(msg); }
+                    ops::pickup_ground(world);
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(_, _), _) => {}
