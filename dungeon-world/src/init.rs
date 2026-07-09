@@ -34,12 +34,17 @@ fn spawn_monsters(world: &mut World, floor: u32, rng: &mut impl Rng, exclude: &[
             dungeon_core::monster_def::monster_stats(kind, floor), EntityName(name.into()),
             AttackName(attk.into()), loot,
         ));
+        let entity = cmd.id();
         cmd.insert(Reaction { time: agility_to_reaction(mon_agi) });
         cmd.insert(LastKnownPlayerPos::default());
         cmd.insert(CanChase::new(100));
         cmd.insert(CanFlee::new(200));
         cmd.insert(CanWander::new(50));
         cmd.insert(CanWait::new(0));
+        // I35: 将独特色写入 Renderable.color，持久化后跨存档/下楼一致
+        if let Some(mut rend) = world.get_mut::<Renderable>(entity) {
+            rend.color = dungeon_core::color::entity_color(entity.to_bits(), 0);
+        }
     }
 }
 

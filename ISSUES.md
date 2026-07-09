@@ -12,13 +12,20 @@
 
 ## ✅ 已修复
 
-### I35 — 行动轴颜色使用 Renderable 组件 ✅已修复
+### I35 — 怪物颜色统一使用 Renderable 组件（地图+行动轴） ✅已修复
 
-**修复前：** `timeline.rs` 使用 `entity_color(e.to_bits(), 0)` 实时哈希计算怪物颜色。读档后 Entity ID 重建导致颜色与地图不一致。
+**修复前：** `timeline.rs` 和 `ui.rs` 使用 `entity_color(entity.to_bits(), 0)` 实时哈希计算怪物颜色。读档后 Entity ID 重建导致颜色不一致。更根本的问题是：独特色是"渲染时实时计算的"，不被持久化。
 
-**修复后：** 改为直接读取 `Renderable.color` 组件值，与地图渲染一致。
+**修复后：**
+1. `entity_color` + `hsv_to_rgb` 从 `dungeon-render` 移至 `dungeon-core/src/color.rs`（纯数学，无 TUI 依赖）
+2. `spawn_monsters` 在 spawn 后立即用 `entity_color(entity.to_bits(), 0)` 写入 `Renderable.color`——独特色在生成时固定
+3. `timeline.rs` 改为直接读取 `Renderable.color`，不再实时哈希
+4. `ui.rs` 移除怪物 entity_color 覆写，直接使用 renderable 的已存颜色
 
-**位置：** `dungeon-render/src/timeline.rs:54`
+**效果：** 独特色在存档中持久化（SavedMonster 的 r/g/b 字段），读档/下楼后地图和行动轴颜色一致。
+
+**位置：** `dungeon-core/src/color.rs`（新模块）、`dungeon-world/src/init.rs:67`、`dungeon-render/src/timeline.rs:41`、`dungeon-render/src/ui.rs:126`
+**教训见：** `LESSONS.md L40`（新增——独特色应在生成时固定存储于组件，而非渲染时实时计算）
 
 ### A11 — 删除 Stats::monster() 死代码 ✅已修复
 
@@ -484,18 +491,7 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 **风险：** dungeon-core 包含战斗公式、升级曲线、FOV、A* 寻路、Tile/Stats 序列化——任一公式修改都可能无声破坏平衡，无单元测试意味着只能靠手动打游戏验证。
 
-### 🟢 I35 — 行动轴怪物颜色用哈希而非 Renderable 组件
-
-**问题：** `entity_color()` 使用 `entity.to_bits()` 作为输入哈希。读档后怪物被重建为新 Entity ID，颜色与存档前不同。虽然地图渲染上正确使用 `Renderable` 组件的颜色，但 `timeline.rs` 中怪物颜色使用 `entity_color(entity.to_bits(), 0)` 实时计算：
-
-```rust
-// timeline.rs:54 — 实时哈希，非 Renderable.color
-let color = renderable_color(entity_color(e.to_bits(), 0));
-```
-
-读档后行动轴上怪物颜色与地图上不一致。
-
-**位置：** `dungeon-render/src/timeline.rs:54`
+<!-- I35 已移至 ✅已修复（修复前/修复后记录见上方） -->
 
 ## 四、游戏逻辑层面（Game Logic）
 

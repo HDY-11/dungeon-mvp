@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use bevy_ecs::prelude::{Entity, World};
-use crate::color::{entity_color, renderable_color};
+use crate::color::renderable_color;
 
 /// 行动表：符号 行动 耗时（无 HP），下方分割后显示符号 怪物名 血量 + Buff
 pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) -> Vec<Line<'static>> {
@@ -36,9 +36,9 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     for entry in &queue.entries {
         let Some(pos) = world.get::<Position>(entry.entity) else { continue };
         if !player_visible.contains(&(pos.x, pos.y)) { continue; }
-        let glyph = world.get::<Renderable>(entry.entity)
-            .map(|r| r.glyph).unwrap_or('?');
-        let color = renderable_color(entity_color(entry.entity.to_bits(), 0));
+        let (glyph, color) = world.get::<Renderable>(entry.entity)
+            .map(|r| (r.glyph, renderable_color(r.color)))
+            .unwrap_or(('?', Color::White));
         let (action_label, timer) = action_display(&entry.kind, entry.av_remaining);
         out.push(Line::from(vec![
             Span::styled(format!(" {} ", glyph), Style::default().fg(color)),

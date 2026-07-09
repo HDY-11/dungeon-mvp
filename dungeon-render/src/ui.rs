@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
-    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Monster, Player,
+    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
     Position, Skills, Stats, Tile, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
-use crate::color::{entity_color, renderable_color};
+use crate::color::renderable_color;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -116,19 +116,15 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         }
         lines.push(row);
     }
-    for &(entity, ex, ey, glyph, (r, g, b)) in &renderables {
+    for &(_entity, ex, ey, glyph, (r, g, b)) in &renderables {
         if ey >= cam_y && ey < cam_y + vh
             && ex >= cam_x && ex < cam_x + vw
             && player_visible.contains(&(ex, ey))
         {
             let (idx, jdx) = (ey - cam_y, ex - cam_x);
             let bg = lines[idx][jdx].2;
-            // 怪物在地图上使用 entity_color，其余实体用原始颜色
-            let color = if world.get::<Monster>(entity).is_some() {
-                renderable_color(entity_color(entity.to_bits(), 0))
-            } else {
-                renderable_color((r, g, b))
-            };
+            // I35: Renderable.color 已在 spawn 时写入独特色，直接使用
+            let color = renderable_color((r, g, b));
             lines[idx][jdx] = (glyph, color, bg);
         }
     }
