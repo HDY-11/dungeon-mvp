@@ -12,6 +12,146 @@
 
 ## ✅ 已修复
 
+ ✅已修复
+### D9 — 下楼不保存 ActiveBuffs ✅已修复
+
+**问题：** `descend()` 中 `player_data.5` 硬编码为 `Buffs::new()`（空），且 `ActiveBuffs` 组件完全未在 `descend` 中捕获和重建。下楼后玩家身上的护盾/狂暴 Buff 全部丢失。
+
+```rust
+// init.rs:196 — 永远空的
+Buffs::new(), cls.clone(), atk.0.clone())
+// init.rs:207 — 下楼后插入的也是空的
+cmd.insert(ActiveBuffs::new());
+```
+
+**对比：** 存档/读档（`persist.rs`）正确保存和恢复了 `ActiveBuffs`——说明下楼丢失不是有意设计，而是遗漏。
+
+**影响：** 🟡 中 — 玩家在楼梯口开 Shield 下楼→Buff 消失，与存档读档行为不一致。
+
+**位置：** `dungeon-world/src/init.rs:193-207`
+
+
+ ✅已修复
+### D10 — buff_tick_system 已删除 ✅已修复
+
+**问题：** `buff_tick_system` 每帧修改旧 `Buffs` 组件的 `shield_turns`/`berserk_turns`/`shield_def`/`berserk_atk` 字段。但 `effective_attack`/`effective_defense` 已在 G14 修复中改为只读新 `ActiveBuffs`。旧 Buffs 的修改永远不会被消费。
+
+```rust
+// systems.rs:47-50 — 仍在运行，产生无用副作用
+pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
+    for mut b in query.iter_mut() {
+        if b.shield_turns > 0 { b.shield_turns -= 1; if b.shield_turns <= 0 { b.shield_def = 0; } }
+        if b.berserk_turns > 0 { b.berserk_turns -= 1; if b.berserk_turns <= 0 { b.berserk_atk = 0; } }
+    }
+}
+```
+
+**违反 LESSONS L39：** 双系统共存应推进到 Phase 3（移除旧系统），当前停留在 Phase 1 且 `buff_tick_system` 仍在 Schedule 中注册并每帧运行。
+
+**位置：** `dungeon-core/src/systems.rs:47-50`、`dungeon-world/src/tick.rs:13`
+
+---
+
+ ✅已修复
+### I39 — effective_attack/defense 删除废弃 _buffs 参数 ✅已修复
+
+**问题：** `effective_attack` 和 `effective_defense` 带有 `_buffs: Option<&Buffs>` 参数，前缀下划线表示"不使用"。G14 修复时移除了求和逻辑但保留了参数占位，所有调用方仍在传入 `world.get::<Buffs>(entity)` 做无用查询。
+
+```rust
+pub fn effective_attack(
+    stats: &Stats, inv: &Inventory, equip: &Equipment,
+    _buffs: Option<&Buffs>,           // ← 废弃参数，从不使用
+    active_buffs: Option<&ActiveBuffs>,
+) -> u32
+```
+
+**违反 LESSONS L39：** 新旧系统共存应推进到 Phase 3（移除旧系统引用），当前停留在 Phase 1 未进展。
+
+**位置：** `dungeon-core/src/ops.rs:24-50`；调用点：`execute.rs:293`、`ui.rs:134`
+
+ ✅已修复
+### I40 — 物品系统行为抽象层（UsableItem trait 已定义） ✅已修复
+
+**问题：** MC 的物品系统有三层：`Registry → ItemStack → Item 虚方法`。本项目的物品只有前两层——`ItemDef` 是纯数据结构，没有任何方法。物品"能做什么"的逻辑必须散落在外部 match 中：
+
+```rust
+// 没有统一的 use() 抽象，只能 match item_id
+match item_id {
+    20 => learn_skill(world, SkillKind::Heal),
+    21 => learn_skill(world, SkillKind::Shield),
+    // 加一种可消耗品 → 加一个 arm
+    _ => {},
+}
+```
+
+**MC 的做法（Item 虚方法）：**
+```java
+public class Item {
+    public InteractionResult use(Level level, Player player, InteractionHand hand) { ... }
+    public void inventoryTick(ItemStack stack, Level level, Entity entity, int slot, boolean selected) { ... }
+}
+```
+
+每件物品通过继承/impl 定义自己的行为，调用方只需 `item.use(...)`——不需要 match。
+
+**影响：** 当前仅装备类有行为（加 stat），材料类完全无用途。即将做的技能卷轴、未来的药水/食物/卷轴都需要行为抽象。没有的话每加一种可交互物品都要改 inventory.rs 和/或 process_key。
+
+**建议方向：** 定义 `UsableItem` trait（与 A12 的 `MonsterBehavior` 同一类问题——用虚表代替枚举 match）：
+
+```rust
+pub trait UsableItem {
+    fn use_on(&self, world: &mut World, user: Entity) -> bool;
+    fn use_verb(&self) -> &'static str;
+    fn can_use(&self, world: &World, user: Entity) -> bool;
+}
+```
+
+**位置：** `dungeon-core/src/items.rs`（ItemDef 定义处，无方法）
+
+ ✅已修复
+### I41 — ItemStack 增加 ItemMeta（NBT 等价物） ✅已修复
+
+**问题：** `ItemStack` 只有 `(item_id, count)` 两个字段，没有存储任意元数据的容器。MC 的 `CompoundTag`（NBT）支持自定义名称、附魔、耐久度、品质/层级等任意键值对。
+
+```rust
+// 当前 ItemStack — 无扩展空间
+pub struct ItemStack {
+    pub item_id: usize,
+    pub count: u32,
+    // 没有第 3 个字段
+}
+```
+
+**影响：** 🔴 高 — 以下功能在没有 NBT 等价物的情况下要么不可能，要么需要绕路：
+| 功能 | 无 NBT 的代价 |
+|------|-------------|
+| 装备层级（+1/+2/+3） | 加字段到 ItemStack 或另加 ECS 组件 |
+| 附魔/自定义属性 | 需要新组件 + 查询链 |
+| 自定义名称 | 不可能——永远是模板名称 |
+| 耐久度 | 需要新组件 + 存档迁移 |
+| 词缀（前缀/后缀） | 不可能——无法存"锋利的长剑"vs"迅捷的长剑" |
+
+**建议方向：** 在 `ItemStack` 中加一个通用元数据容器，`#[serde(default)]` 兼容旧存档：
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ItemMeta {
+    pub name: Option<String>,
+    pub tier: u32,
+    pub enchantments: Vec<Enchantment>,
+    pub durability: Option<u32>,
+    pub tags: Vec<String>,
+}
+
+pub struct ItemStack {
+    pub item_id: usize,
+    pub count: u32,
+    #[serde(default)]
+    pub meta: Option<Box<ItemMeta>>,
+}
+```
+
+
 ### I35 — 怪物颜色统一使用 Renderable 组件（地图+行动轴） ✅已修复
 
 **修复前：** `timeline.rs` 和 `ui.rs` 使用 `entity_color(entity.to_bits(), 0)` 实时哈希计算怪物颜色。读档后 Entity ID 重建导致颜色不一致。更根本的问题是：独特色是"渲染时实时计算的"，不被持久化。
@@ -429,44 +569,6 @@
 **当前评估：** 暂缓实现。在当前战斗系统（纯数值 chase/flee/wander）下，事件帧模式提供的信息量不足以补偿节奏损失——玩家的最优策略不会因看到每个怪物单步移动而改变。
 
 **触发条件：** 出现**足够复杂的战斗逻辑**，即新增的怪物/boss 有需要玩家在过程中作出反应的能力——例如范围攻击预警、状态效果倒计时、可打断的吟唱、地形变化。当单次 tick 内的行动序列构成决策信息时，事件帧模式从"nice to have"变为"need to have"。
-
-### 🟡 D9 — 下楼不保存 ActiveBuffs
-
-**问题：** `descend()` 中 `player_data.5` 硬编码为 `Buffs::new()`（空），且 `ActiveBuffs` 组件完全未在 `descend` 中捕获和重建。下楼后玩家身上的护盾/狂暴 Buff 全部丢失。
-
-```rust
-// init.rs:196 — 永远空的
-Buffs::new(), cls.clone(), atk.0.clone())
-// init.rs:207 — 下楼后插入的也是空的
-cmd.insert(ActiveBuffs::new());
-```
-
-**对比：** 存档/读档（`persist.rs`）正确保存和恢复了 `ActiveBuffs`——说明下楼丢失不是有意设计，而是遗漏。
-
-**影响：** 🟡 中 — 玩家在楼梯口开 Shield 下楼→Buff 消失，与存档读档行为不一致。
-
-**位置：** `dungeon-world/src/init.rs:193-207`
-
-### 🟢 D10 — `buff_tick_system` 仍在处理废弃的旧 `Buffs` 组件
-
-**问题：** `buff_tick_system` 每帧修改旧 `Buffs` 组件的 `shield_turns`/`berserk_turns`/`shield_def`/`berserk_atk` 字段。但 `effective_attack`/`effective_defense` 已在 G14 修复中改为只读新 `ActiveBuffs`。旧 Buffs 的修改永远不会被消费。
-
-```rust
-// systems.rs:47-50 — 仍在运行，产生无用副作用
-pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
-    for mut b in query.iter_mut() {
-        if b.shield_turns > 0 { b.shield_turns -= 1; if b.shield_turns <= 0 { b.shield_def = 0; } }
-        if b.berserk_turns > 0 { b.berserk_turns -= 1; if b.berserk_turns <= 0 { b.berserk_atk = 0; } }
-    }
-}
-```
-
-**违反 LESSONS L39：** 双系统共存应推进到 Phase 3（移除旧系统），当前停留在 Phase 1 且 `buff_tick_system` 仍在 Schedule 中注册并每帧运行。
-
-**位置：** `dungeon-core/src/systems.rs:47-50`、`dungeon-world/src/tick.rs:13`
-
----
-
 ## 二、架构层面（Architecture）
 
 ### 🟡 A10 — 事件日志显示条数回归：代码 take(5) 而非声称的 12
@@ -608,103 +710,6 @@ pub mod pathfinding;
 但 `pub mod pathfinding;` 是生效的，`execute.rs` 中 `dungeon_core::pathfinding::astar` 也在使用。
 
 **位置：** `dungeon-core/src/lib.rs:7-9`
-
-### 🟢 I39 — `effective_attack/defense` 签名残留废弃 `_buffs` 参数
-
-**问题：** `effective_attack` 和 `effective_defense` 带有 `_buffs: Option<&Buffs>` 参数，前缀下划线表示"不使用"。G14 修复时移除了求和逻辑但保留了参数占位，所有调用方仍在传入 `world.get::<Buffs>(entity)` 做无用查询。
-
-```rust
-pub fn effective_attack(
-    stats: &Stats, inv: &Inventory, equip: &Equipment,
-    _buffs: Option<&Buffs>,           // ← 废弃参数，从不使用
-    active_buffs: Option<&ActiveBuffs>,
-) -> u32
-```
-
-**违反 LESSONS L39：** 新旧系统共存应推进到 Phase 3（移除旧系统引用），当前停留在 Phase 1 未进展。
-
-**位置：** `dungeon-core/src/ops.rs:24-50`；调用点：`execute.rs:293`、`ui.rs:134`
-
-### 🟡 I40 — 物品系统缺少行为抽象层（借鉴了 Registry 但没借鉴 Item 虚方法）
-
-**问题：** MC 的物品系统有三层：`Registry → ItemStack → Item 虚方法`。本项目的物品只有前两层——`ItemDef` 是纯数据结构，没有任何方法。物品"能做什么"的逻辑必须散落在外部 match 中：
-
-```rust
-// 没有统一的 use() 抽象，只能 match item_id
-match item_id {
-    20 => learn_skill(world, SkillKind::Heal),
-    21 => learn_skill(world, SkillKind::Shield),
-    // 加一种可消耗品 → 加一个 arm
-    _ => {},
-}
-```
-
-**MC 的做法（Item 虚方法）：**
-```java
-public class Item {
-    public InteractionResult use(Level level, Player player, InteractionHand hand) { ... }
-    public void inventoryTick(ItemStack stack, Level level, Entity entity, int slot, boolean selected) { ... }
-}
-```
-
-每件物品通过继承/impl 定义自己的行为，调用方只需 `item.use(...)`——不需要 match。
-
-**影响：** 当前仅装备类有行为（加 stat），材料类完全无用途。即将做的技能卷轴、未来的药水/食物/卷轴都需要行为抽象。没有的话每加一种可交互物品都要改 inventory.rs 和/或 process_key。
-
-**建议方向：** 定义 `UsableItem` trait（与 A12 的 `MonsterBehavior` 同一类问题——用虚表代替枚举 match）：
-
-```rust
-pub trait UsableItem {
-    fn use_on(&self, world: &mut World, user: Entity) -> bool;
-    fn use_verb(&self) -> &'static str;
-    fn can_use(&self, world: &World, user: Entity) -> bool;
-}
-```
-
-**位置：** `dungeon-core/src/items.rs`（ItemDef 定义处，无方法）
-
-### 🔴 I41 — ItemStack 缺少 NBT 等价物，限制物品深度
-
-**问题：** `ItemStack` 只有 `(item_id, count)` 两个字段，没有存储任意元数据的容器。MC 的 `CompoundTag`（NBT）支持自定义名称、附魔、耐久度、品质/层级等任意键值对。
-
-```rust
-// 当前 ItemStack — 无扩展空间
-pub struct ItemStack {
-    pub item_id: usize,
-    pub count: u32,
-    // 没有第 3 个字段
-}
-```
-
-**影响：** 🔴 高 — 以下功能在没有 NBT 等价物的情况下要么不可能，要么需要绕路：
-| 功能 | 无 NBT 的代价 |
-|------|-------------|
-| 装备层级（+1/+2/+3） | 加字段到 ItemStack 或另加 ECS 组件 |
-| 附魔/自定义属性 | 需要新组件 + 查询链 |
-| 自定义名称 | 不可能——永远是模板名称 |
-| 耐久度 | 需要新组件 + 存档迁移 |
-| 词缀（前缀/后缀） | 不可能——无法存"锋利的长剑"vs"迅捷的长剑" |
-
-**建议方向：** 在 `ItemStack` 中加一个通用元数据容器，`#[serde(default)]` 兼容旧存档：
-
-```rust
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ItemMeta {
-    pub name: Option<String>,
-    pub tier: u32,
-    pub enchantments: Vec<Enchantment>,
-    pub durability: Option<u32>,
-    pub tags: Vec<String>,
-}
-
-pub struct ItemStack {
-    pub item_id: usize,
-    pub count: u32,
-    #[serde(default)]
-    pub meta: Option<Box<ItemMeta>>,
-}
-```
-
 **位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
 ## 四、游戏逻辑层面（Game Logic）
 
