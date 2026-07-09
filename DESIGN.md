@@ -244,6 +244,8 @@ render ───╯（依赖 core + action，因 timeline 使用行动类型）
 
 **解决（D1）：** `GameRng` 成为唯一随机源。所有随机操作（仲裁、暴击、游荡、掉落、地图生成）统一走 `GameRng` 或基于 `MapSeed` 的派生 RNG。线程局部 RNG 已删除，对应的 `global.rs` 文件已删除（A5）。
 
+> **§14 编号未使用（已跳过）。** 如需新增设计决策条目，可使用 §14 或追加 §20。
+
 ---
 
 ## 15. 技能系统重设计（设计中）
@@ -405,21 +407,21 @@ pub struct ItemMeta {
 | 装备管理 | 内联 2 处重复 | `equip_throwable_to_off_hand()` 共享函数 |
 | 存档副手 | `off_hand: None` 硬编码 | 序列化/反序列化 |
 
-### 前置条件：先拆分 ActionKindV3（A12）
+### 架构：行动分派分为玩家枚举 + 怪物 trait
 
-`ActionKindV3` 当前同时承载玩家行动（Move/Wait/Skill/Attack）和怪物行为（Chase/Flee/Wander），见 ISSUES.md A12。直接加 `Throw` 会加重枚举膨胀问题。投掷重构的前置步骤是**先将怪物行为剥离为 trait 对象**：
+投掷作为玩家行动，与移动/攻击/技能同级，放在 `PlayerAction` 枚举中。怪物行为（追击/逃跑/游荡）则通过 `MonsterBehavior` trait 实现，不占用枚举变体。
 
 ```rust
-// 拆分后的玩家行动枚举（只含玩家输入触发的行动）
+// 玩家行动枚举——每个变体对应一种玩家输入触发的行动
 pub enum PlayerAction {
     Move { dx: isize, dy: isize },
     Wait,
     Attack { target: Entity },
     Skill(usize),
-    Throw { tx: usize, ty: usize },  // 新增
+    Throw { tx: usize, ty: usize },   // 投掷
 }
 
-// 怪物行为 trait（每种行为一个 impl，无需改 match）
+// 怪物行为 trait——每种行为一个独立 impl，无需修改分派代码
 pub trait MonsterBehavior: Send + Sync {
     fn execute(&self, world: &mut World, entity: Entity);
     fn check_condition(&self, world: &World, entity: Entity) -> bool;
@@ -429,20 +431,9 @@ pub trait MonsterBehavior: Send + Sync {
 }
 ```
 
-`ActionEntry` 改为持有 `AnyAction` 枚举（Player/Monster 两个变体），`execute_entry`/`check_condition`/`action_display` 中玩家行动走 match、怪物行为走 trait 调用。
+`ActionEntry` 持有 `AnyAction` 枚举（Player/Monster 两个变体）。`execute_entry`/`check_condition`/`action_display` 中玩家行动走 match 分派、怪物行为走 trait 虚方法调用。两种行动共享同一 AV 队列的推进和保活检查机制。
 
-**收益：** 加新怪物行为不再改任何 match 点——只需新 struct + impl。加新玩家行动（如 `Throw`）只扩展 `PlayerAction` 枚举的 4 个 match 点，不影响怪物侧。
-
-**改造范围：**
-| 文件 | 改动 |
-|------|------|
-| `types.rs` | + `PlayerAction` + `MonsterBehavior` trait + `AnyAction` |
-| `execute.rs` | `execute_entry`/`check_condition` 分两路：玩家 match，怪物 trait |
-| `monster.rs` | Chase/Flee/Wander/Wait 改为 impl MonsterBehavior |
-| `timeline.rs` | `action_display` 分两路 |
-| `persist.rs` | `SavedActionKind` 改为只存 `PlayerAction`，怪物队列丢弃 |
-
-**投掷重构在此之后进行：** `PlayerAction::Throw{tx,ty}` 是拆分后玩家枚举的一个新变体，与 Move/Wait/Skill/Attack 同级。
+**设计意图：** 两种扩展方向互不干扰。加新怪物行为（巡逻/召唤/毒雾）只需新 struct + impl MonsterBehavior，不修改任何 match 点。加新玩家行动（未来可能的远程武器、法杖等）只需扩展 `PlayerAction` 枚举，不影响怪物侧。
 
 ### 为什么不保留旁路
 
@@ -479,4 +470,4 @@ GAME.md 的投掷物数值不因本设计而变——伤害公式、射程、视
 
 ### 关联 Issue
 
-ISSUES.md #A12（前置——先拆分 ActionKindV3）、#D14 #D14A #A18 #I31 ⑦ #G21
+ISSUES.md #A12 #D14 #D14A #A18 #I31 ⑦ #G21

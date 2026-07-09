@@ -730,6 +730,14 @@ pub struct ItemStack {
 
 **位置：** `dungeon-core/src/ops.rs:150-163`
 
+### G15 — Buff 持续时长新旧系统差异 60 倍 ✅已修复
+
+**修复前：** `SkillKind { duration: 3 }` 传入两个系统得到不同时长：旧 Buffs 读作 3 帧（~50ms），新 ActiveBuffs 读作 3s（3000 AV），相差 60 倍。
+
+**修复后：** 旧 `Buffs` 系统已由 D11 完整移除，ActiveBuffs 为唯一 Buff 系统。60 倍差异随旧系统消失而自然消除。
+
+**关联：** D11（移除旧 Buffs 结构体）、D10（移除 buff_tick_system）
+
 ---
 
 ## 一、设计层面（Design）
@@ -810,14 +818,6 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
 
 ## 二、架构层面（Architecture）
 
-
-### A10 — 事件日志显示条数回归（take(5)→take(12)） ✅已修复
-
-**修复前：** `ui.rs` 使用 `.take(5)`，战斗密集时事件日志关键信息快速滚出屏幕。G13 声称修复了但代码未改。
-
-**修复后：** `.take(5)` → `.take(12)`。
-
-**位置：** `dungeon-render/src/ui.rs:162`
 
 ### 🔴 A18 — 存档未保存副手投掷物 (off_hand)
 
@@ -1068,18 +1068,6 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 
 
-### 🟡 G15 — Buff 持续时长新旧系统差异 60 倍
-
-**问题：** `SkillKind { duration: 3 }` 传入两个系统得到不同时长：
-
-| 系统 | 解读 | 实际时长 | 玩家行动次数 |
-|------|------|---------|-------------|
-| 旧 `Buffs` | 3 帧（每帧减 1） | ~50ms（60fps） | <1 次 |
-| 新 `ActiveBuffs` | 3 秒（3000 AV） | ~3000ms | ~10-12 次 |
-
-这不是同一 Buff 的平行实现，而是 Buff 时长被 **60 倍放大**。GAME.md 已确认语义为"3s（3000 AV）"，旧系统的 3 帧 ≈ 50ms 在 I29 修复前即存在，是独立于双倍叠加的第二个问题。
-
-**影响：** 🟡 中 — 旧系统实际生效时间极短（3 帧≈50ms），玩家几乎感觉不到；新系统 3s 是合理的。移除旧 `Buffs` 后此问题将自然消失。
 
 ### 🟡 G17 — 材料物品无消耗渠道
 
