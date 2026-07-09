@@ -81,6 +81,16 @@ pub struct VisibleMemory {
 }
 
 /// 光标查看模式（按 x 激活，方向键移动，x/Esc 退出）
+#[derive(Resource, Default)]
+pub struct ThrowPreview {
+    pub active: bool,
+    pub cursor: (usize, usize),
+    /// Bresenham 路径格（不含玩家，含目标），渲染用
+    pub path: Vec<(usize, usize)>,
+    /// 目标是否在射程且视线畅通
+    pub valid_target: bool,
+}
+
 #[derive(Resource)]
 pub struct LookCursor {
     pub active: bool,

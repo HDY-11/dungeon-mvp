@@ -140,6 +140,32 @@ pub fn update_visible_memory(world: &mut World) {
     memory.entries.retain(|&e, _| alive.contains(&e));
 }
 
+// ── Bresenham 画线 ─────────────────────────────────
+
+/// Bresenham 直线算法，返回从 (x0,y0) 到 (x1,y1) 的**中间格**（不含起点）。
+/// 返回顺序从起点旁第一个格到目标格（含目标）。
+pub fn line_bresenham(x0: usize, y0: usize, x1: usize, y1: usize) -> Vec<(usize, usize)> {
+    let mut points = Vec::new();
+    let dx = (x1 as isize - x0 as isize).abs();
+    let dy = -(y1 as isize - y0 as isize).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    let mut x = x0 as isize;
+    let mut y = y0 as isize;
+    loop {
+        let e2 = 2 * err;
+        if e2 >= dy { err += dy; x += sx; }
+        if e2 <= dx { err += dx; y += sy; }
+        if x == x1 as isize && y == y1 as isize {
+            points.push((x as usize, y as usize));
+            break;
+        }
+        points.push((x as usize, y as usize));
+    }
+    points
+}
+
 // ── 碰撞图 ─────────────────────────────────────────
 
 pub fn rebuild_occupancy(world: &mut World) {

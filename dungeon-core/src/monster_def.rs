@@ -100,6 +100,7 @@ pub fn monster_loot(kind: MonsterKindId) -> LootTable {
                 LootEntry { item_id: 11, chance: 0.6, min_count: 1, max_count: 1 },
                 LootEntry { item_id: 12, chance: 0.4, min_count: 1, max_count: 1 },
                 LootEntry { item_id: 13, chance: 0.3, min_count: 1, max_count: 1 },
+                LootEntry { item_id: 18, chance: 0.6, min_count: 1, max_count: 2 },
             ],
         },
     }

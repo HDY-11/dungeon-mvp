@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
     ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
-    Position, Skills, Stats, Tile, TurnManager, Viewshed, VisibleMemory,
+    Position, Skills, Stats, ThrowPreview, Tile, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
 };
@@ -145,6 +145,24 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             let (idx, jdx) = (cursor.y - cam_y, cursor.x - cam_x);
             let (g, fg, _) = lines[idx][jdx];
             lines[idx][jdx] = (g, fg, Color::Rgb(80, 80, 40)); // 暗黄色背景
+        }
+    }
+    // 投掷轨迹渲染：蓝色 *（有效）或红色 *（无效）
+    if let Some(tp) = world.get_resource::<ThrowPreview>() {
+        if tp.active {
+            let trajectory_color = if tp.valid_target {
+                Color::Rgb(80, 160, 255)  // 蓝色
+            } else {
+                Color::Rgb(220, 60, 60)   // 红色
+            };
+            for &(tx, ty) in &tp.path {
+                if ty >= cam_y && ty < cam_y + vh
+                    && tx >= cam_x && tx < cam_x + vw
+                {
+                    let (idx, jdx) = (ty - cam_y, tx - cam_x);
+                    lines[idx][jdx] = ('*', trajectory_color, Color::Reset);
+                }
+            }
         }
     }
     let styled_lines: Vec<Line> = lines.into_iter()

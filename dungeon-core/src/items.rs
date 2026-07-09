@@ -17,6 +17,7 @@ pub const ITEM_CHITIN: usize = 14;
 pub const ITEM_SCROLL_HEAL: usize = 15;
 pub const ITEM_SCROLL_SHIELD: usize = 16;
 pub const ITEM_SCROLL_BERSERK: usize = 17;
+pub const ITEM_STONE: usize = 18;
 
 // ── 物品分类（显示用） ──────────────────────────────
 
@@ -384,6 +385,10 @@ pub fn use_item(item_id: usize, world: &mut World, user: Entity) -> bool {
         ITEM_SCROLL_BERSERK => {
             crate::ops::learn_skill(world, user, &SkillKind::Berserk { atk_boost: 5, duration: 3 });
             true
+        }
+        ITEM_STONE => {
+            // 石子在 inventory 层由投掷模式处理，此处不消耗
+            false
         }
         _ => false,
     }

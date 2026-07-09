@@ -121,6 +121,28 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
     }
 }
 
+/// 在地图可行走格上散布石子堆，每层 1-3 堆。
+fn scatter_stones(world: &mut World, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
+    use rand::RngExt;
+    let count = rng.random_range(1u32..=3);
+    for _ in 0..count {
+        for _attempt in 0..30 {
+            let x = rng.random_range(3..dungeon_core::MAP_WIDTH as u16 - 3) as usize;
+            let y = rng.random_range(3..dungeon_core::MAP_HEIGHT as u16 - 3) as usize;
+            if world.resource::<dungeon_core::Map>().tiles[y][x].walkable()
+                && !exclude.contains(&(x, y))
+            {
+                world.spawn((
+                    dungeon_core::ItemPickup { stack: dungeon_core::ItemStack::new(dungeon_core::ITEM_STONE, 1) },
+                    dungeon_core::Position { x, y },
+                    dungeon_core::Renderable { glyph: '·', color: (160, 140, 120) },
+                ));
+                break;
+            }
+        }
+    }
+}
+
 /// 选择楼梯位置：尽量远离 spawn_pos，至少 15 格。
 /// 优先选最远房间。仅 1 个房间时用醉汉游走 60 步找 ≥15 格外的位置（G9）。
 fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (usize, usize) {
@@ -196,6 +218,7 @@ pub fn setup_world() -> World {
     world.insert_resource(ChaseIntents::default());
     world.insert_resource(FleeIntents::default());
     world.insert_resource(WanderIntents::default());
+    world.insert_resource(dungeon_core::ThrowPreview::default());
 
     let (spawn_x, spawn_y) = map.spawn_point();
     world.insert_resource(map);
@@ -238,6 +261,9 @@ pub fn setup_world() -> World {
 
     // ── 技能卷轴 ──
     place_skill_scrolls(&mut world, 1, &mut rng);
+
+    // ── 石子散布 ──
+    scatter_stones(&mut world, &mut rng, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
     world
 }
@@ -305,6 +331,9 @@ pub fn descend(world: &mut World) {
 
     // ── 技能卷轴 ──
     place_skill_scrolls(w, f, &mut rng);
+
+    // ── 石子散布 ──
+    scatter_stones(w, &mut rng, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
     w.resource_mut::<EventLog>().push(format!("=== 第 {} 层 ===", f));
 }

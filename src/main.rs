@@ -143,7 +143,7 @@ fn process_key(
         }
         KeyCode::Char('e') | KeyCode::Char('E') => {
             modal_flag.store(true, Ordering::Relaxed);
-            dungeon_tui::inventory::open_inventory(terminal, world)?;
+            dungeon_tui::inventory::open_inventory(terminal, world, game_start)?;
             modal_flag.store(false, Ordering::Relaxed);
             Ok(false)
         }

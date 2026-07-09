@@ -1,6 +1,7 @@
 //! 背包界面（双栏：左侧装备+背包，右侧地面物品）
 
 use std::io;
+use std::time::Instant;
 
 use ratatui::{
     layout::{Alignment, Rect},
@@ -44,6 +45,7 @@ fn collect_ground_items_in(world: &World) -> Vec<(ItemStack, Entity)> {
 pub fn open_inventory(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     world: &mut World,
+    game_start: Instant,
 ) -> io::Result<()> {
     let mut left_sel: usize = 0;
     let mut right_sel: usize = 0;
@@ -238,7 +240,21 @@ pub fn open_inventory(
                         }
                     }
                 }
-                // 详情页操作
+                // 详情页操作 — 石子投掷（在 match 前处理，避免 page 借用冲突）
+                (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('r'))
+                    if world.query::<(&Inventory,)>().iter(world).next()
+                        .and_then(|(inv,)| inv.stacks.get(*idx))
+                        .map(|s| s.item_id == dungeon_core::ITEM_STONE)
+                        .unwrap_or(false) =>
+                {
+                    if crate::throw::open_throw_mode(terminal, world, game_start)? {
+                        let mut q = world.query::<(&mut Inventory,)>();
+                        if let Some((mut inv,)) = q.iter_mut(world).next() {
+                            inv.remove(*idx, 1);
+                        }
+                    }
+                    page = Page::List(InvPanel::Left);
+                }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('e')) => {
                     let w2 = &mut *world;
                     let mut q = w2.query::<(&mut Inventory, &mut Equipment)>();
@@ -280,20 +296,19 @@ pub fn open_inventory(
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('r')) => {
-                    // Phase 1: 获取物品和玩家
-                    let (item_id, player) = {
+                    // 获取物品和玩家
+                    let item_id = {
                         let mut q = world.query::<(&Inventory,)>();
-                        let item_id = q.iter(world).next()
+                        q.iter(world).next()
                             .and_then(|(inv,)| inv.stacks.get(*idx))
-                            .map(|s| s.item_id);
-                        (item_id, ops::player_entity(world))
+                            .map(|s| s.item_id)
                     };
-                    // Phase 2: 通过集中分派函数使用物品
+                    let player = ops::player_entity(world);
+                    // 通过集中分派函数使用物品
                     let consumed = item_id.is_some_and(|id| {
                         player.is_some_and(|p| dungeon_core::use_item(id, world, p))
                     });
                     if consumed {
-                        // Phase 3: 移除已使用的物品
                         let mut q = world.query::<(&mut Inventory,)>();
                         if let Some((mut inv,)) = q.iter_mut(world).next() {
                             inv.remove(*idx, 1);
