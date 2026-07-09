@@ -69,21 +69,22 @@ pub fn handle_wait(world: &mut World) -> bool {
     }
 }
 
-/// 处理技能键（idx: 技能索引 0..3）
+/// 处理技能键（idx: 按键索引，0→技能1键，1→技能2键…）
 pub fn handle_skill(world: &mut World, idx: usize) -> bool {
     if let Some(e) = dungeon_core::ops::player_entity(world) {
-        // 无职业设计：检查技能是否已学习
-        let has_skill = world.get::<dungeon_core::Skills>(e)
-            .map(|s| s.list.get(idx).is_some())
-            .unwrap_or(false);
-        if !has_skill {
+        // 按键索引 → 对应快捷键字符（0→'1', 1→'2', 2→'3', 3→'4'）
+        let key_char = char::from_digit(idx as u32 + 1, 10).unwrap_or('1');
+        // 在已学技能列表中按快捷键查找实际索引
+        let real_idx = world.get::<dungeon_core::Skills>(e)
+            .and_then(|s| s.list.iter().position(|sk| sk.key == key_char));
+        let Some(real_idx) = real_idx else {
             world.resource_mut::<dungeon_core::EventLog>()
-                .push("技能未学习".to_string());
+                .push(format!("技能 {} 未学习", key_char));
             return false;
-        }
+        };
         let agility = world.get::<Stats>(e).map(|s| s.agility).unwrap_or(10);
         let reaction_time = agility_to_reaction(agility);
-        handle_timed_action(world, e, ActionKindV3::Skill(idx), reaction_time + 600.0 * agility_speed_factor(agility))
+        handle_timed_action(world, e, ActionKindV3::Skill(real_idx), reaction_time + 600.0 * agility_speed_factor(agility))
     } else {
         false
     }

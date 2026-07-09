@@ -12,15 +12,15 @@
 
 ## ✅ 已修复
 
-### I42 — 技能未学习时无声失败（无反馈） ✅已修复
+### I42 — 技能键索引与快捷键错位：已学习但按对应键无反应 ✅已修复
 
-**问题：** 无职业设计后初始技能为空。按技能键 `handle_skill` 直接将 `ActionKindV3::Skill(idx)` 入队，`execute_skill` 中 `skills.list.get(idx)` 因列表为空返回 `None`，导致 **silently return**——不推日志、无视觉反馈，玩家按了没反应。
+**问题：** 卷轴学习将技能追加到 `Skills.list` 末尾。`handle_skill` 用固定索引访问（按键 1→idx=0，按键 2→idx=1...），但技能的实际位置取决于学习顺序。例如先学护盾（快捷键 2）→ 护盾在 `list[0]`，按 2 键却查 `list[1]`→ 返回 None，技能无声失败。**这不是没学的问题，是学了但位置不对。**
 
 **修复后：**
-1. `handle_skill`（`dungeon-action/src/player.rs:68`）：先查技能是否存在，未学则推日志"技能未学习"并返回 false，action 不入队
-2. `execute_skill`（`dungeon-action/src/execute.rs:302`）：兜底检查同样推日志，处理 handle_skill 之外的其他调用路径
+1. `handle_skill`（`dungeon-action/src/player.rs:68`）：改为按键索引 `0→'1'、1→'2'…`，在技能列表中按 `sk.key` 字符查找实际位置，不再假设顺序
+2. 传入 action 的索引是 `real_idx`（技能在 list 中的实际位置），`execute_skill` 直接命中
 
-**位置：** `dungeon-action/src/player.rs:68`、`dungeon-action/src/execute.rs:302`
+**位置：** `dungeon-action/src/player.rs:68-80`
 
 ### D9 — 下楼不保存 ActiveBuffs ✅已修复
 
