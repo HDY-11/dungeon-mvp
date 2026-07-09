@@ -314,14 +314,9 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
             world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP", skill_name, amount));
         }
         dungeon_core::SkillKind::Shield { def_boost, duration } => {
-            // 旧回合制 Buff（过渡期兼容）
-            if let Some(mut buffs) = world.get_mut::<dungeon_core::Buffs>(entity) {
-                buffs.shield_turns = duration as i32; buffs.shield_def = def_boost;
-            }
             // 新 AV Buff 系统
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;
-                // 同种 Buff 刷新持续时间和效果值
                 if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Shield) {
                     existing.remaining_av = av;
                     existing.magnitude = def_boost;
@@ -332,10 +327,6 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
             world.resource_mut::<EventLog>().push(format!("{}施放了护盾，防御+{}持续{}秒", skill_name, def_boost, duration));
         }
         dungeon_core::SkillKind::Berserk { atk_boost, duration } => {
-            // 旧回合制 Buff（过渡期兼容）
-            if let Some(mut buffs) = world.get_mut::<dungeon_core::Buffs>(entity) {
-                buffs.berserk_turns = duration as i32; buffs.berserk_atk = atk_boost;
-            }
             // 新 AV Buff 系统
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;

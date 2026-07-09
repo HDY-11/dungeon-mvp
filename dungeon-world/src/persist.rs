@@ -46,6 +46,13 @@ pub struct SavedIntentEntry {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SavedActiveBuff {
+    pub kind: u8,
+    pub remaining_av: f32,
+    pub magnitude: i32,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GameSave {
     pub floor: u32,
     pub map_seed: u64,
@@ -70,6 +77,8 @@ pub struct GameSave {
     pub flee_intents: Vec<SavedIntentEntry>,
     #[serde(default)]
     pub wander_intents: Vec<SavedIntentEntry>,
+    #[serde(default)]
+    pub active_buffs: Vec<SavedActiveBuff>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -137,17 +146,22 @@ impl GameSave {
             sq.iter(&w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, player_class) = {
-            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+Buffs+Class reg at init");
-            let (pos, st, inv, eq, bu, cls) = q.iter(&w).next()
+        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, active_buffs, player_class) = {
+            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &ActiveBuffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+Buffs+ActiveBuffs+Class reg at init");
+            let (pos, st, inv, eq, bu, ab, cls) = q.iter(&w).next()
                 .expect("Player entity exists for save");
+            let saved_ab: Vec<SavedActiveBuff> = ab.0.iter().map(|b| SavedActiveBuff {
+                kind: match b.kind { BuffKind::Shield => 0, BuffKind::Berserk => 1 },
+                remaining_av: b.remaining_av,
+                magnitude: b.magnitude,
+            }).collect();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.stacks.iter().map(|s| SavedStack { item_id: s.item_id, count: s.count }).collect(),
              eq.weapon.as_ref().map(|s| s.item_id), eq.weapon.as_ref().map(|s| s.count),
              eq.armor.as_ref().map(|s| s.item_id), eq.armor.as_ref().map(|s| s.count),
              eq.ring.as_ref().map(|s| s.item_id), eq.ring.as_ref().map(|s| s.count),
-             SavedBuffs::from(bu.clone()), Some(cls.clone()))
+             SavedBuffs::from(bu.clone()), saved_ab, Some(cls.clone()))
         };
 
         let monsters = {
@@ -209,7 +223,7 @@ impl GameSave {
         Self {
             floor, map_seed, px, py, st, inv,
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
-            buffs,
+            buffs, active_buffs,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
@@ -270,7 +284,11 @@ impl GameSave {
             Reaction { time: agility_to_reaction(agi) },
             CanMove::new(100), CanWait::new(0),
         ));
-        player_entity.insert(ActiveBuffs::new());
+        let restored_buffs: Vec<Buff> = self.active_buffs.iter().map(|sab| {
+            let kind = match sab.kind { 0 => BuffKind::Shield, 1 => BuffKind::Berserk, _ => BuffKind::Shield };
+            Buff { kind, remaining_av: sab.remaining_av, magnitude: sab.magnitude, stack_type: BuffStackType::None }
+        }).collect();
+        player_entity.insert(ActiveBuffs(restored_buffs));
 
         w.spawn((Stairs, Position { x: self.sx as usize, y: self.sy as usize },
             Renderable { glyph: '>', color: (0, 255, 0) }));

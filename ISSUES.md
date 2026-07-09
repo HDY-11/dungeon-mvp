@@ -12,6 +12,31 @@
 
 ## ✅ 已修复
 
+### I34 — ActiveBuffs 未加入存档 ✅已修复
+
+**修复前：** `GameSave` 仅保存旧 `Buffs`，玩家在 Buff 持续期间存档后，读档后 Buff 丢失。
+
+**修复后：** `GameSave` 新增 `active_buffs: Vec<SavedActiveBuff>` 字段（`#[serde(default)]` 兼容旧存档），capture 时序列化玩家 ActiveBuffs，restore 时重建 Buff 列表。
+
+**位置：** `dungeon-world/src/persist.rs`
+
+### I32 — SkillKind::duration 单位歧义（回合/秒） ✅已修复
+
+**修复前：** `duration: i32` 可负值；旧 Buffs 系统读作 3 帧 ≈ 50ms，新 ActiveBuffs 读作 3 秒；技能描述写"持续3回合"。
+
+**修复后：** `duration` 改为 `u32`（禁止负值）；技能描述统一为"持续3秒"。
+
+**位置：** `dungeon-core/src/components.rs:160-164`
+
+### 🔴 G14 — 护盾/狂暴技能双倍叠加（执行层移除旧系统写入） ✅已修复
+
+**修复前：** `execute_skill` 同时写入旧 `Buffs` 和新 `ActiveBuffs`，`effective_attack`/`effective_defense` 对两者求和。每次使用 Shield/Berserk 时护盾/狂暴数值在 ~3 帧内翻倍（+10 而非 +5）。
+
+**修复后：** `execute_skill` 移除了旧 `Buffs` 写入路径，`effective_attack`/`effective_defense` 只读新 `ActiveBuffs`（旧 Buffs 参数保留但不再参与计算）。使用技能护盾/狂暴正确只加 +5。
+
+**位置：** `dungeon-action/src/execute.rs:315-340`、`dungeon-core/src/ops.rs:24-50`
+**教训见：** `LESSONS.md L39`
+
 ### I27 — 怪物颜色可区分性差（修复三次） ✅已修复
 
 **第一次修复：** `unique_color` 取 `entity.to_bits()` 低 6 位偏移 ±32，相邻 ID 色差 <1。
@@ -369,22 +394,56 @@
 
 ## 二、架构层面（Architecture）
 
+### 🟡 A4La — A4L 再次遗漏：Map 残留 generate_water / is_away_from_rooms / count_walkable_neighbors 三个死方法
+
+**问题：** A4（将环境修饰从 Map impl 移到 map_gen.rs）和 A4L（清除首批遗漏）之后，Map impl 仍有三个方法未被删除：
+
+| 方法 | 行 | 外部调用 |
+|------|-----|---------|
+| `Map::generate_water()` | `lib.rs:282` | ❌ 零调用（所有调用走 `map_gen::generate_water`） |
+| `Map::is_away_from_rooms()` | `lib.rs:291` | ❌ 零调用（所有调用走 `map_gen` 私用版） |
+| `Map::count_walkable_neighbors()` | `lib.rs:299` | ❌ 零调用（所有调用走 `map_gen` 私用版） |
+
+**根因：** A4/A4L 重构时只清理了显式迁移的方法（`collect_walkable_regions`、`detect_cave_regions`），未 grep 检查 Map impl 中所有 pub 方法的调用方。这是同模式第三次发生。
+
+**位置：** `dungeon-core/src/lib.rs:282-310`
+**教训见：** `LESSONS.md L38`
+
+### 🟢 A11 — Stats::monster() 死代码 30 行
+
+**问题：** `components.rs` 中 `Stats::monster(glyph, floor)` 方法无任何调用方。功能完全重复于 `monster_def::monster_stats()`，且缺少蝎子匹配、多一个 fallback default。实际创建怪物全部使用 `monster_def::monster_stats()`。
+
+```rust
+// components.rs — 零调用
+impl Stats {
+    pub fn monster(glyph: char, floor: u32) -> Self { ... }
+}
+```
+
+**位置：** `dungeon-core/src/components.rs:89-116`
+
 ## 三、实现层面（Implementation）
 
-### 🟡 I24 — Buff/Skill 使用回合计数而非 AV，时间轴脱钩
+### 🟡 I24 — Buff/Skill 系统缺陷（含子问题 I24a〜I24c）
 
-**问题：** 当前 Buff 系统和技能机制有三个互相关联的缺陷：
+**问题：** 当前 Buff 系统和技能机制有三个互相关联的缺陷。ActiveBuffs（I29）修复了缺陷①，但缺陷②③和 I29 引入的回归（G14）仍未解决。
 
-| 缺陷 | 表现 | 根因 |
-|------|------|------|
-| Buff 持续时间不可预测 | `buff_tick_system` 每帧减 1 回合，与 AV 推进脱钩。同一 buff 在不同帧消耗速度不同（玩家走一步 300AV vs 等一回合 800AV，都只减 1 回合） | `shield_turns`/`berserk_turns` 是 `i32` 回合计数而非 `f32` AV 值 |
-| 技能数量少且职业锁定 | 技能通过 `PlayerClass::skills()` 硬编码，战士固定 3 技能，无法扩展，每局玩法相同 | 技能来源是职业而非道具 |
-| 无冷却维度 | 技能只有 MP 消耗，没有冷却。强技能无法通过冷却平衡 | 不存在 `Cooldown` 组件或等效机制 |
+**I24a — Buff 持续时间不可预测 ✅已修复（见 I29）**
+`buff_tick_system` 每帧减 1 回合，与 AV 推进脱钩。已由 ActiveBuffs 组件 + AV 同步推进修复。
 
-**影响：** 当前系统不支持复杂战斗设计。加一个新技能需要改 `PlayerClass`、`execute_skill`、`SkillKind` 三处。自由组合、道具学习、冷却平衡均不可实现。
+**I24d — Buff 双倍叠加 ✅已修复（见 G14）**
+I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_attack/defense` 只读新 ActiveBuffs。
+
+**I24b — 技能数量少且职业锁定 🟡**
+技能通过 `PlayerClass::skills()` 硬编码，战士固定 3 技能，无法扩展，每局玩法相同。技能来源是职业而非道具。
+
+**I24c — 无冷却维度 🟡**
+技能只有 MP 消耗，没有冷却。强技能无法通过冷却平衡。`ActiveCooldowns` 组件已存在但未被任何技能使用。
+
+**影响：** 当前系统不支持复杂战斗设计。自由组合、道具学习、冷却平衡均不可实现。
 
 **方案方向（设计中，见 DESIGN.md §15）：**
-- Buff/冷却改为 `remaining_av: f32`，在 `advance_action_queue` 中同步推进
+- Buff/冷却改为 `remaining_av: f32`，在 `advance_action_queue` 中同步推进 ✅（由 I29 完成）
 - 技能改为从道具学习，`Skills` 组件动态扩展
 - 冷却下限约 1000 AV
 
@@ -419,7 +478,48 @@
 
 **风险：** dungeon-core 包含战斗公式、升级曲线、FOV、A* 寻路、Tile/Stats 序列化——任一公式修改都可能无声破坏平衡，无单元测试意味着只能靠手动打游戏验证。
 
+### 🟡 I33 — 丢弃物品永久消失（无地面 spawn）
+
+**问题：** 背包详情页按 `d` 丢弃物品时直接 `inv.drop_stack(idx)` 删除栈，未在地面生成 `ItemPickup` 实体。物品永久消失。
+
+```rust
+// inventory.rs — d 键处理
+(Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
+    inv.drop_stack(*idx);  // ❌ 没有 spawn ItemPickup 在玩家位置
+}
+```
+
+对比 `pickup_ground`（拾取）和怪物死亡掉落均有完整的 spawn/despawn 逻辑，丢弃是唯一不可逆的物品销毁路径。
+
+**位置：** `src/inventory.rs:221-227`
+
+### 🟢 I35 — 行动轴怪物颜色用哈希而非 Renderable 组件
+
+**问题：** `entity_color()` 使用 `entity.to_bits()` 作为输入哈希。读档后怪物被重建为新 Entity ID，颜色与存档前不同。虽然地图渲染上正确使用 `Renderable` 组件的颜色，但 `timeline.rs` 中怪物颜色使用 `entity_color(entity.to_bits(), 0)` 实时计算：
+
+```rust
+// timeline.rs:54 — 实时哈希，非 Renderable.color
+let color = renderable_color(entity_color(e.to_bits(), 0));
+```
+
+读档后行动轴上怪物颜色与地图上不一致。
+
+**位置：** `dungeon-render/src/timeline.rs:54`
+
 ## 四、游戏逻辑层面（Game Logic）
+
+### 🟡 G15 — Buff 持续时长新旧系统差异 60 倍
+
+**问题：** `SkillKind { duration: 3 }` 传入两个系统得到不同时长：
+
+| 系统 | 解读 | 实际时长 | 玩家行动次数 |
+|------|------|---------|-------------|
+| 旧 `Buffs` | 3 帧（每帧减 1） | ~50ms（60fps） | <1 次 |
+| 新 `ActiveBuffs` | 3 秒（3000 AV） | ~3000ms | ~10-12 次 |
+
+这不是同一 Buff 的平行实现，而是 Buff 时长被 **60 倍放大**。GAME.md 已确认语义为"3s（3000 AV）"，旧系统的 3 帧 ≈ 50ms 在 I29 修复前即存在，是独立于双倍叠加的第二个问题。
+
+**影响：** 🟡 中 — 旧系统实际生效时间极短（3 帧≈50ms），玩家几乎感觉不到；新系统 3s 是合理的。移除旧 `Buffs` 后此问题将自然消失。
 
 ### A4L — A4 重构遗漏：Map impl 残留两套重复方法 ✅已修复
 

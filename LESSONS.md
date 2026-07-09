@@ -57,6 +57,27 @@ let memory = world.resource_mut::<MapMemory>();
 
 **教训：** 混入随机数的比较器看似"公平"，实际是未定义行为。`sort_by` 不接受随机比较器。如果确实需要随机顺序，应先 shuffle 再 sort。
 
+### L38 — 迁移方法后必须 grep 原 impl 块全部公共方法，交叉核验是否遗漏
+
+**问题背景：** A4 将 Map 的环境修饰方法移到 `map_gen.rs` 后，A4L 发现 `collect_walkable_regions` 和 `detect_cave_regions` 未删除。A4La 又发现 `generate_water`、`is_away_from_rooms`、`count_walkable_neighbors` 仍未删除。同模式第三次发生。
+
+**参见 ISSUES.md #A4La**
+
+**错误做法：** 只删除记忆中"我移动了哪些方法"——人脑记忆不可靠。
+
+**正确做法：** 移动方法后，grep `impl Map` 块中**所有** `pub fn` 的签名，与目标位置交叉核对。一个方法在旧位置有 pub fn 签名、在新位置也有、且旧位置零调用 = 遗漏。
+
+```rust
+// 第一步：列出 Map impl 中所有 pub fn
+grep -n "pub fn" dungeon-core/src/lib.rs
+// 第二步：检查每个方法在新位置是否有对应
+grep -n "pub fn" dungeon-core/src/map_gen.rs
+// 第三步：检查旧位置中列出的方法是否有调用方
+// 零调用的 → 死代码
+```
+
+**为什么更好：** grep 不会遗忘。过程化清单比「我记得移了 X、Y、Z」可靠。
+
 ---
 
 ## 二、架构设计
@@ -109,6 +130,35 @@ AV = reaction_time + duration        // 单一值入队
 av_remaining -= next_event_distance() // 同步推进
 av_remaining ≤ 0 → pop_ready()       // 执行
 ```
+
+### L39 — 新旧系统共存时，计算/集成层必须设排他开关，不可对两者求和
+
+**问题背景：** I29 引入 ActiveBuffs（新 AV 制）时保留了旧 `Buffs`（旧回合制）。`execute_skill` 同时写入两者，`effective_attack` / `effective_defense` 对两者求和 → Buff 双倍叠加。
+
+**参见 ISSUES.md #G14**
+
+**错误做法：** 
+```rust
+// ❌ 两个系统各算各的，求和
+if let Some(ab) = active_buffs { atk += berzerk_from_av; }
+if let Some(b) = buffs { atk += berserk_from_turns; }
+```
+
+**正确做法：** 引入新系统时，在唯一切入点（计算层）设三态开关：
+- **Phase 1（共存期）：** 新系统存在时**只读新系统**，旧系统仅作 fallback
+- **Phase 2（验证期）：** 写双系统但**只读新系统**，旧系统作为异常检测（assert 两者一致）
+- **Phase 3（完成期）：** 移除旧系统，代码中不再出现旧系统引用
+
+```rust
+// ✅ 新系统优先，旧系统仅作为 fallback
+if let Some(ab) = active_buffs {
+    atk += berserk_from_av;
+} else if let Some(b) = buffs {
+    atk += berserk_from_turns;
+} // 绝不同时求和
+```
+
+**为什么更好：** 双系统求和不是一个"崩溃很快暴露"的错误——它不会 panic，不会断言失败，只会静默影响游戏平衡。此后无论谁改了 `effective_attack` 代码，都不会无意间恢复求和行为。
 
 ---
 

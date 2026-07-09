@@ -159,8 +159,8 @@ impl Stats {
 #[derive(Clone, Debug)]
 pub enum SkillKind {
     Heal { amount: i32 },
-    Shield { def_boost: i32, duration: i32 },
-    Berserk { atk_boost: i32, duration: i32 },
+    Shield { def_boost: i32, duration: u32 },
+    Berserk { atk_boost: i32, duration: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -198,16 +198,16 @@ impl PlayerClass {
     pub fn skills(&self) -> Vec<Skill> {
         match self {
             PlayerClass::Warrior => vec![
-                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
+                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
+                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3秒", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
             ],
             PlayerClass::Mage => vec![
-                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3回合", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
+                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
+                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3秒", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
             ],
             PlayerClass::Priest => vec![
                 Skill { name: "治愈", key: '1', cost_mp: 6, description: "HP+15", kind: SkillKind::Heal { amount: 15 } },
-                Skill { name: "护盾", key: '2', cost_mp: 5, description: "防御+5持续3回合", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
+                Skill { name: "护盾", key: '2', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
             ],
         }
     }
