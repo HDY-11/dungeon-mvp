@@ -256,14 +256,63 @@ render ───╯（依赖 core + action，因 timeline 使用行动类型）
 - 技能数量和扩展性受限于 PlayerClass 硬编码
 
 **核心变更方向：**
-- 职业 → 仅提供初始属性和装备，不锁定技能
-- 技能 → 通过地图道具学习/升级，存储在 `Skills` 组件中
+- 职业 → 仅提供初始属性和装备，不锁定技能。初始不带技能（无职业设计），全凭卷轴获取
+- 技能 → 通过地图道具（技能卷轴）学习/升级，存储在 `Skills` 组件中。每张卷轴教一种技能，重复学习提升该技能的熟练度
+- 熟练度影响技能强度：熟练度每 +1，技能效果按阶梯增长（治愈 +3HP/级，护盾/狂暴 +2/级）
 - Buff/冷却 → 从回合计数改为 `remaining_av: f32`，在 `advance_action_queue` 中与队列同步推进
 - 冷却持续时间下限约 1000 AV，使 Buff 在战斗中有策略价值
 
-**状态：** 已实现基础框架（ActiveBuffs 组件 + AV 推进 + 公式集成），旧回合制 Buffs 保留过渡兼容。自由组合技能系统待开发。数值和具体规则见 GAME.md 对应节。
+**状态：** 已实现基础框架（ActiveBuffs 组件 + AV 推进 + 公式集成），旧回合制 Buffs 保留过渡兼容。待移除旧 Buffs 系统。卷轴投放与学习机制是 Skill 的下一个开发目标。数值和具体规则见 GAME.md 对应节。
 
 ---
+
+## 17. 物品系统设计方向（从 MC 借鉴，以 Rust 方式）
+
+**背景：** 物品系统参考了 Minecraft 1.16+ 的 Registry + ItemStack + LootTable 设计。在原型期中验证了其合理性，并决定在保留核心借鉴的同时，舍弃与 Rust 及本游戏不适配的部分。
+
+### 借鉴范围
+
+| MC 特性 | 本项目决策 | 状态 |
+|---------|-----------|------|
+| `Registry<Item>`（ID → 定义） | 保留 —— `ItemRegistry` + `OnceLock` | ✅ 已实现 |
+| `ItemStack + CompoundTag`（物品+元数据） | 保留 —— `ItemStack` + **`ItemMeta`**（强类型 struct，非动态 NBT） | ❌ I41 |
+| `Item` 虚方法 | 保留 —— 以 **`ItemBehavior` trait** 代替 MC 的每个物品一个子类的方式。每个行为种类一个 impl | ❌ I40 |
+| 命名空间（`minecraft:iron_sword`） | **舍弃** —— 单人 roguelike 无模组冲突问题，`usize` ID 足够 | 无需实现 |
+| 热更新物品（运行时 reload JSON） | **舍弃** —— 物品定义编译时嵌入（`include_str!`），启动后不变 | 无需实现 |
+| LootTable（条件+函数+池嵌套） | **暂缓** —— 当前简化版满足原型需求。待怪物种类扩充到 8+ 后再做 | 待定 |
+| 配方/合成 | **暂缓** —— 在材料有消耗渠道之前不做 | 待定 |
+| 附魔 | **暂缓** —— 标记为装备池 15+ 后的目标 | 待定 |
+
+### Key 舍弃理由
+
+**为什么不用 HashMap 代替 CompoundTag：** 强类型 struct 在 Rust 中比动态 NBT 更优——字段名错误在编译期捕获，而非运行时暴露。
+
+**为什么不用每物品一子类：** MC 的 Item 子类 ≈ 800+。我们的物品是数据驱动的。每个行为一个 impl 覆盖所有同类物品。
+
+### ItemBehavior trait（设计中的骨架）
+
+```rust
+pub trait ItemBehavior: Send + Sync {
+    fn use_on(&self, world: &mut World, user: Entity) -> bool { false }
+    fn inventory_tick(&self, world: &World, user: Entity) {}
+    fn use_verb(&self) -> &'static str { "使用" }
+}
+```
+
+### ItemMeta 结构（设计中的骨架）
+
+```rust
+pub struct ItemMeta {
+    pub display_name: Option<String>,
+    pub tier: u32,
+    pub enchantments: Vec<Enchantment>,
+    pub durability: Option<u32>,
+    pub tags: Vec<String>,
+}
+```
+
+`Option<Box<ItemMeta>>` 挂载于 ItemStack。`None` = 模板原始状态。
+
 
 ## 16. 提交历史作为设计文档
 
