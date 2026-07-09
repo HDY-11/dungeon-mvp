@@ -625,7 +625,89 @@ pub fn effective_attack(
 
 **位置：** `dungeon-core/src/ops.rs:24-50`；调用点：`execute.rs:293`、`ui.rs:134`
 
+### 🟡 I40 — 物品系统缺少行为抽象层（借鉴了 Registry 但没借鉴 Item 虚方法）
+
+**问题：** MC 的物品系统有三层：`Registry → ItemStack → Item 虚方法`。本项目的物品只有前两层——`ItemDef` 是纯数据结构，没有任何方法。物品"能做什么"的逻辑必须散落在外部 match 中：
+
+```rust
+// 没有统一的 use() 抽象，只能 match item_id
+match item_id {
+    20 => learn_skill(world, SkillKind::Heal),
+    21 => learn_skill(world, SkillKind::Shield),
+    // 加一种可消耗品 → 加一个 arm
+    _ => {},
+}
+```
+
+**MC 的做法（Item 虚方法）：**
+```java
+public class Item {
+    public InteractionResult use(Level level, Player player, InteractionHand hand) { ... }
+    public void inventoryTick(ItemStack stack, Level level, Entity entity, int slot, boolean selected) { ... }
+}
+```
+
+每件物品通过继承/impl 定义自己的行为，调用方只需 `item.use(...)`——不需要 match。
+
+**影响：** 当前仅装备类有行为（加 stat），材料类完全无用途。即将做的技能卷轴、未来的药水/食物/卷轴都需要行为抽象。没有的话每加一种可交互物品都要改 inventory.rs 和/或 process_key。
+
+**建议方向：** 定义 `UsableItem` trait（与 A12 的 `MonsterBehavior` 同一类问题——用虚表代替枚举 match）：
+
+```rust
+pub trait UsableItem {
+    fn use_on(&self, world: &mut World, user: Entity) -> bool;
+    fn use_verb(&self) -> &'static str;
+    fn can_use(&self, world: &World, user: Entity) -> bool;
+}
+```
+
+**位置：** `dungeon-core/src/items.rs`（ItemDef 定义处，无方法）
+
+### 🔴 I41 — ItemStack 缺少 NBT 等价物，限制物品深度
+
+**问题：** `ItemStack` 只有 `(item_id, count)` 两个字段，没有存储任意元数据的容器。MC 的 `CompoundTag`（NBT）支持自定义名称、附魔、耐久度、品质/层级等任意键值对。
+
+```rust
+// 当前 ItemStack — 无扩展空间
+pub struct ItemStack {
+    pub item_id: usize,
+    pub count: u32,
+    // 没有第 3 个字段
+}
+```
+
+**影响：** 🔴 高 — 以下功能在没有 NBT 等价物的情况下要么不可能，要么需要绕路：
+| 功能 | 无 NBT 的代价 |
+|------|-------------|
+| 装备层级（+1/+2/+3） | 加字段到 ItemStack 或另加 ECS 组件 |
+| 附魔/自定义属性 | 需要新组件 + 查询链 |
+| 自定义名称 | 不可能——永远是模板名称 |
+| 耐久度 | 需要新组件 + 存档迁移 |
+| 词缀（前缀/后缀） | 不可能——无法存"锋利的长剑"vs"迅捷的长剑" |
+
+**建议方向：** 在 `ItemStack` 中加一个通用元数据容器，`#[serde(default)]` 兼容旧存档：
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ItemMeta {
+    pub name: Option<String>,
+    pub tier: u32,
+    pub enchantments: Vec<Enchantment>,
+    pub durability: Option<u32>,
+    pub tags: Vec<String>,
+}
+
+pub struct ItemStack {
+    pub item_id: usize,
+    pub count: u32,
+    #[serde(default)]
+    pub meta: Option<Box<ItemMeta>>,
+}
+```
+
+**位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
 ## 四、游戏逻辑层面（Game Logic）
+
 
 ### 🟡 G15 — Buff 持续时长新旧系统差异 60 倍
 
