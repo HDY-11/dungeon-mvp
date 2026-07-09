@@ -59,8 +59,8 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
             for _ in 0..20 {
                 let ox = rng2.random_range(2..r.w.saturating_sub(2));
                 let oy = rng2.random_range(2..r.h.saturating_sub(2));
-                let px = r.x + ox as usize;
-                let py = r.y + oy as usize;
+                let px = r.x + ox;
+                let py = r.y + oy;
                 if px < MAP_WIDTH && py < MAP_HEIGHT
                     && world.resource::<Map>().tiles[py][px].walkable()
                     && !exclude.contains(&(px, py))
@@ -210,14 +210,14 @@ pub fn descend(world: &mut World) {
 
     let player_data = {
         let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName)>();
-        let (e, s, inv, eq, cls, atk) = q.iter(&mut *w).next().expect("Player exists for descend");
+        let (e, s, inv, eq, cls, atk) = q.iter(&*w).next().expect("Player exists for descend");
         (e, s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
          Buffs::new(), cls.clone(), atk.0.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
-        q.iter(&mut *w).map(|(e,)| e).collect() };
+        q.iter(&*w).map(|(e,)| e).collect() };
     for e in to_despawn { let _ = w.despawn(e); }
 
     let base_seed = w.resource::<MapSeed>().0;

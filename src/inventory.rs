@@ -266,8 +266,8 @@ pub fn open_inventory(
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('d')) => {
                     let w2 = &mut *world;
                     let mut q = w2.query::<(&mut Inventory, &Position)>();
-                    if let Some((mut inv, pos)) = q.iter_mut(w2).next() {
-                        if let Some(stack) = inv.drop_stack(*idx) {
+                    if let Some((mut inv, pos)) = q.iter_mut(w2).next()
+                        && let Some(stack) = inv.drop_stack(*idx) {
                             let (px, py) = (pos.x, pos.y);
                             let name = stack.name();
                             w2.spawn((
@@ -277,7 +277,6 @@ pub fn open_inventory(
                             ));
                             w2.resource_mut::<EventLog>().push(format!("丢弃了{}x{}在脚下", name, stack.count));
                         }
-                    }
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftEquip, idx), KeyCode::Char('u')) => {

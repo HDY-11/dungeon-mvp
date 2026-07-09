@@ -56,7 +56,7 @@ pub fn advance_action_queue(world: &mut World) -> f32 {
             let _ = world.run_system_once(dungeon_core::systems::apply_exp_system);
             ops::rebuild_occupancy(world);
         } else {
-            world.resource_mut::<EventLog>().push(format!("行动被取消"));
+            world.resource_mut::<EventLog>().push("行动被取消".to_string());
         }
     }
     dist

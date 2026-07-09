@@ -140,13 +140,9 @@ pub struct ActionEntry {
 }
 
 /// 全局行动队列（FIFO）
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct ActionQueue {
     pub entries: Vec<ActionEntry>,
-}
-
-impl Default for ActionQueue {
-    fn default() -> Self { Self { entries: Vec::new() } }
 }
 
 impl ActionQueue {
@@ -228,13 +224,9 @@ impl InputBuffer {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct PlayerPreview {
     pub kind: Option<ActionKindV3>,
-}
-
-impl Default for PlayerPreview {
-    fn default() -> Self { Self { kind: None } }
 }
 
 // ══════════════════════════════════════════════════════

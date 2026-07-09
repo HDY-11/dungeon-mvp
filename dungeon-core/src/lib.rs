@@ -117,14 +117,15 @@ impl Tile {
 // ── Room ──────────────────────────────────────────────
 
 /// 房间形状
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RoomShape {
+    #[default]
     Rect,
     Circle,
     Diamond,
     Ellipse,
 }
-impl Default for RoomShape { fn default() -> Self { Self::Rect } }
+
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Room {

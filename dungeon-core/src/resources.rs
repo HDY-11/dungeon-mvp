@@ -59,9 +59,11 @@ pub struct TurnManager {
     pub game_over: bool,
     pub wants_quit: bool,
 }
+impl Default for EventLog { fn default() -> Self { Self::new() } }
 impl TurnManager {
     pub fn new() -> Self { Self { game_over: false, wants_quit: false } }
 }
+impl Default for TurnManager { fn default() -> Self { Self::new() } }
 
 #[derive(Resource, Clone, Copy)]
 pub struct FloorNumber(pub u32);

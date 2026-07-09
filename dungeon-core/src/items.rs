@@ -277,7 +277,7 @@ impl Inventory {
         }
 
         // 2. 算还需要多少个空格
-        let needed_slots = (remaining + max_stack - 1) / max_stack;
+        let needed_slots = remaining.div_ceil(max_stack);
         self.stacks.len() + needed_slots as usize <= self.capacity
     }
 }

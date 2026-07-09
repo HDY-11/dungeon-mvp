@@ -169,7 +169,7 @@ pub fn collect_renderables(world: &World) -> Vec<(Entity, usize, usize, char, Rg
         else if world.get::<Monster>(*e).is_some() { 1 }
         else { 0 }
     });
-    items.into_iter().map(|(e, x, y, g, c)| (e, x, y, g, c)).collect()
+    items.into_iter().collect()
 }
 
 pub fn set_player_dir(world: &mut World, dx: isize, dy: isize) {

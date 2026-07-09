@@ -52,11 +52,6 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
 
     // ── 实体状态：符号 怪物名 血量（去重，仅可见实体）──
-    let queue_positions: HashSet<(usize, usize)> = queue.entries.iter()
-        .filter_map(|e| world.get::<Position>(e.entity))
-        .map(|p| (p.x, p.y))
-        .collect();
-
     let mut status_entries: Vec<(char, String, i32, i32, Color, Entity)> = Vec::new();
     if let Some(mut q) = world.try_query::<(Entity, &Position, &EntityName, &Stats, &Renderable)>() {
         for (e, p, n, s, r) in q.iter(world) {

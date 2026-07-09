@@ -32,7 +32,7 @@ pub fn collect_walkable_regions(map: &Map) -> Vec<Vec<(usize, usize)>> {
             if region.len() >= 6 { regions.push(region); }
         }
     }
-    regions.sort_by(|a, b| b.len().cmp(&a.len()));
+    regions.sort_by_key(|b| std::cmp::Reverse(b.len()));
     regions
 }
 
@@ -65,7 +65,7 @@ pub fn detect_cave_regions(map: &Map, max_rooms: usize) -> Vec<Room> {
         }
     }
 
-    regions.sort_by(|a, b| b.len().cmp(&a.len()));
+    regions.sort_by_key(|b| std::cmp::Reverse(b.len()));
     regions.into_iter().take(max_rooms).map(|r| {
         let min_x = r.iter().map(|&(x, _)| x).min().unwrap_or(0);
         let max_x = r.iter().map(|&(x, _)| x).max().unwrap_or(0);

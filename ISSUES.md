@@ -454,23 +454,22 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 - 技能改为从道具学习，`Skills` 组件动态扩展
 - 冷却下限约 1000 AV
 
-### 🟡 I22 — clippy 警告约 40 个未处理
+### 🟡 I22 — clippy 警告约 29 个未处理
 
-**问题：** `cargo clippy` 报告约 40 个警告，分布在所有 crate 中。不影响运行正确性，但增加噪音、隐藏真正的问题警告。
+**问题：** `cargo clippy` 报告约 29 个警告（已修复 34 个，原 63 个）。
 
-**主要类型：**
-| 类型 | 数量 | 示例 |
+**已修复类型（34 个）：**
+`unnecessary_cast`(6)、`useless_format`(2)、`map_identity`(1)、`unnecessary_map_or`(1)、`manual_div_ceil`(1)、`sort_by_key`(2)、`new_without_default`(4)、`derivable_impls`(3)、`unnecessary_mut_passed`(3)、`needless_borrow`(5)、`unused_variables`(1)、`RoomShape` Default(1)、`ActionQueue`/`PlayerPreview` 默认派生(2)、cast usize(2)
+
+**剩余类型：**
+| 类型 | 数量 | 说明 |
 |------|------|------|
-| 无意义类型转换 | ~8 | `u32 as u32`、`i32 as i32` |
-| `sort_by` → `sort_by_key` | ~5 | `sort_by(|a,b| b.len().cmp(&a.len()))` |
-| `needless_range_loop` | ~4 | 用 `for i in 0..n` 而非迭代器 |
-| `collapsible_if` | ~4 | 嵌套 `if let` 可合并 |
-| 缺少 `Default` impl | ~3 | `Buffs`、`EventLog`、`TurnManager` |
-| `needless_borrow` | ~5 | `&w` 多此一举 |
-| 复杂类型 | ~3 | 隐式复杂元组类型 |
-| 其他 | ~6 | `useless_format!`、`map_or` → `is_some_and` 等 |
+| `collapsible_if` | ~14 | 安全但逐个修复繁琐 |
+| `needless_range_loop` | ~6 | 迭代器可读性更佳 |
+| `type_complexity` | ~3 | 需要定义 type alias |
+| 其他 | ~6 | 零星警告 |
 
-**建议：** 大部分可用 `cargo clippy --fix` 自动修复（约 15 个），其余需手动调整。
+**建议：** 不影响正确性，可逐步清除。
 
 ### 🟡 I23 — 测试覆盖缺口：dungeon-core 和 dungeon-render 零单元测试
 

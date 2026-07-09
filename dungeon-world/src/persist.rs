@@ -143,12 +143,12 @@ impl GameSave {
 
         let (sx, sy) = {
             let mut sq = w.try_query::<(&Stairs, &Position)>().expect("Stairs+Position registered at init");
-            sq.iter(&w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
+            sq.iter(w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
         let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, buffs, active_buffs, player_class) = {
             let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &Buffs, &ActiveBuffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+Buffs+ActiveBuffs+Class reg at init");
-            let (pos, st, inv, eq, bu, ab, cls) = q.iter(&w).next()
+            let (pos, st, inv, eq, bu, ab, cls) = q.iter(w).next()
                 .expect("Player entity exists for save");
             let saved_ab: Vec<SavedActiveBuff> = ab.0.iter().map(|b| SavedActiveBuff {
                 kind: match b.kind { BuffKind::Shield => 0, BuffKind::Berserk => 1 },
@@ -166,7 +166,7 @@ impl GameSave {
 
         let monsters = {
             let mut mq = w.try_query::<(&Monster, &Position, &Stats, &EntityName, &Renderable)>().expect("Mon+Pos+Stats+Name+Rend reg at init");
-            mq.iter(&w).map(|(_, pos, st, name, rend)| {
+            mq.iter(w).map(|(_, pos, st, name, rend)| {
                 let (r, g, b) = rend.color;
                 SavedMonster {
                     x: pos.x as u16, y: pos.y as u16, glyph: rend.glyph, r, g, b,
@@ -177,7 +177,7 @@ impl GameSave {
 
         let items = {
             let mut iq = w.try_query::<(&ItemPickup, &Position)>().expect("ItemPickup+Position registered at init");
-            iq.iter(&w).map(|(item, pos)| SavedGroundItem {
+            iq.iter(w).map(|(item, pos)| SavedGroundItem {
                 x: pos.x as u16, y: pos.y as u16,
                 item_id: item.stack.item_id, count: item.stack.count,
             }).collect()
@@ -235,7 +235,7 @@ impl GameSave {
     pub fn restore(self, world: &mut World) {
         let w = world;
         let dead: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
-            q.iter(&mut *w).map(|(e,)| e).collect() };
+            q.iter(&*w).map(|(e,)| e).collect() };
         for e in dead { let _ = w.despawn(e); }
 
         w.insert_resource(FloorNumber(self.floor));

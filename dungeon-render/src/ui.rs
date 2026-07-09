@@ -297,7 +297,7 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
 fn bar(current: i32, max: i32, width: usize) -> String {
     if max <= 0 { return "░".repeat(width); }
     let filled = ((current as f32 / max as f32) * width as f32).round() as usize;
-    format!("{}", "█".repeat(filled.min(width)) + &"░".repeat(width - filled.min(width)))
+    "█".repeat(filled.min(width)) + &"░".repeat(width - filled.min(width))
 }
 
 fn inner_rect(area: Rect, border: u16) -> Rect {

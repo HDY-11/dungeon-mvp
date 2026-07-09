@@ -20,7 +20,7 @@ pub fn chase_decision_system(
     out.0.clear();
     let player_pos = player.iter().next().map(|p| (p.x, p.y));
     for (entity, chase, stats, view, _reaction, mut last_known) in &mut monsters {
-        let can_see = player_pos.map_or(false, |pp| view.visible_tiles.contains(&pp));
+        let can_see = player_pos.is_some_and(|pp| view.visible_tiles.contains(&pp));
         if can_see {
             // 看到玩家 → 更新记忆位置
             if let Some(pp) = player_pos {

@@ -199,6 +199,7 @@ pub struct Buff {
 #[derive(Component, Clone, Debug)]
 pub struct ActiveBuffs(pub Vec<Buff>);
 impl ActiveBuffs { pub fn new() -> Self { Self(Vec::new()) } }
+impl Default for ActiveBuffs { fn default() -> Self { Self::new() } }
 
 /// 技能冷却（AV 制，与 ActiveBuffs 共享受同一推进机制）
 #[derive(Clone, Debug)]
@@ -216,6 +217,7 @@ pub struct Buffs {
     pub berserk_turns: i32, pub berserk_atk: i32,
 }
 impl Buffs { pub fn new() -> Self { Self { shield_turns: 0, shield_def: 0, berserk_turns: 0, berserk_atk: 0 } } }
+impl Default for Buffs { fn default() -> Self { Self::new() } }
 
 #[derive(Component, Clone, Debug)]
 pub struct AttackName(pub String);
