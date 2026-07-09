@@ -144,8 +144,8 @@ fn execute_chase(world: &mut World, entity: Entity) {
     // 邻接时攻击（含对角，仅当目标是玩家时）
     if target_visible && pos.0.abs_diff(px) <= 1 && pos.1.abs_diff(py) <= 1 && (pos.0 != px || pos.1 != py) {
         let monster_atk = world.get::<Stats>(entity).map(|s| s.attack as i32).unwrap_or(1);
-        let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&Buffs>, Option<&ActiveBuffs>)>().iter(world).next()
-            .map(|(ps, inv, eq, buffs, ab)| ops::effective_defense(ps, inv, eq, buffs, ab) as i32)
+        let player_def = world.query::<(&Stats, &Inventory, &Equipment, Option<&ActiveBuffs>)>().iter(world).next()
+            .map(|(ps, inv, eq, ab)| ops::effective_defense(ps, inv, eq, ab) as i32)
             .unwrap_or(0);
         let dmg = (monster_atk - player_def).max(1);
         let name = world.get::<EntityName>(entity).map(|n| n.0.clone()).unwrap_or("怪物".into());
@@ -246,13 +246,12 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
             .expect("Attacker has Inventory");
         let equipment = world.get::<Equipment>(attacker)
             .expect("Attacker has Equipment");
-        let buffs = world.get::<Buffs>(attacker);
+        
         let ab = world.get::<ActiveBuffs>(attacker);
-        let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, buffs, ab) as i32;
+        let effective_atk = ops::effective_attack(&attacker_stats, inventory, equipment, ab) as i32;
         let target_def = {
             let eq = world.get::<Equipment>(target);
-            let buffs = world.get::<Buffs>(target);
-            ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), buffs, None) as i32
+            ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), None) as i32
         };
         let raw_dmg = (effective_atk - target_def).max(1);
         let crit_roll = world.resource_mut::<GameRng>().random_f32();

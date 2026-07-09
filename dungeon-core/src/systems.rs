@@ -20,8 +20,6 @@ pub fn check_death_system(
     }
 }
 
-
-
 pub fn apply_exp_system(
     mut player_query: Query<&mut Stats, With<Player>>,
     mut pending: ResMut<PendingExp>,
@@ -41,13 +39,6 @@ pub fn apply_exp_system(
             player.exp_to_next = crate::exp_to_next_level(player.level);
             event_log.push(format!("升级！达到 Lv.{}", player.level));
         }
-    }
-}
-
-pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
-    for mut b in query.iter_mut() {
-        if b.shield_turns > 0 { b.shield_turns -= 1; if b.shield_turns <= 0 { b.shield_def = 0; } }
-        if b.berserk_turns > 0 { b.berserk_turns -= 1; if b.berserk_turns <= 0 { b.berserk_atk = 0; } }
     }
 }
 

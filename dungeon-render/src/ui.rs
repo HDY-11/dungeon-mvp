@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
-    ActiveBuffs, Buffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
+    ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
     Position, Skills, Stats, Tile, TurnManager, Viewshed, VisibleMemory,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense, collect_renderables,
@@ -211,12 +211,12 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
     ]));
     out.push(Line::from(Span::raw("")));
     let eff_atk = {
-        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>, Option<&ActiveBuffs>)>().expect("Inventory+Equipment+Buffs+ActiveBuffs registered at init");
-        q.iter(world).next().map(|(inv, eq, bu, ab)| effective_attack(s, inv, eq, bu, ab)).unwrap_or(s.attack)
+        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&ActiveBuffs>)>().expect("Inventory+Equipment+ActiveBuffs registered at init");
+        q.iter(world).next().map(|(inv, eq, ab)| effective_attack(s, inv, eq, ab)).unwrap_or(s.attack)
     };
     let eff_def = {
-        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&Buffs>, Option<&ActiveBuffs>)>().expect("Inventory+Equipment+Buffs+ActiveBuffs registered at init");
-        q.iter(world).next().map(|(inv, eq, bu, ab)| effective_defense(s, inv, eq, bu, ab)).unwrap_or(s.defense)
+        let mut q = world.try_query::<(&Inventory, &Equipment, Option<&ActiveBuffs>)>().expect("Inventory+Equipment+ActiveBuffs registered at init");
+        q.iter(world).next().map(|(inv, eq, ab)| effective_defense(s, inv, eq, ab)).unwrap_or(s.defense)
     };
     out.push(Line::from(vec![
         Span::styled(" 攻击", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>3}", eff_atk)), Span::raw("   "),

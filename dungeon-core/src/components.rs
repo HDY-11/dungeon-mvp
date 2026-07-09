@@ -136,6 +136,7 @@ pub struct Skill {
     pub cost_mp: i32,
     pub description: &'static str,
     pub kind: SkillKind,
+    pub proficiency: u32,
 }
 
 #[derive(Component)]
@@ -149,33 +150,13 @@ pub enum PlayerClass {
 }
 
 impl PlayerClass {
-    pub fn can_cast(&self, skill: &Skill) -> bool {
-        match self {
-            PlayerClass::Warrior => matches!(skill.kind, SkillKind::Shield { .. } | SkillKind::Berserk { .. }),
-            PlayerClass::Mage => matches!(skill.kind, SkillKind::Shield { .. } | SkillKind::Berserk { .. }),
-            PlayerClass::Priest => matches!(skill.kind, SkillKind::Heal { .. } | SkillKind::Shield { .. }),
-        }
-    }
-
     pub fn display_name(&self) -> &'static str {
         match self { PlayerClass::Warrior => "战士", PlayerClass::Mage => "法师", PlayerClass::Priest => "牧师" }
     }
 
+    /// 无职业设计：初始不带技能，全凭卷轴获取
     pub fn skills(&self) -> Vec<Skill> {
-        match self {
-            PlayerClass::Warrior => vec![
-                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3秒", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
-            ],
-            PlayerClass::Mage => vec![
-                Skill { name: "护盾", key: '1', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-                Skill { name: "狂暴", key: '2', cost_mp: 5, description: "攻击+5持续3秒", kind: SkillKind::Berserk { atk_boost: 5, duration: 3 } },
-            ],
-            PlayerClass::Priest => vec![
-                Skill { name: "治愈", key: '1', cost_mp: 6, description: "HP+15", kind: SkillKind::Heal { amount: 15 } },
-                Skill { name: "护盾", key: '2', cost_mp: 5, description: "防御+5持续3秒", kind: SkillKind::Shield { def_boost: 5, duration: 3 } },
-            ],
-        }
+        Vec::new()
     }
 }
 

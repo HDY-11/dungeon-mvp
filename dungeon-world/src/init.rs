@@ -214,11 +214,11 @@ pub fn descend(world: &mut World) {
     floor.0 += 1; let f = floor.0;
 
     let player_data = {
-        let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName)>();
-        let (e, s, inv, eq, cls, atk) = q.iter(&*w).next().expect("Player exists for descend");
+        let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName, &ActiveBuffs)>();
+        let (e, s, inv, eq, cls, atk, ab) = q.iter(&*w).next().expect("Player exists for descend");
         (e, s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
-         Buffs::new(), cls.clone(), atk.0.clone())
+         Buffs::new(), cls.clone(), atk.0.clone(), ab.0.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
@@ -244,7 +244,7 @@ pub fn descend(world: &mut World) {
     cmd.insert(player_data.5);  // Buffs
     cmd.insert(player_data.6.clone());  // PlayerClass
     cmd.insert(AttackName(player_data.7.clone()));
-    cmd.insert(ActiveBuffs::new());
+    cmd.insert(ActiveBuffs(player_data.8.clone()));  // D9: 保存并恢复 ActiveBuffs
     cmd.insert(Reaction { time: agility_to_reaction(player_data.1.agility) });
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));

@@ -21,7 +21,7 @@ pub fn max_mp_for(level: u32, mastery: u32) -> i32 { 5 + level as i32 * 3 + mast
 
 // ── 有效属性计算 ────────────────────────────────────
 
-pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, _buffs: Option<&Buffs>, active_buffs: Option<&ActiveBuffs>) -> u32 {
+pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, active_buffs: Option<&ActiveBuffs>) -> u32 {
     let bonus = crate::items::equipment_bonus(inv, equip);
     let mut atk = (stats.attack as i32) + bonus.attack;
     // 新 AV Buff 系统（旧 Buffs 已废弃，不再参与计算）
@@ -33,7 +33,7 @@ pub fn effective_attack(stats: &Stats, inv: &Inventory, equip: &Equipment, _buff
     atk.max(1) as u32
 }
 
-pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, _buffs: Option<&Buffs>, active_buffs: Option<&ActiveBuffs>) -> u32 {
+pub fn effective_defense(stats: &Stats, inv: &Inventory, equip: &Equipment, active_buffs: Option<&ActiveBuffs>) -> u32 {
     let bonus = crate::items::equipment_bonus(inv, equip);
     let mut def = (stats.defense as i32) + bonus.defense;
     // 新 AV Buff 系统（旧 Buffs 已废弃，不再参与计算）
