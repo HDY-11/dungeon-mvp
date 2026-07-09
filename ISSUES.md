@@ -430,11 +430,79 @@
 
 **触发条件：** 出现**足够复杂的战斗逻辑**，即新增的怪物/boss 有需要玩家在过程中作出反应的能力——例如范围攻击预警、状态效果倒计时、可打断的吟唱、地形变化。当单次 tick 内的行动序列构成决策信息时，事件帧模式从"nice to have"变为"need to have"。
 
+### 🟡 D9 — 下楼不保存 ActiveBuffs
+
+**问题：** `descend()` 中 `player_data.5` 硬编码为 `Buffs::new()`（空），且 `ActiveBuffs` 组件完全未在 `descend` 中捕获和重建。下楼后玩家身上的护盾/狂暴 Buff 全部丢失。
+
+```rust
+// init.rs:196 — 永远空的
+Buffs::new(), cls.clone(), atk.0.clone())
+// init.rs:207 — 下楼后插入的也是空的
+cmd.insert(ActiveBuffs::new());
+```
+
+**对比：** 存档/读档（`persist.rs`）正确保存和恢复了 `ActiveBuffs`——说明下楼丢失不是有意设计，而是遗漏。
+
+**影响：** 🟡 中 — 玩家在楼梯口开 Shield 下楼→Buff 消失，与存档读档行为不一致。
+
+**位置：** `dungeon-world/src/init.rs:193-207`
+
+### 🟢 D10 — `buff_tick_system` 仍在处理废弃的旧 `Buffs` 组件
+
+**问题：** `buff_tick_system` 每帧修改旧 `Buffs` 组件的 `shield_turns`/`berserk_turns`/`shield_def`/`berserk_atk` 字段。但 `effective_attack`/`effective_defense` 已在 G14 修复中改为只读新 `ActiveBuffs`。旧 Buffs 的修改永远不会被消费。
+
+```rust
+// systems.rs:47-50 — 仍在运行，产生无用副作用
+pub fn buff_tick_system(mut query: Query<&mut Buffs, With<Player>>) {
+    for mut b in query.iter_mut() {
+        if b.shield_turns > 0 { b.shield_turns -= 1; if b.shield_turns <= 0 { b.shield_def = 0; } }
+        if b.berserk_turns > 0 { b.berserk_turns -= 1; if b.berserk_turns <= 0 { b.berserk_atk = 0; } }
+    }
+}
+```
+
+**违反 LESSONS L39：** 双系统共存应推进到 Phase 3（移除旧系统），当前停留在 Phase 1 且 `buff_tick_system` 仍在 Schedule 中注册并每帧运行。
+
+**位置：** `dungeon-core/src/systems.rs:47-50`、`dungeon-world/src/tick.rs:13`
+
 ---
 
 ## 二、架构层面（Architecture）
 
-（当前无 open issue）
+### 🟡 A10 — 事件日志显示条数回归：代码 take(5) 而非声称的 12
+
+**问题：** `ui.rs` 事件日志渲染使用 `.take(5)`，但 ISSUES.md G13（已修复）记录"事件日志增至 12 条"。G13 修复要么未落地，要么被后续提交覆盖。
+
+```rust
+// ui.rs:193 — 当前代码
+for msg in log.messages.iter().rev().take(5) {
+```
+
+**确认：** 搜索 `.take\(1[0-9]\)` 无匹配，仅 `.take(5)` 一处。G13 本已解决的问题重现。
+
+**位置：** `dungeon-render/src/ui.rs:193`
+
+### 🟡 A11 — `ActiveCooldowns` 悬空功能
+
+**问题：** `ActiveCooldowns` 组件在 `advance_action_queue` 中有完整的 AV 推进逻辑，但在 `descend` 中既未保存也未恢复，且没有任何技能向其写入数据。组件有定义、有推进、有存档支持，但无任何写入点。
+
+```rust
+// components.rs:189 — 定义
+#[derive(Component, Clone, Debug, Default)]
+pub struct ActiveCooldowns(pub Vec<Cooldown>);
+
+// execute.rs:33-38 — 推进逻辑
+{
+    let mut q = world.query::<&mut ActiveCooldowns>();
+    for mut cds in q.iter_mut(world) {
+        cds.0.retain_mut(|c| { c.remaining_av -= dist; c.remaining_av > 0.0 });
+    }
+}
+```
+
+**违反 LESSONS L20：** 未完成的游戏机制不应留在代码中。
+
+**位置：** `dungeon-core/src/components.rs:189`、`dungeon-action/src/execute.rs:33-38`
 
 ## 三、实现层面（Implementation）
 
@@ -493,6 +561,36 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 <!-- I35 已移至 ✅已修复（修复前/修复后记录见上方） -->
 
+### 🟢 I38 — `lib.rs` pathfinding 模块注释与事实矛盾
+
+**问题：** `lib.rs` 中 pathfinding 模块声明侧有一条残留注释声称"已移除"：
+
+```rust
+pub mod pathfinding;
+// pub mod pathfinding; // 已移除（find_path 未使用）
+// pub use pathfinding::*; // 已移除
+```
+
+但 `pub mod pathfinding;` 是生效的，`execute.rs` 中 `dungeon_core::pathfinding::astar` 也在使用。
+
+**位置：** `dungeon-core/src/lib.rs:7-9`
+
+### 🟢 I39 — `effective_attack/defense` 签名残留废弃 `_buffs` 参数
+
+**问题：** `effective_attack` 和 `effective_defense` 带有 `_buffs: Option<&Buffs>` 参数，前缀下划线表示"不使用"。G14 修复时移除了求和逻辑但保留了参数占位，所有调用方仍在传入 `world.get::<Buffs>(entity)` 做无用查询。
+
+```rust
+pub fn effective_attack(
+    stats: &Stats, inv: &Inventory, equip: &Equipment,
+    _buffs: Option<&Buffs>,           // ← 废弃参数，从不使用
+    active_buffs: Option<&ActiveBuffs>,
+) -> u32
+```
+
+**违反 LESSONS L39：** 新旧系统共存应推进到 Phase 3（移除旧系统引用），当前停留在 Phase 1 未进展。
+
+**位置：** `dungeon-core/src/ops.rs:24-50`；调用点：`execute.rs:293`、`ui.rs:134`
+
 ## 四、游戏逻辑层面（Game Logic）
 
 ### 🟡 G15 — Buff 持续时长新旧系统差异 60 倍
@@ -507,6 +605,22 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 这不是同一 Buff 的平行实现，而是 Buff 时长被 **60 倍放大**。GAME.md 已确认语义为"3s（3000 AV）"，旧系统的 3 帧 ≈ 50ms 在 I29 修复前即存在，是独立于双倍叠加的第二个问题。
 
 **影响：** 🟡 中 — 旧系统实际生效时间极短（3 帧≈50ms），玩家几乎感觉不到；新系统 3s 是合理的。移除旧 `Buffs` 后此问题将自然消失。
+
+### 🟢 G16 — 暴击率不随装备变化（面板预期不一致）
+
+**问题：** `execute_attack()` 中暴击判定只用 `attacker_stats.crit_rate`（基础值 5%），不包含装备和 Buff 的暴击加成：
+
+```rust
+// execute.rs:302 — 只读基础 stats
+let crit_roll = world.resource_mut::<GameRng>().random_f32();
+let is_crit = attacker_stats.crit_rate > crit_roll;
+```
+
+但 `equipment_bonus()` 中 `StatBonus` 有 `crit_rate: f32` 字段，攻击戒指等物品可定义 `crit_rate` 加成。背包详情页会显示这些加成数据，而实际战斗不生效，给玩家错误的预期。
+
+**影响：** 🟢 低 — 当前无物品带非零 `crit_rate` 加成，但不修复的话将来添加此类物品时会无声失效。
+
+**位置：** `dungeon-action/src/execute.rs:302`、`dungeon-core/src/items.rs`（StatBonus 定义）
 
 ### A4L — A4 重构遗漏：Map impl 残留两套重复方法 ✅已修复
 
