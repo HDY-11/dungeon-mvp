@@ -61,7 +61,7 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     if let Some(mut q) = world.try_query::<(Entity, &Position, &EntityName, &Stats, &Renderable)>() {
         for (e, p, n, s, r) in q.iter(world) {
             if n.0 == "冒险者" || !player_visible.contains(&(p.x, p.y)) { continue; }
-            let color = renderable_color(entity_color(e.to_bits(), 0));
+            let color = Color::Rgb(r.color.0, r.color.1, r.color.2);
             status_entries.push((r.glyph, n.0.clone(), s.hp, s.max_hp, color, e));
         }
     }

@@ -119,41 +119,7 @@ impl Stats {
         }
     }
 
-    pub fn monster(glyph: char, floor: u32) -> Self {
-        let level_scale = floor.saturating_sub(1);
-        match glyph {
-            'r' => {
-                let s = level_scale as f64;
-                Self {
-                    level: (1 + level_scale as u32).min(20), hp: 10 + (s * 4.0) as i32, max_hp: 10 + (s * 4.0) as i32,
-                    mp: 0, max_mp: 0,
-                    exp: (6.0 + s * 6.0 * 0.5).round() as u64, exp_to_next: 0,
-                    attack: (4 + level_scale).min(18) as u32, agility: 5, magic_mastery: 1, defense: 2,
-                    crit_rate: 0.05, crit_damage: 0.50,
-                }
-            },
-            'g' => {
-                let s = level_scale as f64;
-                Self {
-                    level: (1 + level_scale as u32).min(20), hp: 18 + (s * 6.0) as i32, max_hp: 18 + (s * 6.0) as i32,
-                    mp: 0, max_mp: 0,
-                    exp: (15.0 + s * 15.0 * 0.5).round() as u64, exp_to_next: 0,
-                    attack: (6 + level_scale * 2).min(25) as u32, agility: 3, magic_mastery: 3, defense: 4,
-                    crit_rate: 0.05, crit_damage: 0.50,
-                }
-            },
-            _ => {
-                let s = level_scale as f64;
-                Self {
-                    level: (1 + level_scale as u32).min(20),
-                    hp: 10 + (s * 3.0) as i32, max_hp: 10 + (s * 3.0) as i32,
-                    mp: 0, max_mp: 0, exp: (5.0 + s * 5.0 * 0.5).round() as u64, exp_to_next: 0,
-                    attack: (3 + level_scale).min(10) as u32, agility: 3, magic_mastery: 1, defense: 3,
-                    crit_rate: 0.05, crit_damage: 0.50,
-                }
-            },
-        }
-    }
+
 }
 
 #[derive(Clone, Debug)]

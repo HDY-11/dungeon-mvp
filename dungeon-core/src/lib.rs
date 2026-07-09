@@ -276,10 +276,6 @@ impl Map {
         crate::map_gen::ensure_spawn_accessible(self, rng, seed.wrapping_add(350));
     }
 
-    /// 用噪声在水域放置深水种子 → 元胞扩散（75% 浅水 / 25% 深水）
-    /// 
-    /// 已迁移至 `crate::map_gen::generate_water`。
-    pub fn generate_water(&mut self, rng: &mut impl Rng, seed: u64) { crate::map_gen::generate_water(self, rng, seed); }
     // ── 工具函数 ──
 
     /// 统计地图中某种 tile 的数量
@@ -287,29 +283,7 @@ impl Map {
         self.tiles.iter().flatten().filter(|&&t| t == tile).count()
     }
 
-    /// 判断 (x,y) 是否远离所有房间中心（保护楼梯/出生点不被水体覆盖）
-    pub fn is_away_from_rooms(&self, x: usize, y: usize, min_dist: usize) -> bool {
-        self.rooms.iter().all(|r| {
-            let (cx, cy) = r.center();
-            x.abs_diff(cx) + y.abs_diff(cy) >= min_dist
-        })
-    }
 
-    /// 统计 (x,y) 的 8 邻域中可行走格数量
-    pub fn count_walkable_neighbors(&self, x: usize, y: usize) -> usize {
-        let mut n = 0;
-        for dy in -1isize..=1 {
-            for dx in -1isize..=1 {
-                if dx == 0 && dy == 0 { continue; }
-                let nx = x.wrapping_add_signed(dx);
-                let ny = y.wrapping_add_signed(dy);
-                if nx < MAP_WIDTH && ny < MAP_HEIGHT && self.tiles[ny][nx].walkable() {
-                    n += 1;
-                }
-            }
-        }
-        n
-    }
 
     /// 统计 (x,y) 的 8 邻域中某种 tile 的数量
     pub fn count_neighbor_tile(&self, x: usize, y: usize, tile: Tile) -> usize {

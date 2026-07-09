@@ -12,6 +12,31 @@
 
 ## ✅ 已修复
 
+### I35 — 行动轴颜色使用 Renderable 组件 ✅已修复
+
+**修复前：** `timeline.rs` 使用 `entity_color(e.to_bits(), 0)` 实时哈希计算怪物颜色。读档后 Entity ID 重建导致颜色与地图不一致。
+
+**修复后：** 改为直接读取 `Renderable.color` 组件值，与地图渲染一致。
+
+**位置：** `dungeon-render/src/timeline.rs:54`
+
+### A11 — 删除 Stats::monster() 死代码 ✅已修复
+
+**修复前：** `components.rs` 中 `Stats::monster(glyph, floor)` 无调用方，缺少蝎子匹配，功能完全重复于 `monster_def::monster_stats()`。
+
+**修复后：** 删除整个方法（~30 行死代码）。
+
+**位置：** `dungeon-core/src/components.rs:120-156`
+
+### A4La — Map 残留 generate_water / is_away_from_rooms / count_walkable_neighbors 死方法 ✅已修复
+
+**修复前：** A4/A4L 后 Map impl 仍有三个零调用的方法。同模式第三次发生。
+
+**修复后：** 删除三个方法。Map impl 仅保留 `count_tile` / `count_neighbor_tile` / `carve_corridor` / `render` / `spawn_point`。
+
+**位置：** `dungeon-core/src/lib.rs`
+**教训见：** `LESSONS.md L38`
+
 ### I33 — 丢弃物品产生地面拾取物 ✅已修复
 
 **修复前：** 背包详情页按 `d` 直接 `inv.drop_stack(idx)` 删除物品栈，物品永久消失。丢弃是唯一不可逆的物品销毁路径。
@@ -402,33 +427,7 @@
 
 ## 二、架构层面（Architecture）
 
-### 🟡 A4La — A4L 再次遗漏：Map 残留 generate_water / is_away_from_rooms / count_walkable_neighbors 三个死方法
-
-**问题：** A4（将环境修饰从 Map impl 移到 map_gen.rs）和 A4L（清除首批遗漏）之后，Map impl 仍有三个方法未被删除：
-
-| 方法 | 行 | 外部调用 |
-|------|-----|---------|
-| `Map::generate_water()` | `lib.rs:282` | ❌ 零调用（所有调用走 `map_gen::generate_water`） |
-| `Map::is_away_from_rooms()` | `lib.rs:291` | ❌ 零调用（所有调用走 `map_gen` 私用版） |
-| `Map::count_walkable_neighbors()` | `lib.rs:299` | ❌ 零调用（所有调用走 `map_gen` 私用版） |
-
-**根因：** A4/A4L 重构时只清理了显式迁移的方法（`collect_walkable_regions`、`detect_cave_regions`），未 grep 检查 Map impl 中所有 pub 方法的调用方。这是同模式第三次发生。
-
-**位置：** `dungeon-core/src/lib.rs:282-310`
-**教训见：** `LESSONS.md L38`
-
-### 🟢 A11 — Stats::monster() 死代码 30 行
-
-**问题：** `components.rs` 中 `Stats::monster(glyph, floor)` 方法无任何调用方。功能完全重复于 `monster_def::monster_stats()`，且缺少蝎子匹配、多一个 fallback default。实际创建怪物全部使用 `monster_def::monster_stats()`。
-
-```rust
-// components.rs — 零调用
-impl Stats {
-    pub fn monster(glyph: char, floor: u32) -> Self { ... }
-}
-```
-
-**位置：** `dungeon-core/src/components.rs:89-116`
+（当前无 open issue）
 
 ## 三、实现层面（Implementation）
 
