@@ -504,6 +504,40 @@ pub struct ActiveCooldowns(pub Vec<Cooldown>);
 
 **位置：** `dungeon-core/src/components.rs:189`、`dungeon-action/src/execute.rs:33-38`
 
+### 🟡 A12 — ActionKindV3 枚举跨 8 个文件飘散，新加怪物行为成本高
+
+**问题：** `ActionKindV3` 枚举同时承载玩家行动（Move/Wait/Skill/Attack）和怪物行为（Chase/Flee/Wander），两种扩展节奏不同的东西被捆绑在一个枚举中。每新增一种怪物行为，需要修改 **7-8 个文件**：
+
+| 文件 | match 点 | 修改内容 |
+|------|---------|---------|
+| `dungeon-action/src/types.rs` | 枚举定义 | +1 变体 |
+| `dungeon-action/src/execute.rs` | `execute_entry` + `check_condition` | +2 arm |
+| `dungeon-action/src/player.rs` | `handle_timed_action` | +1 确认对 |
+| `dungeon-render/src/timeline.rs` | `action_display` | +1 arm |
+| `dungeon-world/src/persist.rs` | `SavedActionKind` + capture + restore | +3 处 |
+| `dungeon-action/src/monster.rs` | 决策系统 | +1 输出 |
+
+**根因：** 枚举是编译期全匹配的，适合**变体少且稳定**的场景（如 Tile = 5 种地形，EquipmentSlot = 3 个槽位）。怪物行为需要持续扩展（巡逻/召唤/远程/毒雾等），用枚举每加一种就要通改所有 match 点。
+
+**建议方向：** 玩家行动保持枚举（Move/Wait/Skill/Attack 扩展频率极低），怪物行为改用 trait 对象：
+
+```rust
+pub trait MonsterBehavior: Send + Sync {
+    fn execute(&self, world: &mut World, entity: Entity);
+    fn check_condition(&self, world: &World, entity: Entity) -> bool;
+    fn display_name(&self) -> &'static str;
+    fn priority(&self) -> u32;
+    fn av_cost(&self, agility: u32) -> f32;
+}
+```
+
+`ActionEntry` 加 `behavior: Option<Box<dyn MonsterBehavior>>` 字段，`execute_entry`/`check_condition`/`action_display` 中的怪物分支统一调用 trait 方法——不再需要 match。
+
+**收益：** 加新怪物行为从 7-8 个文件 → 1 个新组件 + 1 个 impl。
+**代价：** 虚表调用有微小运行时开销，对 ECS 回合制游戏可忽略。
+
+**位置：** `dungeon-action/src/types.rs:20`（ActionKindV3 定义）、`dungeon-action/src/execute.rs` `execute_entry`+`check_condition`、`dungeon-render/src/timeline.rs` `action_display`、`dungeon-world/src/persist.rs` SavedActionKind、`dungeon-action/src/monster.rs` 决策系统、`dungeon-action/src/player.rs` `handle_timed_action`
+
 ## 三、实现层面（Implementation）
 
 ### 🟡 I24 — Buff/Skill 系统缺陷（含子问题 I24a〜I24c）
