@@ -10,6 +10,66 @@
 
 ## ✅ 已修复
 
+### R1 — RULE.md 编辑流程优化（移除宣誓 + 强化记录优先） ✅已修复
+
+**修复前：** RULE.md 要求编辑前"宣誓"，AI 须在每回合第一次编辑前声明流程步骤。实际效果不佳（"反智能体"），且核心问题（先修后记）未被有效约束。
+
+**修复后：**
+1. 移除"宣誓"机制
+2. 新增醒目 🚨 区块：**用户报告问题 → 先记录 ISSUES → 再修复**
+3. 简化编辑前检查清单，保留三条核心检查
+4. 同步保存高优先级 memory（`rulemd-bug-report-flow`），确保每轮启动可见
+
+**位置：** `RULE.md` §六
+
+### P11 — 主循环空闲 sleep 1ms 导致有限机型 CPU 满载 ✅已修复
+
+**修复前：** 主循环无输入时 `sleep(1ms)`，渲染一帧约 5ms，合计 6ms/帧 ≈ 166fps 空转。有限机型上单核 100% 满载，系统可能因过热/调度杀死进程。
+
+**修复后：** 空闲 sleep 改为 32ms，渲染频率降到约 27fps。回合制终端游戏在无操作时不需要高刷新率。
+
+**位置：** `src/main.rs:88`
+
+### I30 — `throw.rs` 残存 `.unwrap()` 违反 I17 ✅已修复
+
+**修复前：** `execute_throw` 中 `player.unwrap()` 是 I17 修复后引入的新 `.unwrap()`。虽然 `player.is_none() ||` 短路保护了它，但重构时脆弱。
+
+**修复后：** 改为 `match player { None => ..., Some(p) => ... }` 彻底消除 unwrap。
+
+**位置：** `src/throw.rs:253`
+
+### I29 — bevy_ecs resource_mut 双重借用导致崩溃 ✅已修复
+
+**修复前：** `open_throw_aim` 中 `resource_mut::<ThrowPreview>()` 返回 `Mut<ThrowPreview>` 后未 drop，就调用 `update_throw_path(world)`——后者内部再次 `resource_mut::<ThrowPreview>()`。bevy_ecs 内部 UnsafeCell 运行时检测到同一资源的二次可变访问并 panic。这是「按 t → 回车」后崩溃的直接根因。
+
+**修复后：** `Muts` 作用域在调用 `update_throw_path` 前结束（`{ let mut tp = ...; }` block 提前 drop）。同时 Enter 分支中的嵌套 `get_mut` 改为三阶段顺序操作。
+
+**教训：** bevy_ecs 的 `Mut<T>` 存活期间不得再通过任何路径调用 `world.resource_mut::<T>()`——编译器不报错（内部 UnsafeCell），但运行时 panic。
+
+**位置：** `src/throw.rs:163-167`
+
+### I28 — 光标穿墙显示怪物真实位置 ✅已修复
+
+**修复前：** `build_stats_panel` 中光标位置的实体查询不检查可见性。光标移动到已探索但当前不可见格（如墙后）时，仍然显示该格的怪物名称和 HP。
+
+**修复后：** 只有光标在**当前可见格**时才显示实体名+HP。已探索不可见格只显示地形名+"(已探索)"，未探索格显示"(未探索)"。
+
+**位置：** `dungeon-render/src/ui.rs:280-320`
+
+### A16 — 主手/副手系统重构 ✅已修复
+
+**修复前：** `Equipment` 只有一个 `weapon` 槽位，无法区分主手和副手。木盾装备在 `Armor` 槽（与皮甲同槽），投掷动作没有来源位置。
+
+**修复后：**
+1. `EquipmentSlot`：`Weapon` → `MainHand`，新增 `OffHand`
+2. `Equipment`：`weapon` 改为 `main_hand`，新增 `off_hand`
+3. `items.json`：锈铁剑 slot → `MainHand`，木盾 slot → `OffHand`
+4. `t` 键：打开投掷物选择弹窗 → `r`/`y` 切换 → 自动装副手 → 瞄准模式
+5. 投掷伤害不包含主手武器攻击力加成
+6. 状态栏显示主手/副手/防具/戒指 4 行装备信息
+
+**位置：** `dungeon-core/src/items.rs`（EquipmentSlot + Equipment）、`src/throw.rs`（投掷选单+瞄准）、`src/inventory.rs`（装备/卸装）、`dungeon-render/src/ui.rs`（状态栏装备显示）
+
 ### G16 — 暴击率纳入装备加成 ✅已修复
 
 **修复前：** `execute_attack()` 中暴击判定只用 `attacker_stats.crit_rate`（基础值 5%），`equipment_bonus()` 返回的 `StatBonus.crit_rate` 从未被使用。背包详情页显示的 crit_rate 加成不生效。

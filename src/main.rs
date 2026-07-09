@@ -80,7 +80,8 @@ fn run(
         let has_action = match rx.try_recv() {
             Ok(code) => process_key(code, terminal, &modal_flag, world, game_start)?,
             Err(mpsc::TryRecvError::Empty) => {
-                std::thread::sleep(Duration::from_millis(1));
+                // 空转时降低渲染频率，避免有限机型 CPU 满载
+                std::thread::sleep(Duration::from_millis(32));
                 false
             }
             Err(mpsc::TryRecvError::Disconnected) => break Ok(()),
@@ -188,6 +189,12 @@ fn process_key(
         KeyCode::Char('x') | KeyCode::Char('X') => {
             modal_flag.store(true, Ordering::Relaxed);
             open_look_mode(terminal, world, game_start)?;
+            modal_flag.store(false, Ordering::Relaxed);
+            Ok(false)
+        }
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            modal_flag.store(true, Ordering::Relaxed);
+            dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
             modal_flag.store(false, Ordering::Relaxed);
             Ok(false)
         }

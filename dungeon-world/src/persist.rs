@@ -149,7 +149,7 @@ impl GameSave {
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
              inv.stacks.iter().map(|s| SavedStack { item_id: s.item_id, count: s.count }).collect(),
-             eq.weapon.as_ref().map(|s| s.item_id), eq.weapon.as_ref().map(|s| s.count),
+             eq.main_hand.as_ref().map(|s| s.item_id), eq.main_hand.as_ref().map(|s| s.count),
              eq.armor.as_ref().map(|s| s.item_id), eq.armor.as_ref().map(|s| s.count),
              eq.ring.as_ref().map(|s| s.item_id), eq.ring.as_ref().map(|s| s.count),
              saved_ab, Some(cls.clone()))
@@ -266,7 +266,8 @@ impl GameSave {
                 capacity: 36,
             },
             Equipment {
-                weapon: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1), meta: None }),
+                main_hand: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1), meta: None }),
+                off_hand: None,
                 armor: self.armor_item_id.map(|id| ItemStack { item_id: id, count: self.armor_count.unwrap_or(1), meta: None }),
                 ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1), meta: None }),
             },

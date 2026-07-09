@@ -51,7 +51,7 @@ pub fn open_inventory(
     let mut right_sel: usize = 0;
     let mut page = Page::List(InvPanel::Left);
 
-    let left_count = |_eq: &Equipment, inv: &Inventory| -> usize { 3 + inv.stacks.len() };
+    let left_count = |_eq: &Equipment, inv: &Inventory| -> usize { 4 + inv.stacks.len() };
 
     loop {
         let (inv_stacks, inv_cap, equip, ground) = {
@@ -80,7 +80,7 @@ pub fn open_inventory(
 
             if let Page::Detail(dsrc, idx) = &page {
                 let (stack, source_label) = match dsrc {
-                    DetailSource::LeftEquip => ([&equip.weapon, &equip.armor, &equip.ring][*idx].as_ref(), "装备"),
+                    DetailSource::LeftEquip => ([&equip.main_hand, &equip.off_hand, &equip.armor, &equip.ring][*idx].as_ref(), "装备"),
                     DetailSource::LeftInv => (inv_stacks.get(*idx), "背包"),
                     DetailSource::Right => (ground.get(*idx).map(|(s, _)| s), "地面"),
                 };
@@ -142,13 +142,13 @@ pub fn open_inventory(
                     let act = page == Page::List(InvPanel::Left);
                     let ts = if act { Style::default().fg(Color::Cyan).bold() } else { Style::default().fg(Color::DarkGray) };
                     lines.push(Line::from(Span::styled(" ── 装备 ──", ts)));
-                    for i in 0..3 {
-                        let item = [&equip.weapon, &equip.armor, &equip.ring][i];
+                    for i in 0..4 {
+                        let item = [&equip.main_hand, &equip.off_hand, &equip.armor, &equip.ring][i];
                         let name = item.as_ref().map(|s| s.name()).unwrap_or("(空)".into());
                         let p = if act && left_sel == i { "▸" } else { " " };
                         lines.push(Line::from(vec![
                             Span::styled(format!("{}{}", p, i), Style::default().fg(Color::Yellow)),
-                            Span::styled([" [武]", " [防]", " [戒]"][i], Style::default().fg(Color::DarkGray)),
+                            Span::styled([" [主]", " [副]", " [防]", " [戒]"][i], Style::default().fg(Color::DarkGray)),
                             Span::raw(format!(" {}", name)),
                         ]));
                     }
@@ -158,7 +158,7 @@ pub fn open_inventory(
                     } else {
                         let ps = (left_area.height as usize).saturating_sub(8).min(15);
                         for i in 0..inv_stacks.len().min(ps) {
-                            let real = i + 3;
+                            let real = i + 4;
                             let stack = &inv_stacks[i];
                             let p = if act && left_sel == real { "▸" } else { " " };
                             let hk = if i < 10 { char::from_digit(i as u32, 10).expect("i < 10") } else { char::from(b'a' + (i - 10) as u8) };
@@ -212,12 +212,12 @@ pub fn open_inventory(
                 (Page::List(InvPanel::Left), KeyCode::Down) => { if left_sel + 1 < left_total { left_sel += 1; } }
                 (Page::List(InvPanel::Right), KeyCode::Down) => { if right_sel + 1 < ground.len() { right_sel += 1; } }
                 (Page::List(InvPanel::Left), KeyCode::Enter) => {
-                    if left_sel < 3 {
-                        if [&equip.weapon, &equip.armor, &equip.ring][left_sel].is_some() {
+                    if left_sel < 4 {
+                        if [&equip.main_hand, &equip.off_hand, &equip.armor, &equip.ring][left_sel].is_some() {
                             page = Page::Detail(DetailSource::LeftEquip, left_sel);
                         }
-                    } else if left_sel - 3 < inv_stacks.len() {
-                        page = Page::Detail(DetailSource::LeftInv, left_sel - 3);
+                    } else if left_sel - 4 < inv_stacks.len() {
+                        page = Page::Detail(DetailSource::LeftInv, left_sel - 4);
                     }
                 }
                 (Page::List(InvPanel::Right), KeyCode::Enter) => {
@@ -228,31 +228,43 @@ pub fn open_inventory(
                 // 列表页热键
                 (Page::List(InvPanel::Left), KeyCode::Char(ch)) if ch.is_ascii_lowercase() || ch.is_ascii_digit() => {
                     let idx = if ch.is_ascii_digit() { ch as usize - '0' as usize } else { ch as usize - 'a' as usize + 10 };
-                    let real = idx + 3;
+                    let real = idx + 4;
                     if real < left_total {
                         left_sel = real;
-                        if real < 3 {
-                            if [&equip.weapon, &equip.armor, &equip.ring][real].is_some() {
+                        if real < 4 {
+                            if [&equip.main_hand, &equip.off_hand, &equip.armor, &equip.ring][real].is_some() {
                                 page = Page::Detail(DetailSource::LeftEquip, real);
                             }
-                        } else if real - 3 < inv_stacks.len() {
-                            page = Page::Detail(DetailSource::LeftInv, real - 3);
+                        } else if real - 4 < inv_stacks.len() {
+                            page = Page::Detail(DetailSource::LeftInv, real - 4);
                         }
                     }
                 }
-                // 详情页操作 — 石子投掷（在 match 前处理，避免 page 借用冲突）
+                // 详情页操作 — 石子投掷（自动装副手→瞄准→消耗副手）
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('r'))
                     if world.query::<(&Inventory,)>().iter(world).next()
                         .and_then(|(inv,)| inv.stacks.get(*idx))
                         .map(|s| s.item_id == dungeon_core::ITEM_STONE)
                         .unwrap_or(false) =>
                 {
-                    if crate::throw::open_throw_mode(terminal, world, game_start)? {
-                        let mut q = world.query::<(&mut Inventory,)>();
-                        if let Some((mut inv,)) = q.iter_mut(world).next() {
-                            inv.remove(*idx, 1);
+                    // 从背包取出石子，装到副手（旧副手物品放回背包）
+                    if ops::player_entity(world).is_some() {
+                        let mut q = world.query::<(&mut Inventory, &mut Equipment)>();
+                        if let Some((mut inv, mut eq)) = q.iter_mut(world).next() {
+                            if let Some(stack) = inv.stacks.get(*idx).cloned() {
+                                // 旧副手回背包
+                                if let Some(old) = eq.off_hand.take() {
+                                    inv.add(old.item_id, old.count);
+                                }
+                                // 从背包移除（此时 idx 可能已变，重查位置）
+                                if let Some(pos) = inv.stacks.iter().position(|s| s.item_id == stack.item_id) {
+                                    inv.stacks.remove(pos);
+                                }
+                                eq.off_hand = Some(stack);
+                            }
                         }
                     }
+                    crate::throw::open_throw_aim(terminal, world, game_start)?;
                     page = Page::List(InvPanel::Left);
                 }
                 (Page::Detail(DetailSource::LeftInv, idx), KeyCode::Char('e')) => {
@@ -265,7 +277,8 @@ pub fn open_inventory(
                                 let stack = stack.clone();
                                 inv.remove(*idx, 1);
                                 let old = match slot {
-                                    EquipmentSlot::Weapon => eq.weapon.replace(stack),
+                                    EquipmentSlot::MainHand => eq.main_hand.replace(stack),
+                                    EquipmentSlot::OffHand => eq.off_hand.replace(stack),
                                     EquipmentSlot::Armor => eq.armor.replace(stack),
                                     EquipmentSlot::Ring => eq.ring.replace(stack),
                                 };
@@ -323,8 +336,9 @@ pub fn open_inventory(
                     let mut q = w2.query::<(&mut Inventory, &mut Equipment)>();
                     if let Some((mut inv, mut eq)) = q.iter_mut(w2).next() {
                         let slot = match idx {
-                            0 => &mut eq.weapon,
-                            1 => &mut eq.armor,
+                            0 => &mut eq.main_hand,
+                            1 => &mut eq.off_hand,
+                            2 => &mut eq.armor,
                             _ => &mut eq.ring,
                         };
                         let can_add = slot.as_ref().is_some_and(|s| inv.can_add(s.item_id, s.count));

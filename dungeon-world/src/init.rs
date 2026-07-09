@@ -278,7 +278,7 @@ pub fn descend(world: &mut World) {
         let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName, &ActiveBuffs)>();
         let (_, s, inv, eq, cls, atk, ab) = q.iter(&*w).next().expect("Player exists for descend");
         (s.clone(), inv.stacks.clone(), inv.capacity,
-         dungeon_core::Equipment { weapon: eq.weapon.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
+         dungeon_core::Equipment { main_hand: eq.main_hand.clone(), off_hand: eq.off_hand.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
          cls.clone(), atk.0.clone(), ab.0.clone())
     };
 

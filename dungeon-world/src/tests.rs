@@ -29,7 +29,7 @@ fn equip_first_weapon(world: &mut World) {
             inv.stacks.remove(idx)
         };
         let mut eq = world.get_mut::<Equipment>(player).unwrap();
-        eq.weapon = Some(stack);
+        eq.main_hand = Some(stack);
     }
 }
 
@@ -131,8 +131,8 @@ fn test_save_restore_roundtrip() {
 
     // ── 验证 Equipment ──
     let rest_eq = restored.get::<Equipment>(rest_player).unwrap();
-    assert!(rest_eq.weapon.is_some(), "应装备武器");
-    assert_eq!(rest_eq.weapon.as_ref().unwrap().item_id, 0, "应装备锈铁剑");
+    assert!(rest_eq.main_hand.is_some(), "应装备武器");
+    assert_eq!(rest_eq.main_hand.as_ref().unwrap().item_id, 0, "应装备锈铁剑");
 }
 
 // ──────────────────────────────────────────────
@@ -187,8 +187,8 @@ fn test_descend_preserves_data() {
 
     // 验证 Equipment 不变
     assert_eq!(
-        eq_after.weapon.as_ref().map(|s| s.item_id),
-        eq_before.weapon.as_ref().map(|s| s.item_id),
+        eq_after.main_hand.as_ref().map(|s| s.item_id),
+        eq_before.main_hand.as_ref().map(|s| s.item_id),
     );
 
     // 验证 PlayerClass 不变

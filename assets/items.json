@@ -10,7 +10,7 @@
       255
     ],
     "class": "Weapon",
-    "slot": "Weapon",
+    "slot": "MainHand",
     "max_stack": 1,
     "rarity": "Common",
     "tags": [
@@ -39,7 +39,7 @@
       43
     ],
     "class": "Armor",
-    "slot": "Armor",
+    "slot": "OffHand",
     "max_stack": 1,
     "rarity": "Common",
     "tags": [

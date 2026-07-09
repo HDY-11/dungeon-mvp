@@ -82,7 +82,8 @@ impl Rarity {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EquipmentSlot {
-    Weapon,
+    MainHand,
+    OffHand,
     Armor,
     Ring,
 }
@@ -345,7 +346,8 @@ impl Inventory {
 /// 每个槽位存放完整的 ItemStack（通常 count=1）。
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct Equipment {
-    pub weapon: Option<ItemStack>,
+    pub main_hand: Option<ItemStack>,
+    pub off_hand: Option<ItemStack>,
     pub armor: Option<ItemStack>,
     pub ring: Option<ItemStack>,
 }
@@ -353,13 +355,15 @@ pub struct Equipment {
 impl Default for Equipment { fn default() -> Self { Self::new() } }
 impl Equipment {
     pub fn new() -> Self {
-        Self { weapon: None, armor: None, ring: None }
+        Self { main_hand: None, off_hand: None, armor: None, ring: None }
     }
 
     /// 获取所有已装备物品的迭代器
+    /// 获取所有已装备物品的迭代器（含主手、副手）
     pub fn equipped_stacks(&self) -> Vec<&ItemStack> {
         let mut v = Vec::new();
-        if let Some(s) = &self.weapon { v.push(s); }
+        if let Some(s) = &self.main_hand { v.push(s); }
+        if let Some(s) = &self.off_hand { v.push(s); }
         if let Some(s) = &self.armor { v.push(s); }
         if let Some(s) = &self.ring { v.push(s); }
         v

@@ -247,8 +247,34 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
     out.push(Line::from(Span::raw("")));
     out.push(Line::from(vec![
         Span::styled(" 暴击率", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>5.1}%", s.crit_rate * 100.0)), Span::raw(" "),
-        Span::styled("暴击伤害", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>4.0}%", s.crit_damage * 100.0)),
+        Span::styled(" 暴击伤害", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>4.0}%", s.crit_damage * 100.0)),
     ]));
+    out.push(Line::from(Span::raw("")));
+    // 装备栏显示
+    if let Some(equip) = world.try_query::<(&Player, &Equipment)>()
+        .and_then(|mut q| q.iter(world).next().map(|(_, eq)| eq))
+    {
+        let mh = equip.main_hand.as_ref().map(|s| s.name()).unwrap_or("(空)".into());
+        let oh = equip.off_hand.as_ref().map(|s| s.name()).unwrap_or("(空)".into());
+        let ar = equip.armor.as_ref().map(|s| s.name()).unwrap_or("(空)".into());
+        let rg = equip.ring.as_ref().map(|s| s.name()).unwrap_or("(空)".into());
+        out.push(Line::from(Span::styled("── 装备 ──", Style::default().fg(Color::DarkGray))));
+        out.push(Line::from(vec![
+            Span::styled("主手:", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{}", &mh[..mh.len().min(10)])),
+        ]));
+        out.push(Line::from(vec![
+            Span::styled("副手:", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{}", &oh[..oh.len().min(10)])),
+        ]));
+        out.push(Line::from(vec![
+            Span::styled("防具:", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{}", &ar[..ar.len().min(10)])),
+            Span::raw("   "),
+            Span::styled("戒指:", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{}", &rg[..rg.len().min(10)])),
+        ]));
+    }
     out.push(Line::from(Span::raw("")));
     let floor = world.resource::<FloorNumber>().0;
     out.push(Line::from(Span::raw(format!(" 楼层 {}", floor))));
@@ -282,7 +308,8 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
         out.push(Line::from(Span::raw("")));
         out.push(Line::from(Span::styled(format!(" x 光标 ({}, {})", cx, cy), Style::default().fg(Color::Yellow))));
         if cx < MAP_WIDTH && cy < MAP_HEIGHT {
-            if explored[cy][cx] || pv.contains(&(cx, cy)) {
+            if pv.contains(&(cx, cy)) {
+                // 可见格：显示完整信息（地形+实体+HP）
                 let tile = map.tiles[cy][cx];
                 let tile_name = match tile {
                     Tile::Wall => "墙壁", Tile::Floor => "地板",
@@ -290,7 +317,6 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
                     Tile::Stalactite => "钟乳石",
                 };
                 out.push(Line::from(Span::styled(format!("  {}", tile_name), Style::default().fg(Color::DarkGray))));
-                // 查找光标位置的实体
                 let cursor_entities: Vec<(String, Entity)> = {
                     let mut eq = world.try_query::<(Entity, &Position, &EntityName)>().expect("Entity+Pos+Name reg");
                     eq.iter(world).filter(|(_, p, _)| p.x == cx && p.y == cy).map(|(e, _, n)| (n.0.clone(), e)).collect()
@@ -299,6 +325,15 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
                     let hp = world.get::<Stats>(*e).map(|s| format!(" ({}/{})", s.hp.max(0), s.max_hp)).unwrap_or_default();
                     out.push(Line::from(Span::styled(format!("  {}{}", name, hp), Style::default().fg(Color::White))));
                 }
+            } else if explored[cy][cx] {
+                // 已探索但当前不可见：只显示地形名，不显示实体
+                let tile = map.tiles[cy][cx];
+                let tile_name = match tile {
+                    Tile::Wall => "墙壁", Tile::Floor => "地板",
+                    Tile::ShallowWater => "浅水", Tile::DeepWater => "深水",
+                    Tile::Stalactite => "钟乳石",
+                };
+                out.push(Line::from(Span::styled(format!("  {} (已探索)", tile_name), Style::default().fg(Color::DarkGray))));
             } else {
                 out.push(Line::from(Span::styled("  (未探索)", Style::default().fg(Color::DarkGray))));
             }
