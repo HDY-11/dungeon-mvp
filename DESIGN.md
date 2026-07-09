@@ -298,18 +298,20 @@ Equipment:
 
 **不涉及存档兼容（Batch 1 决策）：** 旧存档的 `weapon` 字段被丢弃。MVP 阶段存档兼容的收益低于实现成本。当游戏进入持续游玩阶段时，应加入迁移逻辑。
 
-### 投掷流程
+### 投掷流程（~~旧方案——已由 §19 替代~~）
 
 ```
 t 键 → 列出背包中所有 tag 含 "throwable" 的物品
      → 选择目标
      → 自动装备到副手（旧副手回背包）
      → 瞄准模式（ThrowPreview）
-     → Enter 投掷（消耗副手 1 颗，主手不参与）
+     → Enter 入队：ActionKindV3::Throw{tx,ty}（详见 §19）
      → Esc 取消（副手保留选中的投掷物）
 ```
 
 背包 'r' 键也保留相同的快捷路径——选中石子 → 自动装副手 → 瞄准。两处入口的行为一致。
+
+新流程见 §19：投掷作为一等 AV 行动。
 
 ## 17. 物品系统设计方向（从 MC 借鉴，以 Rust 方式）
 
@@ -370,3 +372,111 @@ pub struct ItemMeta {
 - 连续三个 revert（`09bccd6`、`da7f7e3`、`ba3aed3`） — "简化→失败→回退→重新理解"的健康迭代
 
 **意图：** 在重构或清理代码时保留提交信息的完整性。不要 squash 那些记录设计转折的提交——它们是未来的开发者理解"为什么代码长这样"的唯一途径。
+
+---
+
+## 19. 投掷作为一等 AV 行动
+
+### 设计背景
+
+投掷在 Batch 1 中以"旁路"实现——不进 ActionQueue、即时执行、返回 `Ok(false)` 跳过世界推进。ISSUES.md D14/D14A 记录了此设计的问题：世界时间不推进、暴击率绕过 `equipment_bonus`、游戏逻辑在应用层（I31 ⑦）、存档丢失副手（A18）。
+
+### 核心变更
+
+投掷改为与其他玩家行动相同的生命周期：
+
+```
+瞄准确认 → enqueue(Throw{tx,ty}, AV) → return true
+                                         → advance_and_settle
+                                           → advance_action_queue
+                                             → execute_entry
+                                               → execute_throw
+```
+
+对比旧流程：
+
+| 关注点 | 旧设计（Batch 1） | 新设计 |
+|--------|-----------------|--------|
+| 执行时机 | Enter 即执行 | 入队等待 AV=0 |
+| 世界推进 | `Ok(false)`，跳过 `advance_and_settle` | `Ok(true)`，正常推进 |
+| 游戏逻辑位置 | `src/throw.rs`（应用层） | `dungeon-action/src/execute.rs` |
+| 暴击率路径 | 手动遍历 armor/ring | `ops::equipment_bonus()`（与近战攻击一致） |
+| 副手消耗 | 内联 2 处重复 | `consume_off_hand()` 共享函数 |
+| 装备管理 | 内联 2 处重复 | `equip_throwable_to_off_hand()` 共享函数 |
+| 存档副手 | `off_hand: None` 硬编码 | 序列化/反序列化 |
+
+### 前置条件：先拆分 ActionKindV3（A12）
+
+`ActionKindV3` 当前同时承载玩家行动（Move/Wait/Skill/Attack）和怪物行为（Chase/Flee/Wander），见 ISSUES.md A12。直接加 `Throw` 会加重枚举膨胀问题。投掷重构的前置步骤是**先将怪物行为剥离为 trait 对象**：
+
+```rust
+// 拆分后的玩家行动枚举（只含玩家输入触发的行动）
+pub enum PlayerAction {
+    Move { dx: isize, dy: isize },
+    Wait,
+    Attack { target: Entity },
+    Skill(usize),
+    Throw { tx: usize, ty: usize },  // 新增
+}
+
+// 怪物行为 trait（每种行为一个 impl，无需改 match）
+pub trait MonsterBehavior: Send + Sync {
+    fn execute(&self, world: &mut World, entity: Entity);
+    fn check_condition(&self, world: &World, entity: Entity) -> bool;
+    fn display_name(&self) -> &'static str;
+    fn priority(&self) -> u32;
+    fn av_cost(&self, agility: u32) -> f32;
+}
+```
+
+`ActionEntry` 改为持有 `AnyAction` 枚举（Player/Monster 两个变体），`execute_entry`/`check_condition`/`action_display` 中玩家行动走 match、怪物行为走 trait 调用。
+
+**收益：** 加新怪物行为不再改任何 match 点——只需新 struct + impl。加新玩家行动（如 `Throw`）只扩展 `PlayerAction` 枚举的 4 个 match 点，不影响怪物侧。
+
+**改造范围：**
+| 文件 | 改动 |
+|------|------|
+| `types.rs` | + `PlayerAction` + `MonsterBehavior` trait + `AnyAction` |
+| `execute.rs` | `execute_entry`/`check_condition` 分两路：玩家 match，怪物 trait |
+| `monster.rs` | Chase/Flee/Wander/Wait 改为 impl MonsterBehavior |
+| `timeline.rs` | `action_display` 分两路 |
+| `persist.rs` | `SavedActionKind` 改为只存 `PlayerAction`，怪物队列丢弃 |
+
+**投掷重构在此之后进行：** `PlayerAction::Throw{tx,ty}` 是拆分后玩家枚举的一个新变体，与 Move/Wait/Skill/Attack 同级。
+
+### 为什么不保留旁路
+
+快速路径（不排队直接执行）的核心问题是：它不是一个"更快执行"的路径，而是一个"不排队、不推进世界"的路径。所有其他玩家行动（移动/攻击/技能）都会触发世界推进——这是回合制游戏的基本契约：每做一个行动，世界回应一次。旁路破坏了这一契约。
+
+### 枚举变体 vs. 组件
+
+| 维度 | 枚举变体 `PlayerAction::Throw` | `CanThrow` 组件 |
+|------|-------------------------------|-----------------|
+| 用途 | 玩家行动入口，被 `execute_entry` 分派 | 决策系统遍历检查条件 |
+| 是否需要 | ✅ 需要——入队需要种类标识 | ❌ 不需要——玩家投掷由按键触发 |
+| 对齐对象 | `Skill`（同为枚举变体，无对应组件） | — |
+
+`CanX` 组件的用途是"被决策系统遍历检查条件"。玩家投掷由按键触发，不存在"决策系统检查是否应该投掷"的场景。所以 `Throw` 仅作为枚举变体存在，不引入 `CanThrow` 组件。这与 `Skill` 的处理方式一致。
+
+### 目标为什么用坐标 (tx, ty) 而非 Entity
+
+两个原因：
+- 执行时目标格可能没有怪物（投掷空地的合法情况），Entity 无法在入队时确定
+- 坐标天然可序列化，不存在 Attack 条目的"含 Entity 引用无法存档"问题
+
+### 耗时为什么是 400ms
+
+介于移动（300）和技能（600）之间。取值逻辑：投掷比砍一刀慢——玩家需要取石子、瞄准、发力——但比念咒快。
+
+```
+AV = 反应时 + 400 × 速度修正系数
+玩家敏捷 10 时 → 70 + 400×0.8 = 390ms
+```
+
+### 与 GAME.md 的交互
+
+GAME.md 的投掷物数值不因本设计而变——伤害公式、射程、视线规则保持不变。唯一的行为变化是：投掷确认后不再立即造成伤害，而是等待 AV=0 后才执行。这在回合制中的实际效果是：**玩家不能无限投掷而不给怪物反应时间**——这恰好是原设计（D14）想要修复的问题。
+
+### 关联 Issue
+
+ISSUES.md #A12（前置——先拆分 ActionKindV3）、#D14 #D14A #A18 #I31 ⑦ #G21
