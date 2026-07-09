@@ -6,7 +6,6 @@ pub mod map_gen;
 pub mod monster_def;
 pub mod ops;
 pub mod pathfinding;
-// pub mod pathfinding; // 已移除（find_path 未使用）
 pub mod resources;
 pub mod systems;
 

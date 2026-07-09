@@ -10,6 +10,22 @@
 
 ## ✅ 已修复
 
+### A10 — 事件日志显示条数回归（take(5)→take(12)） ✅已修复
+
+**修复前：** `ui.rs` 使用 `.take(5)`，战斗密集时事件日志关键信息快速滚出屏幕。G13 声称修复了但代码未改。
+
+**修复后：** `.take(5)` → `.take(12)`。
+
+**位置：** `dungeon-render/src/ui.rs:162`
+
+### I38 — `lib.rs` pathfinding 注释矛盾（误导注释已清理） ✅已修复
+
+**修复前：** 同一文件同时有生效的 `pub mod pathfinding;` 和声称"已移除"的注释。
+
+**修复后：** 删除两条误导注释。
+
+**位置：** `dungeon-core/src/lib.rs:7-9`
+
 ### I42 — 技能键索引与快捷键错位：已学习但按对应键无反应 ✅已修复
 
 **问题：** 卷轴学习将技能追加到 `Skills.list` 末尾。`handle_skill` 用固定索引访问（按键 1→idx=0，按键 2→idx=1...），但技能的实际位置取决于学习顺序。例如先学护盾（快捷键 2）→ 护盾在 `list[0]`，按 2 键却查 `list[1]`→ 返回 None，技能无声失败。**这不是没学的问题，是学了但位置不对。**
@@ -618,18 +634,13 @@ pub struct ItemStack {
 ## 二、架构层面（Architecture）
 
 
-### 🟡 A10 — 事件日志显示条数回归：代码 take(5) 而非声称的 12
+### A10 — 事件日志显示条数回归（take(5)→take(12)） ✅已修复
 
-**问题：** `ui.rs` 事件日志渲染使用 `.take(5)`，但 ISSUES.md G13（已修复）记录"事件日志增至 12 条"。G13 修复要么未落地，要么被后续提交覆盖。
+**修复前：** `ui.rs` 使用 `.take(5)`，战斗密集时事件日志关键信息快速滚出屏幕。G13 声称修复了但代码未改。
 
-```rust
-// ui.rs:193 — 当前代码
-for msg in log.messages.iter().rev().take(5) {
-```
+**修复后：** `.take(5)` → `.take(12)`。
 
-**确认：** 搜索 `.take\(1[0-9]\)` 无匹配，仅 `.take(5)` 一处。G13 本已解决的问题重现。
-
-**位置：** `dungeon-render/src/ui.rs:193`
+**位置：** `dungeon-render/src/ui.rs:162`
 
 ### 🟡 A11 — `ActiveCooldowns` 悬空功能
 
@@ -747,12 +758,6 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 <!-- I35 已移至 ✅已修复（修复前/修复后记录见上方） -->
 
-### 🟢 I38 — `lib.rs` pathfinding 模块注释与事实矛盾
-
-**问题：** `lib.rs` 中 pathfinding 模块声明侧有一条残留注释声称"已移除"：
-
-```rust
-pub mod pathfinding;
 // pub mod pathfinding; // 已移除（find_path 未使用）
 // pub use pathfinding::*; // 已移除
 ```

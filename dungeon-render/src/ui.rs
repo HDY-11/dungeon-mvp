@@ -159,7 +159,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     {
         let mut event_lines: Vec<Line> = Vec::new();
         event_lines.push(Line::from(Span::styled("── 事件 ──", Style::default().fg(Color::DarkGray))));
-        for msg in log.messages.iter().rev().take(5) {
+        for msg in log.messages.iter().rev().take(12) {
             event_lines.push(Line::from(Span::raw(format!(" {}", msg))));
         }
         frame.render_widget(
