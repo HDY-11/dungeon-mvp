@@ -130,7 +130,9 @@ pub fn open_throw_aim(
     game_start: Instant,
 ) -> io::Result<bool> {
     let (cx, cy) = {
-        let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
+        let Some(mut q) = world.try_query::<(&Player, &Position)>() else {
+            return Ok(false);
+        };
         q.iter(&*world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
     };
 
@@ -197,32 +199,27 @@ pub fn open_throw_aim(
 }
 
 fn update_throw_path(world: &mut World) {
-    let player_pos = world.try_query::<(&Player, &Position)>()
-        .expect("Player+Position registered")
-        .iter(world).next().map(|(_, p)| (p.x, p.y))
-        .unwrap_or((0, 0));
+    let player_pos = match world.try_query::<(&Player, &Position)>() {
+        Some(mut q) => q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)),
+        None => (0, 0),
+    };
 
-    let map;
-    let path;
-    let in_range;
-    let los_clear;
-    let cursor;
-    {
-        let tp = world.resource::<ThrowPreview>();
-        cursor = tp.cursor;
-    }
+    // Phase 1: 只读收集（所有 &World 借用在此完成）
+    let cursor = world.resource::<ThrowPreview>().cursor;
     let (cx, cy) = cursor;
-
     let dist_cheb = (cx as isize - player_pos.0 as isize).unsigned_abs()
         .max((cy as isize - player_pos.1 as isize).unsigned_abs());
+    let path = ops::line_bresenham(player_pos.0, player_pos.1, cx, cy);
+    let in_range = dist_cheb <= 5;
+    // 视线检查：在闭包内完成 Map 借用，不跨 Phase 边界
+    let los_clear = {
+        let map = world.resource::<dungeon_core::Map>();
+        path.iter().all(|&(px, py)| {
+            (px == cx && py == cy) || !map.tiles[py][px].blocks_vision()
+        })
+    };  // &Map 借用在此结束
 
-    path = ops::line_bresenham(player_pos.0, player_pos.1, cx, cy);
-    map = world.resource::<dungeon_core::Map>();
-    in_range = dist_cheb <= 5;
-    los_clear = path.iter().all(|&(px, py)| {
-        (px == cx && py == cy) || !map.tiles[py][px].blocks_vision()
-    });
-
+    // Phase 2: 写入（&mut World）
     let mut tp = world.resource_mut::<ThrowPreview>();
     tp.path = path;
     tp.valid_target = in_range && los_clear;

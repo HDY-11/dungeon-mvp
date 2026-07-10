@@ -91,7 +91,7 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
 }
 
 /// 在地图可行走格上随机放置技能卷轴，每层 1-3 张
-fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
+fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
     use rand::RngExt;
     let count = rng.random_range(1u32..=3);
     let scroll_ids = [dungeon_core::ITEM_SCROLL_HEAL as u32, dungeon_core::ITEM_SCROLL_SHIELD as u32, dungeon_core::ITEM_SCROLL_BERSERK as u32];
@@ -107,7 +107,8 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
         for _attempt in 0..30 {
             let x = rng.random_range(3..dungeon_core::MAP_WIDTH as u16 - 3) as usize;
             let y = rng.random_range(3..dungeon_core::MAP_HEIGHT as u16 - 3) as usize;
-            if world.resource::<dungeon_core::Map>().tiles[y][x].walkable() {
+            if world.resource::<dungeon_core::Map>().tiles[y][x].walkable()
+                && !exclude.contains(&(x, y)) {
                 let def = dungeon_core::ItemRegistry::global().get(item_id).expect("scroll exists");
                 world.spawn((
                     dungeon_core::ItemPickup { stack: dungeon_core::ItemStack::new(item_id, 1) },
@@ -260,7 +261,7 @@ pub fn setup_world() -> World {
     place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
     // ── 技能卷轴 ──
-    place_skill_scrolls(&mut world, 1, &mut rng);
+    place_skill_scrolls(&mut world, 1, &mut rng, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
 
     // ── 石子散布 ──
     scatter_stones(&mut world, &mut rng, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
@@ -330,7 +331,7 @@ pub fn descend(world: &mut World) {
     place_ground_items(w, &ground_item_ids, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
     // ── 技能卷轴 ──
-    place_skill_scrolls(w, f, &mut rng);
+    place_skill_scrolls(w, f, &mut rng, &[spawn, (stairs_pos.0, stairs_pos.1)]);
 
     // ── 石子散布 ──
     scatter_stones(w, &mut rng, &[spawn, (stairs_pos.0, stairs_pos.1)]);
