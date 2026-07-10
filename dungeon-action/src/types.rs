@@ -125,6 +125,7 @@ pub enum ActionKindV3 {
     Wait,
     Attack { target: Entity },
     Skill(usize),
+    Throw { tx: usize, ty: usize },
 }
 
 /// 行动队列条目

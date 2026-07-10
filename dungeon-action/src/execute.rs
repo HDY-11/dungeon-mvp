@@ -104,6 +104,7 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
             world.get::<Monster>(*target).is_some()
         }
         ActionKindV3::Skill(_) => true,
+        ActionKindV3::Throw { .. } => true,
     }
 }
 
@@ -116,6 +117,7 @@ fn execute_entry(world: &mut World, entry: &ActionEntry) {
         ActionKindV3::Move { dx, dy } => execute_player_move(world, entry.entity, *dx, *dy),
         ActionKindV3::Attack { target } => execute_attack(world, entry.entity, *target),
         ActionKindV3::Skill(idx) => execute_skill(world, entry.entity, *idx),
+        ActionKindV3::Throw { tx, ty } => execute_throw(world, entry.entity, *tx, *ty),
     }
 }
 
@@ -353,6 +355,116 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
                 }
             }
             world.resource_mut::<EventLog>().push(format!("{}进入狂暴，攻击+{}持续{}秒（熟练度+{}）", skill_name, effective_atk, duration, skill_proficiency));
+        }
+    }
+}
+
+/// 投掷执行：石子伤害 + 暴击 + 掉落 + 副手消耗
+/// 由 execute_entry 分派，走 AV 队列生命周期
+fn execute_throw(world: &mut World, _attacker: Entity, tx: usize, ty: usize) {
+    // 收集随机值（避免多次 resource_mut::<GameRng>）
+    let extra = {
+        let mut rng = world.resource_mut::<GameRng>();
+        rng.random_range(0u8, 2u8) as u32
+    };
+    let crit_roll = {
+        let mut rng = world.resource_mut::<GameRng>();
+        rng.random_f32()
+    };
+
+    // 查找目标格上的怪物
+    let target = {
+        let mut q = world.try_query::<(Entity, &Position, &Monster)>()
+            .expect("Entity+Position+Monster registered");
+        q.iter(world)
+            .find(|(_, pos, _)| pos.x == tx && pos.y == ty)
+            .map(|(e, _, _)| e)
+    };
+
+    // 基础伤害（石子公式：3 + floor/2）
+    let floor = world.resource::<FloorNumber>().0;
+    let base_dmg = 3 + floor / 2;
+
+    // 暴击率：复用 equipment_bonus，与 execute_attack 一致
+    let (total_crit_rate, crit_damage) = {
+        let p = ops::player_entity(world);
+        match p {
+            Some(p) => {
+                let p_stats = world.get::<Stats>(p);
+                let inv = world.get::<Inventory>(p);
+                let equip = world.get::<Equipment>(p);
+                let bonus = equip.zip(inv)
+                    .map(|(eq, inv)| dungeon_core::equipment_bonus(inv, eq))
+                    .unwrap_or_default();
+                let cr = p_stats.map(|s| (s.crit_rate + bonus.crit_rate).min(1.0)).unwrap_or(0.05);
+                let cd = p_stats.map(|s| s.crit_damage).unwrap_or(0.5);
+                (cr, cd)
+            }
+            None => (0.05, 0.5),
+        }
+    };
+    let is_crit = crit_roll < total_crit_rate;
+    let crit_mult = if is_crit { 1.0 + crit_damage } else { 1.0 };
+
+    if let Some(target_entity) = target {
+        let target_def = world.get::<Stats>(target_entity)
+            .map(|s| s.defense as i32)
+            .unwrap_or(0);
+        let raw_dmg = ((base_dmg as i32 + extra as i32 - target_def).max(1)) as u32;
+        let final_dmg = (raw_dmg as f32 * crit_mult).round() as i32;
+        let target_name = world.get::<EntityName>(target_entity)
+            .map(|n| n.0.clone())
+            .unwrap_or("怪物".into());
+
+        if let Some(mut s) = world.get_mut::<Stats>(target_entity) {
+            s.hp -= final_dmg;
+        }
+
+        let dead = world.get::<Stats>(target_entity).map(|s| s.hp <= 0).unwrap_or(false);
+        if dead {
+            let exp = world.get::<Stats>(target_entity).map(|s| s.exp).unwrap_or(0);
+            world.resource_mut::<PendingExp>().amount += exp;
+            world.resource_mut::<EventLog>()
+                .push(format!("石子击杀了{}！获得{}经验", target_name, exp));
+            // 掉落生成（与 execute_attack 相同的 spawn 模式）
+            let pos = world.get::<Position>(target_entity).map(|p| (p.x, p.y));
+            let loot_stacks = {
+                let lt = world.get::<LootTable>(target_entity).cloned();
+                lt.map(|l| {
+                    let mut rng = world.resource_mut::<GameRng>();
+                    l.roll(&mut rng.rng)
+                }).unwrap_or_default()
+            };
+            if let Some((px, py)) = pos {
+                for stack in &loot_stacks {
+                    let sname = stack.name();
+                    world.resource_mut::<EventLog>()
+                        .push(format!("{}掉落{}x{}", target_name, sname, stack.count));
+                    world.spawn((
+                        ItemPickup { stack: stack.clone() },
+                        Position { x: px, y: py },
+                        Renderable { glyph: stack.glyph(), color: stack.color() },
+                    ));
+                }
+            }
+            world.entity_mut(target_entity).despawn();
+        } else {
+            world.resource_mut::<EventLog>()
+                .push(format!("石子命中{}！造成{}伤害{}", target_name, final_dmg, if is_crit { "暴击" } else { "" }));
+        }
+    } else {
+        world.resource_mut::<EventLog>().push("石子落在地上".to_string());
+    }
+
+    // 消耗副手 1 颗石子
+    if let Some(p) = ops::player_entity(world) {
+        if let Some(mut eq) = world.get_mut::<Equipment>(p) {
+            if let Some(ref mut stack) = eq.off_hand {
+                stack.count = stack.count.saturating_sub(1);
+                if stack.count == 0 {
+                    eq.off_hand = None;
+                }
+            }
         }
     }
 }

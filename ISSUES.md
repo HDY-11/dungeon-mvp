@@ -730,6 +730,50 @@ pub struct ItemStack {
 
 **位置：** `dungeon-core/src/ops.rs:150-163`
 
+### A18 — 存档未保存副手投掷物 (off_hand) ✅已修复
+
+**修复前：** `GameSave` 保存了主手、防具、戒指，但从未保存副手字段。restore 中硬编码 `off_hand: None`，存档后副手石子永久丢失。
+
+**修复后：** `GameSave` 新增 `off_hand_item_id`、`off_hand_count`（`#[serde(default)]` 兼容旧存档），capture 时序列化副手栈，restore 时恢复。投掷物存档后不再丢失。
+
+**位置：** `dungeon-world/src/persist.rs`
+
+### D14 — 投掷不经过 AV 行动系统 ✅已修复
+
+**修复前：** 投掷是唯一绕过 `ActionQueue` AV 行动系统的玩家行动。`process_key` 中 `t` 键返回硬编码 `Ok(false)`，主循环据此跳过 `advance_and_settle`。投掷后世界时间静止。
+
+**修复后：** `ActionKindV3::Throw{tx,ty}` 新增枚举变体，`execute_throw` 下沉至 `dungeon-action/execute.rs` 并复用 `equipment_bonus`。瞄准确认后 `enqueue` AV 行动计算耗时 190ms，返回 `true` 触发世界推进。投掷与移动/攻击/技能走同一生命周期。
+
+**位置：** `dungeon-action/src/types.rs`、`dungeon-action/src/execute.rs`、`src/main.rs`、`src/throw.rs`
+
+### I43 — `line_bresenham` 零长度路径导致无限循环崩溃 ✅已修复
+
+**修复前：** `line_bresenham(x0,y0, x1,y1)` 在 `x0==x1 && y0==y1`（起点等于终点）时，方向推导 `sx = if x0 < x1 { 1 } else { -1 }` 和 `sy = if y0 < y1 { 1 } else { -1 }` 因 `x0<x1` 为假而得到 `sx = -1, sy = -1`，每一步朝远离目标的方向走，永不终止。坐标递减至负值后 `as usize` 回绕到 `usize::MAX`，在后续 `map.tiles[py][px]` 越界 panic。
+
+**触发场景：** 进入投掷瞄准模式时，光标初始化为玩家位置。`update_throw_path` 立即调用 `line_bresenham(px, py, px, py)` 计算弹道，触发退化路径。
+
+**修复后：** 函数入口加 `if x0 == x1 && y0 == y1 { return Vec::new(); }`，零长度路径直接返回空向量。
+
+**教训：** 方向派生自比较的迭代算法（Bresenham、DDA 等）在起终点相同时，所有方向的比较都为假，推导出"反向"步进——必须显式处理退化情形。
+
+**位置：** `dungeon-core/src/ops.rs:196`
+
+### G22 — 投掷无伤害（怪物先于投掷行动） ✅已修复
+
+**修复前：** 投掷耗时 400ms，玩家投掷 AV=70+400×0.80=390ms，怪物追击 AV=85+250×0.90=310ms。怪物先执行，移动后投掷落空，始终显示"石子落在地上"。
+
+```
+怪物追击 AV=310 < 投掷 AV=390 → 先执行 → 怪物移动 → 投掷落空
+```
+
+**修复后：** 投掷耗时改为 **190ms**，玩家投掷 AV=70+190×0.80=**222ms**，快于怪物追击（310ms）。投掷在怪物移动前命中。
+
+```
+怪物追击 AV=310 > 投掷 AV=222 → 后执行 → 投掷命中 → 怪物移动
+```
+
+**位置：** `src/throw.rs:176`、`GAME.md` 行动表、`DESIGN.md` Dsn12
+
 ### G15 — Buff 持续时长新旧系统差异 60 倍 ✅已修复
 
 **修复前：** `SkillKind { duration: 3 }` 传入两个系统得到不同时长：旧 Buffs 读作 3 帧（~50ms），新 ActiveBuffs 读作 3s（3000 AV），相差 60 倍。
@@ -741,44 +785,6 @@ pub struct ItemStack {
 ---
 
 ## 一、设计层面（Design）
-
----
-
-### 🔴 D14 — 投掷不经过 AV 行动系统
-
-**问题：** 投掷是唯一绕过 `ActionQueue` AV 行动系统的玩家行动。`process_key` 中 `t` 键返回 `Ok(false)`，主循环据此跳过 `advance_and_settle`。
-
-```rust
-// main.rs:195 — t 键返回 false → 跳过 advance_and_settle
-KeyCode::Char('t') | KeyCode::Char('T') => {
-    ...
-    Ok(false)  // ← 无行动入队标记
-}
-// main.rs:116 — has_action = false 时不推进
-if has_action && !world.resource::<TurnManager>().game_over {
-    advance_and_settle(world);
-}
-```
-
-对比移动/攻击/技能：都通过 `handle_player_direction/handle_wait/handle_skill` → 入 ActionQueue → AV 倒计时 → 自动执行。投掷是唯一绕过的。
-
-**影响：** 🔴 高 — 玩家可以无限投掷而怪物不动。整个回合制节奏被打破。这不是"性能优化可接受"的快速路径，而是一个绕过核心设计模型的行动。
-
-**位置：** `src/main.rs:195-201`、`src/throw.rs`（全流程）
-
-  #### 🔴 D14A — 投掷后不推进世界时间（游戏逻辑表现）
-
-  **表现：** 投掷后世界时间静止——怪物队列不进、FOV 不更新、Buff 不消耗、视野记忆不刷新。
-
-  1. 投掷石子击中怪物 → 怪物 HP 减少但不还击
-  2. 连续投掷 → 世界仍然不推进
-  3. 只有按方向键（移动预览返回 `true`）后才能触发 `advance_and_settle`
-
-  **影响：** 🔴 高 — 玩家可以利用此漏洞在安全距离内无风险击杀所有怪物。当前投掷伤害偏低（石子 3-4 点伤害），战斗节奏影响有限，但机制上是不正确的。
-
-  **根因：** D14（设计层面——投掷不走 AV 系统）
-
-  **位置：** `src/main.rs:116-119`（`has_action` 守卫）、`src/main.rs:195`（t 键返回 false）
 
 ---
 
@@ -818,29 +824,6 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
 
 ## 二、架构层面（Architecture）
 
-
-### 🔴 A18 — 存档未保存副手投掷物 (off_hand)
-
-**问题：** `GameSave` 保存了主手 (`weapon_item_id/count`)、防具 (`armor_*`)、戒指 (`ring_*`)，但从未保存副手 (`off_hand_*`)：
-
-```rust
-// persist.rs:55-64 — 结构体定义
-pub struct GameSave {
-    pub weapon_item_id: Option<usize>, pub weapon_count: Option<u32>,
-    // 没有 off_hand_item_id, off_hand_count ← 遗漏
-    pub armor_item_id: Option<usize>, pub armor_count: Option<u32>,
-    pub ring_item_id: Option<usize>, pub ring_count: Option<u32>,
-```
-
-`restore` 中硬编码为 `off_hand: None`，存档后副手石子永久丢失。
-
-**这是 A16（主手/副手重构）的遗留问题。** A16 新增了 `off_hand` 槽位但只更新了运行时逻辑，未同步更新存档结构。
-
-**影响：** 🔴 高 — 玩家装上石子到副手 → 存档 → 读档，副手石子消失。投掷物是消耗品，但"存档保障"不应该是消耗的一部分。
-
-**位置：** `dungeon-world/src/persist.rs:55-64`（定义）、`persist.rs:213`（restore 中 `off_hand: None`）
-
----
 
 ### 🟡 A11 — `ActiveCooldowns` 悬空功能
 
@@ -920,25 +903,14 @@ pub trait MonsterBehavior: Send + Sync {
 **① `execute_throw` 违反单一职责原则（SRP）**
 ~75 行函数同时负责：目标验证、玩家/副手检查、怪物查找、伤害计算（含暴击）、HP 扣减、死亡判定、掉落生成、事件日志、副手消耗。可提取至少 3 个独立函数。
 
-**② 暴击率计算重复实现**
-```rust
-// throw.rs:267-281 — 手动遍历 armor/ring 算暴击率
-let bonus_crit = eq.as_ref().map(|eq| {
-    let mut total = 0.0f32;
-    if let Some(ref a) = eq.armor { ... }
-    if let Some(ref r) = eq.ring { ... }
-    total
-});
-// ops.rs:25 — 已有 equipment_bonus() 返回 StatBonus { crit_rate, ... }
-pub fn equipment_bonus(inv: &Inventory, equip: &Equipment) -> StatBonus
-```
-`execute_throw` 绕过了已有的 `equipment_bonus`，手动重算且只算了 armor+ring（忽略 main_hand 上可能有的 crit_rate）。
+**② 暴击率计算重复实现 ✅已修复（Phase 1）**
+`execute_throw` 已下沉至 `dungeon-action/execute.rs`，暴击率通过 `ops::equipment_bonus()` 统一计算（与 `execute_attack` 一致），不再手动遍历 armor/ring。
 
-**③ 副手消耗逻辑重复**
-相同 ~10 行的 `consume_off_hand_stone` 逻辑在命中分支和未命中分支各出现一次。
+**③ 副手消耗逻辑重复 ✅已修复（Phase 1）**
+`execute_throw` 尾部单次统一消耗副手，命中/未命中分支不再各自一份。共享函数 `ops::consume_off_hand` 提取至 `dungeon-core/src/ops.rs`。
 
-**④ `open_throw_select` UI 与游戏逻辑耦合**
-Enter 处理器中 ~25 行的装备管理（副手交换、背包查找、物品移除）直接写在 UI 循环里，未提取为独立函数。
+**④ `open_throw_select` UI 与游戏逻辑耦合 ✅已修复（Phase 1）**
+Enter 处理器中的装备管理已提取为 `ops::equip_throwable_to_off_hand()` 共享函数，`throw.rs` 和 `inventory.rs` 的两处内联代码统一调用此函数。
 
 **⑤ `update_throw_path` 借用模式脆弱**
 读 cursor→drop→计算→写 path 的 dance 容易因重构引入 I29 类崩溃。
@@ -946,28 +918,17 @@ Enter 处理器中 ~25 行的装备管理（副手交换、背包查找、物品
 **⑥ 使用 `.expect()` 的可 panic 路径**
 `open_throw_aim` 和 `execute_throw` 中多处 `.expect()`，组件缺失时直接 panic 而非降级返回。
 
-**⑦ 架构错放——核心游戏逻辑在应用层（src/）**
-`execute_throw` 包含伤害计算（`base_dmg = 3 + floor / 2`）、暴击判定、HP 扣减、死亡判定、掉落生成等完整的战斗逻辑。这些本应在 `dungeon-action/src/execute.rs` 中（与 `execute_attack` 同级），而非应用层。对比 `execute_attack`：使用 `ops::effective_attack/defense`、`equipment_bonus`、统一暴击公式，`execute_throw` 重新实现了大部分但绕过了工具函数。
+**⑦ 架构错放——核心游戏逻辑在应用层（src/） ✅已修复（Phase 1）**
+`execute_throw` 已完整迁移至 `dungeon-action/src/execute.rs`，与 `execute_attack` 同级。修改战斗公式只需改 `dungeon-action` 一个 crate。遗留的 `update_throw_path`（纯弹道算法）留在应用层是合理的（UI 逻辑）。
 
-**影响：** 🟡 中 — 违反四层 crate 分层原则（DESIGN.md §1）。修改战斗公式需同时改两个文件。纯粹的功能提取（将 `execute_throw` 拆为多个小函数）不足以解决——需要将游戏逻辑下沉到 `dungeon-action` crate。
+**影响：** 🟡 中（剩余 ①⑤⑥）
 
-**建议方向：**
+**剩余建议方向：**
 ```
-throw.rs 重构为 7 个函数：
-  公开入口: open_throw_select, open_throw_aim
-  辅助:     equip_throwable_to_off_hand (装备管理)
-  下沉:     calc_stone_damage → dungeon-action (复用 equipment_bonus)
-  下沉:     execute_throw → dungeon-action (游戏逻辑)
-            consume_off_hand_stone (副手消耗，可在应用层或 action)
-            handle_kill (击杀+掉落，与 execute_attack 共享)
-  路径:     update_throw_path (保持)
+① execute_throw 仍 ~70 行（从应用层下沉后未进一步拆分）
+⑤ update_throw_path 的 borrow dance
+⑥ .expect() 降级处理
 ```
-```
-throw.rs 重构为 6 个函数：
-  公开入口: open_throw_select, open_throw_aim
-  辅助:     equip_throwable_to_off_hand (装备管理)
-            calc_stone_damage (伤害计算，复用 equipment_bonus)
-            consume_off_hand_stone (副手消耗)
             handle_kill (击杀+掉落)
   路径:     update_throw_path (保持)
   目标:     execute_throw 从 ~75 行缩到 ~15 行

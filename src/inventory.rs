@@ -247,22 +247,9 @@ pub fn open_inventory(
                         .map(|s| s.item_id == dungeon_core::ITEM_STONE)
                         .unwrap_or(false) =>
                 {
-                    // 从背包取出石子，装到副手（旧副手物品放回背包）
-                    if ops::player_entity(world).is_some() {
-                        let mut q = world.query::<(&mut Inventory, &mut Equipment)>();
-                        if let Some((mut inv, mut eq)) = q.iter_mut(world).next() {
-                            if let Some(stack) = inv.stacks.get(*idx).cloned() {
-                                // 旧副手回背包
-                                if let Some(old) = eq.off_hand.take() {
-                                    inv.add(old.item_id, old.count);
-                                }
-                                // 从背包移除（此时 idx 可能已变，重查位置）
-                                if let Some(pos) = inv.stacks.iter().position(|s| s.item_id == stack.item_id) {
-                                    inv.stacks.remove(pos);
-                                }
-                                eq.off_hand = Some(stack);
-                            }
-                        }
+                    // 使用共享函数装备投掷物到副手
+                    if let Some(p) = ops::player_entity(world) {
+                        ops::equip_throwable_to_off_hand(world, p, dungeon_core::ITEM_STONE);
                     }
                     crate::throw::open_throw_aim(terminal, world, game_start)?;
                     page = Page::List(InvPanel::Left);

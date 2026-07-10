@@ -91,6 +91,55 @@ pub fn pickup_ground(world: &mut World) {
     for msg in logs { world.resource_mut::<EventLog>().push(msg); }
 }
 
+// ── 投掷/装备共享工具函数 ─────────────────────────
+
+/// 消耗副手 1 个物品。栈空时清除槽位。返回是否还有剩余。
+pub fn consume_off_hand(world: &mut World, entity: Entity) -> bool {
+    if let Some(mut eq) = world.get_mut::<Equipment>(entity) {
+        if let Some(ref mut stack) = eq.off_hand {
+            stack.count = stack.count.saturating_sub(1);
+            if stack.count == 0 {
+                eq.off_hand = None;
+                return false;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// 将指定 item_id 的投掷物从背包装备到副手。
+/// 旧副手物品自动放回背包。返回是否成功。
+pub fn equip_throwable_to_off_hand(world: &mut World, player: Entity, item_id: usize) -> bool {
+    // Phase 1: 旧副手回背包
+    let old_item = {
+        let mut eq = world.get_mut::<Equipment>(player);
+        eq.as_mut().and_then(|eq| eq.off_hand.take())
+    };
+    if let Some(old) = old_item {
+        let mut inv = world.get_mut::<Inventory>(player);
+        if let Some(ref mut inv) = inv {
+            inv.add(old.item_id, old.count);
+        }
+    }
+    // Phase 2: 从背包取投掷物→装副手
+    let taken = {
+        let mut inv = world.get_mut::<Inventory>(player);
+        inv.as_mut().and_then(|inv| {
+            let idx = inv.stacks.iter().position(|s| s.item_id == item_id)?;
+            Some(inv.stacks.remove(idx))
+        })
+    };
+    if let Some(stack) = taken {
+        let mut eq = world.get_mut::<Equipment>(player);
+        if let Some(ref mut eq) = eq {
+            eq.off_hand = Some(stack);
+            return true;
+        }
+    }
+    false
+}
+
 // ── 地图/视野记忆操作 ──────────────────────────────
 
 pub fn update_map_memory(world: &mut World) {
@@ -145,6 +194,9 @@ pub fn update_visible_memory(world: &mut World) {
 /// Bresenham 直线算法，返回从 (x0,y0) 到 (x1,y1) 的**中间格**（不含起点）。
 /// 返回顺序从起点旁第一个格到目标格（含目标）。
 pub fn line_bresenham(x0: usize, y0: usize, x1: usize, y1: usize) -> Vec<(usize, usize)> {
+    if x0 == x1 && y0 == y1 {
+        return Vec::new();
+    }
     let mut points = Vec::new();
     let dx = (x1 as isize - x0 as isize).abs();
     let dy = -(y1 as isize - y0 as isize).abs();

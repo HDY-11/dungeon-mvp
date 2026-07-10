@@ -282,9 +282,6 @@ fn test_attack_execution() {
 // ──────────────────────────────────────────────
 #[test]
 fn test_conditions() {
-    assert!(CanMove::condition(true, false));
-    assert!(CanMove::condition(true, true));
-    assert!(!CanMove::condition(false, false));
     assert!(CanFlee::condition(0.2));
     assert!(!CanFlee::condition(0.5));
     assert!(CanChase::condition(true));

@@ -136,5 +136,6 @@ fn action_display(kind: &ActionKindV3, av: f32) -> (String, f32) {
         ActionKindV3::Wait => ("等待".into(), av),
         ActionKindV3::Attack { .. } => ("攻击".into(), av),
         ActionKindV3::Skill(i) => (format!("技能{}", i + 1), av),
+        ActionKindV3::Throw { .. } => ("投掷".into(), av),
     }
 }

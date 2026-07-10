@@ -26,6 +26,7 @@ pub enum SavedActionKind {
     Move { dx: isize, dy: isize },
     Chase, Flee, Wander, Wait,
     Skill(usize),
+    Throw { tx: u16, ty: u16 },
 }
 
 /// 可序列化的行动条目（按实体位置 + 行动种类标识）
@@ -62,6 +63,10 @@ pub struct GameSave {
     pub weapon_item_id: Option<usize>, pub weapon_count: Option<u32>,
     pub armor_item_id: Option<usize>, pub armor_count: Option<u32>,
     pub ring_item_id: Option<usize>, pub ring_count: Option<u32>,
+    #[serde(default)]
+    pub off_hand_item_id: Option<usize>,
+    #[serde(default)]
+    pub off_hand_count: Option<u32>,
     pub map_tiles: Vec<Tile>,
     pub rooms: Vec<dungeon_core::Room>,
     pub explored: Vec<u8>,
@@ -137,7 +142,7 @@ impl GameSave {
             sq.iter(w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, active_buffs, player_class) = {
+        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, off_hand_item_id, off_hand_count, active_buffs, player_class) = {
             let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &ActiveBuffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+ActiveBuffs+Class reg at init");
             let (pos, st, inv, eq, ab, cls) = q.iter(w).next()
                 .expect("Player entity exists for save");
@@ -152,6 +157,7 @@ impl GameSave {
              eq.main_hand.as_ref().map(|s| s.item_id), eq.main_hand.as_ref().map(|s| s.count),
              eq.armor.as_ref().map(|s| s.item_id), eq.armor.as_ref().map(|s| s.count),
              eq.ring.as_ref().map(|s| s.item_id), eq.ring.as_ref().map(|s| s.count),
+             eq.off_hand.as_ref().map(|s| s.item_id), eq.off_hand.as_ref().map(|s| s.count),
              saved_ab, Some(cls.clone()))
         };
 
@@ -186,6 +192,7 @@ impl GameSave {
                     ActionKindV3::Wander => SavedActionKind::Wander,
                     ActionKindV3::Wait => SavedActionKind::Wait,
                     ActionKindV3::Skill(idx) => SavedActionKind::Skill(*idx),
+                    ActionKindV3::Throw { tx, ty } => SavedActionKind::Throw { tx: *tx as u16, ty: *ty as u16 },
                     ActionKindV3::Attack { .. } => return None, // 含 Entity 引用，无法保存
                 };
                 Some(SavedActionEntry {
@@ -214,6 +221,7 @@ impl GameSave {
         Self {
             floor, map_seed, px, py, st, inv,
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
+            off_hand_item_id, off_hand_count,
             active_buffs,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
@@ -267,7 +275,7 @@ impl GameSave {
             },
             Equipment {
                 main_hand: self.weapon_item_id.map(|id| ItemStack { item_id: id, count: self.weapon_count.unwrap_or(1), meta: None }),
-                off_hand: None,
+                off_hand: self.off_hand_item_id.map(|id| ItemStack { item_id: id, count: self.off_hand_count.unwrap_or(1), meta: None }),
                 armor: self.armor_item_id.map(|id| ItemStack { item_id: id, count: self.armor_count.unwrap_or(1), meta: None }),
                 ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1), meta: None }),
             },
@@ -323,6 +331,7 @@ impl GameSave {
                 SavedActionKind::Wander => ActionKindV3::Wander,
                 SavedActionKind::Wait => ActionKindV3::Wait,
                 SavedActionKind::Skill(idx) => ActionKindV3::Skill(*idx),
+                SavedActionKind::Throw { tx, ty } => ActionKindV3::Throw { tx: *tx as usize, ty: *ty as usize },
             };
             // 在当前位置找对应实体（不可变查询，不需要 &mut World）
             let entity = w.query::<(Entity, &Position)>().iter(w).find_map(|(e, p)| {

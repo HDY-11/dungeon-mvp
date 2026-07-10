@@ -194,9 +194,9 @@ fn process_key(
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             modal_flag.store(true, Ordering::Relaxed);
-            dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
+            let result = dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
             modal_flag.store(false, Ordering::Relaxed);
-            Ok(false)
+            Ok(result)
         }
         _ => Ok(false),
     }

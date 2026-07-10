@@ -6,12 +6,12 @@ use std::time::Instant;
 use bevy_ecs::prelude::*;
 use crossterm::event::{self, Event, KeyCode};
 use dungeon_core::{
-    ops, EventLog, Monster, Position, Stats,
-    ThrowPreview, GameRng, Inventory, Equipment, EntityName,
-    Player, FloorNumber, PendingExp, ItemPickup, LootTable,
-    ItemStack,
+    ops, EventLog, Position, Stats,
+    ThrowPreview, Inventory,
+    Player,
     MAP_HEIGHT, MAP_WIDTH,
 };
+use dungeon_action::{ActionQueue, ActionKindV3, agility_speed_factor};
 use dungeon_render::render_ui;
 use ratatui::{
     layout::{Alignment, Rect},
@@ -27,7 +27,7 @@ pub fn open_throw_select(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     world: &mut World,
     game_start: Instant,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     // 收集背包中所有可投掷物
     let throwable_ids: Vec<(usize, String, u32)> = {
         let mut q = world.query::<(&Inventory,)>();
@@ -45,7 +45,7 @@ pub fn open_throw_select(
 
     if throwable_ids.is_empty() {
         world.resource_mut::<EventLog>().push("无可投掷物".to_string());
-        return Ok(());
+        return Ok(false);
     }
 
     let mut selected: usize = 0;
@@ -106,50 +106,16 @@ pub fn open_throw_select(
                 KeyCode::Enter => {
                     let (item_id, _name, _count) = &throwable_ids[selected];
                     let item_id = *item_id;
-                    // 将选中的投掷物装备到副手（分步操作，避免 get_mut 嵌套）
-                    let player = ops::player_entity(world);
-                    if let Some(p) = player {
-                        // Phase 1: 查询当前副手状态（只读）
-                        let already_equipped = world.get::<Equipment>(p)
-                            .map(|eq| eq.off_hand.as_ref().map(|s| s.item_id) == Some(item_id))
-                            .unwrap_or(false);
-                        if !already_equipped {
-                            // Phase 2: 卸载旧副手→背包（Equipment 写）
-                            let old_item = {
-                                let mut eq = world.get_mut::<Equipment>(p);
-                                eq.as_mut().and_then(|eq| eq.off_hand.take())
-                            };
-                            if let Some(old) = old_item {
-                                let mut inv = world.get_mut::<Inventory>(p);
-                                if let Some(ref mut inv) = inv {
-                                    inv.add(old.item_id, old.count);
-                                }
-                            }
-                            // Phase 3: 从背包取投掷物→装副手（Inventory 写 → Equipment 写）
-                            let taken = {
-                                let mut inv = world.get_mut::<Inventory>(p);
-                                inv.as_mut().and_then(|inv| {
-                                    let idx = inv.stacks.iter().position(|s| s.item_id == item_id)?;
-                                    Some(inv.stacks.remove(idx))
-                                })
-                            };
-                            if let Some(stack) = taken {
-                                let mut eq = world.get_mut::<Equipment>(p);
-                                if let Some(ref mut eq) = eq {
-                                    eq.off_hand = Some(stack);
-                                }
-                            }
-                        }
+                    // 将选中的投掷物装备到副手（共享函数，消除重复）
+                    if let Some(p) = ops::player_entity(world) {
+                        ops::equip_throwable_to_off_hand(world, p, item_id);
                     }
-                    // 进入瞄准模式
+                    // 进入瞄准模式，透传是否入队（true=有行动入队）
                     let consumed = open_throw_aim(terminal, world, game_start)?;
-                    if consumed {
-                        world.resource_mut::<EventLog>().push("投掷了石子".to_string());
-                    }
-                    return Ok(());
+                    return Ok(consumed);
                 }
                 KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => {
-                    return Ok(());
+                    return Ok(false);
                 }
                 _ => {}
             }
@@ -198,9 +164,27 @@ pub fn open_throw_aim(
                     update_throw_path(world);
                 }
                 KeyCode::Enter => {
-                    let consumed = execute_throw(world);
+                    let (valid, tx, ty) = {
+                        let tp = world.resource::<ThrowPreview>();
+                        (tp.valid_target, tp.cursor.0, tp.cursor.1)
+                    };
                     world.resource_mut::<ThrowPreview>().active = false;
-                    return Ok(consumed);
+                    if !valid {
+                        world.resource_mut::<EventLog>().push("目标无效".to_string());
+                        return Ok(false);
+                    }
+                    // 入队 AV 行动（投掷耗时 190ms，快于近战移动，确保先于怪物追击执行）
+                    if let Some(p) = ops::player_entity(world) {
+                        let reaction = world.get::<dungeon_action::Reaction>(p)
+                            .map(|r| r.time).unwrap_or(70.0);
+                        let speed = agility_speed_factor(
+                            world.get::<Stats>(p).map(|s| s.agility).unwrap_or(10)
+                        );
+                        let av = reaction + 190.0 * speed;
+                        world.resource_mut::<ActionQueue>()
+                            .enqueue(p, ActionKindV3::Throw { tx, ty }, av);
+                    }
+                    return Ok(true);
                 }
                 KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => {
                     world.resource_mut::<ThrowPreview>().active = false;
@@ -244,149 +228,4 @@ fn update_throw_path(world: &mut World) {
     tp.valid_target = in_range && los_clear;
 }
 
-fn execute_throw(world: &mut World) -> bool {
-    let valid;
-    let cursor_pos;
-    {
-        let tp = world.resource::<ThrowPreview>();
-        valid = tp.valid_target;
-        cursor_pos = tp.cursor;
-    }
-    if !valid {
-        world.resource_mut::<EventLog>().push("目标无效".to_string());
-        return false;
-    }
-    let (tx, ty) = cursor_pos;
 
-    // 检查副手是否有投掷物
-    let player = ops::player_entity(world);
-    let off_hand_empty = match player {
-        None => true,
-        Some(p) => world.get::<Equipment>(p)
-            .map(|eq| eq.off_hand.is_none())
-            .unwrap_or(true),
-    };
-
-    if off_hand_empty {
-        world.resource_mut::<EventLog>().push("副手没有投掷物".to_string());
-        return false;
-    }
-
-    // 查找光标格上的怪物
-    let target = {
-        let mut q = world.try_query::<(Entity, &Position, &Monster)>()
-            .expect("Entity+Position+Monster registered");
-        q.iter(world)
-            .find(|(_, pos, _)| pos.x == tx && pos.y == ty)
-            .map(|(e, _, _)| e)
-    };
-
-    if let Some(target_entity) = target {
-        // 计算伤害（投掷时不使用主手武器加成）
-        let floor = world.resource::<FloorNumber>().0;
-        let base_dmg = 3 + floor / 2;
-        let extra = world.resource_mut::<GameRng>().random_range(0, 2) as u32;
-        let target_def = world.get::<Stats>(target_entity)
-            .map(|s| s.defense as i32)
-            .unwrap_or(0);
-        let raw_dmg = ((base_dmg as i32 + extra as i32 - target_def).max(1)) as u32;
-
-        // 暴击检查（不含主手武器加成）
-        let crit_mult = if let Some(p) = player {
-            let p_stats = world.get::<Stats>(p).cloned();
-            let _inv = world.get::<Inventory>(p).cloned();
-            let eq = world.get::<Equipment>(p).cloned();
-            // 仅从防具+戒指计算暴击率加成（主手/副手不参与）
-            let bonus_crit = eq.as_ref()
-                .map(|eq| {
-                    let mut total = 0.0f32;
-                    if let Some(ref a) = eq.armor { if let Some(d) = ItemStack::new(a.item_id, 1).def() { total += d.bonus.crit_rate; } }
-                    if let Some(ref r) = eq.ring { if let Some(d) = ItemStack::new(r.item_id, 1).def() { total += d.bonus.crit_rate; } }
-                    total
-                })
-                .unwrap_or(0.0);
-            let total_crit_rate = p_stats.as_ref()
-                .map(|s| (s.crit_rate + bonus_crit).min(1.0))
-                .unwrap_or(0.05);
-
-            let roll = world.resource_mut::<GameRng>().random_f32();
-            if roll < total_crit_rate {
-                p_stats.map(|s| 1.0 + s.crit_damage).unwrap_or(1.5)
-            } else {
-                1.0
-            }
-        } else {
-            1.0
-        };
-
-        let final_dmg = (raw_dmg as f32 * crit_mult).round() as i32;
-
-        let target_name = world.get::<EntityName>(target_entity)
-            .map(|n| n.0.clone())
-            .unwrap_or("怪物".into());
-        {
-            if let Some(mut s) = world.get_mut::<Stats>(target_entity) {
-                s.hp -= final_dmg;
-            }
-        }
-
-        if world.get::<Stats>(target_entity).map(|s| s.hp <= 0).unwrap_or(false) {
-            let exp = world.get::<Stats>(target_entity).map(|s| s.exp).unwrap_or(0);
-            world.resource_mut::<PendingExp>().amount += exp;
-            world.resource_mut::<EventLog>()
-                .push(format!("石子击杀了{}！获得{}经验", target_name, exp));
-
-            let loot = world.get::<LootTable>(target_entity).cloned();
-            if let Some(lt) = loot {
-                let mut rng2 = world.resource_mut::<GameRng>();
-                let stacks = lt.roll(&mut rng2.rng);
-                let pos = world.get::<Position>(target_entity).map(|p| (p.x, p.y));
-                if let Some((px, py)) = pos {
-                    for stack in &stacks {
-                        let sname = stack.name();
-                        world.resource_mut::<EventLog>()
-                            .push(format!("{}掉落{}x{}", target_name, sname, stack.count));
-                        world.spawn((
-                            ItemPickup { stack: stack.clone() },
-                            Position { x: px, y: py },
-                            dungeon_core::Renderable { glyph: stack.glyph(), color: stack.color() },
-                        ));
-                    }
-                }
-            }
-            world.entity_mut(target_entity).despawn();
-        } else {
-            let crit_text = if crit_mult > 1.0 { "暴击" } else { "" };
-            world.resource_mut::<EventLog>()
-                .push(format!("石子命中{}！造成{}伤害{}", target_name, final_dmg, crit_text));
-        }
-
-        // 消耗副手 1 颗石子
-        if let Some(p) = player {
-            if let Some(mut eq) = world.get_mut::<Equipment>(p) {
-                if let Some(ref mut stack) = eq.off_hand {
-                    stack.count = stack.count.saturating_sub(1);
-                    if stack.count == 0 {
-                        eq.off_hand = None;
-                    }
-                }
-            }
-        }
-
-        true
-    } else {
-        world.resource_mut::<EventLog>().push("石子落在地上".to_string());
-        // 仍然消耗石子
-        if let Some(p) = player {
-            if let Some(mut eq) = world.get_mut::<Equipment>(p) {
-                if let Some(ref mut stack) = eq.off_hand {
-                    stack.count = stack.count.saturating_sub(1);
-                    if stack.count == 0 {
-                        eq.off_hand = None;
-                    }
-                }
-            }
-        }
-        true
-    }
-}
