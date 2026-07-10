@@ -948,6 +948,24 @@ pub trait MonsterBehavior: Send + Sync {
 
 ---
 
+### 🟢 A18 — ratatui 内置 widget 闲置（Gauge/List/Clear/Scrollbar/Table 未使用）
+
+**问题：** 项目中使用的 ratatui widget 仅限于 `Paragraph` + `Span` + `Layout` + `Block`，五个内置 widget 完全未使用，对应功能由手写代码替代：
+
+| widget | 手写替代位置 | 手写行数 | 可简化到 |
+|--------|------------|---------|---------|
+| `Gauge` | `ui.rs` 中 `bar()` 函数 | ~8 | 2 行构造 |
+| `List` | `inventory.rs` 背包列表循环（选中态+▸+滚动） | ~30 | 5 行 |
+| `Clear` | 模态弹窗覆盖逻辑 | 依赖 modal | 1 行 |
+| `Scrollbar` | 事件日志 `take(12)` 硬截断 | ~5 | 无截断+滚动条 |
+| `Table` | `ui.rs` 属性面板手算 `{:>3}` + `"   "` 分隔 | ~15 | 3 行列定义 |
+
+**影响：** 🟢 低 — 正确性不受影响。代码量约多写 50 行，背包列表的可维护性（选中态/滚动边界）不如 `List` 开箱即用。仅在新增类似 UI（合成台、技能树）时值得一次性迁移。
+
+**位置：** `dungeon-render/src/ui.rs`（Gauge/Table/Scrollbar）、`src/inventory.rs`（List）
+
+---
+
 ## 三、实现层面（Implementation）
 
 
