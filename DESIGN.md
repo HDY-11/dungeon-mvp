@@ -442,3 +442,56 @@ pub struct ItemMeta {
 **背景**
 
 当前 5 种材料（生物血肉/破布/坚硬木棍/染血兽牙/黑色甲壳）无任何消耗渠道（G17），地面物品每层完全相同（G18）。材料系统处于"拾取了只能堆叠"的状态。合成系统是材料消耗的最直接途径。
+
+---
+
+### Dsn20 渲染架构：Buffer 直写替代 Paragraph + 持久 Canvas + 背景色优先
+
+**决策**
+
+三项独立决策，按实施顺序排列：
+
+**① 地形背景色全面化（立刻可做）**
+所有 Tile 提供背景色，不仅仅是水体。`Tile::bg_color()` 改为对 Wall/Floor/Stalactite 也返回颜色值，而非仅水体有背景：
+
+```
+Wall:        bg=None → bg=(50, 50, 60)    铁灰
+Floor:       bg=None → bg=(20, 22, 25)    近黑微亮
+Stalactite:  bg=None → bg=(60, 55, 20)    暗黄
+```
+
+字符 glyph 不变（保留 `#`/`.`/`~`/`≈`），但背景色提供了"画布"层，视觉从"符号浮在黑纸"变为"符号嵌在纹理上"。改 6 行，零架构影响。
+
+**② Buffer 直写替代 Paragraph/Line/Span（近期重构）**
+当前渲染流程为全量重绘路径：
+
+```
+ECS queries → Vec<Vec<(char,Color,Color)>> → Vec<Line> (800 Span 分配)
+  → frame.render_widget(Paragraph::new(lines), area) → ratatui 内部转为 Buffer Cell
+```
+
+重构后直写 `frame.buffer_mut()`：
+
+```
+ECS queries → 直接写入 Buffer Cell
+```
+
+跳过 Paragraph/Line/Span 中间层，消除每帧 ~800 次小分配。ratatui 的 layout（Layout/Constraint/Block）仍可使用，只绕过文本 widget 层。ratatui 的 ANSI diff 仍然在下游工作。
+
+**③ 持久 Canvas + dirty tracking（中期优化）**
+引入持久化的帧缓冲 `Canvas` 作为 ECS Resource，而非每帧重建：
+
+```
+Canvas: cells: Vec<Vec<Cell>>, dirty: HashSet<(usize, usize)>
+```
+
+每帧流程：
+- 行动推进（实体移动/攻击/死亡）→ 标记对应 cell dirty
+- 渲染时只重建 dirty cell，写入 Buffer
+- 非 dirty cell 直接拷贝到 Buffer（memcpy，不经过任何逻辑判断）
+
+**不是 30fps 固定帧率（当前不做）：** 原因同 D5（事件帧模式）——回合制终端 Roguelike 在无操作时的高帧率渲染收益有限，但固定帧率是动画效果（淡出/粒子/伤害数字）的前提。标记为 deferred，**触发条件：** 当需要实现非交互视觉反馈（伤害数字淡出、弹道尾迹、buff 闪烁）时重新评估。
+
+**背景**
+
+对 Brogue 终端渲染的分析引发此次设计讨论。核心发现：当前渲染慢的原因不是 ratatui（它的 ANSI diff 机制在终端输出层面已经做到了增量），而是"全量重建 + 文本 widget 封装"导致的上游浪费。Brogue 在纯终端时代用 Canvas 缓冲 + 增量 flush + 固定帧率实现了流畅画面，其本质是"只输出变化"而非"全量重建"。
