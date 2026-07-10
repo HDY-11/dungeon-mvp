@@ -13,7 +13,7 @@ use crossterm::ExecutableCommand;
 use dungeon_core::{
     ops, EventLog, LookCursor, TurnManager, MAP_WIDTH, MAP_HEIGHT, Position, Player,
 };
-use dungeon_action::{handle_player_direction, handle_wait, handle_skill};
+use dungeon_action::{handle_player_direction, handle_wait, handle_skill, PlayerAction};
 use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
@@ -117,21 +117,40 @@ fn process_key(
     world: &mut World,
     game_start: Instant,
 ) -> io::Result<bool> {
-    match code {
-        KeyCode::Up      => Ok(handle_player_direction(world, 0, -1)),
-        KeyCode::Down    => Ok(handle_player_direction(world, 0, 1)),
-        KeyCode::Left    => Ok(handle_player_direction(world, -1, 0)),
-        KeyCode::Right   => Ok(handle_player_direction(world, 1, 0)),
-        KeyCode::Home    => Ok(handle_player_direction(world, -1, -1)),
-        KeyCode::End     => Ok(handle_player_direction(world, -1, 1)),
-        KeyCode::PageUp  => Ok(handle_player_direction(world, 1, -1)),
-        KeyCode::PageDown => Ok(handle_player_direction(world, 1, 1)),
-        KeyCode::Char('.') => Ok(handle_wait(world)),
-        KeyCode::Char('1') => Ok(handle_skill(world, 0)),
-        KeyCode::Char('2') => Ok(handle_skill(world, 1)),
-        KeyCode::Char('3') => Ok(handle_skill(world, 2)),
-        KeyCode::Char('4') => Ok(handle_skill(world, 3)),
-        KeyCode::Char('q') | KeyCode::Esc => {
+    // 先按大写字母处理（KeyCode::Char('E') 等）
+    let code = match code {
+        KeyCode::Char(c) if c.is_ascii_uppercase() => KeyCode::Char(c.to_ascii_lowercase()),
+        other => other,
+    };
+    let Some(action) = dungeon_tui::keymap::resolve(code) else {
+        return Ok(false);
+    };
+    match action {
+        // ── 直接行动（tap-tap → AV 队列） ──
+        PlayerAction::Move(dx, dy) => Ok(handle_player_direction(world, *dx, *dy)),
+        PlayerAction::Wait => Ok(handle_wait(world)),
+        PlayerAction::Skill(i) => Ok(handle_skill(world, *i)),
+
+        // ── 模态（阻塞式 UI，需暂停输入线程） ──
+        PlayerAction::Throw => {
+            modal_flag.store(true, Ordering::Relaxed);
+            let result = dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
+            modal_flag.store(false, Ordering::Relaxed);
+            Ok(result)
+        }
+        PlayerAction::OpenInventory => {
+            modal_flag.store(true, Ordering::Relaxed);
+            dungeon_tui::inventory::open_inventory(terminal, world, game_start)?;
+            modal_flag.store(false, Ordering::Relaxed);
+            Ok(false)
+        }
+        PlayerAction::OpenLook => {
+            modal_flag.store(true, Ordering::Relaxed);
+            open_look_mode(terminal, world, game_start)?;
+            modal_flag.store(false, Ordering::Relaxed);
+            Ok(false)
+        }
+        PlayerAction::Quit => {
             if world.resource::<TurnManager>().game_over {
                 world.resource_mut::<TurnManager>().wants_quit = true;
             } else {
@@ -142,36 +161,7 @@ fn process_key(
             }
             Ok(false)
         }
-        KeyCode::Char('e') | KeyCode::Char('E') => {
-            modal_flag.store(true, Ordering::Relaxed);
-            dungeon_tui::inventory::open_inventory(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
-            Ok(false)
-        }
-        KeyCode::Char('g') | KeyCode::Char('G') => {
-            pickup_ground(world);
-            Ok(false)
-        }
-        KeyCode::F(5) => {
-            if let Ok(data) = bincode::serialize(&GameSave::capture(world)) {
-                std::fs::write("save.bin", data).ok();
-                world.resource_mut::<EventLog>().push("已保存");
-            }
-            Ok(false)
-        }
-        KeyCode::F(9) => {
-            if let Ok(data) = std::fs::read("save.bin")
-                && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
-                    save.restore(world);
-                    let _ = world.run_system_once(fov_system);
-                    ops::update_map_memory(world);
-                    ops::update_visible_memory(world);
-                    ops::rebuild_occupancy(world);
-                    world.resource_mut::<EventLog>().push("已读档");
-                }
-            Ok(false)
-        }
-        KeyCode::Char('>') => {
+        PlayerAction::DescendStairs => {
             if on_stairs(world) {
                 modal_flag.store(true, Ordering::Relaxed);
                 let ok = open_modal(terminal, "确认下楼？");
@@ -186,19 +176,31 @@ fn process_key(
             }
             Ok(false)
         }
-        KeyCode::Char('x') | KeyCode::Char('X') => {
-            modal_flag.store(true, Ordering::Relaxed);
-            open_look_mode(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
+
+        // ── 即时行动（无阻塞） ──
+        PlayerAction::PickupGround => {
+            pickup_ground(world);
             Ok(false)
         }
-        KeyCode::Char('t') | KeyCode::Char('T') => {
-            modal_flag.store(true, Ordering::Relaxed);
-            let result = dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
-            Ok(result)
+        PlayerAction::SaveGame => {
+            if let Ok(data) = bincode::serialize(&GameSave::capture(world)) {
+                std::fs::write("save.bin", data).ok();
+                world.resource_mut::<EventLog>().push("已保存");
+            }
+            Ok(false)
         }
-        _ => Ok(false),
+        PlayerAction::LoadGame => {
+            if let Ok(data) = std::fs::read("save.bin")
+                && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
+                    save.restore(world);
+                    let _ = world.run_system_once(fov_system);
+                    ops::update_map_memory(world);
+                    ops::update_visible_memory(world);
+                    ops::rebuild_occupancy(world);
+                    world.resource_mut::<EventLog>().push("已读档");
+                }
+            Ok(false)
+        }
     }
 }
 

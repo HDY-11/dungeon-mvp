@@ -1,4 +1,5 @@
 pub mod inventory;
+pub mod keymap;
 pub mod throw;
 
 // 此文件存在的唯一目的是让 tests/ 目录下的集成测试可以编译。

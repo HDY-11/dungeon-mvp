@@ -185,7 +185,30 @@ impl ActionQueue {
 }
 
 // ══════════════════════════════════════════════════════
-// 输入管线
+// 玩家行动枚举 + 键位绑定
+// ══════════════════════════════════════════════════════
+
+/// 玩家按键触发的所有行动。不包含怪物行为（Chase/Flee/Wander）。
+/// 每个变体对应 process_key 中的一个处理路径。
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlayerAction {
+    // ── 直接行动（tap-tap 预览→入 AV 队列） ──
+    Move(isize, isize),
+    Wait,
+    Skill(usize),
+    Throw,
+    // ── 模态行动（阻塞式 UI） ──
+    OpenInventory,
+    OpenLook,
+    PickupGround,
+    DescendStairs,
+    SaveGame,
+    LoadGame,
+    Quit,
+}
+
+// ══════════════════════════════════════════════════════
+// 输入管线（旧，逐步迁移至 PlayerAction）
 // ══════════════════════════════════════════════════════
 
 #[derive(Clone, Debug)]
