@@ -116,7 +116,7 @@ impl CanWait {
 // 行动队列
 // ══════════════════════════════════════════════════════
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ActionKindV3 {
     Move { dx: isize, dy: isize },
     Chase,
@@ -177,10 +177,11 @@ impl ActionQueue {
         self.entries.iter().any(|e| e.entity == entity)
     }
 
-    pub fn enqueue_if_absent(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
-        if !self.entries.iter().any(|e| e.entity == entity) {
-            self.entries.push(ActionEntry { entity, kind, av_remaining: av });
-        }
+    /// 入队或替换：若实体已有行动在队列中，移除旧行动并添加新行动（而非拒绝）。
+    /// 允许玩家在 Move 排队时确认 Attack 替换之，避免无声吞操作。
+    pub fn enqueue_or_replace(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
+        self.entries.retain(|e| e.entity != entity);
+        self.entries.push(ActionEntry { entity, kind, av_remaining: av });
     }
 }
 

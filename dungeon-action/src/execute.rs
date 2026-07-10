@@ -386,7 +386,7 @@ fn execute_throw(world: &mut World, _attacker: Entity, tx: usize, ty: usize) {
             handle_kill(world, target_entity, &target_name);
         } else {
             world.resource_mut::<EventLog>()
-                .push(format!("石子命中{}！造成{}伤害{}", target_name, final_dmg, if is_crit { "暴击" } else { "" }));
+                .push(format!("石子命中了{}！{}，造成{}点伤害", target_name, if is_crit { "暴击" } else { "" }, final_dmg));
         }
     } else {
         world.resource_mut::<EventLog>().push("石子落在地上".to_string());

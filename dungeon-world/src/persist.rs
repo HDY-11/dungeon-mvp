@@ -53,6 +53,43 @@ pub struct SavedActiveBuff {
     pub magnitude: i32,
 }
 
+/// 可序列化的技能条目
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedSkill {
+    pub name: String,
+    pub key: char,
+    pub cost_mp: i32,
+    pub description: String,
+    /// 0=Heal, 1=Shield, 2=Berserk
+    pub kind: u8,
+    /// Heal.amount 或 Shield.def_boost 或 Berserk.atk_boost
+    pub extra: i32,
+    /// Shield.duration 或 Berserk.duration（Heal=0）
+    pub duration: u32,
+    pub proficiency: u32,
+}
+
+/// 从 SavedSkill 列表重建 Skills（Box::leak 以获取 &'static str，游戏退出时释放）
+fn restore_skills(saved: &[SavedSkill]) -> Vec<dungeon_core::Skill> {
+    use dungeon_core::SkillKind;
+    saved.iter().map(|sk| {
+        let kind = match sk.kind {
+            0 => SkillKind::Heal { amount: sk.extra },
+            1 => SkillKind::Shield { def_boost: sk.extra, duration: sk.duration },
+            2 => SkillKind::Berserk { atk_boost: sk.extra, duration: sk.duration },
+            _ => SkillKind::Heal { amount: sk.extra },
+        };
+        dungeon_core::Skill {
+            name: Box::leak(sk.name.clone().into_boxed_str()),
+            key: sk.key,
+            cost_mp: sk.cost_mp,
+            description: Box::leak(sk.description.clone().into_boxed_str()),
+            kind,
+            proficiency: sk.proficiency,
+        }
+    }).collect()
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GameSave {
     pub floor: u32,
@@ -83,6 +120,9 @@ pub struct GameSave {
     pub wander_intents: Vec<SavedIntentEntry>,
     #[serde(default)]
     pub active_buffs: Vec<SavedActiveBuff>,
+    /// Skills 序列化，#[serde(default)] 兼容旧存档
+    #[serde(default)]
+    pub skills: Vec<SavedSkill>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -142,14 +182,27 @@ impl GameSave {
             sq.iter(w).next().map(|(_, p)| (p.x as u16, p.y as u16)).unwrap_or((0, 0))
         };
 
-        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, off_hand_item_id, off_hand_count, active_buffs, player_class) = {
-            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &ActiveBuffs, &PlayerClass)>().expect("Pos+Stats+Inv+Eq+ActiveBuffs+Class reg at init");
-            let (pos, st, inv, eq, ab, cls) = q.iter(w).next()
+        let (px, py, st, inv, weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count, off_hand_item_id, off_hand_count, active_buffs, player_class, saved_skills) = {
+            let mut q = w.try_query::<(&Position, &Stats, &Inventory, &Equipment, &ActiveBuffs, &PlayerClass, &dungeon_core::Skills)>().expect("Pos+Stats+Inv+Eq+ActiveBuffs+Class+Skills reg at init");
+            let (pos, st, inv, eq, ab, cls, sk) = q.iter(w).next()
                 .expect("Player entity exists for save");
             let saved_ab: Vec<SavedActiveBuff> = ab.0.iter().map(|b| SavedActiveBuff {
                 kind: match b.kind { BuffKind::Shield => 0, BuffKind::Berserk => 1 },
                 remaining_av: b.remaining_av,
                 magnitude: b.magnitude,
+            }).collect();
+            use dungeon_core::SkillKind;
+            let saved_skills: Vec<SavedSkill> = sk.list.iter().map(|s| {
+                let (kind, extra, duration) = match &s.kind {
+                    SkillKind::Heal { amount } => (0u8, *amount, 0u32),
+                    SkillKind::Shield { def_boost, duration } => (1u8, *def_boost, *duration),
+                    SkillKind::Berserk { atk_boost, duration } => (2u8, *atk_boost, *duration),
+                };
+                SavedSkill {
+                    name: s.name.to_string(), key: s.key, cost_mp: s.cost_mp,
+                    description: s.description.to_string(),
+                    kind, extra, duration, proficiency: s.proficiency,
+                }
             }).collect();
             (pos.x as u16, pos.y as u16,
              SavedStats::from(st.clone()),
@@ -158,7 +211,7 @@ impl GameSave {
              eq.armor.as_ref().map(|s| s.item_id), eq.armor.as_ref().map(|s| s.count),
              eq.ring.as_ref().map(|s| s.item_id), eq.ring.as_ref().map(|s| s.count),
              eq.off_hand.as_ref().map(|s| s.item_id), eq.off_hand.as_ref().map(|s| s.count),
-             saved_ab, Some(cls.clone()))
+             saved_ab, Some(cls.clone()), saved_skills)
         };
 
         let monsters = {
@@ -223,6 +276,7 @@ impl GameSave {
             weapon_item_id, weapon_count, armor_item_id, armor_count, ring_item_id, ring_count,
             off_hand_item_id, off_hand_count,
             active_buffs,
+            skills: saved_skills,
             map_tiles, rooms,
             explored: explored.iter().flat_map(|r| r.iter().map(|&b| b as u8)).collect(),
             monsters, items, sx, sy, player_class,
@@ -280,7 +334,7 @@ impl GameSave {
                 ring: self.ring_item_id.map(|id| ItemStack { item_id: id, count: self.ring_count.unwrap_or(1), meta: None }),
             },
             pc.clone(),
-            dungeon_core::Skills { list: pc.skills() },
+            dungeon_core::Skills { list: restore_skills(&self.skills) },
             Reaction { time: agility_to_reaction(agi) },
             CanMove::new(100), CanWait::new(0),
         ));

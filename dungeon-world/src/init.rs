@@ -275,12 +275,12 @@ pub fn descend(world: &mut World) {
     let mut floor = w.resource_mut::<FloorNumber>();
     floor.0 += 1; let f = floor.0;
 
-    let (player_stats, player_inv_stacks, player_inv_cap, player_equip, player_class, player_atk_name, player_active_buffs_vec) = {
-        let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName, &ActiveBuffs)>();
-        let (_, s, inv, eq, cls, atk, ab) = q.iter(&*w).next().expect("Player exists for descend");
+    let (player_stats, player_inv_stacks, player_inv_cap, player_equip, player_class, player_atk_name, player_active_buffs_vec, player_skills) = {
+        let mut q = w.query::<(Entity, &Stats, &Inventory, &Equipment, &PlayerClass, &AttackName, &ActiveBuffs, &Skills)>();
+        let (_, s, inv, eq, cls, atk, ab, sk) = q.iter(&*w).next().expect("Player exists for descend");
         (s.clone(), inv.stacks.clone(), inv.capacity,
          dungeon_core::Equipment { main_hand: eq.main_hand.clone(), off_hand: eq.off_hand.clone(), armor: eq.armor.clone(), ring: eq.ring.clone() },
-         cls.clone(), atk.0.clone(), ab.0.clone())
+         cls.clone(), atk.0.clone(), ab.0.clone(), sk.clone())
     };
 
     let to_despawn: Vec<Entity> = { let mut q = w.query::<(Entity,)>();
@@ -302,7 +302,7 @@ pub fn descend(world: &mut World) {
         Inventory { stacks: player_inv_stacks, capacity: player_inv_cap },
     ));
     cmd.insert(player_equip);  // Equipment
-    cmd.insert(dungeon_core::Skills { list: player_class.skills() });
+    cmd.insert(player_skills);
     cmd.insert(player_class.clone());  // PlayerClass
     cmd.insert(AttackName(player_atk_name));
     cmd.insert(ActiveBuffs(player_active_buffs_vec));  // D9: 保存并恢复 ActiveBuffs

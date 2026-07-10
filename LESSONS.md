@@ -496,3 +496,30 @@ let sx = if x0 < x1 { 1 } else { -1 };
 **推广：** 任何包含 `if a < b { 1 } else { -1 }` 且未处理 `a == b` 的方向派生代码，都应在函数入口检查退化条件。
 
 **参见 ISSUES.md #I43**
+
+### L44 — 为 Player 添加新组件后，必须 grep descend 和 persist 两个路径确保一致
+
+**问题背景：** D16（Skills 下楼/存档丢失）是同一个模式在本项目中的第三次发生——前两次是 D9（ActiveBuffs 下楼丢失）和 I34（ActiveBuffs 存档丢失）。每次都是"在 Player 上加了新组件 → 更新了 `setup_world`（首次创建）→ 但忘记更新 `descend`（下楼重建）和/或 `persist`（存档读档）的 query 和 restore"。
+
+**参见 ISSUES.md #D16**
+
+**错误做法：** 只更新 `setup_world` 中的组件插入，假设下楼和存档路径"会自动继承"。
+
+```rust
+// setup_world ✅ 加了新组件
+cmd.insert(NewComponent::new());
+// descend ❌ 忘了加
+// persist.rs capture ❌ 忘了加
+```
+
+**正确做法：** 每当为 Player 添加新组件（`cmd.insert(...)` 或 `world.spawn(...)` 中的新元素），立即 grep 以下三个位置：
+
+```bash
+grep -n "descend" dungeon-world/src/init.rs      # descend 中的 query + spawn
+grep -n "capture" dungeon-world/src/persist.rs   # GameSave::capture 中的 query
+grep -n "restore" dungeon-world/src/persist.rs   # GameSave::restore 中的 spawn
+```
+
+确保三个路径都包含该组件。这是一个机械检查清单，不需要记忆。
+
+**为什么更好：** `setup_world` 只执行一次（游戏启动），`descend` 每次下楼都执行，`restore` 每次读档都执行。三个路径不同的代码走的是"同一组件的三个不同拷贝"——这不是继承关系，是并行维护关系。任何遗漏都导致数据静默丢失。grep 在编译前就能发现缺口，无需等到运行后。

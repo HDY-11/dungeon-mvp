@@ -14,9 +14,13 @@ pub fn fov_system(mut query: Query<(&Position, &mut Viewshed)>, map: Res<Map>) {
 pub fn check_death_system(
     player_query: Query<&Stats, With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
+    mut event_log: ResMut<EventLog>,
 ) {
     if let Ok(stats) = player_query.single() {
-        if stats.hp <= 0 { turn_manager.game_over = true; }
+        if stats.hp <= 0 {
+            event_log.push("你死了".to_string());
+            turn_manager.game_over = true;
+        }
     }
 }
 

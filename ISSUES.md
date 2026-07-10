@@ -10,6 +10,41 @@
 
 ## ✅ 已修复
 
+### D16 — Skills 组件下楼和存档丢失 ✅已修复
+
+**修复前：** `descend()` query 遗漏 `&Skills`，下楼后用 `player_class.skills()` 重建空列表。`GameSave::capture()` query 同样遗漏，`restore()` 用 `pc.skills()` 重建空列表。所有已学技能在下楼和存档读档后丢失。
+
+**修复后：**
+1. `descend` query 加入 `&Skills`，重建时使用已捕获的 skills 列表
+2. `components.rs`: `Skills` 加 `Clone` derive
+3. `persist.rs`: `GameSave` 新增 `skills` 字段（`#[serde(default)]` 兼容旧存档），capture/restore 路径加入 Skills 序列化/反序列化（SavedSkill 中转）
+
+**位置：** `dungeon-world/src/init.rs:258-265`、`dungeon-world/src/persist.rs:68-247`、`dungeon-core/src/components.rs:172`
+
+### I43 — 玩家死亡无事件日志推送 ✅已修复
+
+**修复前：** `check_death_system` 中检测到 `stats.hp <= 0` 时仅设置 `game_over = true`，未向 EventLog 推送死亡消息。
+
+**修复后：** `check_death_system` 增加 `mut event_log: ResMut<EventLog>` 参数，死亡时 `event_log.push("你死了")`。
+
+**位置：** `dungeon-core/src/systems.rs:16-22`
+
+### I44 — 投掷暴击日志格式与近战攻击不一致 ✅已修复
+
+**修复前：** 投掷暴击日志为 "石子命中老鼠！造成8伤害暴击"（暴击标记在末尾、缺"点"、缺分隔符）。
+
+**修复后：** 改为 "石子命中了老鼠！暴击，造成8点伤害"，与近战攻击日志格式一致。
+
+**位置：** `dungeon-action/src/execute.rs:389`
+
+### G22 — `enqueue_if_absent` 语义可能导致操作被吞 ✅已修复
+
+**修复前：** `handle_timed_action` 在确认后调用 `enqueue_if_absent`，按**实体**去重（同实体有任何行动在队列即拒绝入队）。玩家 Move 排队时无法再 Attack，按键无声无反应。
+
+**修复后：** `ActionKindV3` 加 `PartialEq` derive。`enqueue_if_absent` 改为 `enqueue_or_replace`（替换语义：移除实体旧行动→添加新行动）。`handle_timed_action` 调用 `enqueue_or_replace`。
+
+**位置：** `dungeon-action/src/types.rs:119-124`、`dungeon-action/src/player.rs:16`
+
 ### R1 — RULE.md 编辑流程优化（移除宣誓 + 强化记录优先） ✅已修复
 
 **修复前：** RULE.md 要求编辑前"宣誓"，AI 须在每回合第一次编辑前声明流程步骤。实际效果不佳（"反智能体"），且核心问题（先修后记）未被有效约束。
@@ -822,6 +857,10 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
 
 ---
 
+
+
+---
+
 ## 二、架构层面（Architecture）
 
 
@@ -890,6 +929,22 @@ pub trait MonsterBehavior: Send + Sync {
 **影响：** 🟢 低 — 当前实现（~30 行）简洁有效。仅在 render crate 架构升级时才需处理。
 
 **位置：** `src/main.rs:214-249`
+
+---
+
+### 🟢 A17 — InputBuffer 资源创建但从未使用
+
+**问题：** `init.rs` 中 `world.insert_resource(InputBuffer::default())` 创建了 `InputBuffer`，`persist.rs` 也重建了它，但整个代码库除 types.rs 中的定义和 push/pop 方法外**没有任何调用方**。`main.rs` 的输入处理完全不经过 `InputBuffer`。
+
+```rust
+// types.rs:186-206 — 定义和方法已存在
+// init.rs:18 — 插入资源
+// main.rs — 输入流程完全不使用
+```
+
+**影响：** 🟢 低 — 类似 PendingSkill/PendingPickup（已删除）的同模式悬空代码。资源占用可忽略，但属于"代码骨架先于实际使用"的模式，历史上这种模式容易腐败。
+
+**位置：** `dungeon-action/src/types.rs:186-206`（定义）、`dungeon-world/src/init.rs:18`（插入）、`dungeon-world/src/persist.rs:142`（重建）
 
 ---
 
@@ -1025,6 +1080,17 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 ---
 
+
+### 🟢 I45 — `calc_player_crit` 与 execute_attack 内联暴击计算重复
+
+**问题：** `execute.rs:374-393` 的 `calc_player_crit` 从 Stats + equipment_bonus 计算暴击率/倍率，与 `execute_attack` 中 `:302-305` 的内联计算几乎相同。差异仅在于：`execute_attack` 的 `total_crit_rate` 计算在攻击者（可能非玩家）路径中，而投掷固定在玩家。
+
+**影响：** 🟢 低 — 代码重复，未来暴击率计算逻辑修改需同步两处。
+
+**位置：** `dungeon-action/src/execute.rs:302-305` vs `:374-393`
+
+---
+
 ## 四、游戏逻辑层面（Game Logic）
 
 
@@ -1092,6 +1158,8 @@ let stacks = lt.roll(&mut rng2.rng);
 **位置：** `src/throw.rs:260` `:275` `:285`
 
 ---
+
+
 
 ## 其他
 

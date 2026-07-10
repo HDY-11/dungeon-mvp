@@ -22,7 +22,7 @@ pub fn handle_timed_action(world: &mut World, entity: Entity, kind: ActionKindV3
     };
 
     if is_confirm {
-        world.resource_mut::<ActionQueue>().enqueue_if_absent(entity, kind, av);
+        world.resource_mut::<ActionQueue>().enqueue_or_replace(entity, kind, av);
         world.resource_mut::<PlayerPreview>().kind = None;
         true
     } else {

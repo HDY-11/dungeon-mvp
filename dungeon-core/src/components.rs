@@ -139,7 +139,7 @@ pub struct Skill {
     pub proficiency: u32,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Skills {
     pub list: Vec<Skill>,
 }
