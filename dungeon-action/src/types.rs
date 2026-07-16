@@ -258,6 +258,7 @@ pub struct PlayerPreview {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Game,              // 主游戏画面（默认）
+    Look,              // 光标查看模式
     Dialog(String),    // 确认对话框
 }
 

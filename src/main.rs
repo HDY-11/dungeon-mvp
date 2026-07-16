@@ -137,8 +137,33 @@ fn process_key(
     let page = world.resource::<dungeon_action::PageStack>().current().clone();
     match page {
         dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
+        dungeon_action::Page::Look => process_look_key(code, world),
         dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
     }
+}
+
+/// 光标查看页按键处理
+fn process_look_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            world.resource_mut::<LookCursor>().y = world.resource::<LookCursor>().y.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            world.resource_mut::<LookCursor>().y = (world.resource::<LookCursor>().y + 1).min(MAP_HEIGHT - 1);
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            world.resource_mut::<LookCursor>().x = world.resource::<LookCursor>().x.saturating_sub(1);
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            world.resource_mut::<LookCursor>().x = (world.resource::<LookCursor>().x + 1).min(MAP_WIDTH - 1);
+        }
+        KeyCode::Char('x') | KeyCode::Esc => {
+            world.resource_mut::<LookCursor>().active = false;
+            world.resource_mut::<dungeon_action::PageStack>().pop();
+        }
+        _ => {}
+    }
+    Ok(false)
 }
 
 /// 游戏页按键处理
@@ -194,9 +219,12 @@ fn process_game_key(
             Ok(false)
         }
         PlayerAction::OpenLook => {
-            modal_flag.store(true, Ordering::Relaxed);
-            open_look_mode(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
+            let (cx, cy) = {
+                let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
+                q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
+            };
+            world.insert_resource(LookCursor { active: true, x: cx, y: cy });
+            world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Look);
             Ok(false)
         }
         PlayerAction::PickupGround => {
@@ -261,6 +289,7 @@ fn process_dialog_key(code: KeyCode, world: &mut World, _title: &str) -> io::Res
     }
 }
 
+#[allow(dead_code)]
 fn open_modal(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     title: &str,
@@ -285,6 +314,7 @@ fn open_modal(
     }
 }
 
+#[allow(dead_code)]
 fn open_look_mode(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     world: &mut World,
