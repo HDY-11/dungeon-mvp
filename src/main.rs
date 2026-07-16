@@ -44,6 +44,7 @@ fn run(
     game_start: Instant,
     world: &mut World,
 ) -> io::Result<()> {
+    world.insert_resource(dungeon_action::PageStack::default());
     ops::rebuild_occupancy(world);
     let _ = world.run_system_once(fov_system);
     ops::update_visible_memory(world);
@@ -132,6 +133,22 @@ fn process_key(
     world: &mut World,
     game_start: Instant,
 ) -> io::Result<bool> {
+    // 页栈分派
+    let page = world.resource::<dungeon_action::PageStack>().current().clone();
+    match page {
+        dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
+        dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
+    }
+}
+
+/// 游戏页按键处理
+fn process_game_key(
+    code: KeyCode,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    modal_flag: &AtomicBool,
+    world: &mut World,
+    game_start: Instant,
+) -> io::Result<bool> {
     // 先按大写字母处理（KeyCode::Char('E') 等）
     let code = match code {
         KeyCode::Char(c) if c.is_ascii_uppercase() => KeyCode::Char(c.to_ascii_lowercase()),
@@ -141,10 +158,27 @@ fn process_key(
         return Ok(false);
     };
     match action {
-        // ── 直接行动（tap-tap → AV 队列） ──
         PlayerAction::Move(dx, dy) => Ok(handle_player_direction(world, *dx, *dy)),
         PlayerAction::Wait => Ok(handle_wait(world)),
         PlayerAction::Skill(i) => Ok(handle_skill(world, *i)),
+
+        // ── 页栈弹入对话框 ──
+        PlayerAction::Quit => {
+            if world.resource::<TurnManager>().game_over {
+                world.resource_mut::<TurnManager>().wants_quit = true;
+            } else {
+                world.resource_mut::<dungeon_action::PageStack>().push(
+                    dungeon_action::Page::Dialog("确认退出？".into()));
+            }
+            Ok(false)
+        }
+        PlayerAction::DescendStairs => {
+            if on_stairs(world) {
+                world.resource_mut::<dungeon_action::PageStack>().push(
+                    dungeon_action::Page::Dialog("确认下楼？".into()));
+            }
+            Ok(false)
+        }
 
         // ── 模态（阻塞式 UI，需暂停输入线程） ──
         PlayerAction::Throw => {
@@ -165,34 +199,6 @@ fn process_key(
             modal_flag.store(false, Ordering::Relaxed);
             Ok(false)
         }
-        PlayerAction::Quit => {
-            if world.resource::<TurnManager>().game_over {
-                world.resource_mut::<TurnManager>().wants_quit = true;
-            } else {
-                modal_flag.store(true, Ordering::Relaxed);
-                let confirmed = open_modal(terminal, "确认退出？");
-                modal_flag.store(false, Ordering::Relaxed);
-                if confirmed { world.resource_mut::<TurnManager>().wants_quit = true; }
-            }
-            Ok(false)
-        }
-        PlayerAction::DescendStairs => {
-            if on_stairs(world) {
-                modal_flag.store(true, Ordering::Relaxed);
-                let ok = open_modal(terminal, "确认下楼？");
-                modal_flag.store(false, Ordering::Relaxed);
-                if ok {
-                    descend(world);
-                    let _ = world.run_system_once(fov_system);
-                    ops::update_map_memory(world);
-                    ops::update_visible_memory(world);
-                    ops::rebuild_occupancy(world);
-                }
-            }
-            Ok(false)
-        }
-
-        // ── 即时行动（无阻塞） ──
         PlayerAction::PickupGround => {
             pickup_ground(world);
             Ok(false)
@@ -216,6 +222,42 @@ fn process_key(
                 }
             Ok(false)
         }
+    }
+}
+
+/// 对话框页按键处理
+fn process_dialog_key(code: KeyCode, world: &mut World, _title: &str) -> io::Result<bool> {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            // 弹出前获取对话标题来决定行为
+            let page = world.resource_mut::<dungeon_action::PageStack>().pop();
+            match page {
+                Some(dungeon_action::Page::Dialog(title)) => {
+                    match title.as_str() {
+                        "确认退出？" => {
+                            world.resource_mut::<TurnManager>().wants_quit = true;
+                        }
+                        "确认下楼？" => {
+                            if ops::on_stairs(world) {
+                                descend(world);
+                                let _ = world.run_system_once(fov_system);
+                                ops::update_map_memory(world);
+                                ops::update_visible_memory(world);
+                                ops::rebuild_occupancy(world);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            Ok(false)
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            world.resource_mut::<dungeon_action::PageStack>().pop();
+            Ok(false)
+        }
+        _ => Ok(false),
     }
 }
 

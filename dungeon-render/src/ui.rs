@@ -101,6 +101,23 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
                 .border_style(Style::default().fg(Color::DarkGray))),
         stats_area,
     );
+
+    // 页栈：对话框叠加层
+    if let Some(dungeon_action::Page::Dialog(title)) = world.get_resource::<dungeon_action::PageStack>()
+        .and_then(|ps| ps.0.last())
+    {
+        let dialog = Paragraph::new(vec![
+            Line::from(Span::styled(title.clone(), Style::default().fg(Color::Yellow).bold())),
+            Line::from(Span::styled(" Y)是  N)否", Style::default().fg(Color::DarkGray))),
+        ])
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)))
+        .alignment(Alignment::Center);
+        let area = frame.area();
+        frame.render_widget(dialog, Rect {
+            x: area.width / 2 - 12, y: area.height / 2,
+            width: 24, height: 5,
+        });
+    }
 }
 
 

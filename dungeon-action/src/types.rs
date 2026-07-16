@@ -251,6 +251,33 @@ pub struct PlayerPreview {
 }
 
 // ══════════════════════════════════════════════════════
+// 页栈 — 按键分派
+// ══════════════════════════════════════════════════════
+
+/// UI 页面，决定按键路由
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Page {
+    Game,              // 主游戏画面（默认）
+    Dialog(String),    // 确认对话框
+}
+
+/// 页栈：栈顶是当前活跃页面
+#[derive(Resource, Default)]
+pub struct PageStack(pub Vec<Page>);
+
+impl PageStack {
+    pub fn push(&mut self, page: Page) {
+        self.0.push(page);
+    }
+    pub fn pop(&mut self) -> Option<Page> {
+        self.0.pop()
+    }
+    pub fn current(&self) -> &Page {
+        self.0.last().unwrap_or(&Page::Game)
+    }
+}
+
+// ══════════════════════════════════════════════════════
 // 怪物意图收集
 // ══════════════════════════════════════════════════════
 
