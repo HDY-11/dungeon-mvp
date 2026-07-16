@@ -163,12 +163,17 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
                 }
             }
         }
-    let styled_lines: Vec<Line> = lines.into_iter()
-        .map(|row| Line::from(row.into_iter()
-            .map(|(g, fg, bg)| Span::styled(g.to_string(), Style::default().fg(fg).bg(bg)))
-            .collect::<Vec<_>>()))
-        .collect();
-    frame.render_widget(Paragraph::new(styled_lines).style(Style::default().fg(Color::White)), map_area);
+    // Buffer 直写：跳过 Paragraph/Line/Span，直接写入 frame Buffer Cell
+    let buf = frame.buffer_mut();
+    let map_x = map_area.x as usize;
+    let map_y = map_area.y as usize;
+    for (vy, row) in lines.iter().enumerate() {
+        for (vx, &(g, fg, bg)) in row.iter().enumerate() {
+            let cell = &mut buf[((map_x + vx) as u16, (map_y + vy) as u16)];
+            cell.set_symbol(g.encode_utf8(&mut [0u8; 4]));
+            cell.set_style(Style::default().fg(fg).bg(bg));
+        }
+    }
 
     // ── 事件日志（地图下方） ──
     let log = world.resource::<EventLog>();

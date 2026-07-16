@@ -77,20 +77,28 @@ fn run(
     });
 
     loop {
-        let has_action = match rx.try_recv() {
-            Ok(code) => process_key(code, terminal, &modal_flag, world, game_start)?,
-            Err(mpsc::TryRecvError::Empty) => {
-                // 空转时降低渲染频率，避免有限机型 CPU 满载
-                std::thread::sleep(Duration::from_millis(32));
-                false
-            }
-            Err(mpsc::TryRecvError::Disconnected) => break Ok(()),
-        };
+        let frame_start = Instant::now();
 
+        // 消费本帧所有输入
+        let mut has_action = false;
+        loop {
+            match rx.try_recv() {
+                Ok(code) => {
+                    if process_key(code, terminal, &modal_flag, world, game_start)? {
+                        has_action = true;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+
+        // 推进世界
         if has_action && !world.resource::<TurnManager>().game_over {
             advance_and_settle(world);
         }
 
+        // 渲染（每帧都画，固定帧率）
         {
             let w: &World = &*world;
             terminal.draw(|frame| render_ui(frame, game_start, w))?;
@@ -98,6 +106,13 @@ fn run(
 
         if world.resource::<TurnManager>().wants_quit {
             break Ok(());
+        }
+
+        // 帧率控制：33ms ≈ 30FPS
+        let elapsed = frame_start.elapsed();
+        let target = Duration::from_millis(33);
+        if elapsed < target {
+            std::thread::sleep(target - elapsed);
         }
     }
 }
