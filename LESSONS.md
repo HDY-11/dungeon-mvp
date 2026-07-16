@@ -524,68 +524,45 @@ grep -n "restore" dungeon-world/src/persist.rs   # GameSave::restore 中的 spaw
 
 **为什么更好：** `setup_world` 只执行一次（游戏启动），`descend` 每次下楼都执行，`restore` 每次读档都执行。三个路径不同的代码走的是"同一组件的三个不同拷贝"——这不是继承关系，是并行维护关系。任何遗漏都导致数据静默丢失。grep 在编译前就能发现缺口，无需等到运行后。
 
-### L45 — 阻塞式 UI 模态应使用页栈 + 管道，而非独立 event::read() 循环
+### L45 — 阻塞式 UI 模态在 30FPS 框架下应迁移到页栈
 
-**问题背景：** 查看模式（`open_look_mode`）、投掷瞄准（`open_throw_aim`）、背包（`open_inventory`）各自有独立的 `event::read()` + `terminal.draw()` 循环。这些模态绕过主循环的 30FPS 帧率控制，且 `modal_flag` 需要暂停输入线程来避免按键串扰。
+**问题背景：** 查看模式、投掷瞄准、背包在引入页栈之前各自有独立的 `event::read()` + `terminal.draw()` 循环。每个模态自包含、自洽，引入时是最简单直接的实现——不需要理解主循环的帧率逻辑，不需要协调渲染时序。
 
-**错误做法：**
-```rust
-// ❌ 每个模态独立循环，绕过了主循环
-fn open_look_mode(...) {
-    loop {
-        terminal.draw(...);
-        if let Event::Key(k) = event::read() { ... }
-    }
-}
-```
+**权衡：** 独立循环在项目早期（帧率不固定、页面少）是合理的妥协：
+- 优点：实现简单（一个函数管完）、隔离性好（不会破坏主循环）
+- 代价：绕过 30FPS 框架、`modal_flag` 需要暂停输入线程防串扰
 
-**正确做法：** 页栈 + 管道：
-1. 定义 `Page` 枚举变体（`Look`/`ThrowAim`/`Inventory`/`Dialog`...）
-2. 页栈 `current()` 决定按键路由
-3. 渲染管道一层 `render_ui` 根据 `current()` 决定绘制内容
-4. 所有 UI 共享 30FPS 帧率，无独立循环
+**教训：** 当出现以下信号时，独立循环的代价开始超过收益：
+1. 引入固定帧率（30FPS）后，独立循环的 `terminal.draw()` 与主循环的渲染不同步
+2. 页面数量增长到 3+，每个页面都要重复实现 `event::read()` 循环
+3. 需要在模态背景下播放动画（弹道轨迹、伤害数字）
+
+此时应将模态迁移到页栈 + 管道：页面状态集中到 ECS Resource，按键路由统一由 `PageStack` 分派，渲染走管道主线。
 
 ```rust
-// ✅ 页栈分派
+// 页栈分派（非唯一真理，而是 30FPS 框架下的自然选择）
 fn process_key(code, world) {
     match world.resource::<PageStack>().current() {
         Page::Game => process_game_key(code, world),
         Page::Look => process_look_key(code, world),
-        Page::Inventory => process_inventory_key(code, world),
         // ...
     }
 }
 ```
 
-**为什么更好：** 加入新 UI 页面只需加一个枚举变体、一个渲染分支、一个按键处理器。不需要操心输入线程同步。动画效果（弹道淡出、伤害数字）可以在 30FPS 框架下自然实现。
-
 **参见 ISSUES.md #A14**
 
-### L46 — 管道-过滤器结构应在架构早期引入，而非将 UI 逻辑堆积在单函数中
+### L46 — 显式管道阶段 vs 单函数渲染：取决于帧率策略
 
-**问题背景：** `render_ui` 从 ECS 查询到 Buffer 直写到面板渲染共 ~180 行，所有阶段紧耦合在一个函数体内。添加新 UI 元素需要在该函数内部深处插入代码，容易影响其他阶段的布局。
+**问题背景：** `render_ui` 曾是一个 ~180 行的函数，从 ECS 查询到 Buffer 写入全部在单一函数中完成。
 
-**错误做法：**
-```rust
-// ❌ 所有阶段耦合
-fn render_ui(frame, world) {
-    extract_scene_data(world);  // 阶段标记仅存在注释中
-    compute_camera();
-    render_tiles();
-    overlay_entities();
-    render_panels();
-}
-```
+**权衡：** 在无固定帧率时，单函数渲染是合理起点：
+- 优点：改动一个地方就能影响整个渲染流程、重构成本低、读者不必跨文件追踪
+- 代价：添加新图层（半块字符、伤害数字）需要在函数深处插入代码
 
-**正确做法：** 显式阶段 + `RenderScene` 中间数据：
-```rust
-// ✅ 管道分离
-fn render_ui(frame, world) {
-    let scene = extract_scene(world);    // 阶段 1：数据提取
-    let (grid, cam) = render_map_grid(&scene, world); // 阶段 2：格栅+实体
-    write_buffer(frame, &grid);          // 阶段 3：Buffer 输出
-    render_panels(frame, world, &scene); // 阶段 4：UI 层
-}
-```
+**教训：** 管道分离的时机是当你满足以下条件之一时：
+1. 需要独立测试某个渲染阶段（如测试地图格栅不依赖面板布局）
+2. 需要缓存中间数据做 dirty tracking（持久 Canvas）
+3. 渲染阶段数量超过 5 个（此时单函数的行号和嵌套已经不利于阅读）
 
-**收益：** 每个阶段可独立测试。提取的 `RenderScene` 结构体包含一帧的所有渲染数据，可以缓存用于 dirty tracking。添加新图层（半块字符、伤害数字）只需新增一个管道阶段。
+如果以上都不满足，单函数渲染不仅没问题，还更清晰。本项目的管道分离恰好在引入 30FPS 时发生——这是自然演化，不是"之前写错了"。
