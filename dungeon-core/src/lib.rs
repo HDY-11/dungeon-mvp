@@ -104,12 +104,14 @@ impl Tile {
         }
     }
 
-    /// 渲染背景色（仅水域有特殊背景）
+    /// 渲染背景色（所有 Tile 均有背景色，为半块字符叠加铺路）
     pub fn bg_color(self) -> Option<(u8, u8, u8)> {
         match self {
+            Tile::Wall => Some((50, 50, 60)),
+            Tile::Floor => Some((20, 22, 25)),
             Tile::ShallowWater => Some((120, 190, 250)),
             Tile::DeepWater => Some((20, 60, 140)),
-            _ => None,
+            Tile::Stalactite => Some((60, 55, 20)),
         }
     }
 }

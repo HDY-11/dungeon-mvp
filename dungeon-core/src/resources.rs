@@ -98,6 +98,34 @@ pub struct LookCursor {
     pub y: usize,
 }
 
+/// 模态种类（仅标识，无数据——具体交互数据在各自的 World resource 里）
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModalKind {
+    Look,
+    Confirm { title: &'static str, on_yes: ConfirmAction },
+    Inventory,
+    ThrowSelect,
+    ThrowAim,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Quit,
+    Descend,
+}
+
+/// 模态请求信号（handler 设置 → 主循环消费 → subscribe）
+#[derive(Resource, Default)]
+pub struct ModalRequest {
+    pub kind: Option<ModalKind>,
+}
+
+/// 模态活跃状态（渲染层读取，主循环维护）
+#[derive(Resource, Default)]
+pub struct ModalState {
+    pub active_kind: Option<ModalKind>,
+}
+
 #[derive(Resource)]
 pub struct OccupancyMap {
     pub cells: [[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],

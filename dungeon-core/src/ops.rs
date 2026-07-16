@@ -95,8 +95,8 @@ pub fn pickup_ground(world: &mut World) {
 
 /// 消耗副手 1 个物品。栈空时清除槽位。返回是否还有剩余。
 pub fn consume_off_hand(world: &mut World, entity: Entity) -> bool {
-    if let Some(mut eq) = world.get_mut::<Equipment>(entity) {
-        if let Some(ref mut stack) = eq.off_hand {
+    if let Some(mut eq) = world.get_mut::<Equipment>(entity)
+        && let Some(ref mut stack) = eq.off_hand {
             stack.count = stack.count.saturating_sub(1);
             if stack.count == 0 {
                 eq.off_hand = None;
@@ -104,7 +104,6 @@ pub fn consume_off_hand(world: &mut World, entity: Entity) -> bool {
             }
             return true;
         }
-    }
     false
 }
 

@@ -90,10 +90,10 @@ fn place_ground_items(world: &mut World, item_ids: &[usize], exclude: &[(usize, 
     }
 }
 
-/// 在地图可行走格上随机放置技能卷轴，每层 1-3 张
-fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
+/// 在地图可行走格上随机放置技能卷轴，每层 1-3 张，深层额外增加
+fn place_skill_scrolls(world: &mut World, floor: u32, rng: &mut impl Rng, exclude: &[(usize, usize)]) {
     use rand::RngExt;
-    let count = rng.random_range(1u32..=3);
+    let count = rng.random_range(1u32..=3) + floor.saturating_sub(1) / 5;
     let scroll_ids = [dungeon_core::ITEM_SCROLL_HEAL as u32, dungeon_core::ITEM_SCROLL_SHIELD as u32, dungeon_core::ITEM_SCROLL_BERSERK as u32];
     let kinds = [
         dungeon_core::SkillKind::Heal { amount: 15 },
@@ -151,11 +151,10 @@ fn pick_stair_pos(map: &Map, spawn_pos: (usize, usize), rng: &mut impl Rng) -> (
     let (spx, spy) = spawn_pos;
 
     // 仅当有多个房间时才用最远房间；单房间时 farthest_room_from 返回 spawn 本身
-    if map.rooms.len() > 1 {
-        if let Some(best) = map.farthest_room_from(spawn_pos) {
+    if map.rooms.len() > 1
+        && let Some(best) = map.farthest_room_from(spawn_pos) {
             return best;
         }
-    }
 
     // G9: 单房间 → 醉汉游走 60 步
     let (mut cx, mut cy) = (spx as isize, spy as isize);
@@ -291,6 +290,7 @@ pub fn descend(world: &mut World) {
     let mut rng = rand::rngs::SmallRng::seed_from_u64(base_seed.wrapping_add(f as u64));
     let mut map = Map::new(); map.generate(&mut rng);
     w.insert_resource(map); w.insert_resource(MapMemory::new());
+    w.insert_resource(GameRng::new(base_seed.wrapping_add(f as u64).wrapping_add(42)));  // I44: 下楼时重置 RNG 种子
 
     // ── 重建玩家 ──
     let spawn = { w.resource::<Map>().spawn_point() };

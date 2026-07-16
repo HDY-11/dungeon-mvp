@@ -209,8 +209,8 @@ pub fn open_inventory(
                 (Page::List(_), KeyCode::Right) => page = Page::List(InvPanel::Right),
                 (Page::List(InvPanel::Left), KeyCode::Up) => { left_sel = left_sel.saturating_sub(1); }
                 (Page::List(InvPanel::Right), KeyCode::Up) => { right_sel = right_sel.saturating_sub(1); }
-                (Page::List(InvPanel::Left), KeyCode::Down) => { if left_sel + 1 < left_total { left_sel += 1; } }
-                (Page::List(InvPanel::Right), KeyCode::Down) => { if right_sel + 1 < ground.len() { right_sel += 1; } }
+                (Page::List(InvPanel::Left), KeyCode::Down) if left_sel + 1 < left_total => { left_sel += 1; }
+                (Page::List(InvPanel::Right), KeyCode::Down) if right_sel + 1 < ground.len() => { right_sel += 1; }
                 (Page::List(InvPanel::Left), KeyCode::Enter) => {
                     if left_sel < 4 {
                         if [&equip.main_hand, &equip.off_hand, &equip.armor, &equip.ring][left_sel].is_some() {
@@ -220,11 +220,10 @@ pub fn open_inventory(
                         page = Page::Detail(DetailSource::LeftInv, left_sel - 4);
                     }
                 }
-                (Page::List(InvPanel::Right), KeyCode::Enter) => {
-                    if !ground.is_empty() {
+                (Page::List(InvPanel::Right), KeyCode::Enter)
+                    if !ground.is_empty() => {
                         page = Page::Detail(DetailSource::Right, right_sel);
                     }
-                }
                 // 列表页热键
                 (Page::List(InvPanel::Left), KeyCode::Char(ch)) if ch.is_ascii_lowercase() || ch.is_ascii_digit() => {
                     let idx = if ch.is_ascii_digit() { ch as usize - '0' as usize } else { ch as usize - 'a' as usize + 10 };

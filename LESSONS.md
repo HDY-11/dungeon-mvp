@@ -135,7 +135,7 @@ av_remaining ≤ 0 → pop_ready()       // 执行
 
 **问题背景：** I29 引入 ActiveBuffs（新 AV 制）时保留了旧 `Buffs`（旧回合制）。`execute_skill` 同时写入两者，`effective_attack` / `effective_defense` 对两者求和 → Buff 双倍叠加。
 
-**参见 ISSUES.md #G14**
+**参见 ISSUES.md #G8**
 
 **错误做法：** 
 ```rust
@@ -424,7 +424,7 @@ let color = renderable_color(r.color);
 
 ### L41 — 移除废弃结构体时，必须 grep 所有 crate 中对该结构体的导入和引用
 
-**问题背景：** D11 中移除 `Buffs` 结构体时，`components.rs` 中的 struct 定义删除后，编译通过了，但 `tests.rs` 中仍有 `Buffs` 的导入和 `Buffs::new()` 调用——因为测试代码不常被检查到。
+**问题背景：** D10 中移除 `Buffs` 结构体时，`components.rs` 中的 struct 定义删除后，编译通过了，但 `tests.rs` 中仍有 `Buffs` 的导入和 `Buffs::new()` 调用——因为测试代码不常被检查到。
 
 **错误做法：** 只删除核心定义（struct + impl），依赖"编译会告诉我哪里还有引用"。
 
@@ -436,7 +436,7 @@ grep -rn "Buff\b" --include="*.rs" src/ dungeon-core/ dungeon-action/ dungeon-wo
 
 **为什么更好：** `Buffs` 和 `ActiveBuffs` 名称相似，grep 结果会同时包含两者。通过检查每个命中的上下文来区分"旧系统引用（删）"和"新系统引用（留）"——不做这个检查的话，测试文件等不常运行的代码会被遗漏。
 
-**参见 ISSUES.md #D11**
+**参见 ISSUES.md #D10**
 
 ### L42 — bevy_ecs 的 Mut<T> 存活期间不得再对同一资源调用 resource_mut
 
@@ -468,7 +468,7 @@ update_throw_path(world);  // 安全：前一个 Mut<T> 已 drop
 - `world.get_mut::<T>(entity)` — **同一组件类型**（不同实体可以）
 - `world.query::<Q>().iter_mut(world)` — 同一 Query 不会冲突，但 query + get_mut 对同一组件类型会冲突
 
-**参见 ISSUES.md #I29**
+**参见 ISSUES.md #I46**
 
 ### L43 — Bresenham 类方向派生算法必须显式处理起终点退化
 
@@ -495,13 +495,13 @@ let sx = if x0 < x1 { 1 } else { -1 };
 
 **推广：** 任何包含 `if a < b { 1 } else { -1 }` 且未处理 `a == b` 的方向派生代码，都应在函数入口检查退化条件。
 
-**参见 ISSUES.md #I43**
+**参见 ISSUES.md #I41**
 
 ### L44 — 为 Player 添加新组件后，必须 grep descend 和 persist 两个路径确保一致
 
-**问题背景：** D16（Skills 下楼/存档丢失）是同一个模式在本项目中的第三次发生——前两次是 D9（ActiveBuffs 下楼丢失）和 I34（ActiveBuffs 存档丢失）。每次都是"在 Player 上加了新组件 → 更新了 `setup_world`（首次创建）→ 但忘记更新 `descend`（下楼重建）和/或 `persist`（存档读档）的 query 和 restore"。
+**问题背景：** D15（Skills 下楼/存档丢失）是同一个模式在本项目中的第三次发生——前两次是 D8（ActiveBuffs 下楼丢失）和 I34（ActiveBuffs 存档丢失）。每次都是"在 Player 上加了新组件 → 更新了 `setup_world`（首次创建）→ 但忘记更新 `descend`（下楼重建）和/或 `persist`（存档读档）的 query 和 restore"。
 
-**参见 ISSUES.md #D16**
+**参见 ISSUES.md #D15**
 
 **错误做法：** 只更新 `setup_world` 中的组件插入，假设下楼和存档路径"会自动继承"。
 

@@ -98,11 +98,10 @@ pub fn open_throw_select(
         if let Ok(Event::Key(key)) = event::read() {
             match key.code {
                 KeyCode::Char('r') => {
-                    if selected > 0 { selected -= 1; }
+                    selected = selected.saturating_sub(1);
                 }
-                KeyCode::Char('y') => {
-                    if selected + 1 < throwable_ids.len() { selected += 1; }
-                }
+                KeyCode::Char('y')
+                    if selected + 1 < throwable_ids.len() => { selected += 1; }
                 KeyCode::Enter => {
                     let (item_id, _name, _count) = &throwable_ids[selected];
                     let item_id = *item_id;
@@ -162,6 +161,7 @@ pub fn open_throw_aim(
                         KeyCode::PageDown => { tp.cursor.1 = (tp.cursor.1 + 5).min(MAP_HEIGHT - 1); }
                         _ => {}
                     }
+                    #[allow(clippy::drop_non_drop)]
                     drop(tp);
                     update_throw_path(world);
                 }

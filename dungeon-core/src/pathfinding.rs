@@ -71,9 +71,8 @@ pub fn astar(
             let ny = node.y.wrapping_add_signed(dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT { continue; }
             if !map_tiles[ny][nx].walkable() { continue; }
-            if let Some(occ) = occupied {
-                if (nx, ny) != goal && occ.is_occupied(nx, ny) { continue; }
-            }
+            if let Some(occ) = occupied
+                && (nx, ny) != goal && occ.is_occupied(nx, ny) { continue; }
             let ni = idx(nx, ny);
             if next_cost < costs[ni] {
                 costs[ni] = next_cost;

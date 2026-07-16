@@ -75,8 +75,8 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     // ── 次级标注：实体身上的 Buff（小字号 = dim 样式）──
     let mut has_buffs = false;
     for (_, _, _, _, _, e) in &status_entries {
-        if let Some(ab) = world.get::<ActiveBuffs>(*e) {
-            if !ab.0.is_empty() {
+        if let Some(ab) = world.get::<ActiveBuffs>(*e)
+            && !ab.0.is_empty() {
                 if !has_buffs {
                     out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
                     has_buffs = true;
@@ -92,14 +92,12 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
                     ]));
                 }
             }
-        }
     }
 
     // 玩家自己的 Buff 也显示
     if let Some(ab) = world.try_query::<(&Player, &ActiveBuffs)>()
         .and_then(|mut q| q.iter(world).next().map(|(_, ab)| ab))
-    {
-        if !ab.0.is_empty() {
+        && !ab.0.is_empty() {
             if !has_buffs {
                 out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
             }
@@ -114,7 +112,6 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
                 ]));
             }
         }
-    }
 
     // ── 空状态提示 ──
     if status_entries.is_empty() && out.len() <= 5 {

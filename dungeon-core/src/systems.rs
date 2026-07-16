@@ -16,12 +16,11 @@ pub fn check_death_system(
     mut turn_manager: ResMut<TurnManager>,
     mut event_log: ResMut<EventLog>,
 ) {
-    if let Ok(stats) = player_query.single() {
-        if stats.hp <= 0 {
+    if let Ok(stats) = player_query.single()
+        && stats.hp <= 0 {
             event_log.push("你死了".to_string());
             turn_manager.game_over = true;
         }
-    }
 }
 
 pub fn apply_exp_system(

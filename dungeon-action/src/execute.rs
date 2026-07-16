@@ -76,11 +76,10 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
     match &entry.kind {
         ActionKindV3::Chase => {
             let player_pos = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y));
-            if let Some((px, py)) = player_pos {
-                if world.get::<Viewshed>(entry.entity)
+            if let Some((px, py)) = player_pos
+                && world.get::<Viewshed>(entry.entity)
                     .map(|v| v.visible_tiles.contains(&(px, py)))
                     .unwrap_or(false) { return true; }
-            }
             // 玩家不在视野内但有记忆位置 → 继续追击
             world.get::<LastKnownPlayerPos>(entry.entity)
                 .map(|l| l.0.is_some())
@@ -161,21 +160,17 @@ fn execute_chase(world: &mut World, entity: Entity) {
             dungeon_core::pathfinding::astar(pos, (px, py), &map.tiles, Some(occ))
                 .and_then(|path| path.first().copied())
         };
-        if let Some((nx, ny)) = next_step {
-            if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
-        }
+        if let Some((nx, ny)) = next_step
+            && let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
     }
 
     // 到达记忆位置附近但仍未看到玩家 → 清除记忆，进入游荡
-    if !target_visible {
-        if let Some(mut lkp) = world.get_mut::<LastKnownPlayerPos>(entity) {
-            if let Some((lkx, lky)) = lkp.0 {
-                if pos.0.abs_diff(lkx) <= 2 && pos.1.abs_diff(lky) <= 2 {
+    if !target_visible
+        && let Some(mut lkp) = world.get_mut::<LastKnownPlayerPos>(entity)
+            && let Some((lkx, lky)) = lkp.0
+                && pos.0.abs_diff(lkx) <= 2 && pos.1.abs_diff(lky) <= 2 {
                     lkp.0 = None;
                 }
-            }
-        }
-    }
 }
 
 fn execute_flee(world: &mut World, entity: Entity) {
@@ -200,9 +195,8 @@ fn execute_flee(world: &mut World, entity: Entity) {
         }
         best
     };
-    if let Some((nx, ny)) = best {
-        if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
-    }
+    if let Some((nx, ny)) = best
+        && let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
 }
 
 fn execute_wander(world: &mut World, entity: Entity) {
@@ -218,9 +212,8 @@ fn execute_wander(world: &mut World, entity: Entity) {
         can_move_to(map, occ, pos.x, pos.y, dx, dy)
             .then_some((pos.x.wrapping_add_signed(dx), pos.y.wrapping_add_signed(dy)))
     } else { None };
-    if let Some((nx, ny)) = target {
-        if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
-    }
+    if let Some((nx, ny)) = target
+        && let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
 }
 
 fn execute_wait(_entity: Entity) {}
@@ -234,6 +227,14 @@ fn execute_player_move(world: &mut World, entity: Entity, dx: isize, dy: isize) 
         (ppos.0.wrapping_add_signed(dx), ppos.1.wrapping_add_signed(dy))
     };
     if let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
+}
+
+/// 统一暴击计算（玩家和怪物共享路径）
+fn calc_crit(stats: &Stats, bonus: &dungeon_core::StatBonus, crit_roll: f32) -> (bool, f32) {
+    let total_crit_rate = (stats.crit_rate + bonus.crit_rate).min(1.0);
+    let is_crit = total_crit_rate > crit_roll;
+    let crit_mult = if is_crit { 1.0 + stats.crit_damage } else { 1.0 };
+    (is_crit, crit_mult)
 }
 
 fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
@@ -255,15 +256,15 @@ fn execute_attack(world: &mut World, attacker: Entity, target: Entity) {
             ops::effective_defense(&target_stats, &world.get::<Inventory>(target).cloned().unwrap_or_default(), &eq.cloned().unwrap_or_default(), None) as i32
         };
         let raw_dmg = (effective_atk - target_def).max(1);
-        // G16: 暴击率纳入装备加成（equipment_bonus 已含 crit_rate）
         let equip = world.get::<Equipment>(attacker);
         let inv = world.get::<Inventory>(attacker);
         let bonus = equip.zip(inv).map(|(eq, inv)| dungeon_core::equipment_bonus(inv, eq)).unwrap_or_default();
-        let total_crit_rate = (attacker_stats.crit_rate + bonus.crit_rate).min(1.0);
         let crit_roll = world.resource_mut::<GameRng>().random_f32();
-        let is_crit = total_crit_rate > crit_roll;
-        dmg = if is_crit { (raw_dmg as f32 * (1.0 + attacker_stats.crit_damage)).round() as i32 } else { raw_dmg };
-        crit = is_crit;
+        (dmg, crit) = {
+            let (is_crit, crit_mult) = calc_crit(&attacker_stats, &bonus, crit_roll);
+            let d = if is_crit { (raw_dmg as f32 * crit_mult).round() as i32 } else { raw_dmg };
+            (d, is_crit)
+        };
     }
     {
         let Some(mut target_stats) = world.get_mut::<Stats>(target) else { return };
@@ -304,13 +305,13 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
     }
     match skill_kind {
         dungeon_core::SkillKind::Heal { amount } => {
-            let effective = amount as i32 + skill_proficiency as i32 * 3;
+            let effective = amount + skill_proficiency as i32 * 3;
             if let Some(mut stats) = world.get_mut::<Stats>(entity) { stats.hp = (stats.hp + effective).min(stats.max_hp); }
             world.resource_mut::<EventLog>().push(format!("{}恢复了{}HP（熟练度+{}）", skill_name, effective, skill_proficiency));
         }
         dungeon_core::SkillKind::Shield { def_boost, duration } => {
             // 新 AV Buff 系统
-            let effective_def = def_boost as i32 + skill_proficiency as i32 * 2;
+            let effective_def = def_boost + skill_proficiency as i32 * 2;
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;
                 if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Shield) {
@@ -324,7 +325,7 @@ fn execute_skill(world: &mut World, entity: Entity, skill_idx: usize) {
         }
         dungeon_core::SkillKind::Berserk { atk_boost, duration } => {
             // 新 AV Buff 系统
-            let effective_atk = atk_boost as i32 + skill_proficiency as i32 * 2;
+            let effective_atk = atk_boost + skill_proficiency as i32 * 2;
             if let Some(mut ab) = world.get_mut::<ActiveBuffs>(entity) {
                 let av = duration as f32 * 1000.0;
                 if let Some(existing) = ab.0.iter_mut().find(|b| b.kind == BuffKind::Berserk) {
@@ -393,40 +394,34 @@ fn execute_throw(world: &mut World, _attacker: Entity, tx: usize, ty: usize) {
     }
 
     // 消耗副手 1 颗石子
-    if let Some(p) = ops::player_entity(world) {
-        if let Some(mut eq) = world.get_mut::<Equipment>(p) {
-            if let Some(ref mut stack) = eq.off_hand {
+    if let Some(p) = ops::player_entity(world)
+        && let Some(mut eq) = world.get_mut::<Equipment>(p)
+            && let Some(ref mut stack) = eq.off_hand {
                 stack.count = stack.count.saturating_sub(1);
                 if stack.count == 0 {
                     eq.off_hand = None;
                 }
             }
-        }
-    }
 }
 
-/// 计算玩家暴击率和暴击倍率，与 execute_attack 共用同一 equipment_bonus 路径
+/// 计算玩家暴击率和暴击倍率，复用 calc_crit
 fn calc_player_crit(world: &World, crit_roll: f32) -> (bool, f32) {
-    let (total_crit_rate, crit_damage) = {
-        let p = ops::player_entity(world);
-        match p {
-            Some(p) => {
-                let p_stats = world.get::<Stats>(p);
-                let inv = world.get::<Inventory>(p);
-                let equip = world.get::<Equipment>(p);
-                let bonus = equip.zip(inv)
-                    .map(|(eq, inv)| dungeon_core::equipment_bonus(inv, eq))
-                    .unwrap_or_default();
-                let cr = p_stats.map(|s| (s.crit_rate + bonus.crit_rate).min(1.0)).unwrap_or(0.05);
-                let cd = p_stats.map(|s| s.crit_damage).unwrap_or(0.5);
-                (cr, cd)
+    let p = ops::player_entity(world);
+    match p {
+        Some(p) => {
+            let p_stats = world.get::<Stats>(p);
+            let inv = world.get::<Inventory>(p);
+            let equip = world.get::<Equipment>(p);
+            let bonus = equip.zip(inv)
+                .map(|(eq, inv)| dungeon_core::equipment_bonus(inv, eq))
+                .unwrap_or_default();
+            match p_stats {
+                Some(stats) => calc_crit(stats, &bonus, crit_roll),
+                None => (false, 1.0),
             }
-            None => (0.05, 0.5),
         }
-    };
-    let is_crit = crit_roll < total_crit_rate;
-    let crit_mult = if is_crit { 1.0 + crit_damage } else { 1.0 };
-    (is_crit, crit_mult)
+        None => (false, 1.0),
+    }
 }
 
 /// 处理实体死亡：经验、掉落生成、despawn。

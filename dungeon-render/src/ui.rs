@@ -138,18 +138,17 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         }
     }
     // 光标高亮：黄色背景覆盖光标所在格
-    if let Some(cursor) = world.get_resource::<LookCursor>() {
-        if cursor.active && cursor.y >= cam_y && cursor.y < cam_y + vh
+    if let Some(cursor) = world.get_resource::<LookCursor>()
+        && cursor.active && cursor.y >= cam_y && cursor.y < cam_y + vh
             && cursor.x >= cam_x && cursor.x < cam_x + vw
         {
             let (idx, jdx) = (cursor.y - cam_y, cursor.x - cam_x);
             let (g, fg, _) = lines[idx][jdx];
             lines[idx][jdx] = (g, fg, Color::Rgb(80, 80, 40)); // 暗黄色背景
         }
-    }
     // 投掷轨迹渲染：蓝色 *（有效）或红色 *（无效）
-    if let Some(tp) = world.get_resource::<ThrowPreview>() {
-        if tp.active {
+    if let Some(tp) = world.get_resource::<ThrowPreview>()
+        && tp.active {
             let trajectory_color = if tp.valid_target {
                 Color::Rgb(80, 160, 255)  // 蓝色
             } else {
@@ -164,7 +163,6 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
                 }
             }
         }
-    }
     let styled_lines: Vec<Line> = lines.into_iter()
         .map(|row| Line::from(row.into_iter()
             .map(|(g, fg, bg)| Span::styled(g.to_string(), Style::default().fg(fg).bg(bg)))
@@ -236,6 +234,13 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
         let mut q = world.try_query::<(&Inventory, &Equipment, Option<&ActiveBuffs>)>().expect("Inventory+Equipment+ActiveBuffs registered at init");
         q.iter(world).next().map(|(inv, eq, ab)| effective_defense(s, inv, eq, ab)).unwrap_or(s.defense)
     };
+    let display_crit_rate = {
+        let mut q = world.try_query::<(&Inventory, &Equipment)>().expect("Inventory+Equipment registered at init");
+        q.iter(world).next().map(|(inv, eq)| {
+            let bonus = dungeon_core::equipment_bonus(inv, eq);
+            (s.crit_rate + bonus.crit_rate).min(1.0) * 100.0
+        }).unwrap_or(s.crit_rate * 100.0)
+    };
     out.push(Line::from(vec![
         Span::styled(" 攻击", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>3}", eff_atk)), Span::raw("   "),
         Span::styled("法术精通", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>3}", s.magic_mastery)),
@@ -246,7 +251,7 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
     ]));
     out.push(Line::from(Span::raw("")));
     out.push(Line::from(vec![
-        Span::styled(" 暴击率", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>5.1}%", s.crit_rate * 100.0)), Span::raw(" "),
+        Span::styled(" 暴击率", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>5.1}%", display_crit_rate)), Span::raw(" "),
         Span::styled(" 暴击伤害", Style::default().fg(Color::DarkGray)), Span::raw(format!("{:>4.0}%", s.crit_damage * 100.0)),
     ]));
     out.push(Line::from(Span::raw("")));
@@ -261,18 +266,18 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
         out.push(Line::from(Span::styled("── 装备 ──", Style::default().fg(Color::DarkGray))));
         out.push(Line::from(vec![
             Span::styled("主手:", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", &mh[..mh.len().min(10)])),
+            Span::raw(mh[..mh.len().min(10)].to_string()),
         ]));
         out.push(Line::from(vec![
             Span::styled("副手:", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", &oh[..oh.len().min(10)])),
+            Span::raw(oh[..oh.len().min(10)].to_string()),
         ]));
         out.push(Line::from(vec![
             Span::styled("防具:", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", &ar[..ar.len().min(10)])),
+            Span::raw(ar[..ar.len().min(10)].to_string()),
             Span::raw("   "),
             Span::styled("戒指:", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("{}", &rg[..rg.len().min(10)])),
+            Span::raw(rg[..rg.len().min(10)].to_string()),
         ]));
     }
     out.push(Line::from(Span::raw("")));
@@ -296,8 +301,8 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
         }
     }
     // ── 光标查看信息 ──
-    if let Some(cursor) = world.get_resource::<LookCursor>() {
-    if cursor.active {
+    if let Some(cursor) = world.get_resource::<LookCursor>()
+    && cursor.active {
         let (cx, cy) = (cursor.x, cursor.y);
         let explored = world.resource::<MapMemory>().explored;
         let map = world.resource::<Map>();
@@ -338,7 +343,6 @@ pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &Worl
                 out.push(Line::from(Span::styled("  (未探索)", Style::default().fg(Color::DarkGray))));
             }
         }
-    }
     }
     out
 }

@@ -216,11 +216,10 @@ impl ItemStack {
 
     pub fn name(&self) -> String {
         // I41: 优先使用自定义名称
-        if let Some(ref meta) = self.meta {
-            if let Some(ref custom) = meta.display_name {
+        if let Some(ref meta) = self.meta
+            && let Some(ref custom) = meta.display_name {
                 return custom.clone();
             }
-        }
         self.def().map(|d| d.name.clone()).unwrap_or_else(|| format!("未知物品({})", self.item_id))
     }
 
