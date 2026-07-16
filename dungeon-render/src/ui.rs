@@ -1,11 +1,10 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
     ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
-    Position, Skills, Stats, ThrowPreview, Tile, TurnManager, Viewshed, VisibleMemory,
+    Position, Skills, Stats, Tile, Viewshed,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
-    effective_attack, effective_defense, collect_renderables,
+    effective_attack, effective_defense,
 };
-use crate::color::renderable_color;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
@@ -13,37 +12,22 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-use std::collections::HashSet;
 use std::time::Instant;
 use bevy_ecs::prelude::World;
+use crate::pipeline;
 use crate::timeline::build_timeline;
 
 pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let area = frame.area();
     let inner = inner_rect(area, 1);
+    let scene = pipeline::extract_scene(world);
 
-    let (game_over, player_visible, tiles, explored, px, py, visible_mem) = {
-        let go = world.resource::<TurnManager>().game_over;
-        let pv: HashSet<(usize, usize)> = {
-            let mut q = world.try_query::<(&Player, &Viewshed)>().expect("Player+Viewshed registered at init");
-            q.iter(world).next()
-                .map(|(_, v)| v.visible_tiles.iter().copied().collect())
-                .unwrap_or_default()
-        };
-        let ts = world.resource::<Map>().tiles;
-        let ex = world.resource::<MapMemory>().explored;
-        let pp = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world)
-            .next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0));
-        let vm: Vec<(usize, usize, char, (u8, u8, u8))> = world.resource::<VisibleMemory>().entries.values().copied().collect();
-        (go, pv, ts, ex, pp.0, pp.1, vm)
-    };
-
-    let title = if game_over { "  你死了  " } else { "  Dungeon MVP " };
+    let title = if scene.game_over { "  你死了  " } else { "  Dungeon MVP " };
     let block = Block::default()
         .title(title).title_alignment(Alignment::Center)
         .borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(block, area);
-    if game_over {
+    if scene.game_over {
         frame.render_widget(Paragraph::new(Line::from("按 q 退出").centered())
             .style(Style::default().fg(Color::Red)), inner);
         return;
@@ -58,10 +42,9 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             Constraint::Min(1),
         ])
         .split(inner);
-    let (timeline_area, map_events_area, stats_area) = (chunks[0], chunks[2],
-        Rect { x: chunks[4].x, y: chunks[4].y, width: chunks[4].width, height: inner.height });
+    let (timeline_area, map_events_area) = (chunks[0], chunks[2]);
+    let stats_area = Rect { x: chunks[4].x, y: chunks[4].y, width: chunks[4].width, height: inner.height };
 
-    // 地图 + 事件垂直分割：地图占 VIEWPORT_HEIGHT，剩余给事件日志
     let map_events_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -72,102 +55,14 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let map_area = map_events_chunks[0];
     let events_area = map_events_chunks[1];
 
-    let vw = VIEWPORT_WIDTH;
-    let vh = VIEWPORT_HEIGHT;
-    // 摄像机偏移：以玩家为中心，钳制到地图边界
-    let cam_x = (px.saturating_sub(vw / 2)).min(MAP_WIDTH.saturating_sub(vw));
-    let cam_y = (py.saturating_sub(vh / 2)).min(MAP_HEIGHT.saturating_sub(vh));
+    // 管道 1：渲染地图格栅
+    let (grid, _cam_x, _cam_y) = pipeline::render_map_grid(&scene, world);
 
-    let renderables = collect_renderables(world);
-
-    /// 将颜色降饱和+变暗（灰色滤镜）
-    fn dim(c: u8, factor: f32) -> u8 {
-        (c as f32 * (1.0 - factor) + 96.0 * factor) as u8
-    }
-    fn dim_tile(tile: dungeon_core::Tile) -> (Color, Color) {
-        let (r, g, b) = tile.fg_color();
-        let fg = Color::Rgb(dim(r, 0.55), dim(g, 0.55), dim(b, 0.55));
-        let bg = tile.bg_color().map(|(r, g, b)|
-            Color::Rgb(dim(r, 0.7), dim(g, 0.7), dim(b, 0.7))
-        ).unwrap_or(Color::Reset);
-        (fg, bg)
-    }
-
-    // (glyph, fg, bg)
-    let mut lines: Vec<Vec<(char, Color, Color)>> = Vec::with_capacity(vh);
-    for vy in 0..vh {
-        let my = cam_y + vy;
-        let mut row = Vec::with_capacity(vw);
-        for vx in 0..vw {
-            let mx = cam_x + vx;
-            let pos = (mx, my);
-            let tile = tiles[my][mx];
-            if player_visible.contains(&pos) {
-                let (r, g, b) = tile.fg_color();
-                let fg = Color::Rgb(r, g, b);
-                let bg = tile.bg_color().map(|(r, g, b)| Color::Rgb(r, g, b)).unwrap_or(Color::Reset);
-                row.push((tile.glyph(), fg, bg));
-            } else if explored[my][mx] {
-                let (fg, bg) = dim_tile(tile);
-                row.push((tile.glyph(), fg, bg));
-            } else {
-                row.push((' ', Color::DarkGray, Color::Reset));
-            }
-        }
-        lines.push(row);
-    }
-    for &(_entity, ex, ey, glyph, (r, g, b)) in &renderables {
-        if ey >= cam_y && ey < cam_y + vh
-            && ex >= cam_x && ex < cam_x + vw
-            && player_visible.contains(&(ex, ey))
-        {
-            let (idx, jdx) = (ey - cam_y, ex - cam_x);
-            let bg = lines[idx][jdx].2;
-            // I35: Renderable.color 已在 spawn 时写入独特色，直接使用
-            let color = renderable_color((r, g, b));
-            lines[idx][jdx] = (glyph, color, bg);
-        }
-    }
-    for &(mx, my, glyph, _) in &visible_mem {
-        if !player_visible.contains(&(mx, my)) && explored[my][mx]
-            && my >= cam_y && my < cam_y + vh
-            && mx >= cam_x && mx < cam_x + vw
-        {
-            let (idx, jdx) = (my - cam_y, mx - cam_x);
-            lines[idx][jdx] = (glyph, Color::Rgb(dim(160, 0.5), dim(160, 0.5), dim(160, 0.5)), lines[idx][jdx].2);
-        }
-    }
-    // 光标高亮：黄色背景覆盖光标所在格
-    if let Some(cursor) = world.get_resource::<LookCursor>()
-        && cursor.active && cursor.y >= cam_y && cursor.y < cam_y + vh
-            && cursor.x >= cam_x && cursor.x < cam_x + vw
-        {
-            let (idx, jdx) = (cursor.y - cam_y, cursor.x - cam_x);
-            let (g, fg, _) = lines[idx][jdx];
-            lines[idx][jdx] = (g, fg, Color::Rgb(80, 80, 40)); // 暗黄色背景
-        }
-    // 投掷轨迹渲染：蓝色 *（有效）或红色 *（无效）
-    if let Some(tp) = world.get_resource::<ThrowPreview>()
-        && tp.active {
-            let trajectory_color = if tp.valid_target {
-                Color::Rgb(80, 160, 255)  // 蓝色
-            } else {
-                Color::Rgb(220, 60, 60)   // 红色
-            };
-            for &(tx, ty) in &tp.path {
-                if ty >= cam_y && ty < cam_y + vh
-                    && tx >= cam_x && tx < cam_x + vw
-                {
-                    let (idx, jdx) = (ty - cam_y, tx - cam_x);
-                    lines[idx][jdx] = ('*', trajectory_color, Color::Reset);
-                }
-            }
-        }
-    // Buffer 直写：跳过 Paragraph/Line/Span，直接写入 frame Buffer Cell
+    // 管道 2：写地图到 frame Buffer
     let buf = frame.buffer_mut();
     let map_x = map_area.x as usize;
     let map_y = map_area.y as usize;
-    for (vy, row) in lines.iter().enumerate() {
+    for (vy, row) in grid.iter().enumerate() {
         for (vx, &(g, fg, bg)) in row.iter().enumerate() {
             let cell = &mut buf[((map_x + vx) as u16, (map_y + vy) as u16)];
             cell.set_symbol(g.encode_utf8(&mut [0u8; 4]));
@@ -175,7 +70,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         }
     }
 
-    // ── 事件日志（地图下方） ──
+    // UI 层：事件日志
     let log = world.resource::<EventLog>();
     {
         let mut event_lines: Vec<Line> = Vec::new();
@@ -189,7 +84,8 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         );
     }
 
-    let timeline = build_timeline(player_visible.clone(), world);
+    // UI 层：行动轴
+    let timeline = build_timeline(scene.player_visible.clone(), world);
     frame.render_widget(
         Paragraph::new(timeline).style(Style::default().fg(Color::White))
             .block(Block::default().title(" 行动轴 ").borders(Borders::RIGHT)
@@ -197,16 +93,23 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         timeline_area,
     );
 
-    let stats = build_stats_panel(px, py, game_start, world);
+    // UI 层：状态面板
+    let stats = build_stats_panel(scene.px, scene.py, game_start, world);
     frame.render_widget(
         Paragraph::new(stats).style(Style::default().fg(Color::White))
-            .block(Block::default().borders(Borders::LEFT)
+            .block(Block::default().title(" 状态 ").borders(Borders::LEFT)
                 .border_style(Style::default().fg(Color::DarkGray))),
         stats_area,
     );
 }
 
-pub fn build_stats_panel(px: usize, py: usize, game_start: Instant, world: &World) -> Vec<Line<'static>> {
+
+
+
+
+
+pub fn build_stats_panel
+(px: usize, py: usize, game_start: Instant, world: &World) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let stats: Option<Stats> = world.try_query::<(&Player, &Stats)>().expect("Player+Stats registered at init").iter(world).next().map(|(_, s)| s.clone());
     let Some(ref s) = stats else {

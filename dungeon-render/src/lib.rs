@@ -1,4 +1,5 @@
 pub mod color;
+pub mod pipeline;
 pub mod timeline;
 pub mod title;
 pub mod ui;
