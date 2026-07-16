@@ -138,6 +138,8 @@ fn process_key(
     match page {
         dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
         dungeon_action::Page::Look => process_look_key(code, world),
+        dungeon_action::Page::ThrowSelect => { /* 暂用旧模态，后续迁移 */ Ok(false) },
+        dungeon_action::Page::ThrowAim => { /* 暂用旧模态，后续迁移 */ Ok(false) },
         dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
     }
 }

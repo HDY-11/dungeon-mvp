@@ -259,6 +259,8 @@ pub struct PlayerPreview {
 pub enum Page {
     Game,              // 主游戏画面（默认）
     Look,              // 光标查看模式
+    ThrowSelect,       // 投掷物选择
+    ThrowAim,          // 投掷瞄准
     Dialog(String),    // 确认对话框
 }
 
@@ -275,6 +277,18 @@ impl PageStack {
     }
     pub fn current(&self) -> &Page {
         self.0.last().unwrap_or(&Page::Game)
+    }
+}
+
+/// 投掷行动能力（怪物也可携带）
+#[derive(Component, Clone, Debug)]
+pub struct CanThrow {
+    pub priority: u32,
+    pub duration: f32,
+}
+impl CanThrow {
+    pub fn new(priority: u32) -> Self {
+        Self { priority, duration: 190.0 }
     }
 }
 
