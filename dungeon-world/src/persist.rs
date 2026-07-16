@@ -392,7 +392,7 @@ impl GameSave {
                 if p.x as u16 == saved.x && p.y as u16 == saved.y { Some(e) } else { None }
             });
             if let Some(entity) = entity {
-                entries.push(ActionEntry { entity, kind, av_remaining: saved.av_remaining });
+                entries.push(ActionEntry { entity, kind, action: None, av_remaining: saved.av_remaining });
             }
         }
         // 一次性写入队列

@@ -73,6 +73,9 @@ fn can_move_to(map: &Map, occ: &OccupancyMap, x: usize, y: usize, dx: isize, dy:
 }
 
 fn check_condition(world: &World, entry: &ActionEntry) -> bool {
+    if let Some(ref action) = entry.action {
+        return action.check_condition(world, entry.entity);
+    }
     match &entry.kind {
         ActionKindV3::Chase => {
             let player_pos = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y));
@@ -108,6 +111,9 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
 }
 
 fn execute_entry(world: &mut World, entry: &ActionEntry) {
+    if let Some(ref action) = entry.action {
+        action.execute(world, entry.entity); return;
+    }
     match &entry.kind {
         ActionKindV3::Chase => execute_chase(world, entry.entity),
         ActionKindV3::Flee => execute_flee(world, entry.entity),

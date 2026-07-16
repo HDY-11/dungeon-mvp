@@ -39,7 +39,11 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
         let (glyph, color) = world.get::<Renderable>(entry.entity)
             .map(|r| (r.glyph, renderable_color(r.color)))
             .unwrap_or(('?', Color::White));
-        let (action_label, timer) = action_display(&entry.kind, entry.av_remaining);
+        let (action_label, timer) = if let Some(ref action) = entry.action {
+            (action.display_name().to_string(), entry.av_remaining)
+        } else {
+            action_display(&entry.kind, entry.av_remaining)
+        };
         out.push(Line::from(vec![
             Span::styled(format!(" {} ", glyph), Style::default().fg(color)),
             Span::raw(action_label),

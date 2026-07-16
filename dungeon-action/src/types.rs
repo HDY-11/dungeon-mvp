@@ -128,12 +128,46 @@ pub enum ActionKindV3 {
     Throw { tx: usize, ty: usize },
 }
 
-/// 行动队列条目
+/// 怪物行为 trait：所有怪物/前缀行动统一接口
+pub trait GameAction: Send + Sync + std::fmt::Debug {
+    fn execute(&self, world: &mut World, entity: Entity);
+    fn check_condition(&self, world: &World, entity: Entity) -> bool;
+    fn display_name(&self) -> &'static str;
+    fn priority(&self) -> u32;
+    fn av_cost(&self, agility: u32) -> f32;
+    fn clone_box(&self) -> Box<dyn GameAction>;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+
+/// 追击行为
 #[derive(Clone, Debug)]
+pub struct ChaseAction;
+/// 逃跑行为
+#[derive(Clone, Debug)]
+pub struct FleeAction;
+/// 游荡行为
+#[derive(Clone, Debug)]
+pub struct WanderAction;
+
+/// 行动队列条目
+#[derive(Debug)]
 pub struct ActionEntry {
     pub entity: Entity,
     pub kind: ActionKindV3,
+    pub action: Option<Box<dyn GameAction>>,
     pub av_remaining: f32,
+}
+
+impl Clone for ActionEntry {
+    fn clone(&self) -> Self {
+        ActionEntry {
+            entity: self.entity,
+            kind: self.kind.clone(),
+            action: self.action.as_ref().map(|a| a.clone_box()),
+            av_remaining: self.av_remaining,
+        }
+    }
 }
 
 /// 全局行动队列（FIFO）
@@ -144,8 +178,10 @@ pub struct ActionQueue {
 
 impl ActionQueue {
     pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
-        self.entries.push(ActionEntry { entity, kind, av_remaining: av });
+        self.entries.push(ActionEntry { entity, kind, action: None, av_remaining: av });
     }
+
+
 
     pub fn advance(&mut self, amount: f32) {
         for entry in &mut self.entries {
@@ -181,7 +217,7 @@ impl ActionQueue {
     /// 允许玩家在 Move 排队时确认 Attack 替换之，避免无声吞操作。
     pub fn enqueue_or_replace(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
         self.entries.retain(|e| e.entity != entity);
-        self.entries.push(ActionEntry { entity, kind, av_remaining: av });
+        self.entries.push(ActionEntry { entity, kind, action: None, av_remaining: av });
     }
 }
 
