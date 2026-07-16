@@ -523,3 +523,69 @@ grep -n "restore" dungeon-world/src/persist.rs   # GameSave::restore 中的 spaw
 确保三个路径都包含该组件。这是一个机械检查清单，不需要记忆。
 
 **为什么更好：** `setup_world` 只执行一次（游戏启动），`descend` 每次下楼都执行，`restore` 每次读档都执行。三个路径不同的代码走的是"同一组件的三个不同拷贝"——这不是继承关系，是并行维护关系。任何遗漏都导致数据静默丢失。grep 在编译前就能发现缺口，无需等到运行后。
+
+### L45 — 阻塞式 UI 模态应使用页栈 + 管道，而非独立 event::read() 循环
+
+**问题背景：** 查看模式（`open_look_mode`）、投掷瞄准（`open_throw_aim`）、背包（`open_inventory`）各自有独立的 `event::read()` + `terminal.draw()` 循环。这些模态绕过主循环的 30FPS 帧率控制，且 `modal_flag` 需要暂停输入线程来避免按键串扰。
+
+**错误做法：**
+```rust
+// ❌ 每个模态独立循环，绕过了主循环
+fn open_look_mode(...) {
+    loop {
+        terminal.draw(...);
+        if let Event::Key(k) = event::read() { ... }
+    }
+}
+```
+
+**正确做法：** 页栈 + 管道：
+1. 定义 `Page` 枚举变体（`Look`/`ThrowAim`/`Inventory`/`Dialog`...）
+2. 页栈 `current()` 决定按键路由
+3. 渲染管道一层 `render_ui` 根据 `current()` 决定绘制内容
+4. 所有 UI 共享 30FPS 帧率，无独立循环
+
+```rust
+// ✅ 页栈分派
+fn process_key(code, world) {
+    match world.resource::<PageStack>().current() {
+        Page::Game => process_game_key(code, world),
+        Page::Look => process_look_key(code, world),
+        Page::Inventory => process_inventory_key(code, world),
+        // ...
+    }
+}
+```
+
+**为什么更好：** 加入新 UI 页面只需加一个枚举变体、一个渲染分支、一个按键处理器。不需要操心输入线程同步。动画效果（弹道淡出、伤害数字）可以在 30FPS 框架下自然实现。
+
+**参见 ISSUES.md #A14**
+
+### L46 — 管道-过滤器结构应在架构早期引入，而非将 UI 逻辑堆积在单函数中
+
+**问题背景：** `render_ui` 从 ECS 查询到 Buffer 直写到面板渲染共 ~180 行，所有阶段紧耦合在一个函数体内。添加新 UI 元素需要在该函数内部深处插入代码，容易影响其他阶段的布局。
+
+**错误做法：**
+```rust
+// ❌ 所有阶段耦合
+fn render_ui(frame, world) {
+    extract_scene_data(world);  // 阶段标记仅存在注释中
+    compute_camera();
+    render_tiles();
+    overlay_entities();
+    render_panels();
+}
+```
+
+**正确做法：** 显式阶段 + `RenderScene` 中间数据：
+```rust
+// ✅ 管道分离
+fn render_ui(frame, world) {
+    let scene = extract_scene(world);    // 阶段 1：数据提取
+    let (grid, cam) = render_map_grid(&scene, world); // 阶段 2：格栅+实体
+    write_buffer(frame, &grid);          // 阶段 3：Buffer 输出
+    render_panels(frame, world, &scene); // 阶段 4：UI 层
+}
+```
+
+**收益：** 每个阶段可独立测试。提取的 `RenderScene` 结构体包含一帧的所有渲染数据，可以缓存用于 dirty tracking。添加新图层（半块字符、伤害数字）只需新增一个管道阶段。

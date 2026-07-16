@@ -12,6 +12,48 @@
 
 ## ✅ 已修复
 
+
+### I50 — `place_skill_scrolls` 的 `_floor` 参数投入使用 ✅已修复
+
+**修复前：** `_floor: u32` 带下划线前缀标注未使用，函数体内从未使用。
+
+**修复后：** 去掉 `_` 前缀，卷轴生成数量加入楼层缩放：`count = rng.random_range(1..=3) + floor.saturating_sub(1) / 5`。F1-4 保持 1-3 张，F5-9 变成 2-4 张，F10+ 变成 3-5 张。
+
+**位置：** `dungeon-world/src/init.rs:94`
+
+### I44 — `descend` 中 `GameRng` 种子与 `setup_world` 不一致 ✅已修复
+
+**修复前：** `setup_world` 种 `GameRng` 为 `map_seed.wrapping_add(42)`，但 `descend` 不创建或重置 `GameRng`，下楼后旧 RNG 状态继续使用。
+
+**修复后：** `descend` 中插入 `GameRng::new(base_seed.wrapping_add(f as u64).wrapping_add(42))`，下楼后 RNG 种子可复现，与 `setup_world` 模式一致。
+
+**位置：** `dungeon-world/src/init.rs`
+
+---
+
+
+### I43 — `calc_player_crit` 与 execute_attack 内联暴击计算重复 ✅已修复
+
+**修复前：** `execute_attack`（行 302-305）和 `calc_player_crit`（行 374-417）各自独立实现暴击率/倍率计算，逻辑几乎相同但代码重复。未来修改需同步两处。
+
+**修复后：** 提取 `calc_crit(stats, bonus, crit_roll) -> (bool, f32)` 共享函数。`execute_attack` 和 `calc_player_crit` 统一调用此函数。同时状态面板暴击率改为显示有效值（含 `equipment_bonus().crit_rate`）。
+
+**位置：** `dungeon-action/src/execute.rs`、`dungeon-render/src/ui.rs`
+
+---
+
+### A14 — `open_look_mode` 迁移到页栈 ✅已修复
+
+**修复前：** `open_look_mode` 直接在函数体内 `terminal.draw()` 渲染 + `event::read()` 处理输入，完全绕过了主循环的渲染编排。
+
+**修复后：** 查看模式由页栈 `Page::Look` 管理。按键由 `process_look_key` 处理（方向键移动光标、x/Esc 退出），渲染走管道主线（`render_map_grid` 中由 `LookCursor` 叠加光标高亮，状态面板显示光标信息）。消除了独立的 `event::read()` 循环。
+
+**位置：** `src/main.rs`、`dungeon-render/src/ui.rs`、`dungeon-action/src/types.rs`
+**教训见：** `LESSONS.md L45`
+
+---
+
+
 ### D15 — Skills 组件下楼和存档丢失 ✅已修复
 
 **修复前：** `descend()` query 遗漏 `&Skills`，下楼后用 `player_class.skills()` 重建空列表。`GameSave::capture()` query 同样遗漏，`restore()` 用 `pc.skills()` 重建空列表。所有已学技能在下楼和存档读档后丢失。
@@ -931,15 +973,6 @@ pub struct ActiveCooldowns(pub Vec<Cooldown>);
 
 ---
 
-### 🟢 A14 — `open_look_mode` 在 main.rs 中混合渲染和状态管理
-
-**问题：** `open_look_mode` 直接在函数体内 `terminal.draw()` 渲染 + `event::read()` 处理输入，完全绕过了主循环的渲染编排。如果将来要将查看模式移至 dungeon-render crate，需提取至少两个关注点。
-
-**影响：** 🟢 低 — 当前实现（~30 行）简洁有效。仅在 render crate 架构升级时才需处理。
-
-**位置：** `src/main.rs:214-249`
-
----
 
 ### 🟢 A16 — InputBuffer 资源创建但从未使用
 
@@ -1083,42 +1116,6 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 **位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
 
 
-
-### 🟢 I50 — `place_skill_scrolls` 的 `_floor` 参数未使用
-
-**问题：** `place_skill_scrolls(world, _floor, rng)` 函数签名中 `_floor: u32` 带下划线前缀（标注"未使用"），函数体内确实从未使用该参数。GAME.md 中所有卷轴在 F1+ 均可出现，无楼层相关性——所以参数的存在是正确的设计扩展点，但当前是死参数。
-
-**影响：** 🟢 低。如果将来实现楼层滚稀有卷轴的逻辑，需要用到此参数。
-
-**位置：** `dungeon-world/src/init.rs:94`
-
-### 🟢 I44 — `descend` 中 `GameRng` 种子与 `setup_world` 不一致
-
-**问题：** `execute_attack` 中的暴击判定使用 `GameRng`。`setup_world` 中 `GameRng` 种子为 `map_seed.wrapping_add(42)`，但 `descend` 中不创建或重置 `GameRng`——下楼后旧 RNG 状态继续使用。每次下楼 RNG 状态不重置，导致两个问题：
-
-1. **不可回放性**：如果记录种子回放，下楼后玩家暴击/不暴击的结果不可复现
-2. **隐蔽的种子泄露**：下楼后 `GameRng` 的状态取决于下楼前玩家进行了多少次暴击判定
-
-对比地图生成（使用 `MapSeed + floor_number` 派生的独立 `SmallRng`，下楼后重新 seed），`GameRng` 的推进方式不一致。
-
-**影响：** 🟢 低 — 当前游戏没有"回放"功能需求，暴击判定使用旧 RNG 状态在功能上正确（只是种子不干净）。仅在引入回放功能时需要修复。
-
-**位置：** `dungeon-world/src/init.rs:79`（setup_world 的 GameRng 初始化）
-
----
-
-
-### 🟢 I43 — `calc_player_crit` 与 execute_attack 内联暴击计算重复
-
-**问题：** `execute.rs:374-393` 的 `calc_player_crit` 从 Stats + equipment_bonus 计算暴击率/倍率，与 `execute_attack` 中 `:302-305` 的内联计算几乎相同。差异仅在于：`execute_attack` 的 `total_crit_rate` 计算在攻击者（可能非玩家）路径中，而投掷固定在玩家。
-
-**影响：** 🟢 低 — 代码重复，未来暴击率计算逻辑修改需同步两处。
-
-**位置：** `dungeon-action/src/execute.rs:302-305` vs `:374-393`
-
----
-
-## 四、游戏逻辑层面（Game Logic）
 
 
 
