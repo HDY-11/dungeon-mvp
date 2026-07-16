@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::Entity;
+use dungeon_action::PageStack;
 use dungeon_core::{
     ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, InventoryUI, LookCursor, Map, MapMemory, Player,
     Position, Skills, Stats, Tile, Viewshed,
@@ -22,6 +23,13 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let inner = inner_rect(area, 1);
     let scene = pipeline::extract_scene(world);
 
+    // 页栈感知：非 Game 页面跳过游戏 UI 渲染
+    let current_page = world.get_resource::<PageStack>()
+        .map(|ps| ps.current().clone())
+        .unwrap_or(dungeon_action::Page::Game);
+
+    let is_fullscreen = matches!(current_page, dungeon_action::Page::Inventory);
+
     let title = if scene.game_over { "  你死了  " } else { "  Dungeon MVP " };
     let block = Block::default()
         .title(title).title_alignment(Alignment::Center)
@@ -33,6 +41,22 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
         return;
     }
 
+    if !is_fullscreen {
+        render_game_ui(frame, inner, &scene, world, game_start);
+    }
+
+    // 页栈：对话框叠加层（在所有 UI 之上）
+    render_dialog_overlay(frame, world);
+    // 页栈：投掷选择页
+    render_throw_select_overlay(frame, world);
+    // 页栈：背包页面（全屏）
+    if is_fullscreen {
+        render_inventory_overlay(frame, world);
+    }
+}
+
+/// 游戏主 UI（地图 + 面板），仅 Game/Look/ThrowAim 等非全屏页面时渲染
+fn render_game_ui(frame: &mut Frame, inner: Rect, scene: &pipeline::RenderScene, world: &World, game_start: Instant) {
     let timeline_width: u16 = 26;
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -56,7 +80,7 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
     let events_area = map_events_chunks[1];
 
     // 管道 1：渲染地图格栅
-    let (grid, _cam_x, _cam_y) = pipeline::render_map_grid(&scene, world);
+    let (grid, _cam_x, _cam_y) = pipeline::render_map_grid(scene, world);
 
     // 管道 2：写地图到 frame Buffer
     let buf = frame.buffer_mut();
@@ -101,9 +125,11 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
                 .border_style(Style::default().fg(Color::DarkGray))),
         stats_area,
     );
+}
 
-    // 页栈：对话框叠加层
-    if let Some(dungeon_action::Page::Dialog(title)) = world.get_resource::<dungeon_action::PageStack>()
+/// 对话框叠加层
+fn render_dialog_overlay(frame: &mut Frame, world: &World) {
+    if let Some(dungeon_action::Page::Dialog(title)) = world.get_resource::<PageStack>()
         .and_then(|ps| ps.0.last())
     {
         let dialog = Paragraph::new(vec![
@@ -118,8 +144,11 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             width: 24, height: 5,
         });
     }
-    // 页栈：投掷选择页
-    if world.get_resource::<dungeon_action::PageStack>()
+}
+
+/// 投掷选择页叠加层
+fn render_throw_select_overlay(frame: &mut Frame, world: &World) {
+    if world.get_resource::<PageStack>()
         .map(|ps| ps.0.last() == Some(&dungeon_action::Page::ThrowSelect))
         .unwrap_or(false)
     {
@@ -140,11 +169,10 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             width: 32, height: 5,
         });
     }
-    // 页栈：背包页面
-    if world.get_resource::<dungeon_action::PageStack>()
-        .map(|ps| ps.0.last() == Some(&dungeon_action::Page::Inventory))
-        .unwrap_or(false)
-    {
+}
+
+/// 背包页全屏渲染
+fn render_inventory_overlay(frame: &mut Frame, world: &World) {
         let inv_state = world.resource::<InventoryUI>();
         let left_total = world.try_query::<(&Player, &Inventory)>()
             .map(|mut q| q.iter(world).next().map(|(_, inv)| inv.stacks.len()).unwrap_or(0))
@@ -192,7 +220,6 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             .block(Block::default().borders(Borders::ALL).title(" 背包 ").border_style(Style::default().fg(Color::Cyan)));
         frame.render_widget(inv_paragraph, frame.area());
     }
-}
 
 
 
