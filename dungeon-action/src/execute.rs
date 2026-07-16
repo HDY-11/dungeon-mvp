@@ -72,6 +72,23 @@ fn can_move_to(map: &Map, occ: &OccupancyMap, x: usize, y: usize, dx: isize, dy:
     true
 }
 
+pub(crate) fn chase_condition(world: &World, entity: Entity) -> bool {
+    let player_pos = world.try_query::<(&Player, &Position)>().expect("Player+Position registered at init").iter(world).next().map(|(_, p)| (p.x, p.y));
+    if let Some((px, py)) = player_pos
+        && world.get::<Viewshed>(entity)
+            .map(|v| v.visible_tiles.contains(&(px, py)))
+            .unwrap_or(false) { return true; }
+    world.get::<LastKnownPlayerPos>(entity)
+        .map(|l| l.0.is_some())
+        .unwrap_or(false)
+}
+
+pub(crate) fn flee_condition(world: &World, entity: Entity) -> bool {
+    world.get::<Stats>(entity)
+        .map(|s| (s.hp as f32 / s.max_hp as f32) < 0.30)
+        .unwrap_or(false)
+}
+
 fn check_condition(world: &World, entry: &ActionEntry) -> bool {
     if let Some(ref action) = entry.action {
         return action.check_condition(world, entry.entity);
@@ -126,7 +143,7 @@ fn execute_entry(world: &mut World, entry: &ActionEntry) {
     }
 }
 
-fn execute_chase(world: &mut World, entity: Entity) {
+pub(crate) fn execute_chase(world: &mut World, entity: Entity) {
     let Some(player_entity) = world.query::<(Entity, &Player)>().iter(world).next().map(|(e, _)| e) else { return };
     let player_pos = world.get::<Position>(player_entity).map(|p| (p.x, p.y));
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
@@ -179,7 +196,7 @@ fn execute_chase(world: &mut World, entity: Entity) {
                 }
 }
 
-fn execute_flee(world: &mut World, entity: Entity) {
+pub(crate) fn execute_flee(world: &mut World, entity: Entity) {
     let player_pos = world.query::<(&Player, &Position)>().iter(world).next().map(|(_, p)| (p.x, p.y));
     let Some((px, py)) = player_pos else { return };
     let pos = match world.get::<Position>(entity) { Some(p) => (p.x, p.y), None => return };
@@ -205,7 +222,7 @@ fn execute_flee(world: &mut World, entity: Entity) {
         && let Some(mut p) = world.get_mut::<Position>(entity) { p.x = nx; p.y = ny; }
 }
 
-fn execute_wander(world: &mut World, entity: Entity) {
+pub(crate) fn execute_wander(world: &mut World, entity: Entity) {
     let dirs: [(isize, isize); 8] = [
         (0, -1), (0, 1), (-1, 0), (1, 0),
         (-1, -1), (1, -1), (-1, 1), (1, 1),

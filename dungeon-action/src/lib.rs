@@ -1,7 +1,8 @@
 pub mod execute;
 pub mod monster;
 pub mod player;
-pub mod tick;
+pub mod actions;
+mod tick;
 pub mod types;
 
 pub use types::*;

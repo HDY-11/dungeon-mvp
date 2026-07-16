@@ -80,12 +80,18 @@ pub fn arbitration_system(
     all.extend(flee_out.0.iter().cloned());
     all.extend(wander_out.0.iter().cloned());
 
-    // 按 priority 降序，相同 priority 保持插入顺序（stable sort）。移除随机 tiebreaker 避免违反全序契约
     all.sort_by(|(_, pa, _, _), (_, pb, _, _)| pb.cmp(pa));
 
     for (entity, _priority, av, kind) in &all {
         if !queue.has_entity(*entity) {
-            queue.enqueue(*entity, kind.clone(), *av);
+            // 怪物行为通过 GameAction trait 对象存储（Phase 2）
+            let action: Option<Box<dyn GameAction>> = match kind {
+                ActionKindV3::Chase => Some(Box::new(ChaseAction)),
+                ActionKindV3::Flee => Some(Box::new(FleeAction)),
+                ActionKindV3::Wander => Some(Box::new(WanderAction)),
+                _ => None,
+            };
+            queue.entries.push(ActionEntry { entity: *entity, kind: kind.clone(), action, av_remaining: *av });
         }
     }
 }
