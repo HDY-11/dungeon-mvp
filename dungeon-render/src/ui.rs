@@ -118,6 +118,14 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             width: 24, height: 5,
         });
     }
+    // 页栈：背包页面提示（实际渲染在旧模态中完成）
+    #[allow(clippy::collapsible_if)]
+    if world.get_resource::<dungeon_action::PageStack>()
+        .map(|ps| ps.0.last() == Some(&dungeon_action::Page::Inventory))
+        .unwrap_or(false)
+    {
+        // 背包渲染由旧 open_inventory 函数通过 modal_flag 完成
+    }
 }
 
 

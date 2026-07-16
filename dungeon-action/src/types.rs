@@ -261,6 +261,7 @@ pub enum Page {
     Look,              // 光标查看模式
     ThrowSelect,       // 投掷物选择
     ThrowAim,          // 投掷瞄准
+    Inventory,         // 背包界面
     Dialog(String),    // 确认对话框
 }
 

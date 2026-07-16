@@ -138,8 +138,9 @@ fn process_key(
     match page {
         dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
         dungeon_action::Page::Look => process_look_key(code, world),
-        dungeon_action::Page::ThrowSelect => { /* 暂用旧模态，后续迁移 */ Ok(false) },
-        dungeon_action::Page::ThrowAim => { /* 暂用旧模态，后续迁移 */ Ok(false) },
+        dungeon_action::Page::ThrowSelect => { /* 暂用旧模态 */ Ok(false) },
+        dungeon_action::Page::ThrowAim => { /* 暂用旧模态 */ Ok(false) },
+        dungeon_action::Page::Inventory => { /* 暂用旧模态 */ Ok(false) },
         dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
     }
 }
@@ -215,9 +216,11 @@ fn process_game_key(
             Ok(result)
         }
         PlayerAction::OpenInventory => {
+            world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Inventory);
             modal_flag.store(true, Ordering::Relaxed);
             dungeon_tui::inventory::open_inventory(terminal, world, game_start)?;
             modal_flag.store(false, Ordering::Relaxed);
+            world.resource_mut::<dungeon_action::PageStack>().pop();
             Ok(false)
         }
         PlayerAction::OpenLook => {
