@@ -118,6 +118,28 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             width: 24, height: 5,
         });
     }
+    // 页栈：投掷选择页
+    if world.get_resource::<dungeon_action::PageStack>()
+        .map(|ps| ps.0.last() == Some(&dungeon_action::Page::ThrowSelect))
+        .unwrap_or(false)
+    {
+        let name = world.try_query::<(&Player, &Equipment)>()
+            .and_then(|mut q| q.iter(world).next()
+                .and_then(|(_, eq)| eq.off_hand.as_ref().map(|s| s.name())))
+            .unwrap_or("(无投掷物)".into());
+        let msg = Paragraph::new(vec![
+            Line::from(Span::styled("选择投掷物", Style::default().fg(Color::Yellow).bold())),
+            Line::from(Span::raw(format!(" 当前: {}", name))),
+            Line::from(Span::styled(" Enter 确认  Esc 取消", Style::default().fg(Color::DarkGray))),
+        ])
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)))
+        .alignment(Alignment::Center);
+        let area = frame.area();
+        frame.render_widget(msg, Rect {
+            x: area.width / 2 - 16, y: area.height / 2,
+            width: 32, height: 5,
+        });
+    }
     // 页栈：背包页面提示（实际渲染在旧模态中完成）
     #[allow(clippy::collapsible_if)]
     if world.get_resource::<dungeon_action::PageStack>()

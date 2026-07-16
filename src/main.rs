@@ -11,9 +11,10 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    ops, EventLog, LookCursor, TurnManager, MAP_WIDTH, MAP_HEIGHT, Position, Player,
+    ops, EventLog, LookCursor, Stats, ThrowPreview, Equipment, TurnManager,
+    MAP_WIDTH, MAP_HEIGHT, Position, Player,
 };
-use dungeon_action::{handle_player_direction, handle_wait, handle_skill, PlayerAction};
+use dungeon_action::{handle_player_direction, handle_wait, handle_skill, PlayerAction, agility_speed_factor, agility_to_reaction};
 use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
 use dungeon_render::{draw_title, render_ui};
 use ratatui::layout::{Alignment, Rect};
@@ -138,8 +139,8 @@ fn process_key(
     match page {
         dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
         dungeon_action::Page::Look => process_look_key(code, world),
-        dungeon_action::Page::ThrowSelect => { /* 暂用旧模态 */ Ok(false) },
-        dungeon_action::Page::ThrowAim => { /* 暂用旧模态 */ Ok(false) },
+        dungeon_action::Page::ThrowSelect => process_throw_select_key(code, world),
+        dungeon_action::Page::ThrowAim => process_throw_aim_key(code, world),
         dungeon_action::Page::Inventory => { /* 暂用旧模态 */ Ok(false) },
         dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
     }
@@ -162,6 +163,86 @@ fn process_look_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
         }
         KeyCode::Char('x') | KeyCode::Esc => {
             world.resource_mut::<LookCursor>().active = false;
+            world.resource_mut::<dungeon_action::PageStack>().pop();
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
+/// 投掷选择页
+fn process_throw_select_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
+    match code {
+        KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('y') => {
+            // 自动从背包装填投掷物到副手
+            dungeon_tui::throw::auto_equip_throwable(world);
+            let has_offhand = world.try_query::<(&Player, &Equipment)>()
+                .and_then(|mut q| q.iter(world).next()
+                    .map(|(_, eq)| eq.off_hand.is_some()))
+                .unwrap_or(false);
+            if has_offhand {
+                let (cx, cy) = {
+                    let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
+                    q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+                };
+                world.insert_resource(ThrowPreview { active: true, cursor: (cx, cy), path: Vec::new(), valid_target: false });
+                world.insert_resource(LookCursor { active: true, x: cx, y: cy });
+                dungeon_tui::throw::update_throw_path(world);
+                world.resource_mut::<dungeon_action::PageStack>().pop();
+                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowAim);
+            }
+        }
+        KeyCode::Esc => {
+            world.resource_mut::<dungeon_action::PageStack>().pop();
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
+/// 投掷瞄准页
+fn process_throw_aim_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            let mut tp = world.resource_mut::<ThrowPreview>();
+            tp.cursor.1 = tp.cursor.1.saturating_sub(1);
+            drop(tp);
+            dungeon_tui::throw::update_throw_path(world);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let mut tp = world.resource_mut::<ThrowPreview>();
+            tp.cursor.1 = (tp.cursor.1 + 1).min(MAP_HEIGHT - 1);
+            drop(tp);
+            dungeon_tui::throw::update_throw_path(world);
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            let mut tp = world.resource_mut::<ThrowPreview>();
+            tp.cursor.0 = tp.cursor.0.saturating_sub(1);
+            drop(tp);
+            dungeon_tui::throw::update_throw_path(world);
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            let mut tp = world.resource_mut::<ThrowPreview>();
+            tp.cursor.0 = (tp.cursor.0 + 1).min(MAP_WIDTH - 1);
+            drop(tp);
+            dungeon_tui::throw::update_throw_path(world);
+        }
+        KeyCode::Enter => {
+            let (tx, ty) = { let tp = world.resource::<ThrowPreview>(); (tp.cursor.0, tp.cursor.1) };
+            world.resource_mut::<ThrowPreview>().active = false;
+            world.resource_mut::<dungeon_action::PageStack>().pop();
+            // 执行投掷
+            let Some(player) = dungeon_core::ops::player_entity(world) else { return Ok(false) };
+            let agility = world.get::<Stats>(player).map(|s| s.agility).unwrap_or(10);
+            let reaction = agility_to_reaction(agility);
+            let factor = agility_speed_factor(agility);
+            let av = reaction + 190.0 * factor;
+            let has_action = dungeon_action::handle_timed_action(
+                world, player, dungeon_action::ActionKindV3::Throw { tx, ty }, av);
+            return Ok(has_action);
+        }
+        KeyCode::Esc | KeyCode::Char('x') => {
+            world.resource_mut::<ThrowPreview>().active = false;
             world.resource_mut::<dungeon_action::PageStack>().pop();
         }
         _ => {}
@@ -210,10 +291,24 @@ fn process_game_key(
 
         // ── 模态（阻塞式 UI，需暂停输入线程） ──
         PlayerAction::Throw => {
-            modal_flag.store(true, Ordering::Relaxed);
-            let result = dungeon_tui::throw::open_throw_select(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
-            Ok(result)
+            // 检查是否有副手物品 → 直接进入瞄准，否则先进选择页
+            if world.try_query::<(&Player, &Equipment)>()
+                .and_then(|mut q| q.iter(world).next()
+                    .map(|(_, eq)| eq.off_hand.is_some()))
+                .unwrap_or(false)
+            {
+                let (cx, cy) = {
+                    let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
+                    q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
+                };
+                world.insert_resource(ThrowPreview { active: true, cursor: (cx, cy), path: Vec::new(), valid_target: false });
+                world.insert_resource(LookCursor { active: true, x: cx, y: cy });
+                dungeon_tui::throw::update_throw_path(world);
+                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowAim);
+            } else {
+                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowSelect);
+            }
+            Ok(false)
         }
         PlayerAction::OpenInventory => {
             world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Inventory);

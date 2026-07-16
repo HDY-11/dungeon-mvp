@@ -7,9 +7,9 @@ use bevy_ecs::prelude::*;
 use crossterm::event::{self, Event, KeyCode};
 use dungeon_core::{
     ops, EventLog, Position, Stats,
-    ThrowPreview, Inventory,
+    ThrowPreview, Inventory, Equipment,
     Player,
-    MAP_HEIGHT, MAP_WIDTH,
+    MAP_HEIGHT, MAP_WIDTH, ITEM_STONE,
 };
 use dungeon_action::{ActionQueue, ActionKindV3, agility_speed_factor};
 use dungeon_render::render_ui;
@@ -30,8 +30,8 @@ pub fn open_throw_select(
 ) -> io::Result<bool> {
     // 收集背包中所有可投掷物
     let throwable_ids: Vec<(usize, String, u32)> = {
-        let mut q = world.query::<(&Inventory,)>();
-        let inv = q.iter(world).next().map(|(inv,)| inv);
+        let mut q = world.query::<&Inventory>();
+        let inv = q.iter(world).next();
         match inv {
             Some(inv) => inv.stacks.iter()
                 .filter(|s| {
@@ -198,7 +198,7 @@ pub fn open_throw_aim(
     }
 }
 
-fn update_throw_path(world: &mut World) {
+pub fn update_throw_path(world: &mut World) {
     let player_pos = match world.try_query::<(&Player, &Position)>() {
         Some(mut q) => q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)),
         None => (0, 0),
@@ -226,3 +226,30 @@ fn update_throw_path(world: &mut World) {
 }
 
 
+
+/// 获取当前副手投掷物名称（用于渲染选择页）
+pub fn get_offhand_name(world: &World) -> Option<String> {
+    let Some(player) = dungeon_core::ops::player_entity(world) else { return None };
+    world.get::<Equipment>(player)
+        .and_then(|eq| eq.off_hand.as_ref())
+        .map(|s| s.name())
+}
+
+/// 从背包里找一个投掷物装到副手
+pub fn auto_equip_throwable(world: &mut World) {
+    let Some(player) = dungeon_core::ops::player_entity(world) else { return };
+    // 如果已经有副手物品则跳过
+    let has_offhand = world.get::<Equipment>(player)
+        .map(|eq| eq.off_hand.is_some()).unwrap_or(false);
+    if has_offhand { return; }
+    // 从背包找石子（ITEM_STONE=18）
+    if let Some(mut inv) = world.get_mut::<Inventory>(player) {
+        let idx = inv.stacks.iter().position(|s| s.item_id == dungeon_core::ITEM_STONE);
+        if let Some(i) = idx {
+            let stack = inv.stacks.remove(i);
+            if let Some(mut eq) = world.get_mut::<Equipment>(player) {
+                eq.off_hand = Some(stack);
+            }
+        }
+    }
+}
