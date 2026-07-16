@@ -126,6 +126,23 @@ pub struct ModalState {
     pub active_kind: Option<ModalKind>,
 }
 
+/// 背包 UI 状态（被页栈 + 管道消费）
+#[derive(Resource)]
+pub struct InventoryUI {
+    pub active: bool,
+    pub panel: bool,  // false=Left, true=Right
+    pub left_sel: usize,
+    pub right_sel: usize,
+    pub detail: bool,
+    pub detail_source: usize, // 0=LeftInv, 1=LeftEquip, 2=Right
+    pub detail_idx: usize,
+}
+impl Default for InventoryUI {
+    fn default() -> Self {
+        Self { active: false, panel: false, left_sel: 0, right_sel: 0, detail: false, detail_source: 0, detail_idx: 0 }
+    }
+}
+
 #[derive(Resource)]
 pub struct OccupancyMap {
     pub cells: [[Option<Entity>; MAP_WIDTH]; MAP_HEIGHT],

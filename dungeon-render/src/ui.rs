@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Entity;
 use dungeon_core::{
-    ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, LookCursor, Map, MapMemory, Player,
+    ActiveBuffs, EntityName, Equipment, EventLog, FloorNumber, Inventory, InventoryUI, LookCursor, Map, MapMemory, Player,
     Position, Skills, Stats, Tile, Viewshed,
     MAP_HEIGHT, MAP_WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
     effective_attack, effective_defense,
@@ -140,13 +140,57 @@ pub fn render_ui(frame: &mut Frame, game_start: Instant, world: &World) {
             width: 32, height: 5,
         });
     }
-    // 页栈：背包页面提示（实际渲染在旧模态中完成）
-    #[allow(clippy::collapsible_if)]
+    // 页栈：背包页面
     if world.get_resource::<dungeon_action::PageStack>()
         .map(|ps| ps.0.last() == Some(&dungeon_action::Page::Inventory))
         .unwrap_or(false)
     {
-        // 背包渲染由旧 open_inventory 函数通过 modal_flag 完成
+        let inv_state = world.resource::<InventoryUI>();
+        let left_total = world.try_query::<(&Player, &Inventory)>()
+            .map(|mut q| q.iter(world).next().map(|(_, inv)| inv.stacks.len()).unwrap_or(0))
+            .unwrap_or(0);
+        let ground_items = {
+            let mut q = world.try_query::<(Entity, &Position, &dungeon_core::ItemPickup)>()
+                .expect("ItemPickup+Pos reg");
+            let px = world.try_query::<(&Player, &Position)>().expect("Player+Pos reg").iter(world)
+                .next().map(|(_, p)| (p.x, p.y));
+            px.map(|(px, py)| q.iter(world)
+                .filter(|(_, p, _)| p.x == px && p.y == py)
+                .map(|(e, _, ip)| (ip.stack.clone(), e))
+                .collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled(" 背包                             地面", Style::default().fg(Color::Yellow))));
+        let max_rows = 18;
+        for i in 0..max_rows {
+            let left = if i < left_total {
+                let inv = world.try_query::<(&Player, &Inventory)>()
+                    .and_then(|mut q| q.iter(world).next().map(|(_, inv)| &inv.stacks));
+                inv.map(|stacks| {
+                    let s = &stacks[i];
+                    let marker = if i == inv_state.left_sel && !inv_state.detail { "▸" } else { " " };
+                    let equipped = if i >= 4 { " (装备)" } else { "" };
+                    format!("{}{}{}", marker, s.name(), equipped)
+                }).unwrap_or_default()
+            } else { "".into() };
+            let right = if i < ground_items.len() {
+                let (stack, _) = &ground_items[i];
+                let marker = if i == inv_state.right_sel && !inv_state.detail { "▸" } else { " " };
+                format!("{}{} x{}", marker, stack.name(), stack.count)
+            } else { "".into() };
+            lines.push(Line::from(Span::raw(format!(" {:<20}  {:<20}", left, right))));
+        }
+        if inv_state.detail {
+            lines.push(Line::from(Span::raw("")));
+            lines.push(Line::from(Span::styled(" [e]装备  [d]丢弃  [Esc]返回", Style::default().fg(Color::DarkGray))));
+        } else {
+            lines.push(Line::from(Span::raw("")));
+            lines.push(Line::from(Span::styled(" ← → 切换栏  ↑ ↓ 选择  Enter 查看详情  g 拾取  Esc 关闭", Style::default().fg(Color::DarkGray))));
+        }
+        let inv_paragraph = Paragraph::new(lines.clone())
+            .block(Block::default().borders(Borders::ALL).title(" 背包 ").border_style(Style::default().fg(Color::Cyan)));
+        frame.render_widget(inv_paragraph, frame.area());
     }
 }
 

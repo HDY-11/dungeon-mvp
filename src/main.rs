@@ -11,7 +11,7 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use dungeon_core::{
-    ops, EventLog, LookCursor, Stats, ThrowPreview, Equipment, TurnManager,
+    ops, EventLog, Inventory, InventoryUI, LookCursor, Stats, ThrowPreview, Equipment, TurnManager,
     MAP_WIDTH, MAP_HEIGHT, Position, Player,
 };
 use dungeon_action::{handle_player_direction, handle_wait, handle_skill, PlayerAction, agility_speed_factor, agility_to_reaction};
@@ -141,7 +141,7 @@ fn process_key(
         dungeon_action::Page::Look => process_look_key(code, world),
         dungeon_action::Page::ThrowSelect => process_throw_select_key(code, world),
         dungeon_action::Page::ThrowAim => process_throw_aim_key(code, world),
-        dungeon_action::Page::Inventory => { /* 暂用旧模态 */ Ok(false) },
+        dungeon_action::Page::Inventory => process_inventory_key(code, world),
         dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
     }
 }
@@ -250,6 +250,121 @@ fn process_throw_aim_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
     Ok(false)
 }
 
+/// 背包页面按键处理
+fn process_inventory_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
+    let detail;
+    let detail_source;
+    let detail_idx;
+    let panel;
+    let left_sel;
+    let right_sel;
+    let left_total;
+    let ground_total;
+    {
+        let inv_state = world.resource::<InventoryUI>();
+        detail = inv_state.detail;
+        detail_source = inv_state.detail_source;
+        detail_idx = inv_state.detail_idx;
+        panel = inv_state.panel;
+        left_sel = inv_state.left_sel;
+        right_sel = inv_state.right_sel;
+    } // drop inv_state immutable borrow
+    {
+        left_total = world.try_query::<(&Player, &Inventory)>()
+            .map(|mut q| q.iter(world).next().map(|(_, inv)| inv.stacks.len()).unwrap_or(0))
+            .unwrap_or(0);
+    }
+    {
+        let mut q = world.try_query::<(Entity, &Position, &dungeon_core::ItemPickup)>()
+            .expect("ItemPickup+Pos reg");
+        let px = world.try_query::<(&Player, &Position)>().expect("Player+Pos reg").iter(world)
+            .next().map(|(_, p)| (p.x, p.y));
+        ground_total = px.map(|(px, py)| q.iter(world).filter(|(_, p, _)| p.x == px && p.y == py).count()).unwrap_or(0);
+    } // drop query borrows
+
+    match code {
+        KeyCode::Esc => {
+            if detail {
+                world.resource_mut::<InventoryUI>().detail = false;
+            } else {
+                world.resource_mut::<dungeon_action::PageStack>().pop();
+            }
+        }
+        KeyCode::Left => world.resource_mut::<InventoryUI>().panel = false,
+        KeyCode::Right => world.resource_mut::<InventoryUI>().panel = true,
+        KeyCode::Up => {
+            let mut s = world.resource_mut::<InventoryUI>();
+            if !s.detail {
+                if !panel { s.left_sel = left_sel.saturating_sub(1); }
+                else { s.right_sel = right_sel.saturating_sub(1); }
+            }
+        }
+        KeyCode::Down => {
+            let mut s = world.resource_mut::<InventoryUI>();
+            if !s.detail {
+                if !panel { s.left_sel = (left_sel + 1).min(left_total.saturating_sub(1)); }
+                else { s.right_sel = (right_sel + 1).min(ground_total.saturating_sub(1)); }
+            }
+        }
+        KeyCode::Enter => {
+            let mut s = world.resource_mut::<InventoryUI>();
+            if !panel && left_total > 0 {
+                s.detail = true;
+                if left_sel < 4 { s.detail_source = 1; s.detail_idx = left_sel; }
+                else { s.detail_source = 0; s.detail_idx = left_sel - 4; }
+            } else if panel && ground_total > 0 {
+                s.detail = true; s.detail_source = 2; s.detail_idx = right_sel;
+            }
+        }
+        KeyCode::Char('e') if detail && detail_source == 0 => {
+            // 装备：背包物品 → 装备槽
+            if let Some(p) = dungeon_core::ops::player_entity(world) {
+                let stack = world.get::<Inventory>(p).and_then(|inv| inv.stacks.get(detail_idx + 4).cloned());
+                if let Some(s) = stack {
+                    let mut inv = world.get_mut::<Inventory>(p).unwrap();
+                    inv.remove(detail_idx + 4, 1);
+                    let def = s.def().unwrap();
+                    let slot = def.slot.unwrap();
+                    let mut eq = world.get_mut::<Equipment>(p).unwrap();
+                    let old = match slot {
+                        dungeon_core::EquipmentSlot::MainHand => eq.main_hand.replace(s),
+                        dungeon_core::EquipmentSlot::OffHand => eq.off_hand.replace(s),
+                        dungeon_core::EquipmentSlot::Armor => eq.armor.replace(s),
+                        dungeon_core::EquipmentSlot::Ring => eq.ring.replace(s),
+                    };
+                    if let Some(old_stack) = old {
+                        world.get_mut::<Inventory>(p).unwrap().add(old_stack.item_id, old_stack.count);
+                    }
+                    world.resource_mut::<EventLog>().push(format!("装备了{}", def.name));
+                }
+            }
+            world.resource_mut::<InventoryUI>().detail = false;
+        }
+        KeyCode::Char('d') if detail => {
+            let player = dungeon_core::ops::player_entity(world);
+            let pos = player.and_then(|p| world.get::<Position>(p).map(|pp| (pp.x, pp.y))).unwrap_or((0, 0));
+            let idx = if detail_source == 0 { detail_idx + 4 } else { detail_idx };
+            if let Some(p) = player {
+                let stack = world.get_mut::<Inventory>(p).and_then(|mut inv| {
+                    if idx < inv.stacks.len() { Some(inv.stacks.remove(idx)) } else { None }
+                });
+                if let Some(s) = stack {
+                    world.spawn((dungeon_core::ItemPickup { stack: dungeon_core::ItemStack::new(s.item_id, s.count) },
+                        dungeon_core::Position { x: pos.0, y: pos.1 },
+                        dungeon_core::Renderable { glyph: '?', color: (180, 180, 180) }));
+                    world.resource_mut::<EventLog>().push("丢弃了物品");
+                }
+            }
+            world.resource_mut::<InventoryUI>().detail = false;
+        }
+        KeyCode::Char('g') if !panel && !detail => {
+            ops::pickup_ground(world);
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
 /// 游戏页按键处理
 fn process_game_key(
     code: KeyCode,
@@ -311,11 +426,8 @@ fn process_game_key(
             Ok(false)
         }
         PlayerAction::OpenInventory => {
+            world.insert_resource(InventoryUI::default());
             world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Inventory);
-            modal_flag.store(true, Ordering::Relaxed);
-            dungeon_tui::inventory::open_inventory(terminal, world, game_start)?;
-            modal_flag.store(false, Ordering::Relaxed);
-            world.resource_mut::<dungeon_action::PageStack>().pop();
             Ok(false)
         }
         PlayerAction::OpenLook => {
