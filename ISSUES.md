@@ -49,7 +49,6 @@
 **修复后：** 查看模式由页栈 `Page::Look` 管理。按键由 `process_look_key` 处理（方向键移动光标、x/Esc 退出），渲染走管道主线（`render_map_grid` 中由 `LookCursor` 叠加光标高亮，状态面板显示光标信息）。消除了独立的 `event::read()` 循环。
 
 **位置：** `src/main.rs`、`dungeon-render/src/ui.rs`、`dungeon-action/src/types.rs`
-**教训见：** `LESSONS.md L45`
 
 ---
 
