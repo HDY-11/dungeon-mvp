@@ -375,17 +375,17 @@ pub struct ItemMeta {
 
 ## 四、输入与渲染
 
-### Dsn17 50ms 按键去重 + 16ms 轮询
+### Dsn17 33ms 按键去重 + 16ms 轮询
 
 **决策**
 
-输入线程以 16ms 间隔轮询（≈60fps），连续两次相同按键间隔小于 50ms 则丢弃后一次。
+输入线程以 16ms 间隔轮询（≈60fps），连续两次相同按键间隔小于 33ms 则丢弃后一次（L46 校准：现代终端过滤 Release/Repeat 事件后，窗口从 50ms 收窄为 33ms）。
 
 **16ms 不是任意选择的：** 它与 60fps 的输入采样对齐。轮询间隔太长（如 100ms）会导致明显可感知的延迟。16ms 是人感知不到的单帧延迟下限。
 
 **背景**
 
-终端键盘的物理按键会触发重复的 key-repeat 事件（长按时）。如果不做去重，方向键长按会导致连续触发预览/确认/预览/确认，玩家瞬间移动多格。50ms 窗口允许正常双次敲击（tap-tap 确认），但过滤掉键盘重复。
+终端键盘的物理按键会触发重复的 key-repeat 事件（长按时）。如果不做去重，方向键长按会导致连续触发预览/确认/预览/确认，玩家瞬间移动多格。33ms 窗口（配合 KeyEventKind 过滤）允许正常双次敲击（tap-tap 确认），但过滤掉键盘重复。
 
 ---
 
@@ -587,3 +587,140 @@ PageStack: Vec<Page>
 旧方案将查看模式、投掷瞄准、背包分别实现为独立的阻塞式 UI，各自有 `event::read()` 循环。这在 30FPS 框架下不协调——它们无法参与固定帧率渲染，且 `modal_flag` 需要暂停输入线程。
 
 ISSUES.md A14 记录了查看模式的架构问题。A16 的 `InputBuffer` 资源在页栈框架下变为非必要——按键直接由栈顶处理器消费，不需要中间缓冲。`modal_flag` 在所有页面迁移完成后已为死代码。
+
+---
+
+## 五、数据与方法
+
+### Dsn22 MonsterTemplate 结构体统一 — 设计中，实验方向
+
+**决策（暂缓执行）**
+
+将 `monster_def.rs` 中 7 个分散的 match 函数（`monster_glyph`、`monster_color`、`monster_name`、`monster_attack_name`、`monster_stats`、`monster_loot`、`monster_spawn_weight`）合并为一个 `MonsterTemplate` 结构体 + 一个查表函数。
+
+```rust
+pub struct MonsterTemplate {
+    glyph: char,
+    color: (u8, u8, u8),
+    name: &'static str,
+    attack_name: &'static str,
+    // 系数——不存最终值，存公式参数
+    hp_base: i32, hp_per_floor: i32,
+    atk_base: u32, atk_per_floor: f64, atk_max: u32,
+    def: u32, agi: u32, magic_mastery: u32,
+    exp_base: f64, exp_per_floor: f64,
+    loot: &'static [LootEntry],
+    spawn_weight_base: f32, spawn_weight_per_floor: f32,
+    spawn_weight_min: f32, spawn_weight_max: f32,
+}
+
+impl MonsterTemplate {
+    pub fn stats(&self, floor: u32) -> Stats { /* 统一公式 */ }
+    pub fn spawn_weight(&self, floor: u32) -> f32 { /* 统一公式 */ }
+    // glyph/color/name 等退化为字段直接访问
+}
+```
+
+收益：
+- 加新怪物从改 7 个 match 变为加 1 行数据
+- 对外的 `monster_glyph(kind)` 等函数退化为 `template(kind).glyph` 等字段访问
+- 未来切换到 JSON 配置驱动只需改 `fn template()` 的加载源，调用方不变
+
+**当前状态：** 暂缓。当前 `monster_stats` 等函数中的公式是直接赋值（裸数值），尚未抽象为统一的系数+公式体系。GAME.md 的数值标注体系（`[⃞计算]/[⃞直觉]/[⃞试调]`）也未完成。在公式体系设计就绪前，硬套系数反而引入硬编码的假灵活性。先记录方向，等 GAME.md 完成后再实施。
+
+**关联：** GAME.md Gm8（怪物设计）、LESSONS.md（无直接关联）
+
+---
+
+### Dsn23 日志系统分层集成 —— 开发者日志 vs 玩家日志
+
+**决策**
+
+两层日志设计，面向不同用户：
+
+```
+玩家可见层：EventLog (ECS Resource)
+  → 游戏内终端渲染，按 EventLevel 着色（红/黄/青/灰/亮红）
+  → 上限 50 条，自动丢弃最旧
+
+开发者层：log crate (全局静态)
+  → 文件持久化，5MB 自动轮转
+  → 所有 EventLog::push 自动转发到此层
+  → 独立调用点可直接写 log::info! / log::error!
+```
+
+**为什么两层不合并：**
+- 目标用户不同——玩家需要终端实时反馈，开发者需要持久化逐帧追踪
+- 频率不同——`log::debug!` 可以写详细的战斗公式分解，但玩家终端不需要看
+- 生命周期不同——EventLog 只存活于游戏会话，日志文件需跨会话保留
+
+**分层机制：**
+- `EventLog::push(msg: EventMessage)` 内部调用 `log::info!` 或 `log::warn!` + 存入 `Vec<EventMessage>`
+- 渲染层通过 `msg.level` 按类别着色，不再显示裸字符串
+- `ResultLogExt::expect_log` 和 `OptionLogExt::expect_log` 提供 panic 前日志记录
+
+**背景**
+
+旧的 EventLog 只有 `Vec<String>`，开发者无法在崩溃后追溯战斗过程；`panic.log` 只记录 panic 信息，不知道崩溃前发生了什么。引入 `log` crate 后，任何 panic 之前的 `log::info!` 调用都已写入文件，崩溃现场可复现。
+
+**关联：** `dungeon-core/src/logger.rs`、`dungeon-core/src/ext.rs`、`dungeon-core/src/resources.rs`（EventLog）
+
+---
+
+**（本文档末尾 — 此后追加新条目）**
+---
+
+### Dsn24 多类型地图：繁茂洞穴 + 地海（已定案并落地）
+
+**决策**
+
+解决"地图只有一种、楼层无视觉/生态区分"的问题。多分支楼梯暂缓（类型系统稳定后再规划类型分配，见 ISSUES 讨论）。
+
+**地图类型与派生**
+
+- `MapKind`：`Cavern`（标准洞穴）/ `LushCavern`（繁茂洞穴）/ `Undersea`（地海）
+- 骨架统一为 room_accretion 洞穴，环境修饰差异化（不引入新算法）
+- 类型派生：`map_kind_for(seed, floor)`——F1 固定 Cavern（新手层），之后按 `seed×黄金常数 + floor×31` 哈希取模三分均分 [⃞试调]
+- 类型与地图均由 `(MapSeed, floor)` 确定性重建——**存档零改动**，读档后当前层与下楼结果一致
+
+**环境参数表（MapEnvParams）**
+
+| 参数 | Cavern | LushCavern | Undersea |
+|------|--------|-----------|----------|
+| 深水种子率 ‰ | 2 | 0 | 20 [⃞试调: 8‰ 在真实地图期望种子仅 3，方差大易 0 水域] |
+| 深水种子最小房间距离 | 3 | 3 | 1（水域贴近活动区） |
+| 深水扩散加成 | 0 | -0.02 | +0.08 |
+| 浅水扩散 % | 10 | 2 | 18 |
+| 障碍密度 % | 7（钟乳石） | 10（垂藤） | 3（珊瑚礁） |
+| 装饰 % | 0 | 25（菌丝）+15（蘑菇丛） | 15（沙岸）+10（海草） |
+
+**新方块（6 种，serde tag 5-10 追加）**
+
+| Tile | 地形 | 可走 | 挡视线 | 生态角色 |
+|------|------|------|--------|---------|
+| Mycelium 菌丝 | 繁茂 | ✓ | | 真菌地面 |
+| FungalPatch 蘑菇丛 | 繁茂 | ✓ | | 真菌点缀（菌丝上 15%） |
+| HangingVine 垂藤 | 繁茂 | ✗ | ✓ | 替代钟乳石的障碍 |
+| Sand 沙岸 | 地海 | ✓ | | 水域边缘（8 邻域 15%） |
+| Seagrass 海草 | 地海 | ✓ | | 浅水点缀（10%） |
+| CoralReef 珊瑚礁 | 地海 | ✗ | ✓ | 替代钟乳石的障碍 |
+
+**水域保留关键修复**：`carve_expand` 只挖 Wall（原逻辑挖所有不可走格，会把地海水挖成 Floor）；所有通道挖掘（ensure_connectivity/ensure_connection_between/ensure_spawn_accessible）统一走 `carve_channel`——DeepWater 变为 ShallowWater（涉水通道），保留水域且保证 4 方向连通（G22）。
+
+**生态对应（新怪 5 种，MonsterKindId 变体追加 3-7）**
+
+| 怪物 | 地形 | 定位 | 掉落 | 经验定位 |
+|------|------|------|------|---------|
+| Sporeling 孢子怪 m | 繁茂 | 弱（HP12 攻4） | 蘑菇 60%、苔藓 40% | ≈老鼠 |
+| MushroomGolem 蘑菇傀儡 M | 繁茂 | 中（HP22 攻7） | 苔藓 80%、孢子囊 30%、蘑菇 30% | ≈蝎子 |
+| CaveFish 洞穴鱼 f | 地海 | 弱快速（HP10 敏14） | 鱼骨 60%、海藻 30% | ≈老鼠 |
+| CaveCrab 洞穴蟹 c | 地海 | 中高防（HP18 防4） | 贝壳 80%、珍珠 10% | ≈蝎子 |
+| DeepEel 深鳗 e | 地海 | 中（HP15 攻6） | 鳗皮 60%、海藻 40% | ≈蝎子 |
+
+- 生成权重按 `MapKind` 分派（`monster_spawn_weight(map_kind, kind, floor)`）：繁茂以真菌为主+少量原生物；地海以水生为主+少量蝎子；洞穴保持原状
+- 新掉落物 8 种（ID 25-32）：蘑菇/海藻为地形消耗品（r 键使用：+6 HP / +4 MP，上限钳制 [⃞试调]），其余为材料（Dsn19 Phase 2 合成储备）
+
+**关联：** ISSUES G23/I70 | GAME.md Gm7/Gm10 | 生态对应原则（回复对称：繁茂回 HP ↔ 地海回 MP）
+
+**状态：** 已落地。分支楼梯（多楼梯/树状分支）待类型系统稳定后单独规划。
+

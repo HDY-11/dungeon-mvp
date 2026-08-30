@@ -499,9 +499,9 @@ let sx = if x0 < x1 { 1 } else { -1 };
 
 ### L44 — 为 Player 添加新组件后，必须 grep descend 和 persist 两个路径确保一致
 
-**问题背景：** D15（Skills 下楼/存档丢失）是同一个模式在本项目中的第三次发生——前两次是 D8（ActiveBuffs 下楼丢失）和 I34（ActiveBuffs 存档丢失）。每次都是"在 Player 上加了新组件 → 更新了 `setup_world`（首次创建）→ 但忘记更新 `descend`（下楼重建）和/或 `persist`（存档读档）的 query 和 restore"。
+**问题背景：** D15（Skills 下楼/存档丢失）是同一个模式在本项目中的第三次发生——前两次是 D8（ActiveBuffs 下楼丢失）和 I34（ActiveBuffs 存档丢失）。每次都是"在 Player 上加了新组件 → 更新了 `setup_world`（首次创建）→ 但忘记更新 `descend`（下楼重建）和/或 `persist`（存档读档）的 query 和 restore"。I79（restore 缺 AttackName）是第四次——三路径中 setup/descend 已加、restore 又漏，且读档测试只断言数据字段、不查组件存在性，导致缺组件被 `unwrap_or` 兜底静默降级。
 
-**参见 ISSUES.md #D15**
+**参见 ISSUES.md #D15 #I79**
 
 **错误做法：** 只更新 `setup_world` 中的组件插入，假设下楼和存档路径"会自动继承"。
 
@@ -522,6 +522,110 @@ grep -n "restore" dungeon-world/src/persist.rs   # GameSave::restore 中的 spaw
 
 确保三个路径都包含该组件。这是一个机械检查清单，不需要记忆。
 
-**为什么更好：** `setup_world` 只执行一次（游戏启动），`descend` 每次下楼都执行，`restore` 每次读档都执行。三个路径不同的代码走的是"同一组件的三个不同拷贝"——这不是继承关系，是并行维护关系。任何遗漏都导致数据静默丢失。grep 在编译前就能发现缺口，无需等到运行后。
+**补充（I79 教训）：** 仅 grep 还不够——restore 回环测试（capture→restore）必须显式断言关键组件存在（`world.get::<T>(player).is_some()`），而不是只断言数据字段。没有存在性断言时，缺组件会被运行时 `unwrap_or` 兜底静默降级，测试照样通过。
+
+**为什么更好：** `setup_world` 只执行一次（游戏启动），`descend` 每次下楼都执行，`restore` 每次读档都执行。三个路径不同的代码走的是"同一组件的三个不同拷贝"——这不是继承关系，是并行维护关系。任何遗漏都导致数据静默丢失。grep 在编译前就能发现缺口，断言让缺口在测试中失败，都无需等到运行后手动发现。
 
 
+### L45 — 段内偏移与段外索引是两套坐标系，偏移转换必须在唯一入口处完成
+
+**问题背景：** 背包 UI 中，`left_sel` 是"装备+背包"的全局索引：0-3 为装备段，4+ 为背包段（段内索引 0, 1, 2...）。Enter 键将 `left_sel` 转换为段内偏移 `detail_idx = left_sel - 4`（背包段）。但后续的"装备"（'e'）和"丢弃"（'d'）处理代码中，又使用 `detail_idx + 4` 重新计算全局索引，然后直接用这个值索引 `inv.stacks`。但 `inv.stacks` 是 0 基背包数组，不含装备段——全局索引左移 4 位后访问了错误的物品。
+
+```rust
+// ❌ 错误：detail_idx = left_sel - 4（段内偏移），又加回 4 变成全局索引
+let stack = inv.stacks.get(detail_idx + 4);  // 越界或错位
+// ✅ 正确：段内偏移直接索引背包数组
+let stack = inv.stacks.get(detail_idx);
+```
+
+**错误做法：** 在消费点处做反向转换（`segment_offset + segment_base`），假设"只要公式对就可以"。
+
+**正确做法：** 偏移转换只在入口处（Enter 键处理）做一次，后续所有消费点直接使用段内偏移。如果需要全局索引用于其他目的（如范围检查），在入口处同时计算并存储两个值。
+
+```rust
+// 入口处（唯一转换点）
+if left_sel < 4 {
+    detail_source = Equip;
+    detail_idx = left_sel;        // 装备段：段内偏移 = 全局索引
+} else {
+    detail_source = Backpack;
+    detail_idx = left_sel - 4;    // 背包段：段内偏移 = 全局索引 - 基数
+    // 两侧同时维护，消费点各取所需
+}
+// 消费点直接使用 detail_idx，不再做左移
+```
+
+**为什么更好：** 段内偏移是"我要访问第几个背包物品"的唯一正确答案。全局索引是"用户光标在哪个位置"的 UI 概念。把 UI 概念代入数据访问层，就是把渲染坐标当数据索引用——当两套数的基数不同时必然错位。一个入口点 + N 个直读点的模式比 N 个各自转换的模式更容易审计正确性。
+
+
+### L46 — 键盘事件去重应从事件类型入手，不能仅依赖时间窗口
+
+**问题背景：** 输入线程依赖 50ms 同键去重过滤重复按键。`KeyEventKind::Release` 事件与 `Press` 的 `key.code` 相同，去重逻辑只能靠时间窗口区分。但 Release 的到达时间受终端调度、事件缓冲、线程切换的影响——可能落在 49ms（被过滤）或 51ms（通过），结果完全不可控。
+
+```rust
+// ❌ 仅靠时间窗口去重——Release 在 50ms 边界上随机通过
+if key.code == last_code && now - last_time < Duration::from_millis(50) {
+    continue;
+}
+```
+
+**错误做法：** 增大去重窗口。100ms 虽然能覆盖 Release，但会延迟 tap-tap 的响应，手感变钝。
+
+**正确做法：** 从事件类型上区分 Press 和 Release，时间窗口只用于过滤 OS key-repeat：
+
+```rust
+// ✅ 事件类型过滤 Release，33ms 窗口只过滤 key-repeat
+if key.kind != KeyEventKind::Press { continue; }
+if key.code == last_code && now - last_time < Duration::from_millis(33) { continue; }
+```
+
+现代终端（Windows Terminal、Kitty、WezTerm）会为一次按键同时产生 `Press` 和 `Release` 两个事件，`key.kind` 区分了它们。传统终端（Conhost、xterm、SSH）的所有事件都是 `Press`，此过滤无害。
+
+**为什么更好：** 时间窗口解决的是"同一个 Press 重复到达"的问题（OS key-repeat 硬件抖动的产物）。Release 是另一个事件类型，不该由时间窗口来过滤。两件事各司其职，不需要为了覆盖 Release 而把窗口拉到影响手感的大小。
+
+**参见 ISSUES.md #I56**
+
+
+### L47 — UI 操作提示与按键处理器必须同源，不能一边显示一边不处理
+
+**问题背景：** 背包详情页 UI 显示「r:使用/学习」（`ui.rs`），但 `process_inventory_key` 没有 `'r'` 分支——玩家被引导按一个无效键，技能卷轴系统整体断链（I61）。同轮 I57：UI 对无 slot 物品不显示「e:装备」，但处理器没有对应 guard，按 e 直接 panic。
+
+**错误做法：** 在渲染层手写操作提示文案，在处理器层手写 match 分支，两处独立维护。
+
+**正确做法：** 操作提示与按键处理共享同一份「可用操作」判定：
+
+```rust
+// 单一判定函数，渲染和处理器都调用它
+fn available_actions(item: &ItemStack) -> Vec<&'static str> {
+    let mut v = vec!["d:丢弃"];
+    if item.def().is_some_and(|d| d.slot.is_some()) { v.push("e:装备"); }
+    v
+}
+// ui.rs: 由 available_actions 生成提示行
+// main.rs: match 分支的 guard 与 available_actions 的判定逻辑一致
+```
+
+**为什么更好：** 提示与处理是同一决策的两种消费。提示了但不处理 = 玩家按无效键；不提示但可触发 = 隐藏的崩溃路径。任何「显示 X 键」与「处理 X 键」的判定都必须来自同一来源，或至少在改动一侧时 grep 另一侧。
+
+**参见 ISSUES.md #I61 #I57**
+
+---
+
+### L48 — 规则验证必须存在于执行入口，显示层的"有效性"只是提示不算规则
+
+**问题背景：** 投掷的射程/视线检查只在 `update_throw_path` 计算 `valid_target`，渲染层据此画红/蓝轨迹（Gm9 的"目标不可选中"）。但 Enter 入队和 `execute_throw` 都不检查——玩家瞄准墙后/超射程目标按 Enter，石子穿墙命中（I59）。
+
+**错误做法：** 认为"显示层阻止了无效操作"——红色轨迹只是提示，玩家仍可确认。显示层没有任何阻止能力。
+
+**正确做法：** 规则验证写入执行入口（入队时 + 执行时双保险）：
+
+```rust
+// 入队前：UI 层检查（体验）
+if !tp.valid_target { 推送提示; return; }
+// 执行时：规则层检查（兜底，防状态变化/绕过 UI）
+if let Err(reason) = validate_throw(world, attacker, tx, ty) { 取消; return; }
+```
+
+**为什么更好：** 显示层可能被绕过（直接入队、脚本调用、未来新 UI），执行层是唯一不可绕过的关卡。凡是"玩家能否做 X"的规则，验证必须在执行函数入口重复一次——显示层的检查只负责"提前告知"，不负责"阻止"。
+
+**参见 ISSUES.md #I59**

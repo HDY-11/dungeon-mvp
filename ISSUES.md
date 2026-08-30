@@ -8,10 +8,800 @@
 问题按维度分组：**设计 / 架构 / 实现 / 游戏逻辑**，组内按严重程度降序。
 优先级标记：🔴 高（影响正确性或游戏体验） / 🟡 中（维护性或功能缺口） / 🟢 低（整洁或边缘情况）
 
-> **编号状态** — D: D1~D15 | A: A1~A19（含 A4L/A4La 子条目）| I: I1~I50（含 I27L/I27La 子条目）| G: G1~G16（含 G4L/G4La 子条目）| P: P1~P8 | R: R1
+> **编号状态** — D: D1~D28 | A: A1~A40（含 A4L/A4La 子条目）| I: I1~I85（含 I27L/I27La 子条目）| G: G1~G34（含 G4L/G4La 子条目）| P: P1~P8 | R: R1
 
 ## ✅ 已修复
 
+### 🟡 D21 — Gm4 玩家初始 HP 文档算术错误：28 vs 实现 33 ✅已修复
+
+**修复前：** Gm4 标注 `HP = 20 + 等级×5 + 防御×2 = 28`，代码 `max_hp_for(1,4)=33`，文档漏加 `等级×5=5`。
+
+**修复后：** Gm4 表改 `= 33（1级防4时）` 并展开计算过程 `20+5+8=33`，标注改 [⃞计算]。
+
+**位置：** `GAME.md:152`
+
+---
+
+### 🟡 D22 — Gm6 熟练度表格与公式/代码错位一级 ✅已修复
+
+**修复前：** 表格「熟练度 1」行写零加成，公式/代码熟练度 1 即有加成（治愈 +3、护盾/狂暴 +2）；Gm5 表同步错位。
+
+**修复后：** Gm6 表格修正为熟练度 1 = `15+精通+3 / +7 / +7`，并加说明「熟练度 1 即有加成（熟练度×系数）」；Gm5 表护盾/狂暴熟练度 1 修正为 +7。
+
+**位置：** `GAME.md:194-195`（Gm5）、`GAME.md:223-228`（Gm6）
+
+---
+
+### 🟡 D23 — Gm9 投掷伤害表与自身公式/代码不符 ✅已修复
+
+**修复前：** 公式 `基础=3+floor(楼层/2)` 下 F10 应为 8，表写 7；F5 对防 3 哥布林表写 2-4，实际 2-3。
+
+**修复后：** 表格重算：F5 行 2-3、F10 行 8/8-9/5-6，与公式及代码一致。
+
+**位置：** `GAME.md:471-475`
+
+---
+
+### 🟡 D24 — 按键去重阈值：文档三处 50ms vs 实现 33ms ✅已修复
+
+**修复前：** Gm11/Dsn17/README 均声明 50ms，实现（L46 修复后）为 33ms + KeyEventKind 过滤。
+
+**修复后：** 三处文档统一为 33ms；Dsn17 保留「50→33 收窄」历史上下文并关联 L46。
+
+**位置：** `GAME.md:524/530`、`DESIGN.md:378-389`（Dsn17）、`README.md:87`
+
+---
+
+### 🟡 D25 — Gm11 模态对话框描述过时：modal_flag 已是死代码 ✅已修复
+
+**修复前：** Gm11 写「AtomicBool 暂停输入线程」，页栈（Dsn21）已接管，`modal_flag` 为死代码。
+
+**修复后：** Gm11 改为「页栈按键路由」，标注旧方案已废弃；`modal_flag` 死代码清理并入 A36。
+
+**位置：** `GAME.md:534`
+
+---
+
+### 🟡 D26 — Gm1 移动耗时 300ms 与 Gm7 武器攻速矛盾，CanMove.duration 成死字段 ✅已修复
+
+**修复前：** Gm1 行动表写「移动 300ms」，I67 后耗时由主手武器 speed 决定。
+
+**修复后：** Gm1 行动表改为「武器 speed（无武器 300）」并标注 [⃞计算]，交叉引用 Gm7；CanMove.duration 死字段注释同步（清理并入 A36）。
+
+**位置：** `GAME.md:14`
+
+---
+
+### 🟢 D27 — Gm3 升级经验表 round vs 实现 trunc（每级差 1） ✅已修复
+
+**修复前：** 表格按四舍五入，代码 `as u64` 截断（2→3=90 表写 91 等）。
+
+**修复后：** 公式标注「结果向下取整（trunc）」，表格改为截断值（90/159/329/645/890）。
+
+**位置：** `GAME.md:106-120`
+
+---
+
+### 🟢 D28 — Gm6 卷轴「每层 1-3 张」未记载深层增量 ✅已修复
+
+**修复前：** 实现为 `1-3 + ⌊(楼层-1)/5⌋`，文档只写 1-3。
+
+**修复后：** Gm6 掉落描述补充深层增量公式。
+
+**位置：** `GAME.md:201`
+
+---
+
+### 🟡 I82 — 怪物种群补足循环无进展保证，深层/水域地图可死循环 ✅已修复
+
+**修复前：** `while positions.len() < min_count` 无迭代上限、无候选格不足判定，可行走格不足时死循环卡死。
+
+**修复后：** 迭代上限 40×期望数，未达期望时 log::warn 降级（不足比卡死好）。回归测试 1 个（全墙 6 格地图 + floor=20 不死循环）。
+
+**位置：** `dungeon-world/src/population.rs`（generate_monster_population 补足段）
+
+---
+
+### 🟡 I83 — 单房间地面物品放置 random_range 空区间 panic ✅已修复
+
+**修复前：** `random_range(2..r.w.saturating_sub(2))` 在房间 bounding box ≤4 时区间为空 panic。
+
+**修复后：** 房间过小时跳过采样，充底到中心最近可行走格（与多房间路径语义一致）。
+
+**位置：** `dungeon-world/src/init.rs`（place_ground_items 单房间分支）
+
+---
+
+### 🟢 I84 — pick_stair_pos 兜底坐标未钳制，可引发越界 panic ✅已修复
+
+**修复前：** 螺旋搜索全失败时兜底 `(spx+15, spy)` 未 clamp，spx>64 时越界坐标传给 ensure_connection_between 索引越界 panic。
+
+**修复后：** 兜底坐标 `saturating_add(15).min(MAP_WIDTH-1)` 钳制 + `nearest_walkable` 保证可行走。回归测试 1 个（spawn(75,59) 返回界内 walkable 坐标）。
+
+**位置：** `dungeon-world/src/init.rs`（pick_stair_pos 兜底）
+
+---
+
+### 🟡 G33 — 护盾/狂暴实际时长约为文档宣称 3 倍，技能超模 ✅已修复
+
+**修复前：** duration=3 → 3000 AV；玩家单次行动 AV 约 310ms，实际覆盖 7-13 次行动，远超「3 次行动」设计意图。
+
+**修复后：** duration 3→1（1000 AV ≈ 3 次玩家行动），Gm2/Gm5 数值表同步更新（标注 [⃞试调] 调整轨迹）。回归测试 1 个（技能 duration=1 断言）。
+
+**位置：** `dungeon-core/src/items.rs`（use_item 卷轴学习）、`GAME.md:98-99/194-195`
+
+---
+
+### 🟡 G32 — SL 刷掉落漏洞：RNG 状态不持久化，读档重放随机序列 ✅已修复
+
+**修复前：** 存档只存 map_seed，restore 用 `GameRng::new(map_seed+42)` 从种子重建，读档后暴击/掉落/游荡随机序列重放，可存档→杀怪→读档重掷实现 SL 刷掉落；且与 descend 的含 floor 派生不一致。
+
+**修复后：** GameRng 重写为可序列化的 xorshift64* 状态机（impl `rand::TryRng`，每次 `next` 计一步）；掉落 roll 改走 GameRng（不再绕过状态）；GameSave 存 `rng_state/rng_steps`，restore 用 `from_state` 精确恢复。旧档（无状态）保持旧派生种子行为。回归测试 3 个（状态持久/续接非重放/旧档默认）。
+
+**位置：** `dungeon-core/src/resources.rs`（GameRng）、`dungeon-action/src/execute.rs`（handle_kill）、`dungeon-world/src/persist.rs`
+
+---
+
+### 🟡 A35 — 存档静默丢弃玩家 Attack 行动 ✅已修复
+
+**修复前：** capture 对 `ActionKindV3::Attack` 直接 `return None`，攻击已入队未执行时存档，读档后攻击消失无提示。
+
+**修复后：** `SavedActionKind` 末尾追加 `Attack { tx, ty }` 变体（bincode 旧档兼容）；capture 按目标坐标保存，restore 按坐标反查 Monster 实体重映射；查不到则取消并记 warn 日志。回归测试 1 个（Attack 存读档后 target 反查成功）。
+
+**位置：** `dungeon-world/src/persist.rs`（capture/restore/SavedActionKind）
+
+---
+
+### 🟢 A30 — GameSave 无版本号：bincode 下 `#[serde(default)]` 不提供 schema 级兼容 ✅已修复
+
+**修复前：** GameSave 无版本字段，bincode 按字段顺序读写，schema 变更（加字段）会让旧存档 EOF 反序列化失败，无迁移路径。
+
+**修复后：** 磁盘格式引入 magic 前缀 `DSV1`（4 字节）+ 新 GameSave；旧格式（裸 bincode GameSaveV0）保留专门结构，`load_game` 双格式自动识别并字段级迁移（新字段取默认：容量 36、RNG 无状态）。以后 schema 变更只需新 magic 版本 + V{N} 转换函数。回归测试 1 个（V0 旧档读入成功）。
+
+**位置：** `dungeon-world/src/persist.rs`（SAVE_MAGIC/GameSaveV0/save_game/load_game）
+
+---
+
+### 🟢 A37 — 读档链路在 main.rs 与 game.rs 重复实现 ✅已修复
+
+**修复前：** 两处各自实现 read→deserialize→restore→post_load_refresh，路径硬编码两次，日志行为不一致。
+
+**修复后：** 收敛为 `dungeon_world::save_game`/`load_game` 单入口（含 magic 双格式兼容与 post_load_refresh），两处调用方只做路径选择与结果日志；存档/读档失败现在有明确的「已保存/已读档/失败」提示（旧实现静默吞错误）。回归测试 1 个（save/load 回环）。
+
+**位置：** `dungeon-world/src/persist.rs`（save_game/load_game）、`src/main.rs`、`src/pages/game.rs`
+
+---
+
+### 🟢 A40 — restore 硬编码 Inventory capacity=36，capture 不存容量 ✅已修复
+
+**修复前：** capture 只存 stacks，restore 写死 36；descend 却保留原容量——未来容量可变时读档静默重置。
+
+**修复后：** GameSave 增加 `inv_capacity` 字段（0/缺省=旧档默认 36），capture 写入、restore 读回。回归测试 1 个（容量 40 存读档回环）。
+
+**位置：** `dungeon-world/src/persist.rs`
+
+---
+
+### 🟢 I85 — 读档 map_tiles/explored 长度未校验，损坏存档越界 panic ✅已修复
+
+**修复前：** restore 按 `i/MAP_WIDTH` 直接索引写入，反序列化的 Vec 长度 > 4800（被篡改/损坏但 Tile tag 合法）时越界 panic，与 I72「读档永不崩溃」目标相悖。
+
+**修复后：** 长度校验 + `take` 截断（多余丢弃、缺失保持 Wall/false），不一致时 log::warn。回归测试 1 个（超长 4850 格存档读档不 panic）。
+
+**位置：** `dungeon-world/src/persist.rs`（restore 地图恢复段）
+
+---
+
+### 🔴 A31 — 读档怪物缺 LastKnownPlayerPos：追击 AI 失效（L44 模式第五次） ✅已修复
+
+**修复前：** restore 怪物 spawn 缺 `LastKnownPlayerPos` 组件（setup_world/descend 均有），`chase_decision_system` 查询要求该组件——读档后所有怪物被查询过滤，永不追击玩家。
+
+**修复后：** restore 怪物 spawn 补 `LastKnownPlayerPos::default()`。回归测试 1 个（capture→restore 后所有 Monster 断言持有该组件——存在性断言而非数据字段，L44 补充教训）。
+
+**位置：** `dungeon-world/src/persist.rs`（restore 怪物 spawn）
+
+**教训见 LESSONS.md L44**
+
+---
+
+### 🔴 G28 — 背包满时 g 快速拾取静默销毁脚下全部地面物品 ✅已修复
+
+**修复前：** `pickup_ground` 循环内无条件 despawn 每个地面物品实体——背包满（picked==0）时物品仍被销毁；部分空间时 leftover 一并销毁。卷轴/装备/稀有材料永久丢失。
+
+**修复后：** 仅当 `picked>0 且 leftover==0`（全部装下）才 despawn；装不下时保留实体并写回剩余数量，推「背包已满」日志。回归测试 2 个（背包满保留实体 / 部分装下写回剩余）。
+
+**位置：** `dungeon-core/src/ops.rs`（pickup_ground）
+
+---
+
+### 🟡 G29 — 玩家近战攻击无距离校验，可隔空命中已离开的怪物 ✅已修复
+
+**修复前：** 玩家确认攻击后若怪逃跑离开，execute_attack 仍全额结算伤害；怪物侧攻击先判 8 方向邻接。check_condition 的 Attack 分支只查 target 仍是 Monster。
+
+**修复后：** 新增 `adjacent_8` 距离判定，check_condition 的 Attack 分支与 execute_attack 执行入口双重校验（L48 执行层兜底），玩家与怪物规则对称。回归测试 1 个（非邻接目标攻击被取消）。
+
+**位置：** `dungeon-action/src/execute.rs`（check_condition/execute_attack/adjacent_8）
+
+---
+
+### 🟡 G30 — 逃跑怪物永不回头：滞回未落地 + 卡墙角原地挨打 ✅已修复
+
+**修复前：** 注释声称滞回（进入<25% 退出>30%）但实现仅 <25%；execute_flee 无路可逃时原地不动不反击。
+
+**修复后：** 新增 `FLEE_HP_RATIO_EXIT=0.30`，保活检查用退出阈值（滞回落地：25%-30% 区间内已入队的逃跑继续有效，≥30% 取消）；提取共享 `monster_attack_player`，execute_flee 死角且邻接玩家（视野内）时兜底反击。回归测试 3 个（阈值关系 / 超阈值取消 / 死角反击）。
+
+**位置：** `dungeon-core/src/ops.rs`（FLEE_HP_RATIO_EXIT）、`dungeon-action/src/execute.rs`（check_condition/execute_flee/monster_attack_player）
+
+---
+
+### 🟡 G31 — 对角穿墙（corner-cutting）：玩家与怪物均可斜穿墙角 ✅已修复
+
+**修复前：** can_move_to 注释声称验证不穿墙角但实现没有；玩家入队与怪物 A* 均不检查。
+
+**修复后：** can_move_to 增加对角约束（两侧正交格须可通行且未被占用）；`handle_player_direction` 入队前预检同规则；A* 8 方向遍历同步检查。回归测试 4 个（can_move_to 两侧墙/单侧墙/开放 + 玩家入队拒绝 + A* 不穿墙角 + A* 开放对角）。
+
+**位置：** `dungeon-action/src/execute.rs`（can_move_to）、`dungeon-action/src/player.rs`、`dungeon-core/src/pathfinding.rs`（astar）
+
+---
+
+### 🟢 G34 — 下楼不清空 ActionQueue，残留失效条目 ✅已修复
+
+**修复前：** descend despawn 全部实体但 ActionQueue/三个意图缓冲区未清，下楼后第一次推进产生 no-op 与「行动被取消」日志噪音。
+
+**修复后：** descend 在 despawn 后同步清空 ActionQueue 与 ChaseIntents/FleeIntents/WanderIntents。回归测试 1 个（入队 4 条后下楼全部清空）。
+
+**位置：** `dungeon-world/src/init.rs`（descend）
+
+---
+
+### 🔴 I77 — 投掷 UI 确认链路断裂：`handle_timed_action` 无 Throw 分支 + Enter 提前 pop 页栈，投掷永远无法执行 ✅已修复
+
+**修复前：** `throw_aim.rs` Enter 分支先 pop 页栈再走 `handle_timed_action`（tap-tap 双确认），而确认匹配只有 Move/Wait/Skill 三个 arm——`Throw` 永远落入 `_ => false`。第一次 Enter 只设预览并弹回 Game 页，第二次 Enter 被 keymap（无 Enter 绑定）吞掉。投掷 UI 链路自页栈迁移起从未可用（I59/G15 测试只覆盖 `execute_throw` 层）。
+
+**修复后：** 新增 `dungeon_action::confirm_throw`（execute.rs）：校验 valid_target（L48 执行入口兜底）→ 清理 UI 状态 → `enqueue_or_replace` 入队。`throw_aim` Enter 一次确认直接入队，与 README/Gm9「Enter 投掷」文档语义一致（D20 随之关闭）。回归测试 3 个（一次确认入队+消耗石子 / 无效目标拒绝 / 替换旧行动）。
+
+**位置：** `dungeon-action/src/execute.rs`（confirm_throw）、`src/pages/throw_aim.rs`
+
+**提交：** `fda7f21`
+
+### 🔴 I78 — 状态面板按 UTF-8 字节切片中文装备名 → panic 崩溃 ✅已修复
+
+**修复前：** `ui.rs` 装备名截断 `mh[..mh.len().min(10)]` 按字节操作——4 字中文名（12 字节）`[..10]` 落在字符中间直接 panic。攻击戒指为每层装备池常客，装备后渲染即崩溃。
+
+**修复后：** 新增 `truncate_name`（按字符截断，5 字符 ≈ 原 10 字节显示宽度意图），主手/副手/防具/戒指四槽统一。回归测试 2 个（长中文名面板渲染不 panic + truncate_name 字符安全）。
+
+**位置：** `dungeon-render/src/ui.rs`（truncate_name）
+
+**提交：** `701cc0a`
+
+### 🟡 I79 — 读档玩家缺 AttackName 组件（L44 模式第三次） ✅已修复
+
+**修复前：** `restore` 玩家 spawn 缺少 `AttackName`（setup_world/descend 均有"斩击"），读档后攻击日志名退化为"攻击"。
+
+**修复后：** restore 玩家补 `AttackName("斩击")`，三路径（setup/descend/restore）组件集合一致。回归测试 1 个（含组件存在性断言——L44 第四次，教训强化见 LESSONS.md L44）。
+
+**位置：** `dungeon-world/src/persist.rs`（restore 玩家 spawn）
+
+**提交：** `2547cf0`
+
+### 🟢 I80 — 读档怪物 AttackName 仍用 glyph 反推（A24 同根因残留） ✅已修复
+
+**修复前：** restore 怪物攻击名按 `m.glyph` 分支（'r'/'s'/其他→"重击"）——Dsn24 新怪（m/M/f/c/e）读档后攻击名全部错误显示"重击"。
+
+**修复后：** 按已存档的 `kind` 查 `monster_def::monster_attack_name`，旧存档（kind=None）先按 glyph 推断 kind 再查表，攻击名全对。回归测试 1 个（深鳗读档攻击名"缠绕"）。
+
+**位置：** `dungeon-world/src/persist.rs`（restore 怪物 spawn）
+
+**提交：** `2547cf0`
+
+### 🟡 G24 — `auto_equip_throwable` 背包满时静默丢失副手装备（违反 Dsn10 原子语义） ✅已修复
+
+**修复前：** `throw.rs` 装填时 `inv.add(old.item_id, old.count)` 返回值被忽略——副手木盾 + 背包满 + 按 t → 木盾卸下放不回背包，永久消失。
+
+**修复后：** 装填前预检旧副手能否放回背包（can_add），放不回则回滚保持副手原状并推送"背包已满"提示。回归测试 3 个（背包满保留副手 / 正常换装 / 已有投掷物跳过）。
+
+**位置：** `src/throw.rs`（auto_equip_throwable）
+
+**提交：** `a26d620`
+
+### 🟡 G25 — `ensure_connectivity` 直线收尾挖单格而非 2x2（G22 修复不完整） ✅已修复
+
+**修复前：** G22 修复声明通道挖 2x2 块，但 `ensure_connectivity` 的 Bresenham 收尾用单格 `carve_channel`——区域间通道对角转折处仍可能 4 方向断裂（`ensure_connection_between` 已 2x2，两处不一致）。
+
+**修复后：** 抽取共用 `carve_2x2`，`ensure_connectivity` 游走与收尾全部 2x2。回归测试 2 个（隔离区域连通 20 种子 + carve_2x2 挖 4 格）。
+
+**位置：** `dungeon-core/src/map_gen.rs`（carve_2x2）
+
+**提交：** `63866f2`
+
+### 🟢 G26 — `craft_with_template` 空间预检时序：模板移除前检查 ✅已修复
+
+**修复前：** 空间检查先于材料/模板消耗执行——背包满但材料与模板占位时永远误报"背包已满"，合成不可用。
+
+**修复后：** 空间检查模拟「移除配方材料 + 模板」后的背包再判定。回归测试 2 个（背包满+材料齐全合成成功 / 材料不足拒绝且不消耗模板）；既有合成测试断言同步更新（原"背包满应失败"改"应成功"）。
+
+**位置：** `dungeon-core/src/items.rs`（craft_with_template）
+
+**提交：** `5967c69`、`15dbeac`
+
+### 🟢 G27 — 背包列表 take(14) 硬截断不可滚动，光标可移出可见区 ✅已修复
+
+**修复前：** 背包列表只渲染前 14 个物品且无滚动——>14 物品时选中光标移出屏幕（无视觉反馈），且 README 声称的 0-9/a-z 快捷选中从未实现（UI 显示热键但处理器不响应，L47 违规）。
+
+**修复后：** 列表改为以选中项为中心的滚动窗口（`backpack_window_start`）；处理器补 `hotkey_to_idx`（'0'-'9'/'a'-'z' ↔ 背包第 0-35 个物品，与 UI 热键显示一致；'g' 拾取语义优先）。回归测试 2 个（窗口边界 6 例 + 热键映射 6 例）。
+
+**位置：** `dungeon-render/src/ui.rs`、`src/pages/inventory.rs`
+
+**提交：** `dd5e78a`
+
+### 🟢 I81 — 8 个 unused import 警告 + init.rs 卷轴放置死代码 ✅已修复
+
+**修复前：** 架构批重构后回归：monster.rs/ui.rs/dialog.rs/game.rs/throw_select.rs 未用导入 8 处；init.rs `kinds` 数组整体死代码（卷轴技能类型由 use_item 学习时重建，放置不依赖）。
+
+**修复后：** 全部清理，`cargo build` 警告 8 → 0。
+
+**位置：** `dungeon-action/src/monster.rs`、`dungeon-render/src/ui.rs`、`dungeon-world/src/init.rs`、`src/pages/{dialog,game,throw_select}.rs`
+
+**提交：** `3ca4d26`
+
+### 🟢 D20 — 投掷确认语义与文档不符：README/Gm9 的「Enter 投掷」（一次确认）vs 实现走 tap-tap 双确认 ✅已修复
+
+**修复前：** README/Gm9 写「Enter 投掷」，实现走 tap-tap 双确认且 `Throw` 无确认分支（I77 根因）。
+
+**修复后：** I77 修复后 Enter 一次确认直接入队，实现与文档一致。
+
+**位置：** `src/pages/throw_aim.rs`、`dungeon-action/src/execute.rs`
+
+**提交：** `fda7f21`
+
+### I76 — 架构批 5（A 渲染快照化·核心子集）：状态面板脱离 ECS + render 首测 ✅已修复
+
+**修复前：** dungeon-render 每帧直接查询 ECS（约 20 处），`build_stats_panel` 单函数 10+ 查询；dungeon-render 零测试（I23 最大缺口）。
+
+**修复后：** `RenderScene` 扩展状态面板快照（stats/equip/buffs/skills/floor），`extract_scene` 一次收集；`panel_header(scene)` 纯函数生成面板头部（HP/MP/EXP/攻防/暴击/装备/楼层），`build_stats_panel` 只处理坐标/计时/光标段；技能段改用快照。**dungeon-render 首个单测**（3 个：快照生成面板、无数据降级、低血红色阈值）。渲染层仍有光标查看/背包/时间轴等段直查 ECS——记录为后续（render 完整快照化里程碑）。
+
+**位置：** `dungeon-render/src/{pipeline,ui}.rs`
+
+### I75 — 架构批 4（D 存档瘦身）：SavedStats 手工层删除 ✅已修复
+
+
+### I75 — 架构批 4（D 存档瘦身）：SavedStats 手工层删除 ✅已修复
+
+**修复前：** `SavedStats` 13 字段手工逐字段复制 Stats（From/into_stats 约 30 行），而 Stats 已 derive Serialize 且字段序一致。
+
+**修复后：** 存档直接存 `Stats`（GameSave.st / SavedMonster.st）——bincode 布局二进制兼容（字段序一致验证）；删除 SavedStats + From + into_stats。`save_restore_roundtrip` 回环测试通过证明兼容。
+
+**保留项（记录理由）：** SavedStack/SavedActiveBuff/SavedSkill 保留——ItemStack 有 meta 字段、Buff 有 stack_type 字段，直接换序列化布局会破坏旧存档，与"存档兼容"原则冲突。
+
+**位置：** `dungeon-world/src/persist.rs`
+
+### I74 — 架构批 3（B+E 收敛）：投掷链路与重复模式收敛 ✅已修复
+
+
+### I74 — 架构批 3（B+E 收敛）：投掷链路与重复模式收敛 ✅已修复
+
+**修复前：** ① 进入 ThrowAim 初始化块在 game.rs/throw_select.rs 逐字重复、副手可投掷判定 4 处；② 装备槽位 match 在 inventory.rs 多处；③ 读档/下楼后刷新序列 3 处重复；④ 游标移动 look/throw_aim 双实现（且投掷时光标高亮不跟随光标——既有瑕疵）。
+
+**修复后：** `throw.rs::try_enter_throw_aim`/`has_throwable_offhand` 收敛投掷链路；`Equipment::slot/slot_mut` 收敛槽位访问；`ops::post_load_refresh` 收敛读档/下楼刷新（3 处调用）；`pages::move_cursor` 收敛游标移动（look 用），投掷页 `move_throw_cursor` 同步 ThrowPreview+LookCursor（修复高亮不跟随）。
+
+**跳过项（低收益/高风险，记录）：** BFS 连通区泛型化（collect_walkable_regions/detect_cave_regions 语义不同，合并风险高）、醉汉游走 4 处合并（各带不同参数）、玩家查询全量替换（机械改动收益低）。
+
+**位置：** `src/throw.rs`、`src/pages/{game,throw_select,throw_aim,look,mod}.rs`、`dungeon-core/src/{ops,items}.rs`、`dungeon-world/src/persist.rs`
+
+### I73 — 架构批 2（F 死代码清理） ✅已修复
+
+
+### I73 — 架构批 2（F 死代码清理） ✅已修复
+
+**修复前：** 迁移后遗留死代码：MovingDir 组件（spawn 从不读取）+ ops::set_player_dir；UsableItem trait + SkillScroll 组件（悬空抽象，ISSUES 自认"抽象债务"）；PlayerClass::display_name、ItemClass::icon、ItemDef::has_tag、Inventory::drop_stack、Room::tiles、Map::carve_corridor、Map::render、count_neighbor_tile 零调用；run_monster_decision 包装（仅 re-export）；dungeon-world 冗余 re-export（check_death_system/apply_exp_system）。
+
+**修复后：** 全部删除；PlayerClass 保留 skills()（Dsn13 无职业设计）；Rarity 枚举保留（误删后恢复）。79 测试通过、clippy 0。
+
+**位置：** `dungeon-core/src/{components,items,ops,lib}.rs`、`dungeon-action/src/{monster,lib}.rs`、`dungeon-world/src/{init,persist,lib}.rs`、`dungeon-action/src/tests.rs`
+
+### I72 — 架构批 1（G 加固）：读档容错 / DialogKind / 平衡常量单源 ✅已修复
+
+
+### I72 — 架构批 1（G 加固）：读档容错 / DialogKind / 平衡常量单源 ✅已修复
+
+**修复前：** ① 损坏存档（未知物品 ID）读档直接 panic；② 对话框行为按标题字符串匹配（改文案即断）；③ 平衡数值多源：射程 5 双份（execute.rs/throw.rs）、投掷耗时 190.0 双份、低血阈值 0.3 vs 1/3 **不一致 bug**（状态面板与行动轴显示不同）、逃跑阈值 0.25 vs 0.30 双份（触发与保活矛盾）。
+
+**修复后：** ① 读档跳过未知物品 + log::warn；② `DialogKind` 枚举（Quit/Descend），行为按种类分派，标题只作显示；③ core 平衡常量单源：`THROW_RANGE`/`THROW_DURATION`/`LOW_HP_RATIO`/`FLEE_HP_RATIO`，全部引用点统一（逃跑统一 0.25，低血统一 0.3）。
+
+**位置：** `dungeon-world/src/persist.rs`、`dungeon-action/src/types.rs`（DialogKind）、`dungeon-core/src/ops.rs`（常量）、`dungeon-render/src/ui.rs`+`timeline.rs`、`src/pages/{dialog,mod,game,throw_aim}.rs`、`src/throw.rs`
+
+### I71 — Dsn23 expect_log 未落地：生产代码仍在用裸 expect/unwrap ✅已修复
+
+
+### I71 — Dsn23 expect_log 未落地：生产代码仍在用裸 expect/unwrap ✅已修复
+
+**修复前：** Dsn23 设计 `expect_log`（panic 前经 log::error! 写入开发者日志，`#[track_caller]` 记录调用点）用于替换标准库 `expect`，但 `ext.rs` 零调用方——生产代码 44 处 `.expect("...")` + 10 处裸 `.unwrap()` 崩溃前无日志，崩溃现场无法追溯（violates Dsn23 设计意图）。
+
+**修复后：** 生产代码全部改用 `expect_log`（59 处，覆盖 dungeon-core/action/world/render/tui 15 个文件）：注册断言（`try_query::<...>().expect_log("...registered at init")`）、预检保证的 `get_mut`（`expect_log("Player inventory exists")`）、锁中毒（`FileLogger mutex poisoned`）、digit 转换等。裸 `expect`/`unwrap` 生产路径清零。测试代码保持 expect（不需要日志）。日志未初始化时 `log::error!` 为 no-op，测试安全。
+
+**位置：** `dungeon-core/src/ext.rs` + 15 个生产文件
+
+### G23 — 地图类型单一，楼层无视觉/生态区分 ✅已修复
+
+
+### G23 — 地图类型单一，楼层无视觉/生态区分 ✅已修复
+
+**修复前：** 所有楼层均为同一洞穴地形；楼梯单一；无生态差异。
+
+**修复后：** 多类型地图落地（Dsn24）：`MapKind`（Cavern/LushCavern/Undersea）+ `map_kind_for(seed, floor)` 确定性派生（F1 固定 Cavern）；6 新方块（菌丝/蘑菇丛/垂藤/沙岸/海草/珊瑚礁）；5 新怪物（孢子怪/蘑菇傀儡/洞穴鱼/洞穴蟹/深鳗）按类型生态权重生成；8 新掉落物（蘑菇/海藻地形消耗品 + 材料）。关键修复：carve_expand 只挖墙、通道挖掘 `carve_channel` 深水变涉水浅水——水域不再被挖穿。分支楼梯暂缓（待类型系统稳定）。
+
+**位置：** `dungeon-core/src/lib.rs`（MapKind/Tile）、`map_gen.rs`、`monster_def.rs`、`dungeon-world/src/population.rs`、`init.rs`、`assets/items.json`
+
+### I70 — 新方块/怪物/掉落物实现 ✅已修复
+
+**修复前：** 无（Dsn24 配套内容）。
+
+**修复后：** Tile serde tag 5-10（旧存档兼容）；MonsterKindId 变体 3-7；物品 ID 25-32；蘑菇/海藻经 is_usable/use_item 回血回蓝（L47 共享判定自动生效）。回归测试：Tile serde 回环、类型特征、怪物定义完整性、按类型种群生成（30 种子×3 类型）、消耗品使用与上限钳制。全 workspace 79 测试通过、clippy 0。
+
+**位置：** 同 G23
+
+
+### I69 — Dsn19 Phase 1：模板碎片合成系统（材料出口） ✅已修复
+
+
+### I69 — Dsn19 Phase 1：模板碎片合成系统（材料出口） ✅已修复
+
+**修复前：** 5 种材料无消耗渠道（G11）；模板碎片系统只有定案设计（Dsn19）。
+
+**修复后：** 4 个模板碎片（19-22 剑刃/盾面/甲片/兽牙指环模板）——items.json + ITEM_* 常量 + `template_recipe`/`craft_with_template`（材料检查/空间预检/消耗产出，失败不消耗模板）+ 背包 r 键使用（is_usable 扩展）+ 哥布林 5% 掉落。Inventory 新增 `count_of`/`remove_item`。回归测试 `test_craft_with_template`（成功/材料不足/背包满三路径）。GAME.md Gm7 物品表+掉落表+配方表记录。G11 主条目更新：Phase 1 落地，Phase 2/3 保留 Deferred。
+
+**位置：** `assets/items.json`、`dungeon-core/src/items.rs`、`dungeon-core/src/monster_def.rs`、`src/pages/inventory.rs`、`GAME.md`
+
+### I68 — 投掷 LOS/射程判定双实现未收敛 ✅已修复
+
+**修复前：** `validate_throw`（execute.rs）与 `update_throw_path`（throw.rs）各一份 Bresenham+blocks_vision+射程实现。
+
+**修复后：** core 新增 `ops::los_clear(map, from, to)` 与 `ops::chebyshev(a, b)` 作为唯一实现，两处调用。回归测试 `test_los_clear_and_chebyshev`。
+
+**位置：** `dungeon-core/src/ops.rs`、`dungeon-action/src/execute.rs`、`src/throw.rs`
+
+### I67 — 武器无差异化 ✅已修复
+
+**修复前：** 所有武器共享 300ms 行动耗时，换武器只有数值差异。
+
+**修复后：** `ItemDef.speed` 字段（毫秒）；玩家移动/攻击耗时 = 主手武器 speed × 敏捷系数（无武器 300ms 基准）；新增石锤（450ms 攻击+4 慢速高攻）与匕首（200ms 攻击+2 快速低攻），哥布林 12% 掉落 + 地面物品池。GAME.md Gm7 装备表 + 攻速表 + 数值标注。回归测试 `test_weapon_speed_affects_av`（匕首<空手<石锤）。
+
+**位置：** `assets/items.json`、`dungeon-core/src/items.rs`、`dungeon-action/src/player.rs`、`dungeon-core/src/monster_def.rs`、`dungeon-world/src/init.rs`、`GAME.md`
+
+
+### A27 — main.rs 单体 → 按页拆分为 pages/ 模块 ✅已修复
+
+**修复前：** `src/main.rs` 662 行集中了全部页面处理器（process_game_key / process_look_key / process_throw_select_key / process_throw_aim_key / process_inventory_key / process_dialog_key），每加一个 UI 元素都要碰 main.rs。
+
+**修复后：** 按 `dungeon_action::Page` 枚举一一拆分为 `src/pages/` 模块（每页一个文件 + mod.rs 分派入口）。main.rs 瘦身至 ~180 行（入口/主循环/标题画面）。`process_key` 分派逻辑进入 pages/mod.rs；`pickup_ground`/`on_stairs` 薄包装删除（各页直接调 `ops::*`）；顺带清理死代码 `throw.rs::get_offhand_name`（零调用方）。重构无行为变化：全 workspace 68 测试通过、clippy 0 警告。README 架构注释同步。
+
+**位置：** `src/main.rs`、`src/pages/`（新增）
+
+
+### I66 — 背包操作提示与处理器判定未共享（L47 落地） ✅已修复
+
+**修复前：** ui.rs 详情提示与 main.rs 处理器分支两处独立维护；发现 3 处不一致：① 石子/材料详情显示「r:使用/学习」但按 r 提示"不能直接使用"；② 地面详情显示「g:拾取」但处理器 'g' 仅在列表模式生效——**按 g 无反应**；③ 地面详情按 d 会错误地尝试从背包移除；④ 空槽位按 u 误报"背包已满"。
+
+**修复后：** core 新增 `detail_item_actions(item, detail_source) -> Vec<ItemAction>` + `is_usable(item_id)` 共享判定（use_item 复用）；ui.rs 提示与 main.rs 处理器（'e' 装备判定）全部由共享函数驱动。'g' 分支新增地面详情单物品拾取（`ops::pickup_ground_item`，预检背包空间）；'d' 限定背包详情；'u' 区分空槽与背包满。回归测试 `test_detail_item_actions`/`test_pickup_ground_item` 覆盖。
+
+**位置：** `dungeon-core/src/items.rs`、`dungeon-core/src/ops.rs`、`dungeon-render/src/ui.rs`、`src/main.rs`
+
+### D19 — README 无完整操作手册，Gm9「背包 r 键进入投掷瞄准」与实现不符 ✅已修复
+
+**修复前：** README 操作表缺 `x`（查看）/`t`（投掷）/斜向移动/`r`（使用/学习）；架构注释残留已删除的 `Reaction`；Gm9 记载"背包 r 键进入投掷瞄准"（实际 r 键是使用/学习）。
+
+**修复后：** README 操作部分重写（游戏页/背包页两表 + 技能/投掷专节 + "提示什么就能按什么"说明）；架构注释、楼梯落点（G22）同步；GAME.md Gm9 使用方式修正。
+
+**位置：** `README.md`、`GAME.md` Gm9
+
+
+### G18 — 治愈公式缺法术精通：Gm6 公式与实现不一致 ✅已修复
+
+**修复前：** `execute_skill` 的 Heal 分支只实现 `amount(15) + 熟练度 × 3`，法术精通完全不参与（玩家初始法术精通 8，治愈量少 8 点）。
+
+**修复后：** `execute_skill` 捕获 `stats.magic_mastery`，公式改为 `amount + 法术精通 × 1 + 熟练度 × 3`，与 Gm6 一致。回归测试 `test_heal_includes_magic_mastery` 覆盖。
+
+**位置：** `dungeon-action/src/execute.rs`（execute_skill）
+
+### G19 — 怪物 Stats 的 crit 字段是死数据 ✅已修复
+
+**修复前：** 怪物有 crit_rate/crit_damage 字段但 `execute_chase` 从不暴击。
+
+**修复后：** 怪物邻接攻击接入 Gm2 通用暴击公式（`calc_crit`，无装备加成），日志带「（暴击）」标记。GAME.md Gm2 补充说明怪物适用。
+
+**位置：** `dungeon-action/src/execute.rs`（execute_chase）
+
+### G20 — `execute_throw` 的 `_attacker` 参数未使用 ✅已修复
+
+**修复前：** 投掷硬编码查玩家实体消耗副手，怪物投掷设计预留失效。
+
+**修复后：** `execute_throw` 全程使用 `attacker` 参数（验证副手、消耗副手），不再查询玩家。
+
+**位置：** `dungeon-action/src/execute.rs`
+
+### G21 — population.rs 怪物生成公式未标注（Gm10） ✅已修复
+
+**修复前：** 阈值/扩散概率/数量公式是裸数值，GAME.md 无记录。
+
+**修复后：** GAME.md Gm10 补充公式与 `[⃞直觉]` 标注（阈值 `max(0.38-0.012f, 0.15)`、扩散 0.35、数量 `2f+4~4f+8`）。
+
+**位置：** `GAME.md` Gm10
+
+### D18 — `place_ground_items` 单房间退路硬编码 `SmallRng::seed_from_u64(42)` ✅已修复
+
+**修复前：** 单房间分支用固定种子 42 的独立 RNG，物品位置固定且违反 Dsn16。
+
+**修复后：** `place_ground_items` 增加 `rng` 参数，单房间分支使用传入的楼层 RNG，setup_world/descend 两入口一致。
+
+**位置：** `dungeon-world/src/init.rs`
+
+### A21 — `ops::equip_throwable_to_off_hand` 死代码 ✅已修复
+
+**修复前：** 共享函数零调用方，装填逻辑实际走 `throw.rs::auto_equip_throwable`（I48 ④ 声称统一但未执行）。
+
+**修复后：** 删除死函数。`auto_equip_throwable` 承担全部装填职责（含 I60 换装逻辑）。
+
+**位置：** `dungeon-core/src/ops.rs`
+
+### A22 — `ModalKind`/`ModalRequest`/`ModalState`/`ConfirmAction` 死代码 ✅已修复
+
+**修复前：** 页栈迁移后 4 个模态类型零引用（D17 清理遗漏）。
+
+**修复后：** 全部删除。
+
+**位置：** `dungeon-core/src/resources.rs`
+
+### A23 — `Reaction` 组件悬空：spawn 但零读取 ✅已修复
+
+**修复前：** 所有实体 spawn `Reaction`，三个决策 system 全部忽略它，实际每次现场算 `agility_to_reaction`。
+
+**修复后：** 删除 `Reaction` 组件（类型、init/persist/tests 的 spawn、monster.rs 查询参数），`agility_to_reaction`/`agility_speed_factor` 保留为纯函数。
+
+**位置：** `dungeon-action/src/types.rs`、`dungeon-world/src/init.rs`、`dungeon-world/src/persist.rs`、`dungeon-action/src/monster.rs`
+
+### A24 — 存档用 glyph 反推怪物类型 ✅已修复
+
+**修复前：** `SavedMonster` 无 kind 字段，restore 用 `match glyph` 推断种类，渲染字符与游戏数据耦合。
+
+**修复后：** `MonsterKindId` 组件化（derive Component + Serialize），spawn 时挂载，`SavedMonster.kind: Option<MonsterKindId>`（`#[serde(default)]` 旧存档按 glyph 兜底）。
+
+**位置：** `dungeon-core/src/components.rs`、`dungeon-world/src/init.rs`、`dungeon-world/src/persist.rs`
+
+### A25 — L31 查询约束违例：玩家查询多处缺少 `With<Player>` ✅已修复
+
+**修复前：** persist capture、descend、pickup_ground、execute_chase、timeline（字符串判断玩家）5 处依赖隐式假设。
+
+**修复后：** 全部改为显式含 `&Player` 组件或 `Without<Player>` 过滤的查询。
+
+**位置：** `dungeon-world/src/persist.rs`、`dungeon-world/src/init.rs`、`dungeon-core/src/ops.rs`、`dungeon-action/src/execute.rs`、`dungeon-render/src/timeline.rs`
+
+### A26 — `process_game_key` 三个死参数 + `equipment_bonus` 无用 `_inv` 参数 ✅已修复
+
+**修复前：** `terminal`/`modal_flag`/`game_start` 传而不用；`equipment_bonus(_inv, ...)` 全调用方白传 Inventory。
+
+**修复后：** `process_key`/`process_game_key` 精简为 `(code, world)`；`equipment_bonus(equip)` 单参数，`effective_attack/defense` 同步去参，4 个调用方（execute×2、ops×2、ui）更新。
+
+**位置：** `src/main.rs`、`dungeon-core/src/items.rs`、`dungeon-core/src/ops.rs`、`dungeon-render/src/ui.rs`
+
+### A16 — InputBuffer 资源创建但从未使用 ✅已修复
+
+**修复前：** `InputBuffer`/`RecognizedInput` 定义+插入但全代码库零消费（A16 记录）。
+
+**修复后：** 删除类型与两处 `insert_resource`（init/persist/tests）。
+
+**位置：** `dungeon-action/src/types.rs`、`dungeon-world/src/init.rs`、`dungeon-world/src/persist.rs`、`dungeon-action/src/tests.rs`
+
+### A18 — `ActiveCooldowns` 悬空功能 ✅已修复
+
+**修复前：** 组件有定义有推进但无任何写入点（A18 记录）。
+
+**修复后：** 删除 `ActiveCooldowns`/`Cooldown` 类型与 `advance_action_queue` 中的推进逻辑。技能冷却需求（I24c）标记 Won't Fix——当前 3 技能均无冷却设计，将来需要时重新引入。
+
+**位置：** `dungeon-core/src/components.rs`、`dungeon-action/src/execute.rs`
+
+### D14 — `place_skill_scrolls` 缺少 exclude 参数 ✅已修复
+
+**修复前：** 文档记录卷轴可能生成在楼梯/出生点上（ISSUES 开放区 D14）。
+
+**修复后：** 核实代码：`place_skill_scrolls` 早已带 `exclude` 参数且 setup_world/descend 均传入（与 spawn_monsters/place_ground_items/scatter_stones 一致）。纯文档状态更新，无代码改动。
+
+**位置：** `dungeon-world/src/init.rs:94`
+
+### I61 — 技能卷轴断链：`use_item` 零调用方 + 背包 'r' 键缺失 ✅已修复
+
+**修复前：** 卷轴拾取后无法学习（UI 提示「r:使用/学习」但处理器无 'r' 分支），整个技能系统不可达。
+
+**修复后：** `process_inventory_key` 新增 `'r'` 分支：调 `use_item`（卷轴→learn_skill），消耗 1 个；不可直接使用（如石子）推送提示。回归测试 `test_learn_skill_and_use_item` 覆盖。I24b「技能少且职业锁定」随 Dsn13 无职业设计+卷轴获取落地而关闭。
+
+**位置：** `src/main.rs`、`dungeon-core/src/items.rs`
+**教训见：** LESSONS.md L47（UI 提示与处理器同源）
+
+### I59 — 投掷可穿墙 + 超射程：视线/射程检查只在渲染层生效 ✅已修复
+
+**修复前：** `valid_target` 只影响轨迹颜色，Enter 直接入队，`execute_throw` 不验证射程/视线，可穿墙/超距命中。
+
+**位置：** `src/main.rs`、`dungeon-action/src/execute.rs`
+**教训见：** LESSONS.md L48（验证必须存在于执行入口）
+
+### I60 — 非投掷物副手被当投掷物消耗 ✅已修复
+
+**修复前：** 副手有物品（如木盾）即可投掷，`consume_off_hand` 无类型检查，木盾被扔出永久消失。
+
+**修复后：** 新增 `items::is_throwable(item_id)`（MVP 仅石子）；Throw 分支/ThrowSelect 确认/`execute_throw` 验证三级检查；`auto_equip_throwable` 副手为不可投掷物时先卸下回背包再装填。回归测试 `test_throw_non_throwable_offhand_cancelled` 覆盖。
+
+**位置：** `dungeon-core/src/items.rs`、`src/main.rs`、`src/throw.rs`、`dungeon-action/src/execute.rs`
+
+### I57 — 背包「装备」无 slot 物品直接 panic ✅已修复
+
+**修复前：** `def.slot.unwrap()` 对材料/卷轴/石子（slot=None）panic；UI 有 guard 但处理器没有。
+
+**修复后：** 'e' 分支改为 `let Some(slot) = def.and_then(|d| d.slot) else { 推送「该物品不能装备」 }`，与 UI 提示一致。
+
+**位置：** `src/main.rs`
+**教训见：** LESSONS.md L47（UI 提示与处理器同源）
+
+### I58 — 装备换装旧装备静默丢失（违反 Dsn10 原子语义） ✅已修复
+
+**修复前：** `inv.add(old_stack...)` 忽略返回值，背包满时旧装备永久消失。
+
+**修复后：** 换装前 `can_add` 预检旧装备回背包空间，失败推送「背包已满，无法换装」并放弃操作；预检保证 add 不失败（Dsn10 原子语义）。
+
+**位置：** `src/main.rs`
+
+### I62 — tap-tap Attack 通配确认：任意方向单次触发 ✅已修复
+
+**修复前：** `(Some(Attack{..}), Attack{..}) => true` 通配——预览攻击时按任意方向键立即执行，preview 与执行目标不一致。
+
+**修复后：** 删除通配分支；`handle_player_direction` 对 Attack 单独处理——**同目标**才确认，不同目标仅更新预览，与 Move/Wait/Skill 语义一致。
+
+**位置：** `dungeon-action/src/player.rs`
+
+### I63 — 投掷退出后 LookCursor 残留 ✅已修复
+
+**修复前：** 退出 ThrowAim（Enter/Esc/x）不重置 `LookCursor.active`，地图残留光标高亮。
+
+**修复后：** 两个退出分支均重置 `LookCursor.active = false`。
+
+**位置：** `src/main.rs`
+
+### I64 — `restore_skills` 用 `Box::leak` 每次读档泄漏 ✅已修复
+
+**修复前：** Skill 用 `&'static str` 存文本，读档 `Box::leak` 泄漏。
+
+**修复后：** `Skill.name`/`description` 改为 `String`，`restore_skills` 直接 clone。`skill_from_kind` 同步改 `.to_string()`。
+
+**位置：** `dungeon-core/src/components.rs`、`dungeon-core/src/ops.rs`、`dungeon-world/src/persist.rs`
+
+### I65 — monster_def.rs 掉落表裸数字 item_id（D12 补全） ✅已修复
+
+**修复前：** `monster_loot` 用裸数字（10/11/12/13/14/18）。
+
+**修复后：** 改用 `ITEM_BIOMASS`/`ITEM_CLOTH`/`ITEM_STICK`/`ITEM_FANG`/`ITEM_CHITIN`/`ITEM_STONE` 命名常量。
+
+**位置：** `dungeon-core/src/monster_def.rs`
+
+### G12 — 地面物品每层完全相同 ✅已修复
+
+**修复前：** `ground_item_ids` 固定 8 件（剑盾甲戒各 2），每层一样（G12 记录）。
+
+**修复后：** 新增 `roll_ground_item_ids(rng)`：从基础装备池随机抽 4-8 件，setup_world/descend 共用。GAME.md Gm10 同步更新为「4-8 随机 [⃞试调]」。
+
+**位置：** `dungeon-world/src/init.rs`、`GAME.md`
+
+### G14 — `execute_throw` 中 GameRng 多次 `resource_mut` 调用脆弱 ✅已修复
+
+**修复前：** 3 处独立 `resource_mut::<GameRng>()`（G14 记录）。
+
+**修复后：** 统一绑定为单次 `let (extra, crit_roll) = { let mut rng = ... }`。
+
+**位置：** `dungeon-action/src/execute.rs`
+
+### I48 — throw.rs 架构混乱（剩余项） ✅已修复
+
+**修复前：** ① execute_throw ~75 行职责过多；⑤ `update_throw_path` borrow dance；⑥ 可 panic 路径。
+
+**修复后：** ① 验证逻辑提取为 `validate_throw`（execute_throw 主体显著缩短）；⑤ drop dance 改为块作用域（符合 L42 且 clippy 干净）；⑥ 应用层旧 `.expect()` 已随 D17 删除，剩余 expect 均为 L34 认可的注册断言。
+
+**位置：** `dungeon-action/src/execute.rs`、`src/main.rs`
+
+### I22 — clippy 警告未处理 ✅已修复
+
+**修复前：** 32 个警告（type_complexity、needless_drop、range_loop 等）。
+
+**修复后：** 全部清零：type alias（`RenderableView`/`EntityRenderable`/`GridCell`）、块作用域替代 drop、迭代器改写 range loop、`?` 替代 let-else 等。`cargo clippy --workspace` 0 警告。
+
+### I23 — 测试覆盖缺口（部分修复） 🟡 进行中
+
+**修复前：** dungeon-core 零测试、render 零测试、应用层零测试。
+
+**修复后：** dungeon-core 已有 5 个（EventLog）；本次新增 6 个回归测试（投掷验证×4、卷轴学习、治愈公式），dungeon-action 8→14。dungeon-render 与应用层（main.rs 装备/投掷 UI 流程）仍无测试，需手动验证。
+
+**位置：** `dungeon-action/src/tests.rs`
+
+
+### I56 — 输入线程未过滤 `KeyEventKind::Release`，导致同键触发 2-3 次 ✅已修复
+
+**修复前：** 输入线程仅靠 50ms 同键去重过滤重复按键。`KeyEventKind::Release` 事件与 `Press` 的 `key.code` 相同，依赖去重窗口过滤。但 Release 的到达时间受终端调度影响不可控（可跨 1-3 个 poll 周期），当 50ms 窗口刚好闭合时 Release 通过，产生"按一次触发 2-3 次"的效果。
+
+**修复后：** 双重过滤：
+1. 环境自适应：丢弃 `key.kind != KeyEventKind::Press`（现代终端区分事件类型，传统终端所有事件为 Press，不受影响）
+2. 去重窗口 50ms→33ms，与帧率（30FPS）对齐，tap-tap 不受影响
+
+**位置：** `src/main.rs:62-72`（输入线程事件循环）
+**教训见：** LESSONS.md L46
+
+**修复前：** `render_inventory_overlay` 在 `inv_state.detail == true` 时仅显示操作提示行，无物品名称/属性/描述。
+
+**修复后：** 根据 `detail_source`（装备/背包/地面）获取物品，渲染完整的详情视图：标签、名称（黄色加粗）、数量、类别、属性加成、描述、上下文操作提示。参考旧版 `inventory.rs:81-133` 的详情渲染逻辑。
+
+**位置：** `dungeon-render/src/ui.rs`（render_inventory_overlay detail 分支）
+
+### D17 — 页栈迁移后大量旧阻塞式 UI 死代码未清理 ✅已修复
+
+**修复前：** `src/inventory.rs`（open_inventory, ~300行）、`src/input.rs`（InputDriver/EventBus, ~110行）、`src/throw.rs`（open_throw_select/open_throw_aim, ~160行）、`src/main.rs`（open_modal/open_look_mode）共 6 处旧阻塞式 UI 死代码保留在代码库中，违反 LESSONS L20。
+
+**修复后：**
+1. 删除 `src/inventory.rs`（整个文件）
+2. 删除 `src/input.rs`（整个文件）
+3. 从 `src/lib.rs` 移除 `pub mod inventory;`
+4. 删除 `src/throw.rs` 中的 `open_throw_select` 和 `open_throw_aim`（保留 `update_throw_path`、`get_offhand_name`、`auto_equip_throwable`）
+5. 删除 `src/main.rs` 中的 `open_modal`、`open_look_mode` 及 `#[allow(dead_code)]`
+
+**位置：** 见上表
+
+### I52 — 背包页栈缺少 'u' 键卸载装备 ✅已修复
+
+**修复前：** `process_inventory_key` 的 match 分支包含 `Esc/Left/Right/Up/Down/Enter/e/d/g`，但没有 `KeyCode::Char('u')` 处理。玩家无法从装备槽卸载装备回背包。
+
+**修复后：** 添加 `KeyCode::Char('u') if detail && detail_source == 1` 分支。先读取（不可变借）Equipment/Inventory 检查背包容量和物品信息，再（可变借）执行卸载。背包满时推送"背包已满"日志。
+
+**位置：** `src/main.rs`（process_inventory_key）
+
+### I51 — 背包页栈渲染 `render_inventory_overlay` 完全缺失装备栏 ✅已修复
+
+**修复前：** `render_inventory_overlay` 仅渲染背包物品列表，没有装备槽位显示。`left_total` 仅取 `inv.stacks.len()`，渲染与选中逻辑的索引体系不一致。第 201 行 `if i >= 4 { " (装备)" }` 是旧索引残留。
+
+**修复后：**
+1. 左栏改为装备段（4行：`[主]`/`[副]`/`[防]`/`[戒]`）+ 背包段（`── 背包 (x/y) ──` 分隔线 + 物品列表）
+2. `left_total` 改为 `4 + inv.stacks.len()`
+3. 移除误导性 `" (装备)"` 标注
+4. 同时修复 `process_inventory_key` 中 `detail_idx + 4` 的索引 bug（应是 `detail_idx`，因为 `detail_idx` 已是段内偏移）
+
+**位置：** `dungeon-render/src/ui.rs`（render_inventory_overlay）、`src/main.rs`（process_inventory_key）
+
+### G17 — 弹道轨迹渲染覆盖实体 glyph 且丢失地形背景 ✅已修复
+
+**修复前：** 弹道轨迹在实体叠加层之后渲染，使用 `Color::Reset` 背景覆盖实体 glyph 并丢失地形纹理。（位置：`pipeline.rs:114`）
+
+**修复后：** 弹道轨迹渲染时保留该格已有背景色 `lines[idx][jdx].2`，轨迹 `*` 不再覆盖实体 glyph，且背景色与地形一致。
+
+**位置：** `dungeon-render/src/pipeline.rs:114`
+
+### I55 — 查看模式页栈缺少 Home/End 快捷键 ✅已修复
+
+**修复前：** `process_look_key` 只有方向键和 Esc/x 退出，无 Home/End 跳转。玩家无法一键跳到地图角落。
+
+**修复后：** 添加 `KeyCode::Home` → `(0,0)` 和 `KeyCode::End` → `(MAP_WIDTH-1, MAP_HEIGHT-1)` 处理分支。
+
+**位置：** `src/main.rs:164-171`（process_look_key）
+
+### I54 — 投掷选择页栈缺少无投掷物反馈 ✅已修复
+
+**修复前：** `process_throw_select_key` 在 `auto_equip_throwable` 失败后静默 fall-through，玩家无任何反馈。
+
+**修复后：** 添加 `else` 分支推送 `"没有可投掷的物品"` 到 EventLog。
+
+**位置：** `src/main.rs:194`
+
+### A20 — `ops::consume_off_hand` 共享函数存在但未被 `execute_throw` 调用 ✅已修复
+
+**修复前：** `execute_throw` 使用 8 行内联副手消耗实现，未调用 `ops::consume_off_hand` 共享函数，违反 DRY。
+
+**修复后：** 替换为 `ops::consume_off_hand(world, p)` 调用。
+
+**位置：** `dungeon-action/src/execute.rs:420-421`、`dungeon-core/src/ops.rs:97-108`
+
+---
 
 ### I50 — `place_skill_scrolls` 的 `_floor` 参数投入使用 ✅已修复
 
@@ -890,28 +1680,6 @@ pub struct ItemStack {
 
 ---
 
-### 🟡 D14 — `place_skill_scrolls` 缺少 exclude 参数
-
-**问题：** `place_skill_scrolls` 是唯一不接受 exclude 参数的放置函数。技能卷轴可能生成在楼梯/出生点上。
-
-```rust
-// ops.rs:179 — 无 exclude 参数
-fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
-```
-
-对比同模块的其他函数：
-- `spawn_monsters(world, floor, rng, exclude)` ✅
-- `place_ground_items(world, item_ids, exclude)` ✅
-- `scatter_stones(world, rng, exclude)` ✅
-
-`descend` 中对 `place_skill_scrolls` 的调用也不传 exclude。
-
-**影响：** 🟡 中 — 技能卷轴（治愈/护盾/狂暴）可能覆盖玩家关键交互位置。概率低（30 次尝试散布到可行走格）但存在。
-
-**位置：** `dungeon-core/src/ops.rs:179`（定义）、`dungeon-world/src/init.rs:330`（descend 调用点）
-
----
-
 ### 🟡 D5 — 事件帧模式（Deferred — 触发条件达成时重新评估）
 
 **问题：** 当前玩家确认行动后批量推进到玩家行动完成，中间所有怪物行动对玩家不可见。
@@ -924,34 +1692,105 @@ fn place_skill_scrolls(world: &mut World, _floor: u32, rng: &mut impl Rng) {
 
 ---
 
+### 🟡 D16 — 页栈迁移后对话框不再暂停输入线程，非对话框按键被消耗丢失（Won't Fix）
 
+**问题：** 旧阻塞式 UI（open_modal）通过 `modal_flag = true` 暂停输入线程，对话框期间所有按键由主线程 `event::read()` 处理，非 'y'/'n' 按键保留在 crossterm 缓冲区。页栈迁移后 `modal_flag` 未被使用（传入 `process_game_key` 但从未读写），输入线程持续运行，非对话框按键通过 `try_recv()` 取出后被 `process_dialog_key` 静默丢弃（匹配不到 'y'/'n'/Esc 即 fall-through）。
+
+```rust
+// main.rs:57-78 — 输入线程，modal_flag 永远为 false
+if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
+// main.rs:469-502 — process_dialog_key 只处理 y/n/Esc
+```
+
+**影响：** 🟢 低 — 对话框出现概率低（退出/下楼确认），非对话框按键在对话框期间被丢弃的行为实际上比旧版更安全（避免下楼后意外触发方向键），但与旧版行为不一致。
+
+**状态：** Won't Fix — 页栈模式下按键由栈顶页面处理器消费，非对话框按键被丢弃是设计行为（比旧版 modal_flag 更安全）。`modal_flag` 已随 A26 从处理器签名中移除。
+
+**位置：** `src/main.rs:57-78`（输入线程）、`src/main.rs:469-502`（process_dialog_key）
 
 ---
 
 ## 二、架构层面（Architecture）
 
+### 🟡 A32 — dungeon-core 承载执行逻辑，违反「纯数据/纯查询」分层
 
-### 🟡 A18 — `ActiveCooldowns` 悬空功能
+**问题：** ops.rs 顶部注释自称「纯读写，无执行逻辑」「不包含何时/如何行动的判断逻辑」，但同文件 `pickup_ground`/`pickup_ground_item`/`consume_off_hand`/`learn_skill` 与 items.rs 的 `use_item`/`craft_with_template` 都执行 `get_mut`/`resource_mut`/`spawn`/`despawn`——有副作用的世界变更逻辑下沉到 core，action 层被架空。
 
-**问题：** `ActiveCooldowns` 组件在 `advance_action_queue` 中有完整的 AV 推进逻辑，但在 `descend` 中既未保存也未恢复，且没有任何技能向其写入数据。组件有定义、有推进、有存档支持，但无任何写入点。
+**影响：** 🟡 中 — 分层承诺失效；core 深度耦合 ECS 可变语义。
 
-```rust
-// components.rs:189 — 定义
-#[derive(Component, Clone, Debug, Default)]
-pub struct ActiveCooldowns(pub Vec<Cooldown>);
+**位置：** `dungeon-core/src/ops.rs:74-131/302-339`、`dungeon-core/src/items.rs:67-104/505-546`
 
-// execute.rs:33-38 — 推进逻辑
-{
-    let mut q = world.query::<&mut ActiveCooldowns>();
-    for mut cds in q.iter_mut(world) {
-        cds.0.retain_mut(|c| { c.remaining_av -= dist; c.remaining_av > 0.0 });
-    }
-}
-```
+---
 
-**违反 LESSONS L20：** 未完成的游戏机制不应留在代码中。
+### 🟡 A33 — 核心玩法规则泄漏到 src 应用层 UI 处理器
 
-**位置：** `dungeon-core/src/components.rs:189`、`dungeon-action/src/execute.rs:33-38`
+**问题：** 装备原子换装预检（I58）、卸装、丢弃、物品使用分派、副手装填回滚（G24）全部写在 `src/pages/inventory.rs`/`src/throw.rs` 按键处理器中，无 action/world 层 API；与渲染层提示通过字符串/枚举约定松散关联。
+
+**影响：** 🟡 中 — 游戏规则散落 UI 层无法单测（I23 应用层 0 测试的根因之一），重复维护风险。
+
+**位置：** `src/pages/inventory.rs:79-199`、`src/throw.rs:61-97`
+
+---
+
+### 🟡 A34 — 追击/逃跑条件三处重复实现，改阈值需同步三处
+
+**问题：** 「玩家可见或 LastKnownPlayerPos 有值」追击判定与「HP<25%」逃跑判定，各在 ①并行决策 system、②GameAction::check_condition、③check_condition 的 kind match 分支独立实现。A11 引入 trait 对象后因无法序列化，读档 action=None 必须保留 kind match 副本，形成三套并行行为定义。逃跑滞回注释（进入<25% 退出>30%）与实际（仅<25%）不符。
+
+**影响：** 🟡 中 — 三处漂移风险；注释与实现不符误导。
+
+**位置：** `dungeon-action/src/execute.rs:70-108`、`dungeon-action/src/monster.rs:14-50`、`dungeon-action/src/actions.rs:13-31`
+
+---
+
+### 🟡 A36 — 死代码：GameAction 三方法 + CanThrow + CanMove
+
+**问题：** ①`GameAction::priority/av_cost/as_any` 全仓库零调用（A11 声称五方法，实际只用 execute/check_condition/display_name）；②`CanThrow` 从未被 spawn/insert/query（Dsn12「支持怪物投掷」未落地）；③`CanMove.duration/priority` 从未被读取——玩家移动耗时由 weapon_speed 决定。
+
+**影响：** 🟡 中 — 声明未接线的符号误导维护者；组件式行动授权双轨重构未完成。
+
+**位置：** `dungeon-action/src/types.rs:29-39/126-134/297-306`、`dungeon-action/src/actions.rs:17-52`
+
+---
+
+### 🟢 A38 — execute_attack 重复查询 Equipment 且处理方式不一致
+
+**问题：** 同函数内第 272 行 `expect_log`（必须存在）与 282 行 Option 形式各查一次 Equipment；expect_log 隐式假设攻击者必有 Equipment（仅玩家触发 Attack，脆弱耦合）。
+
+**影响：** 🟢 低 — 重复查询 + 两套错误处理。
+
+**位置：** `dungeon-action/src/execute.rs:272-273/282-283`
+
+---
+
+### 🟢 A39 — world.query() 与 try_query().expect_log() 混用
+
+**问题：** L34 约定「组件已注册时用 try_query().expect_log() 替换 query()」，但 pickup_ground、execute_chase 等仍用裸 query()（panic 无上下文日志）。
+
+**影响：** 🟢 低 — 崩溃时丢失调用点信息。
+
+**位置：** `dungeon-core/src/ops.rs:91`、`dungeon-action/src/execute.rs:142/168`
+
+---
+
+### 🟡 A28 — terrain-forge submodule 配置缺失：无 .gitmodules + 163 个未提交变更
+
+**问题：** 主仓库将 terrain-forge 记录为 gitlink（`160000 c6d9d1f`）但仓库中不存在 `.gitmodules`（历史中也没有）。submodule 工作区有 163 个未提交的删除/修改（README、demo、.github、Cargo.toml 等被清理但从未提交）。
+
+**影响：** 🟡 中 — 新克隆者无法 `git submodule update --init`，workspace 构建直接失败；本地清理状态未固化，随时可被覆盖丢失。
+
+**位置：** 仓库根（.gitmodules 缺失）、`terrain-forge/`（git status 163 项脏变更）
+
+---
+
+### 🟢 A29 — ItemMeta 不参与存档序列化
+
+**问题：** I41 落地的 `ItemMeta`（display_name/tier/durability/tags）在 `GameSave::capture` 的 `SavedStack` 中只存 `(item_id, count)`，meta 静默丢弃；restore 时 `meta: None`。
+
+**影响：** 🟢 低 — 当前无使用场景，但 Dsn14 声称 ItemMeta 已实现；未来实例级数据（自定义名/品质）会静默丢失。
+
+**位置：** `dungeon-world/src/persist.rs:17-21`（SavedStack）、`dungeon-world/src/persist.rs:301`
+
+---
 
 ### A11 — ActionKindV3 枚举解耦：引入 GameAction trait ✅已修复
 
@@ -973,23 +1812,7 @@ pub struct ActiveCooldowns(pub Vec<Cooldown>);
 ---
 
 
-### 🟢 A16 — InputBuffer 资源创建但从未使用
-
-**问题：** `init.rs` 中 `world.insert_resource(InputBuffer::default())` 创建了 `InputBuffer`，`persist.rs` 也重建了它，但整个代码库除 types.rs 中的定义和 push/pop 方法外**没有任何调用方**。`main.rs` 的输入处理完全不经过 `InputBuffer`。
-
-```rust
-// types.rs:186-206 — 定义和方法已存在
-// init.rs:18 — 插入资源
-// main.rs — 输入流程完全不使用
-```
-
-**影响：** 🟢 低 — 类似 PendingSkill/PendingPickup（已删除）的同模式悬空代码。资源占用可忽略，但属于"代码骨架先于实际使用"的模式，历史上这种模式容易腐败。
-
-**位置：** `dungeon-action/src/types.rs:186-206`（定义）、`dungeon-world/src/init.rs:18`（插入）、`dungeon-world/src/persist.rs:142`（重建）
-
----
-
-### 🟢 A19 — ratatui 内置 widget 闲置（Gauge/List/Clear/Scrollbar/Table 未使用）
+### 🟢 A19 — ratatui 内置 widget 闲置（Gauge/List/Clear/Scrollbar/Table 未使用）（Deferred）
 
 **问题：** 项目中使用的 ratatui widget 仅限于 `Paragraph` + `Span` + `Layout` + `Block`，五个内置 widget 完全未使用，对应功能由手写代码替代：
 
@@ -1003,121 +1826,55 @@ pub struct ActiveCooldowns(pub Vec<Cooldown>);
 
 **影响：** 🟢 低 — 正确性不受影响。代码量约多写 50 行，背包列表的可维护性（选中态/滚动边界）不如 `List` 开箱即用。仅在新增类似 UI（合成台、技能树）时值得一次性迁移。
 
+**状态：** Deferred — 触发条件：新增合成台/技能树等列表型 UI 时一次性迁移（Gauge/List/Scrollbar）。
+
 **位置：** `dungeon-render/src/ui.rs`（Gauge/Table/Scrollbar）、`src/inventory.rs`（List）
 
 ---
 
 ## 三、实现层面（Implementation）
 
+### 🟡 I24 — Buff/Skill 系统缺陷（子项 I24b/I24c 已关闭）
 
-### 🔴 I48 — throw.rs 架构混乱，多处违反软件工程原则
+**I24b — 技能数量少且职业锁定 （Won't Fix — 已被 Dsn13 取代）**
+无职业设计已实现（`PlayerClass::skills()` 返回空），技能全部通过卷轴获取（I61 修复后链路畅通）。
 
-**问题：** `src/throw.rs` 是近期新增文件（~380 行），存在以下架构问题：
+**I24c — 无冷却维度 （Won't Fix — 当前无需求）**
+`ActiveCooldowns` 已删除（A18）。当前 3 个技能（治愈/护盾/狂暴）均无冷却设计，MP 消耗已足够平衡。将来引入强技能需要冷却时，按 Dsn13「冷却下限约 1000 AV」重新实现。
 
-**① `execute_throw` 违反单一职责原则（SRP）**
-~75 行函数同时负责：目标验证、玩家/副手检查、怪物查找、伤害计算（含暴击）、HP 扣减、死亡判定、掉落生成、事件日志、副手消耗。可提取至少 3 个独立函数。
+**位置：** 无（设计层面结论）
 
-**② 暴击率计算重复实现 ✅已修复（Phase 1）**
-`execute_throw` 已下沉至 `dungeon-action/execute.rs`，暴击率通过 `ops::equipment_bonus()` 统一计算（与 `execute_attack` 一致），不再手动遍历 armor/ring。
+### 🟡 I23 — 测试覆盖缺口（部分） 🟡 进行中
 
-**③ 副手消耗逻辑重复 ✅已修复（Phase 1）**
-`execute_throw` 尾部单次统一消耗副手，命中/未命中分支不再各自一份。共享函数 `ops::consume_off_hand` 提取至 `dungeon-core/src/ops.rs`。
+**现状：** dungeon-core 5 个（EventLog）、dungeon-action 14 个（含本次 6 个回归测试）、dungeon-world 2 个、场景 3 个、terrain-forge 26 个。
 
-**④ `open_throw_select` UI 与游戏逻辑耦合 ✅已修复（Phase 1）**
-Enter 处理器中的装备管理已提取为 `ops::equip_throwable_to_off_hand()` 共享函数，`throw.rs` 和 `inventory.rs` 的两处内联代码统一调用此函数。
+**剩余缺口：** dungeon-render 0 测试；应用层（main.rs 装备/投掷 UI 流程）0 测试。
 
-**⑤ `update_throw_path` 借用模式脆弱**
-读 cursor→drop→计算→写 path 的 dance 容易因重构引入 I46 类崩溃。
+**风险：** UI 流程（装备原子性 I58、投掷 Enter 验证 I59）依赖手动验证。
 
-**⑥ 使用 `.expect()` 的可 panic 路径**
-`open_throw_aim` 和 `execute_throw` 中多处 `.expect()`，组件缺失时直接 panic 而非降级返回。
+---
 
-**⑦ 架构错放——核心游戏逻辑在应用层（src/） ✅已修复（Phase 1）**
-`execute_throw` 已完整迁移至 `dungeon-action/src/execute.rs`，与 `execute_attack` 同级。修改战斗公式只需改 `dungeon-action` 一个 crate。遗留的 `update_throw_path`（纯弹道算法）留在应用层是合理的（UI 逻辑）。
+## 四、游戏逻辑层面（Game Logic）
 
-**影响：** 🟡 中（剩余 ①⑤⑥）
+### G22 — 楼梯/地面物品可能生成在不可行走格上 + 通道 4 方向断裂 ✅已修复
 
-**剩余建议方向：**
-```
-① execute_throw 仍 ~70 行（从应用层下沉后未进一步拆分）
-⑤ update_throw_path 的 borrow dance
-⑥ .expect() 降级处理
-```
-            handle_kill (击杀+掉落)
-  路径:     update_throw_path (保持)
-  目标:     execute_throw 从 ~75 行缩到 ~15 行
-```
+**成因链（四层）：**
+1. `generate_stalactites` 在房间内每格 7% 概率放钟乳石（**含房间中心**），`generate_water` 扩散也可能波及
+2. `pick_stair_pos` 多房间分支直接返回 `farthest_room_from`（最远房间中心）**不检查 walkable**（出生点 `spawn_point()` 有螺旋兜底，楼梯没有）→ 楼梯落在 Stalactite/DeepWater 上
+3. `ensure_connection_between` 醉汉游走提前停止（距离<3 break）或 500 步耗尽 → 通道挖不到终点
+4. **8 方向通道 4 方向断裂**：游走/Bresenham 路径可对角相邻，而玩家移动与 `has_path_between` 是 4 方向——单格宽通道在锯齿处断裂，玩家走不过去
 
-**位置：** `src/throw.rs`
+**同类问题：** `place_ground_items` 多房间分支同样直接取房间中心（物品落不可走格捡不到）；`ensure_connectivity` 通道同样可能挖不到位且对角断裂。
 
-### 🟡 I24 — Buff/Skill 系统缺陷（含子问题 I24a〜I24c）
+**修复：**
+- 治本：`generate_stalactites` 跳过房间中心（中心永远 Floor）
+- 兜底：新增 `Map::nearest_walkable`（螺旋搜索），`pick_stair_pos`/`place_ground_items`（含 +1 偏移落点）/`persist.rs` 读档楼梯全部走兜底
+- 收尾：`ensure_connection_between`/`ensure_connectivity` 游走后用 Bresenham 直线强制打通终点
+- 连通性：通道改为挖 **2x2 块**（非单格），保证 4 方向连通
 
-**问题：** 当前 Buff 系统和技能机制有三个互相关联的缺陷。ActiveBuffs（I29）修复了缺陷①，但缺陷②③和 I29 引入的回归（G8）仍未解决。
+**回归测试：** `test_stalactites_skips_room_centers`（20 轮钟乳石生成中心仍 Floor）、`test_nearest_walkable_fallback`、`test_pick_stair_pos_always_walkable_and_reachable`（60 种子：落点 walkable + 完整流程后出生点→楼梯可达）
 
-**I24a — Buff 持续时间不可预测 ✅已修复（见 I29）**
-`buff_tick_system` 每帧减 1 回合，与 AV 推进脱钩。已由 ActiveBuffs 组件 + AV 同步推进修复。
-
-**I24d — Buff 双倍叠加 ✅已修复（见 G8）**
-I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_attack/defense` 只读新 ActiveBuffs。
-
-**I24b — 技能数量少且职业锁定 🟡**
-技能通过 `PlayerClass::skills()` 硬编码，战士固定 3 技能，无法扩展，每局玩法相同。技能来源是职业而非道具。
-
-**I24c — 无冷却维度 🟡**
-技能只有 MP 消耗，没有冷却。强技能无法通过冷却平衡。`ActiveCooldowns` 组件已存在但未被任何技能使用。
-
-**影响：** 当前系统不支持复杂战斗设计。自由组合、道具学习、冷却平衡均不可实现。
-
-**方案方向（设计中，见 DESIGN.md §15）：**
-- Buff/冷却改为 `remaining_av: f32`，在 `advance_action_queue` 中同步推进 ✅（由 I29 完成）
-- 技能改为从道具学习，`Skills` 组件动态扩展
-- 冷却下限约 1000 AV
-
-### 🟡 I22 — clippy 警告约 29 个未处理
-
-**问题：** `cargo clippy` 报告约 29 个警告（已修复 34 个，原 63 个）。
-
-**已修复类型（34 个）：**
-`unnecessary_cast`(6)、`useless_format`(2)、`map_identity`(1)、`unnecessary_map_or`(1)、`manual_div_ceil`(1)、`sort_by_key`(2)、`new_without_default`(4)、`derivable_impls`(3)、`unnecessary_mut_passed`(3)、`needless_borrow`(5)、`unused_variables`(1)、`RoomShape` Default(1)、`ActionQueue`/`PlayerPreview` 默认派生(2)、cast usize(2)
-
-**剩余类型：**
-| 类型 | 数量 | 说明 |
-|------|------|------|
-| `collapsible_if` | ~14 | 安全但逐个修复繁琐 |
-| `needless_range_loop` | ~6 | 迭代器可读性更佳 |
-| `type_complexity` | ~3 | 需要定义 type alias |
-| 其他 | ~6 | 零星警告 |
-
-**建议：** 不影响正确性，可逐步清除。
-
-### 🟡 I23 — 测试覆盖缺口：dungeon-core 和 dungeon-render 零单元测试
-
-**问题：** 核心 crate 的单元测试覆盖不均衡。
-| crate | 单元测试数 | 覆盖内容 |
-|-------|-----------|---------|
-| dungeon-core | 0 | ❌ 核心公式（伤害/升级/属性）、FOV、寻路、序列化均无直接测试 |
-| dungeon-render | 0 | ❌ UI 渲染逻辑无测试 |
-| dungeon-action | 8 | ✅ |
-| dungeon-world | 2 | ✅ |
-| 场景集成测试 | 3 | ✅ 间接覆盖部分 core 逻辑 |
-
-**风险：** dungeon-core 包含战斗公式、升级曲线、FOV、A* 寻路、Tile/Stats 序列化——任一公式修改都可能无声破坏平衡，无单元测试意味着只能靠手动打游戏验证。
-
-<!-- I35 已移至 ✅已修复（修复前/修复后记录见上方） -->
-
-// pub mod pathfinding; // 已移除（find_path 未使用）
-// pub use pathfinding::*; // 已移除
-```
-
-但 `pub mod pathfinding;` 是生效的，`execute.rs` 中 `dungeon_core::pathfinding::astar` 也在使用。
-
-**位置：** `dungeon-core/src/lib.rs:7-9`
-**位置：** `dungeon-core/src/items.rs:54`（ItemStack 定义）
-
-
-
-
-
+**位置：** `dungeon-world/src/init.rs`（pick_stair_pos/place_ground_items）、`dungeon-world/src/persist.rs`、`dungeon-core/src/map_gen.rs`（generate_stalactites/ensure_connection_between/ensure_connectivity）、`dungeon-core/src/lib.rs`（nearest_walkable）
 
 ### 🟡 G11 — 材料物品无消耗渠道
 
@@ -1132,57 +1889,19 @@ I29 引入双写双读回归。已移除旧 Buffs 写入路径，`effective_atta
 
 **方案：** 模板碎片系统（DESIGN.md Dsn19）。碎片作为一次性消耗品，用材料合成指定物品。Phase 1 材料开始有出口，Phase 2 引入核心→完整模板。渐进实现。
 
+**状态：** 部分修复 — **Phase 1 已落地（I69）**：模板碎片作为独立消耗品掉落和使用，材料已有消耗渠道。Phase 2（模板核心）与 Phase 3（实验级碎片）保持 Deferred。
+
 **位置：** `assets/items.json` items 10-14
 
-### 🟡 G12 — 地面物品每层完全相同
-
-**问题：** `ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2]` 硬编码在 `init.rs` 中，每层生成完全相同的 8 件物品（锈铁剑×2、木盾×2、皮甲×2、攻击戒指×2）。无随机变化、无楼层关联、无稀有度梯度。
-
-```rust
-// init.rs:235 — 每层都一样的物品组合
-let ground_item_ids = [0, 1, 2, 3, 0, 1, 3, 2];
-place_ground_items(&mut world, &ground_item_ids, &[(spawn_x, spawn_y), (stairs_pos.0, stairs_pos.1)]);
-```
-
-GAME.md 记载的是"每层约 8 件物品"——数量和描述匹配，但缺少"多样性和随机性"的设计意图。
-
-**影响：** 🟡 中 — 玩家打完第一层就见过所有可拾取物品了，下楼探索的动力之一是"找新装备"的期待落空。
-
-**建议：** 至少随机化物品种类和数量，低层出基础装备，深层引入稀有/魔法物品或更高的装备层级。
-
-**位置：** `dungeon-world/src/init.rs:235`
-
-### 🟢 G13 — 战斗公式缺乏层次深度
+### 🟢 G13 — 战斗公式缺乏层次深度（Won't Fix — MVP 范围决策）
 
 **表现：** 当前 `max(攻击 - 防御, 1)` 的差值公式完全线性，1 点攻击永远对应 1 点伤害。无穿甲穿透、无元素属性/抗性、无距离衰减、无背后/侧击加成。装备增强集中在 +攻击/+防御 两个维度。
 
 **影响：** 🟢 低 — MVP 阶段可以接受。但扩展到 8+ 种怪物、3+ 种武器类型时，所有战斗都会感觉"差不多"——只有数值差异，没有策略差异。当需要设计"抗高攻怪"和"抗高防怪"两种不同策略时，当前公式无法提供区分度。
 
+**状态：** Won't Fix — MVP 范围决策。触发条件：怪物种类 ≥8 或武器类型 ≥3 时重新评估。
+
 **位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
-
-### 🟢 G14 — `execute_throw` 中 GameRng 多次 `resource_mut` 调用脆弱
-
-**问题：** `execute_throw` 中 `GameRng` 被多次通过 `world.resource_mut::<GameRng>()` 获取：
-
-```rust
-// throw.rs:260 — 伤害附加随机
-let extra = world.resource_mut::<GameRng>().random_range(0, 2) as u32;
-// throw.rs:275 — 暴击判定（另一次 resource_mut）
-let roll = world.resource_mut::<GameRng>().random_f32();
-// throw.rs:285 — 掉落判定（再一次 resource_mut）
-let mut rng2 = world.resource_mut::<GameRng>();
-let stacks = lt.roll(&mut rng2.rng);
-```
-
-虽然每次 `Mut<GameRng>` 在下次调用前已 drop（不会触发 I46 类崩溃），但模式脆弱——中间插一句代码就可能产生双重借用 panic。应绑定为 `let mut rng = world.resource_mut::<GameRng>()` 统一使用。
-
-**影响：** 🟢 低 — 当前正确运行。重构风险点，但不会在现有代码中触发崩溃。
-
-**位置：** `src/throw.rs:260` `:275` `:285`
-
----
-
-
 
 ## 其他
 
