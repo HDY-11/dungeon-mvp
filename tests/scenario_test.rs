@@ -12,19 +12,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use ratatui::Terminal;
 
-use dungeon_action::{
-    handle_player_direction, handle_wait, handle_skill,
-};
-use dungeon_render::render_ui;
-use dungeon_world::{
-    setup_world, fov_system,
-    advance_and_settle_parallel,
-};
 use bevy_ecs::system::RunSystemOnce;
+use dungeon_action::{handle_player_direction, handle_skill, handle_wait};
+use dungeon_render::render_ui;
+use dungeon_world::{advance_and_settle_parallel, fov_system, setup_world};
 
 // ══════════════════════════════════════════════════════
 // ScenarioRunner
@@ -45,8 +40,8 @@ struct ScenarioRunner {
 impl ScenarioRunner {
     /// 创建一个新场景。输出到 scenario_output/<name>/
     fn new(name: &str) -> Self {
-        let width = 100;  // 足够宽，容纳视窗 40 + 边栏
-        let height = 30;  // 足够高，容纳视窗 20 + 边框
+        let width = 100; // 足够宽，容纳视窗 40 + 边栏
+        let height = 30; // 足够高，容纳视窗 20 + 边框
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend).expect("创建 TestBackend");
         let mut world = setup_world();
@@ -207,20 +202,53 @@ fn test_scenario_move_around() {
     s.capture("start");
 
     // 向右走两步
-    s.direction(1, 0); s.capture("preview_right_1");
-    s.direction(1, 0); s.capture("move_right_1");
-    s.direction(1, 0); s.capture("preview_right_2");
-    s.direction(1, 0); s.capture("move_right_2");
+    s.direction(1, 0);
+    s.capture("preview_right_1");
+    s.direction(1, 0);
+    s.capture("move_right_1");
+    s.direction(1, 0);
+    s.capture("preview_right_2");
+    s.direction(1, 0);
+    s.capture("move_right_2");
 
     // 向下走一步
-    s.direction(0, 1); s.capture("preview_down");
-    s.direction(0, 1); s.capture("move_down");
+    s.direction(0, 1);
+    s.capture("preview_down");
+    s.direction(0, 1);
+    s.capture("move_down");
 
     // 等一回合
-    s.wait(); s.capture("wait");
+    s.wait();
+    s.capture("wait");
 
     let x = s.px();
     let y = s.py();
     println!("最终位置: ({}, {})", x, y);
     assert!(x > 0 || y > 0, "玩家应该已经移动");
+}
+
+/// I78 端到端回归：主手/戒指装备 4 字中文名物品（攻击戒指，12 字节）后渲染游戏画面不 panic。
+/// 修复前 ui.rs 按字节切片 [..10] 落在字符中间直接崩溃。
+#[test]
+fn test_scenario_equip_long_chinese_name_render() {
+    use dungeon_core::{Equipment, ITEM_ATTACK_RING, ItemStack};
+    let mut s = ScenarioRunner::new("equip_long_chinese_name");
+    let player = dungeon_core::ops::player_entity(&s.world).unwrap();
+    // 装备到主手 + 戒指槽（两条渲染路径都走 truncate_name）
+    {
+        let mut eq = s.world.get_mut::<Equipment>(player).unwrap();
+        eq.main_hand = Some(ItemStack::new(ITEM_ATTACK_RING, 1));
+        eq.ring = Some(ItemStack::new(ITEM_ATTACK_RING, 1));
+    }
+    // 渲染一帧——I78 修复前此处 panic
+    s.capture("equipped_attack_ring");
+    // 再渲染背包页（全屏页，含装备栏）
+    s.world
+        .insert_resource(dungeon_action::PageStack::default());
+    s.world
+        .insert_resource(dungeon_core::InventoryUI::default());
+    s.world
+        .resource_mut::<dungeon_action::PageStack>()
+        .push(dungeon_action::Page::Inventory);
+    s.capture("inventory_with_attack_ring");
 }

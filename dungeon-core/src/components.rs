@@ -1,8 +1,17 @@
+//! ECS 组件定义：玩家、怪物、物品、地图实体、渲染/战斗所需的全部组件。
+//!
+//! 组件只保存数据，不包含行为逻辑；行为由 dungeon-action / dungeon-world 中的 system 处理。
+
 use bevy_ecs::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 pub type RgbColor = (u8, u8, u8);
+
+/// 渲染用视图元组别名（无 Entity）：(x, y, glyph, color)
+pub type RenderableView = (usize, usize, char, RgbColor);
+/// 渲染用视图元组别名（含 Entity）：(entity, x, y, glyph, color)
+pub type EntityRenderable = (Entity, usize, usize, char, RgbColor);
 
 // ── 掉落表组件 ─────────────────────────────────────
 
@@ -59,12 +68,6 @@ pub struct Renderable {
 #[derive(Component)]
 pub struct Player;
 
-#[derive(Component, Default, Debug)]
-pub struct MovingDir {
-    pub dx: isize,
-    pub dy: isize,
-}
-
 #[derive(Component, Clone, Debug)]
 pub struct Viewshed {
     pub range: usize,
@@ -75,11 +78,19 @@ pub struct Viewshed {
 pub struct Monster;
 
 /// 怪物种类标识（用于概率生成和属性查询）
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// 组件化后随实体持久化（A24），避免读档时用 glyph 反推。
+/// Dsn24: 新变体追加在末尾（serde 按序编号 0-2 为旧三种，旧存档兼容）。
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum MonsterKindId {
     Rat,
     Scorpion,
     Goblin,
+    // Dsn24 多类型地图怪物
+    Sporeling,     // m 孢子怪（繁茂洞穴，弱怪）
+    MushroomGolem, // M 蘑菇傀儡（繁茂洞穴，中怪）
+    CaveFish,      // f 洞穴鱼（地海，弱怪快速）
+    CaveCrab,      // c 洞穴蟹（地海，中怪高防）
+    DeepEel,       // e 深鳗（地海，中怪）
 }
 
 #[derive(Component, Clone, Debug)]
@@ -111,15 +122,21 @@ impl Stats {
         let def_val = 4;
         let magic_val = 8;
         Self {
-            level, hp: crate::max_hp_for(level, def_val), max_hp: crate::max_hp_for(level, def_val),
-            mp: crate::max_mp_for(level, magic_val), max_mp: crate::max_mp_for(level, magic_val),
-            exp: 0, exp_to_next: crate::exp_to_next_level(level),
-            attack: 8, defense: def_val, magic_mastery: magic_val, agility: 10,
-            crit_rate: 0.05, crit_damage: 0.50,
+            level,
+            hp: crate::max_hp_for(level, def_val),
+            max_hp: crate::max_hp_for(level, def_val),
+            mp: crate::max_mp_for(level, magic_val),
+            max_mp: crate::max_mp_for(level, magic_val),
+            exp: 0,
+            exp_to_next: crate::exp_to_next_level(level),
+            attack: 8,
+            defense: def_val,
+            magic_mastery: magic_val,
+            agility: 10,
+            crit_rate: 0.05,
+            crit_damage: 0.50,
         }
     }
-
-
 }
 
 #[derive(Clone, Debug)]
@@ -131,10 +148,10 @@ pub enum SkillKind {
 
 #[derive(Clone, Debug)]
 pub struct Skill {
-    pub name: &'static str,
+    pub name: String,
     pub key: char,
     pub cost_mp: i32,
-    pub description: &'static str,
+    pub description: String,
     pub kind: SkillKind,
     pub proficiency: u32,
 }
@@ -146,15 +163,13 @@ pub struct Skills {
 
 #[derive(Component, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerClass {
-    Warrior, Mage, Priest,
+    Warrior,
+    Mage,
+    Priest,
 }
 
 impl PlayerClass {
-    pub fn display_name(&self) -> &'static str {
-        match self { PlayerClass::Warrior => "战士", PlayerClass::Mage => "法师", PlayerClass::Priest => "牧师" }
-    }
-
-    /// 无职业设计：初始不带技能，全凭卷轴获取
+    /// Dsn13 无职业设计：初始无技能，全部由卷轴学习（I61 修复后链路畅通）
     pub fn skills(&self) -> Vec<Skill> {
         Vec::new()
     }
@@ -163,11 +178,16 @@ impl PlayerClass {
 // ── Buff 系统（AV 制） ──────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BuffKind { Shield, Berserk }
+pub enum BuffKind {
+    Shield,
+    Berserk,
+}
 
 /// 堆叠标记（预留，当前不实现叠加逻辑，同种 Buff 刷新增时长）
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BuffStackType { None }
+pub enum BuffStackType {
+    None,
+}
 
 #[derive(Clone, Debug)]
 pub struct Buff {
@@ -179,35 +199,21 @@ pub struct Buff {
 
 #[derive(Component, Clone, Debug)]
 pub struct ActiveBuffs(pub Vec<Buff>);
-impl ActiveBuffs { pub fn new() -> Self { Self(Vec::new()) } }
-impl Default for ActiveBuffs { fn default() -> Self { Self::new() } }
-
-/// 技能冷却（AV 制，与 ActiveBuffs 共享受同一推进机制）
-#[derive(Clone, Debug)]
-pub struct Cooldown { pub skill_id: usize, pub remaining_av: f32 }
-
-#[derive(Component, Clone, Debug, Default)]
-pub struct ActiveCooldowns(pub Vec<Cooldown>);
+impl ActiveBuffs {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+impl Default for ActiveBuffs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Component, Clone, Debug, Default)]
 pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
-
-
 
 #[derive(Component, Clone, Debug)]
 pub struct AttackName(pub String);
 
 // ── 技能卷轴组件 ────────────────────────────────────
-
-#[derive(Component, Clone)]
-pub struct SkillScroll {
-    pub kind: SkillKind,
-}
-
-impl crate::items::UsableItem for SkillScroll {
-    fn use_on(&self, world: &mut bevy_ecs::prelude::World, user: bevy_ecs::prelude::Entity) -> bool {
-        crate::ops::learn_skill(world, user, &self.kind);
-        true
-    }
-    fn use_verb(&self) -> &'static str { "学习" }
-}

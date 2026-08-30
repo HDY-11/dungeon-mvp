@@ -1,223 +1,30 @@
-//! 投掷模式：投掷物选择 + 瞄准 + 弹道可视化
-
-use std::io;
-use std::time::Instant;
+//! 投掷模式工具函数：弹道计算 + 副手管理
 
 use bevy_ecs::prelude::*;
-use crossterm::event::{self, Event, KeyCode};
 use dungeon_core::{
-    ops, EventLog, Position, Stats,
-    ThrowPreview, Inventory, Equipment,
-    Player,
-    MAP_HEIGHT, MAP_WIDTH, ITEM_STONE,
+    Equipment, EventLog, Inventory, LookCursor, OptionLogExt, Player, Position, ThrowPreview, ops,
 };
-use dungeon_action::{ActionQueue, ActionKindV3, agility_speed_factor};
-use dungeon_render::render_ui;
-use ratatui::{
-    layout::{Alignment, Rect},
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-    Terminal,
-};
-
-/// 投掷物选择弹窗。遍历背包中所有 tag 含 "throwable" 的物品，
-/// 列出供玩家选择，然后进入瞄准模式。
-pub fn open_throw_select(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    world: &mut World,
-    game_start: Instant,
-) -> io::Result<bool> {
-    // 收集背包中所有可投掷物
-    let throwable_ids: Vec<(usize, String, u32)> = {
-        let mut q = world.query::<&Inventory>();
-        let inv = q.iter(world).next();
-        match inv {
-            Some(inv) => inv.stacks.iter()
-                .filter(|s| {
-                    s.def().map(|d| d.has_tag("throwable")).unwrap_or(false)
-                })
-                .map(|s| (s.item_id, s.name(), s.count))
-                .collect(),
-            None => Vec::new(),
-        }
-    };
-
-    if throwable_ids.is_empty() {
-        world.resource_mut::<EventLog>().push("无可投掷物".to_string());
-        return Ok(false);
-    }
-
-    let mut selected: usize = 0;
-    loop {
-        // 渲染选择弹窗
-        terminal.draw(|frame| {
-            let area = frame.area();
-
-            // 先渲染正常画面作为背景
-            render_ui(frame, game_start, &*world);
-
-            // 再覆盖弹窗
-            let popup_w = 30u16.min(area.width.saturating_sub(4));
-            let popup_h = (throwable_ids.len() as u16 + 4).min(area.height.saturating_sub(4));
-            let popup_rect = Rect {
-                x: (area.width.saturating_sub(popup_w)) / 2,
-                y: (area.height.saturating_sub(popup_h)) / 2,
-                width: popup_w,
-                height: popup_h,
-            };
-
-            let mut lines = vec![
-                Line::from(Span::styled(" 选择投掷物 ", Style::default().fg(Color::Cyan).bold())),
-                Line::from(Span::raw("")),
-            ];
-            for (i, (_id, name, count)) in throwable_ids.iter().enumerate() {
-                let prefix = if i == selected { " ▸" } else { "  " };
-                let style = if i == selected {
-                    Style::default().fg(Color::Yellow).bold()
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(Color::Yellow)),
-                    Span::styled(format!(" {} x{}", name, count), style),
-                ]));
-            }
-            lines.push(Line::from(Span::raw("")));
-            lines.push(Line::from(Span::styled(" r/y:切换  Enter:投掷  Esc:取消", Style::default().fg(Color::DarkGray))));
-
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan));
-            frame.render_widget(
-                Paragraph::new(lines).block(block).alignment(Alignment::Left),
-                popup_rect,
-            );
-        })?;
-
-        if let Ok(Event::Key(key)) = event::read() {
-            match key.code {
-                KeyCode::Char('r') => {
-                    selected = selected.saturating_sub(1);
-                }
-                KeyCode::Char('y')
-                    if selected + 1 < throwable_ids.len() => { selected += 1; }
-                KeyCode::Enter => {
-                    let (item_id, _name, _count) = &throwable_ids[selected];
-                    let item_id = *item_id;
-                    // 将选中的投掷物装备到副手（共享函数，消除重复）
-                    if let Some(p) = ops::player_entity(world) {
-                        ops::equip_throwable_to_off_hand(world, p, item_id);
-                    }
-                    // 进入瞄准模式，透传是否入队（true=有行动入队）
-                    let consumed = open_throw_aim(terminal, world, game_start)?;
-                    return Ok(consumed);
-                }
-                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => {
-                    return Ok(false);
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-/// 投掷瞄准模式。
-pub fn open_throw_aim(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    world: &mut World,
-    game_start: Instant,
-) -> io::Result<bool> {
-    let (cx, cy) = {
-        let Some(mut q) = world.try_query::<(&Player, &Position)>() else {
-            return Ok(false);
-        };
-        q.iter(&*world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
-    };
-
-    // 先设置光标位置，drop 后再计算 path（避免 resource_mut 双重借用）
-    {
-        let mut tp = world.resource_mut::<ThrowPreview>();
-        tp.active = true;
-        tp.cursor = (cx, cy);
-    }
-    update_throw_path(world);
-
-    loop {
-        let _ = terminal.draw(|frame| render_ui(frame, game_start, &*world));
-        if let Ok(Event::Key(k)) = event::read() {
-            match k.code {
-                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
-                | KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
-                    let mut tp = world.resource_mut::<ThrowPreview>();
-                    match k.code {
-                        KeyCode::Up => tp.cursor.1 = tp.cursor.1.saturating_sub(1),
-                        KeyCode::Down => tp.cursor.1 = (tp.cursor.1 + 1).min(MAP_HEIGHT - 1),
-                        KeyCode::Left => tp.cursor.0 = tp.cursor.0.saturating_sub(1),
-                        KeyCode::Right => tp.cursor.0 = (tp.cursor.0 + 1).min(MAP_WIDTH - 1),
-                        KeyCode::Home => { tp.cursor.0 = 0; tp.cursor.1 = 0; }
-                        KeyCode::End => { tp.cursor.0 = MAP_WIDTH - 1; tp.cursor.1 = MAP_HEIGHT - 1; }
-                        KeyCode::PageUp => { tp.cursor.1 = tp.cursor.1.saturating_sub(5); }
-                        KeyCode::PageDown => { tp.cursor.1 = (tp.cursor.1 + 5).min(MAP_HEIGHT - 1); }
-                        _ => {}
-                    }
-                    #[allow(clippy::drop_non_drop)]
-                    drop(tp);
-                    update_throw_path(world);
-                }
-                KeyCode::Enter => {
-                    let (valid, tx, ty) = {
-                        let tp = world.resource::<ThrowPreview>();
-                        (tp.valid_target, tp.cursor.0, tp.cursor.1)
-                    };
-                    world.resource_mut::<ThrowPreview>().active = false;
-                    if !valid {
-                        world.resource_mut::<EventLog>().push("目标无效".to_string());
-                        return Ok(false);
-                    }
-                    // 入队 AV 行动（投掷耗时 190ms，快于近战移动，确保先于怪物追击执行）
-                    if let Some(p) = ops::player_entity(world) {
-                        let reaction = world.get::<dungeon_action::Reaction>(p)
-                            .map(|r| r.time).unwrap_or(70.0);
-                        let speed = agility_speed_factor(
-                            world.get::<Stats>(p).map(|s| s.agility).unwrap_or(10)
-                        );
-                        let av = reaction + 190.0 * speed;
-                        world.resource_mut::<ActionQueue>()
-                            .enqueue(p, ActionKindV3::Throw { tx, ty }, av);
-                    }
-                    return Ok(true);
-                }
-                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => {
-                    world.resource_mut::<ThrowPreview>().active = false;
-                    return Ok(false);
-                }
-                _ => {}
-            }
-        }
-    }
-}
 
 pub fn update_throw_path(world: &mut World) {
     let player_pos = match world.try_query::<(&Player, &Position)>() {
-        Some(mut q) => q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0)),
+        Some(mut q) => q
+            .iter(world)
+            .next()
+            .map(|(_, p)| (p.x, p.y))
+            .unwrap_or((0, 0)),
         None => (0, 0),
     };
 
     // Phase 1: 只读收集（所有 &World 借用在此完成）
     let cursor = world.resource::<ThrowPreview>().cursor;
     let (cx, cy) = cursor;
-    let dist_cheb = (cx as isize - player_pos.0 as isize).unsigned_abs()
-        .max((cy as isize - player_pos.1 as isize).unsigned_abs());
-    let path = ops::line_bresenham(player_pos.0, player_pos.1, cx, cy);
-    let in_range = dist_cheb <= 5;
-    // 视线检查：在闭包内完成 Map 借用，不跨 Phase 边界
+    // I68: 射程/视线判定收敛到 core（与 execute_throw::validate_throw 同一实现）
+    let in_range = ops::chebyshev(player_pos, (cx, cy)) <= dungeon_core::THROW_RANGE;
     let los_clear = {
         let map = world.resource::<dungeon_core::Map>();
-        path.iter().all(|&(px, py)| {
-            (px == cx && py == cy) || !map.tiles[py][px].blocks_vision()
-        })
-    };  // &Map 借用在此结束
+        ops::los_clear(map, player_pos, (cx, cy))
+    }; // &Map 借用在此结束
+    let path = ops::line_bresenham(player_pos.0, player_pos.1, cx, cy);
 
     // Phase 2: 写入（&mut World）
     let mut tp = world.resource_mut::<ThrowPreview>();
@@ -225,26 +32,103 @@ pub fn update_throw_path(world: &mut World) {
     tp.valid_target = in_range && los_clear;
 }
 
-
-
-/// 获取当前副手投掷物名称（用于渲染选择页）
-pub fn get_offhand_name(world: &World) -> Option<String> {
-    let Some(player) = dungeon_core::ops::player_entity(world) else { return None };
-    world.get::<Equipment>(player)
-        .and_then(|eq| eq.off_hand.as_ref())
-        .map(|s| s.name())
+/// 副手是否持有可投掷物（I73 收敛：game/throw_select 共用同一判定）
+pub fn has_throwable_offhand(world: &World) -> bool {
+    world
+        .try_query::<(&Player, &Equipment)>()
+        .and_then(|mut q| {
+            q.iter(world).next().map(|(_, eq)| {
+                eq.off_hand
+                    .as_ref()
+                    .map(|s| dungeon_core::is_throwable(s.item_id))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
+/// 进入投掷瞄准（I73 收敛：game/throw_select 的重复初始化块）。
+/// 副手可投掷则初始化 ThrowPreview/LookCursor 并 push ThrowAim；返回 true。
+/// 无投掷物返回 false，调用方决定后续（进选择页/提示）。
+pub fn try_enter_throw_aim(world: &mut World) -> bool {
+    if !has_throwable_offhand(world) {
+        return false;
+    }
+    let (cx, cy) = {
+        let mut q = world
+            .try_query::<(&Player, &Position)>()
+            .expect_log("Player+Position registered");
+        q.iter(world)
+            .next()
+            .map(|(_, p)| (p.x, p.y))
+            .unwrap_or((0, 0))
+    };
+    world.insert_resource(ThrowPreview {
+        active: true,
+        cursor: (cx, cy),
+        path: Vec::new(),
+        valid_target: false,
+    });
+    world.insert_resource(LookCursor {
+        active: true,
+        x: cx,
+        y: cy,
+    });
+    update_throw_path(world);
+    world
+        .resource_mut::<dungeon_action::PageStack>()
+        .push(dungeon_action::Page::ThrowAim);
+    true
+}
 /// 从背包里找一个投掷物装到副手
+/// 副手已有投掷物 → 跳过；副手有不可投掷物（如木盾）→ 先放回背包再装填（I60）
+/// G24: 原子语义（Dsn10）——旧副手放不回背包（背包满）时放弃装填，绝不静默丢失物品
 pub fn auto_equip_throwable(world: &mut World) {
-    let Some(player) = dungeon_core::ops::player_entity(world) else { return };
-    // 如果已经有副手物品则跳过
-    let has_offhand = world.get::<Equipment>(player)
-        .map(|eq| eq.off_hand.is_some()).unwrap_or(false);
-    if has_offhand { return; }
-    // 从背包找石子（ITEM_STONE=18）
+    let Some(player) = dungeon_core::ops::player_entity(world) else {
+        return;
+    };
+    // 副手已有可投掷物则跳过
+    let has_throwable = world
+        .get::<Equipment>(player)
+        .and_then(|eq| eq.off_hand.as_ref())
+        .map(|s| dungeon_core::is_throwable(s.item_id))
+        .unwrap_or(false);
+    if has_throwable {
+        return;
+    }
+    // 副手有不可投掷物 → 预检背包空间后再卸下（G24：放不回则回滚，保持副手原状）
+    let old = {
+        world
+            .get_mut::<Equipment>(player)
+            .and_then(|mut eq| eq.off_hand.take())
+    };
+    if let Some(old) = &old {
+        let can = world
+            .get::<Inventory>(player)
+            .map(|inv| inv.can_add(old.item_id, old.count))
+            .unwrap_or(false);
+        if !can {
+            // 背包满：旧装备放回副手，放弃本次装填
+            if let Some(mut eq) = world.get_mut::<Equipment>(player) {
+                eq.off_hand = Some(old.clone());
+            }
+            world
+                .resource_mut::<EventLog>()
+                .push(dungeon_core::EventMessage::item(
+                    "背包已满，无法替换副手".to_string(),
+                ));
+            return;
+        }
+        if let Some(mut inv) = world.get_mut::<Inventory>(player) {
+            inv.add(old.item_id, old.count);
+        }
+    }
+    // 从背包找石子（ITEM_STONE）
     if let Some(mut inv) = world.get_mut::<Inventory>(player) {
-        let idx = inv.stacks.iter().position(|s| s.item_id == dungeon_core::ITEM_STONE);
+        let idx = inv
+            .stacks
+            .iter()
+            .position(|s| s.item_id == dungeon_core::ITEM_STONE);
         if let Some(i) = idx {
             let stack = inv.stacks.remove(i);
             if let Some(mut eq) = world.get_mut::<Equipment>(player) {

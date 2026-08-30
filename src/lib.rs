@@ -1,4 +1,3 @@
-pub mod inventory;
 pub mod keymap;
 pub mod throw;
 

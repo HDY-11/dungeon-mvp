@@ -4,17 +4,11 @@
 //! 定义在行动 crate 中，而非核心 crate。
 
 use bevy_ecs::prelude::*;
+use dungeon_core::OptionLogExt;
 
 // ══════════════════════════════════════════════════════
 // 实体属性
 // ══════════════════════════════════════════════════════
-
-/// 反应时：从决策锁定到行动执行的延迟。
-/// 由敏捷派生，敏捷越高反应越快（反应时越短）。
-#[derive(Component, Clone, Debug)]
-pub struct Reaction {
-    pub time: f32,
-}
 
 /// 从敏捷推算反应时
 pub fn agility_to_reaction(agility: u32) -> f32 {
@@ -40,7 +34,10 @@ pub struct CanMove {
 
 impl CanMove {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 300.0, priority }
+        Self {
+            duration: 300.0,
+            priority,
+        }
     }
 }
 
@@ -53,7 +50,10 @@ pub struct CanChase {
 
 impl CanChase {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 250.0, priority }
+        Self {
+            duration: 250.0,
+            priority,
+        }
     }
 
     pub fn condition(can_see_player: bool) -> bool {
@@ -70,11 +70,14 @@ pub struct CanFlee {
 
 impl CanFlee {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 250.0, priority }
+        Self {
+            duration: 250.0,
+            priority,
+        }
     }
 
     pub fn condition(hp_ratio: f32) -> bool {
-        hp_ratio < 0.25
+        hp_ratio < dungeon_core::FLEE_HP_RATIO
     }
 }
 
@@ -87,7 +90,10 @@ pub struct CanWander {
 
 impl CanWander {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 500.0, priority }
+        Self {
+            duration: 500.0,
+            priority,
+        }
     }
 
     pub fn condition() -> bool {
@@ -104,7 +110,10 @@ pub struct CanWait {
 
 impl CanWait {
     pub fn new(priority: u32) -> Self {
-        Self { duration: 800.0, priority }
+        Self {
+            duration: 800.0,
+            priority,
+        }
     }
 
     pub fn condition() -> bool {
@@ -138,7 +147,6 @@ pub trait GameAction: Send + Sync + std::fmt::Debug {
     fn clone_box(&self) -> Box<dyn GameAction>;
     fn as_any(&self) -> &dyn std::any::Any;
 }
-
 
 /// 追击行为
 #[derive(Clone, Debug)]
@@ -178,10 +186,13 @@ pub struct ActionQueue {
 
 impl ActionQueue {
     pub fn enqueue(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
-        self.entries.push(ActionEntry { entity, kind, action: None, av_remaining: av });
+        self.entries.push(ActionEntry {
+            entity,
+            kind,
+            action: None,
+            av_remaining: av,
+        });
     }
-
-
 
     pub fn advance(&mut self, amount: f32) {
         for entry in &mut self.entries {
@@ -192,10 +203,11 @@ impl ActionQueue {
     }
 
     pub fn next_event_distance(&self) -> Option<f32> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| e.av_remaining > 0.0)
             .map(|e| e.av_remaining)
-            .min_by(|a, b| a.partial_cmp(b).expect("AV values should never be NaN"))
+            .min_by(|a, b| a.partial_cmp(b).expect_log("AV values should never be NaN"))
     }
 
     pub fn pop_ready(&mut self) -> Vec<ActionEntry> {
@@ -204,7 +216,9 @@ impl ActionQueue {
             if e.av_remaining <= 0.0 {
                 ready.push(e.clone());
                 false
-            } else { true }
+            } else {
+                true
+            }
         });
         ready
     }
@@ -217,7 +231,12 @@ impl ActionQueue {
     /// 允许玩家在 Move 排队时确认 Attack 替换之，避免无声吞操作。
     pub fn enqueue_or_replace(&mut self, entity: Entity, kind: ActionKindV3, av: f32) {
         self.entries.retain(|e| e.entity != entity);
-        self.entries.push(ActionEntry { entity, kind, action: None, av_remaining: av });
+        self.entries.push(ActionEntry {
+            entity,
+            kind,
+            action: None,
+            av_remaining: av,
+        });
     }
 }
 
@@ -245,60 +264,42 @@ pub enum PlayerAction {
 }
 
 // ══════════════════════════════════════════════════════
-// 输入管线（旧，逐步迁移至 PlayerAction）
+// 页栈 — 按键分派
 // ══════════════════════════════════════════════════════
 
-#[derive(Clone, Debug)]
-pub enum RecognizedInput {
-    Direction(isize, isize),
-    Skill(usize),
-    Wait,
-    OpenBag,
-    Quit,
-    Confirm,
-}
-
-#[derive(Resource, Default)]
-pub struct InputBuffer {
-    pub buffer: Vec<RecognizedInput>,
-}
-
-impl InputBuffer {
-    pub fn push(&mut self, input: RecognizedInput) {
-        if self.buffer.len() >= 2 { self.buffer.remove(0); }
-        if let Some(last) = self.buffer.last() {
-            match (last, &input) {
-                (RecognizedInput::Direction(ax, ay), RecognizedInput::Direction(bx, by))
-                    if ax == bx && ay == by => return,
-                _ => {}
-            }
-        }
-        self.buffer.push(input);
-    }
-
-    pub fn pop(&mut self) -> Option<RecognizedInput> {
-        if self.buffer.is_empty() { None } else { Some(self.buffer.remove(0)) }
-    }
-}
-
+/// tap-tap 预览状态（第一次按键设置，第二次同键确认后清除）
 #[derive(Resource, Default)]
 pub struct PlayerPreview {
     pub kind: Option<ActionKindV3>,
 }
 
-// ══════════════════════════════════════════════════════
-// 页栈 — 按键分派
-// ══════════════════════════════════════════════════════
+/// 对话框种类（I71：行为按种类分派，标题文案只是显示——不再用字符串匹配行为）
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DialogKind {
+    /// 确认退出
+    Quit,
+    /// 确认下楼
+    Descend,
+}
+
+impl DialogKind {
+    pub fn title(self) -> &'static str {
+        match self {
+            DialogKind::Quit => "确认退出？",
+            DialogKind::Descend => "确认下楼？",
+        }
+    }
+}
 
 /// UI 页面，决定按键路由
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
-    Game,              // 主游戏画面（默认）
-    Look,              // 光标查看模式
-    ThrowSelect,       // 投掷物选择
-    ThrowAim,          // 投掷瞄准
-    Inventory,         // 背包界面
-    Dialog(String),    // 确认对话框
+    Game,               // 主游戏画面（默认）
+    Look,               // 光标查看模式
+    ThrowSelect,        // 投掷物选择
+    ThrowAim,           // 投掷瞄准
+    Inventory,          // 背包界面
+    Dialog(DialogKind), // 确认对话框
 }
 
 /// 页栈：栈顶是当前活跃页面
@@ -325,7 +326,10 @@ pub struct CanThrow {
 }
 impl CanThrow {
     pub fn new(priority: u32) -> Self {
-        Self { priority, duration: 190.0 }
+        Self {
+            priority,
+            duration: dungeon_core::THROW_DURATION,
+        }
     }
 }
 

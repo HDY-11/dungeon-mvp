@@ -1,17 +1,20 @@
-use dungeon_core::{
-    ActiveBuffs, EntityName, Player, Position, Renderable, Stats,
-};
-use dungeon_action::{ActionQueue, ActionKindV3, PlayerPreview};
+//! 行动时间轴渲染：从 ActionQueue 构建符号-行动-耗时列表。
+
+use crate::color::renderable_color;
+use bevy_ecs::prelude::{Entity, Without, World};
+use dungeon_action::{ActionKindV3, ActionQueue, PlayerPreview};
+use dungeon_core::{ActiveBuffs, EntityName, Player, Position, Renderable, Stats};
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
 };
 use std::collections::HashSet;
-use bevy_ecs::prelude::{Entity, World};
-use crate::color::renderable_color;
 
 /// 行动表：符号 行动 耗时（无 HP），下方分割后显示符号 怪物名 血量 + Buff
-pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) -> Vec<Line<'static>> {
+pub fn build_timeline(
+    player_visible: HashSet<(usize, usize)>,
+    world: &World,
+) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
 
     // ── 玩家预览 ──
@@ -23,7 +26,10 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
         Some(ActionKindV3::Attack { .. }) => "攻击".into(),
         _ => "等待输入".into(),
     };
-    out.push(Line::from(vec![Span::styled("╭────────────", Style::default().fg(Color::Yellow))]));
+    out.push(Line::from(vec![Span::styled(
+        "╭────────────",
+        Style::default().fg(Color::Yellow),
+    )]));
     out.push(Line::from(vec![
         Span::styled("│ ", Style::default().fg(Color::Yellow)),
         Span::styled("@", Style::default().fg(Color::Yellow)),
@@ -34,9 +40,14 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     // ── 行动队列：符号 行动 耗时（无 HP）──
     let queue = world.resource::<ActionQueue>();
     for entry in &queue.entries {
-        let Some(pos) = world.get::<Position>(entry.entity) else { continue };
-        if !player_visible.contains(&(pos.x, pos.y)) { continue; }
-        let (glyph, color) = world.get::<Renderable>(entry.entity)
+        let Some(pos) = world.get::<Position>(entry.entity) else {
+            continue;
+        };
+        if !player_visible.contains(&(pos.x, pos.y)) {
+            continue;
+        }
+        let (glyph, color) = world
+            .get::<Renderable>(entry.entity)
             .map(|r| (r.glyph, renderable_color(r.color)))
             .unwrap_or(('?', Color::White));
         let (action_label, timer) = if let Some(ref action) = entry.action {
@@ -47,31 +58,47 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
         out.push(Line::from(vec![
             Span::styled(format!(" {} ", glyph), Style::default().fg(color)),
             Span::raw(action_label),
-            Span::styled(format!(" {:>3}ms", timer as u32), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {:>3}ms", timer as u32),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
     }
-    out.push(Line::from(vec![Span::styled("╰────────────", Style::default().fg(Color::Yellow))]));
+    out.push(Line::from(vec![Span::styled(
+        "╰────────────",
+        Style::default().fg(Color::Yellow),
+    )]));
 
     // ── 分割线 ──
-    out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
+    out.push(Line::from(Span::styled(
+        "─────────────────",
+        Style::default().fg(Color::DarkGray),
+    )));
 
-    // ── 实体状态：符号 怪物名 血量（去重，仅可见实体）──
+    // ── 实体状态：符号 怪物名 血量（去重，仅可见实体；A25: 用 Without<Player> 排除玩家而非名字字符串）
     let mut status_entries: Vec<(char, String, i32, i32, Color, Entity)> = Vec::new();
-    if let Some(mut q) = world.try_query::<(Entity, &Position, &EntityName, &Stats, &Renderable)>() {
+    if let Some(mut q) = world.try_query_filtered::<(Entity, &Position, &EntityName, &Stats, &Renderable), Without<Player>>() {
         for (e, p, n, s, r) in q.iter(world) {
-            if n.0 == "冒险者" || !player_visible.contains(&(p.x, p.y)) { continue; }
+            if !player_visible.contains(&(p.x, p.y)) { continue; }
             let color = Color::Rgb(r.color.0, r.color.1, r.color.2);
             status_entries.push((r.glyph, n.0.clone(), s.hp, s.max_hp, color, e));
         }
     }
     if !status_entries.is_empty() {
         for (glyph, name, hp, mhp, color, _) in &status_entries {
-            let hp_color = if *hp <= *mhp / 3 { Color::Red } else { Color::Cyan };
+            let hp_color = if *hp as f32 <= *mhp as f32 * dungeon_core::LOW_HP_RATIO {
+                Color::Red
+            } else {
+                Color::Cyan
+            };
             out.push(Line::from(vec![
                 Span::styled(format!(" {} ", glyph), Style::default().fg(*color)),
                 Span::styled(name.clone(), Style::default().fg(*color)),
                 Span::raw(" "),
-                Span::styled(format!("{:>3}/{:<3}", (*hp).max(0), mhp), Style::default().fg(hp_color)),
+                Span::styled(
+                    format!("{:>3}/{:<3}", (*hp).max(0), mhp),
+                    Style::default().fg(hp_color),
+                ),
             ]));
         }
     }
@@ -80,30 +107,14 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
     let mut has_buffs = false;
     for (_, _, _, _, _, e) in &status_entries {
         if let Some(ab) = world.get::<ActiveBuffs>(*e)
-            && !ab.0.is_empty() {
-                if !has_buffs {
-                    out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
-                    has_buffs = true;
-                }
-                for b in &ab.0 {
-                    let name = match b.kind {
-                        dungeon_core::BuffKind::Shield => "护盾",
-                        dungeon_core::BuffKind::Berserk => "狂暴",
-                    };
-                    out.push(Line::from(vec![
-                        Span::styled(format!("  {} +{}", name, b.magnitude), Style::default().fg(Color::DarkGray)),
-                        Span::styled(format!(" {:>1}s", (b.remaining_av / 1000.0).ceil() as u32), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
-            }
-    }
-
-    // 玩家自己的 Buff 也显示
-    if let Some(ab) = world.try_query::<(&Player, &ActiveBuffs)>()
-        .and_then(|mut q| q.iter(world).next().map(|(_, ab)| ab))
-        && !ab.0.is_empty() {
+            && !ab.0.is_empty()
+        {
             if !has_buffs {
-                out.push(Line::from(Span::styled("─────────────────", Style::default().fg(Color::DarkGray))));
+                out.push(Line::from(Span::styled(
+                    "─────────────────",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                has_buffs = true;
             }
             for b in &ab.0 {
                 let name = match b.kind {
@@ -111,20 +122,66 @@ pub fn build_timeline(player_visible: HashSet<(usize, usize)>, world: &World) ->
                     dungeon_core::BuffKind::Berserk => "狂暴",
                 };
                 out.push(Line::from(vec![
-                    Span::styled(format!("  {} +{}", name, b.magnitude), Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!(" {:>1}s", (b.remaining_av / 1000.0).ceil() as u32), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("  {} +{}", name, b.magnitude),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!(" {:>1}s", (b.remaining_av / 1000.0).ceil() as u32),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ]));
             }
         }
+    }
+
+    // 玩家自己的 Buff 也显示
+    if let Some(ab) = world
+        .try_query::<(&Player, &ActiveBuffs)>()
+        .and_then(|mut q| q.iter(world).next().map(|(_, ab)| ab))
+        && !ab.0.is_empty()
+    {
+        if !has_buffs {
+            out.push(Line::from(Span::styled(
+                "─────────────────",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        for b in &ab.0 {
+            let name = match b.kind {
+                dungeon_core::BuffKind::Shield => "护盾",
+                dungeon_core::BuffKind::Berserk => "狂暴",
+            };
+            out.push(Line::from(vec![
+                Span::styled(
+                    format!("  {} +{}", name, b.magnitude),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!(" {:>1}s", (b.remaining_av / 1000.0).ceil() as u32),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+        }
+    }
 
     // ── 空状态提示 ──
     if status_entries.is_empty() && out.len() <= 5 {
-        out.push(Line::from(Span::styled(" (无实体)", Style::default().fg(Color::DarkGray))));
+        out.push(Line::from(Span::styled(
+            " (无实体)",
+            Style::default().fg(Color::DarkGray),
+        )));
     }
 
     out.push(Line::from(Span::raw("")));
-    out.push(Line::from(Span::styled(" ↑↓←→移动 1-4技能 (双击确认)", Style::default().fg(Color::DarkGray))));
-    out.push(Line::from(Span::styled(" .等待  e背包 x查看", Style::default().fg(Color::DarkGray))));
+    out.push(Line::from(Span::styled(
+        " ↑↓←→移动 1-4技能 (双击确认)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    out.push(Line::from(Span::styled(
+        " .等待  e背包 x查看",
+        Style::default().fg(Color::DarkGray),
+    )));
     out
 }
 

@@ -624,6 +624,7 @@ name = "dungeon-core"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "log",
  "rand 0.10.1",
  "serde",
  "serde_json",
@@ -660,8 +661,10 @@ name = "dungeon-world"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "bincode",
  "dungeon-action",
  "dungeon-core",
+ "log",
  "rand 0.10.1",
  "serde",
  "symmetric-shadowcasting",

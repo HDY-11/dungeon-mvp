@@ -5,21 +5,24 @@
 //! bevy 调度器自动并行执行互不冲突的 system。
 
 use crate::types::*;
-use dungeon_core::{
-    components::*,
-};
 use bevy_ecs::prelude::*;
-use bevy_ecs::system::RunSystemOnce;
+use dungeon_core::components::*;
 
 /// 追击决策：有 CanChase 的怪物是否看到玩家
 pub fn chase_decision_system(
     player: Query<&Position, With<Player>>,
-    mut monsters: Query<(Entity, &CanChase, &Stats, &Viewshed, &Reaction, &mut LastKnownPlayerPos)>,
+    mut monsters: Query<(
+        Entity,
+        &CanChase,
+        &Stats,
+        &Viewshed,
+        &mut LastKnownPlayerPos,
+    )>,
     mut out: ResMut<ChaseIntents>,
 ) {
     out.0.clear();
     let player_pos = player.iter().next().map(|p| (p.x, p.y));
-    for (entity, chase, stats, view, _reaction, mut last_known) in &mut monsters {
+    for (entity, chase, stats, view, mut last_known) in &mut monsters {
         let can_see = player_pos.is_some_and(|pp| view.visible_tiles.contains(&pp));
         if can_see {
             // 看到玩家 → 更新记忆位置
@@ -29,22 +32,25 @@ pub fn chase_decision_system(
         }
         // 看到玩家 | 有记忆位置 → 追击
         if CanChase::condition(can_see) || last_known.0.is_some() {
-            let av = agility_to_reaction(stats.agility) + chase.duration * agility_speed_factor(stats.agility);
-            out.0.push((entity, chase.priority, av, ActionKindV3::Chase));
+            let av = agility_to_reaction(stats.agility)
+                + chase.duration * agility_speed_factor(stats.agility);
+            out.0
+                .push((entity, chase.priority, av, ActionKindV3::Chase));
         }
     }
 }
 
 /// 逃跑决策：有 CanFlee 的怪物 HP 是否低于 25%
 pub fn flee_decision_system(
-    monsters: Query<(Entity, &CanFlee, &Stats, &Reaction)>,
+    monsters: Query<(Entity, &CanFlee, &Stats)>,
     mut out: ResMut<FleeIntents>,
 ) {
     out.0.clear();
-    for (entity, flee, stats, _reaction) in &monsters {
+    for (entity, flee, stats) in &monsters {
         let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
         if CanFlee::condition(hp_ratio) {
-            let av = agility_to_reaction(stats.agility) + flee.duration * agility_speed_factor(stats.agility);
+            let av = agility_to_reaction(stats.agility)
+                + flee.duration * agility_speed_factor(stats.agility);
             out.0.push((entity, flee.priority, av, ActionKindV3::Flee));
         }
     }
@@ -52,18 +58,25 @@ pub fn flee_decision_system(
 
 /// 游荡决策：有 CanWander 且尚未决定行动的怪物
 pub fn wander_decision_system(
-    monsters: Query<(Entity, &CanWander, &Stats, &Reaction)>,
+    monsters: Query<(Entity, &CanWander, &Stats)>,
     chase_out: Res<ChaseIntents>,
     flee_out: Res<FleeIntents>,
     mut out: ResMut<WanderIntents>,
 ) {
     out.0.clear();
     // 已有追击/逃跑意图的实体，不再纳入游荡
-    let already_decided: Vec<Entity> = chase_out.0.iter().chain(flee_out.0.iter()).map(|(e, _, _, _)| *e).collect();
-    for (entity, wander, stats, _reaction) in &monsters {
+    let already_decided: Vec<Entity> = chase_out
+        .0
+        .iter()
+        .chain(flee_out.0.iter())
+        .map(|(e, _, _, _)| *e)
+        .collect();
+    for (entity, wander, stats) in &monsters {
         if !already_decided.contains(&entity) && CanWander::condition() {
-            let av = agility_to_reaction(stats.agility) + wander.duration * agility_speed_factor(stats.agility);
-            out.0.push((entity, wander.priority, av, ActionKindV3::Wander));
+            let av = agility_to_reaction(stats.agility)
+                + wander.duration * agility_speed_factor(stats.agility);
+            out.0
+                .push((entity, wander.priority, av, ActionKindV3::Wander));
         }
     }
 }
@@ -91,15 +104,12 @@ pub fn arbitration_system(
                 ActionKindV3::Wander => Some(Box::new(WanderAction)),
                 _ => None,
             };
-            queue.entries.push(ActionEntry { entity: *entity, kind: kind.clone(), action, av_remaining: *av });
+            queue.entries.push(ActionEntry {
+                entity: *entity,
+                kind: kind.clone(),
+                action,
+                av_remaining: *av,
+            });
         }
     }
-}
-
-/// 向后兼容包装：顺序执行四个决策 system（非并行）
-pub fn run_monster_decision(world: &mut World) {
-    let _ = world.run_system_once(chase_decision_system);
-    let _ = world.run_system_once(flee_decision_system);
-    let _ = world.run_system_once(wander_decision_system);
-    let _ = world.run_system_once(arbitration_system);
 }

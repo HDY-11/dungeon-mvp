@@ -3,11 +3,12 @@
 //! 自 dungeon-core/monster_def.rs 迁移至此。该算法是世界初始化逻辑，
 //! 而非怪物数据定义。
 
-use dungeon_core::{MonsterKindId, Tile, MAP_WIDTH, MAP_HEIGHT};
+use dungeon_core::{MAP_HEIGHT, MAP_WIDTH, MonsterKindId, Tile};
 use rand::Rng;
 
-/// 用噪声密度层 + 元胞扩散生成怪物种群。
+/// 用噪声密度层 + 元胞扩散生成怪物种群（Dsn24: 种类权重按 map_kind 分派）。
 pub fn generate_monster_population(
+    map_kind: dungeon_core::MapKind,
     tiles: &[[Tile; MAP_WIDTH]; MAP_HEIGHT],
     floor: u32,
     rng: &mut impl Rng,
@@ -46,15 +47,21 @@ pub fn generate_monster_population(
         let mut added = 0usize;
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
-                if snapshot[y][x] || !tiles[y][x].walkable() { continue; }
+                if snapshot[y][x] || !tiles[y][x].walkable() {
+                    continue;
+                }
                 let has_neighbor = {
                     let mut n = false;
                     for dy in [-1isize, 0, 1] {
                         for dx in [-1isize, 0, 1] {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let ny = y.wrapping_add_signed(dy);
                             let nx = x.wrapping_add_signed(dx);
-                            if nx < MAP_WIDTH && ny < MAP_HEIGHT && snapshot[ny][nx] { n = true; }
+                            if nx < MAP_WIDTH && ny < MAP_HEIGHT && snapshot[ny][nx] {
+                                n = true;
+                            }
                         }
                     }
                     n
@@ -65,25 +72,39 @@ pub fn generate_monster_population(
                 }
             }
         }
-        if added == 0 { break; }
+        if added == 0 {
+            break;
+        }
     }
 
     // Phase 4: 收集 + 钳制（排除 exclude）
     let mut positions: Vec<(usize, usize)> = Vec::new();
-    for y in 0..MAP_HEIGHT {
-        for x in 0..MAP_WIDTH {
-            if is_monster[y][x] && !exclude.contains(&(x, y)) {
+    for (y, row) in is_monster.iter().enumerate() {
+        for (x, &has) in row.iter().enumerate() {
+            if has && !exclude.contains(&(x, y)) {
                 positions.push((x, y));
             }
         }
     }
 
-    while positions.len() < min_count {
+    // I82: 补足循环加迭代上限（40×期望数）——可行走格不足时不再死循环，
+    // 随机命中未占格概率随填充度下降，上限同时约束最坏耗时
+    let max_attempts = min_count.saturating_mul(40);
+    let mut attempts = 0;
+    while positions.len() < min_count && attempts < max_attempts {
+        attempts += 1;
         let x = rng.random_range(3..MAP_WIDTH - 3);
         let y = rng.random_range(3..MAP_HEIGHT - 3);
         if tiles[y][x].walkable() && !positions.contains(&(x, y)) && !exclude.contains(&(x, y)) {
             positions.push((x, y));
         }
+    }
+    if positions.len() < min_count {
+        log::warn!(
+            "怪物补足不足：期望 {} 只，实际 {} 只（可行走格不足或排除集过大）",
+            min_count,
+            positions.len()
+        );
     }
 
     while positions.len() > max_count {
@@ -92,5 +113,14 @@ pub fn generate_monster_population(
     }
 
     // Phase 5: 分配种类
-    positions.into_iter().map(|(x, y)| (dungeon_core::monster_def::roll_one_kind(floor, rng), x, y)).collect()
+    positions
+        .into_iter()
+        .map(|(x, y)| {
+            (
+                dungeon_core::monster_def::roll_one_kind(map_kind, floor, rng),
+                x,
+                y,
+            )
+        })
+        .collect()
 }

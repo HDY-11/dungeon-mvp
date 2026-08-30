@@ -1,6 +1,6 @@
 //! 对称阴影投射视野计算
 
-use crate::{Map, MAP_WIDTH, MAP_HEIGHT};
+use crate::{MAP_HEIGHT, MAP_WIDTH, Map};
 
 /// 对称阴影投射视野计算
 pub fn calculate_visible_tiles(x: usize, y: usize, range: usize, map: &Map) -> Vec<(usize, usize)> {

@@ -1,39 +1,42 @@
+//! 应用层入口：标题画面 → 独立输入线程 + 主循环。
+//!
+//! 各页面按键处理器已按页拆分到 `src/pages/`（Game/Look/ThrowSelect/ThrowAim/Inventory/Dialog），
+//! 本文件只保留进程入口、主循环编排与标题画面。
+
 use std::io::{self, stdout};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
-use dungeon_core::{
-    ops, EventLog, Inventory, InventoryUI, LookCursor, Stats, ThrowPreview, Equipment, TurnManager,
-    MAP_WIDTH, MAP_HEIGHT, Position, Player,
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use dungeon_action::{handle_player_direction, handle_wait, handle_skill, PlayerAction, agility_speed_factor, agility_to_reaction};
-use dungeon_world::{setup_world, descend, GameSave, fov_system, advance_and_settle_parallel as advance_and_settle};
+use dungeon_core::{TurnManager, ops};
 use dungeon_render::{draw_title, render_ui};
-use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use dungeon_world::{
+    advance_and_settle_parallel as advance_and_settle, fov_system, load_game, setup_world,
+};
 use ratatui::Terminal;
 
+mod keymap;
+mod pages;
+mod throw;
+
 fn main() -> io::Result<()> {
-    std::panic::set_hook(Box::new(|info| {
-        let msg = format!("PANIC: {}\n", info);
-        std::fs::write("panic.log", msg).ok();
-    }));
+    dungeon_core::init_logging();
 
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
     let (mut world, game_start) = title_screen(&mut terminal)?;
     let result = run(&mut terminal, game_start, &mut world);
+    dungeon_core::shutdown_logging();
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -45,516 +48,128 @@ fn run(
     game_start: Instant,
     world: &mut World,
 ) -> io::Result<()> {
+    // ========== 进入游戏主循环前的初始化 ==========
+    // 页栈是 UI 导航的核心：当前栈顶决定按键由哪个页面处理器消费。
+    // 初始只有 Game 页，后续 Look/Inventory/ThrowAim 等通过 push 进入。
     world.insert_resource(dungeon_action::PageStack::default());
+
+    // 重建占用表：根据所有 Position 实体生成 OccupancyMap，
+    // 供移动、寻路、攻击距离等逻辑查询“某格是否被占用”。
     ops::rebuild_occupancy(world);
+
+    // 先执行一次视野计算，保证首帧渲染前玩家视野已正确。
     let _ = world.run_system_once(fov_system);
+
+    // 将当前可见信息写入 VisibleMemory，用于渲染“已探索/当前可见”区域。
     ops::update_visible_memory(world);
+
+    // 首帧立即绘制一次，避免进入循环前屏幕空白。
     {
         let w: &World = &*world;
         terminal.draw(|frame| render_ui(frame, game_start, w))?;
     }
 
+    // ========== 启动后台输入线程 ==========
+    // 使用 mpsc channel 将 crossterm 的按键事件从输入线程发送到主线程。
+    // 主线程每帧用 try_recv 非阻塞消费，不会因为等待输入而卡住渲染。
     let (tx, rx) = mpsc::channel::<KeyCode>();
+
+    // modal_flag 是保留的“暂停输入”开关；当前没有页面写 true，
+    // 若未来需要阻塞式对话框/模态输入，可置 true 让输入线程暂时休眠。
     let modal_flag = Arc::new(AtomicBool::new(false));
     let thread_flag = modal_flag.clone();
+
     thread::spawn(move || {
+        // 去重状态：记录上一个按键和触发时间，用于过滤 33ms 内的重复按键。
         let mut last_code: KeyCode = KeyCode::Null;
         let mut last_time = Instant::now();
         loop {
+            // 如果未来某处把 thread_flag 置为 true，则暂停读取终端输入。
             if thread_flag.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(16));
                 continue;
             }
+
+            // 非阻塞轮询终端事件；没有事件就继续循环，避免忙等。
             if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false)
-                && let Ok(Event::Key(key)) = crossterm::event::read() {
-                    let now = Instant::now();
-                    if key.code == last_code && now - last_time < Duration::from_millis(50) {
-                        continue;
-                    }
-                    last_code = key.code;
-                    last_time = now;
-                    if tx.send(key.code).is_err() { break; }
+                && let Ok(Event::Key(key)) = crossterm::event::read()
+            {
+                // 现代终端会区分 Press/Repeat/Release；
+                // 这里只处理 Press，避免长按产生大量重复行动。
+                if key.kind != KeyEventKind::Press {
+                    continue;
                 }
+
+                // 33ms 去重：同一按键在极短时间内再次触发则丢弃，
+                // 与主循环 30FPS 的帧节奏保持一致。
+                let now = Instant::now();
+                if key.code == last_code && now - last_time < Duration::from_millis(33) {
+                    continue;
+                }
+                last_code = key.code;
+                last_time = now;
+
+                // 把按键发送给主线程；如果主线程已退出（channel 关闭），则结束输入线程。
+                if tx.send(key.code).is_err() {
+                    break;
+                }
+            }
         }
     });
 
+    // ========== 主循环：输入 -> 行动 -> 世界推进 -> 渲染 ==========
     loop {
+        // 记录本帧开始时间，用于末尾的帧率控制。
         let frame_start = Instant::now();
 
-        // 消费本帧所有输入
+        // 1. 消费本帧所有输入
+        // has_action 表示是否有按键真正产生了游戏行动（移动/攻击/使用等）。
+        // 像打开背包、查看地图这类 UI 操作不会推进世界时间。
         let mut has_action = false;
         loop {
             match rx.try_recv() {
                 Ok(code) => {
-                    if process_key(code, terminal, &modal_flag, world, game_start)? {
+                    // 将按键交给当前页面的处理器；返回 true 表示该键触发了行动。
+                    if pages::process_key(code, world)? {
                         has_action = true;
                     }
                 }
+                // 当前没有更多按键时退出内层循环，进入本帧世界推进。
                 Err(mpsc::TryRecvError::Empty) => break,
+                // 输入线程已结束（例如 channel 发送端被丢弃），游戏正常退出。
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             }
         }
 
-        // 推进世界
+        // 2. 推进世界
+        // 只有“产生行动”且游戏未结束时才推进行动队列；
+        // 否则本帧只做渲染，保持游戏暂停/等待状态。
         if has_action && !world.resource::<TurnManager>().game_over {
             advance_and_settle(world);
         }
 
-        // 渲染（每帧都画，固定帧率）
+        // 3. 渲染
+        // 无论是否有输入都重绘一帧，保证 UI 状态（光标、日志、时间轴）及时刷新。
         {
             let w: &World = &*world;
             terminal.draw(|frame| render_ui(frame, game_start, w))?;
         }
 
+        // 4. 退出检查
+        // 页面处理器（如 Dialog 确认退出）会设置 wants_quit，
+        // 主循环在此统一退出，避免散落在各处直接 return。
         if world.resource::<TurnManager>().wants_quit {
             break Ok(());
         }
 
-        // 帧率控制：33ms ≈ 30FPS
+        // 5. 帧率控制：目标 33ms/帧，约 30FPS。
+        // 如果本帧处理耗时不足 33ms，则睡眠补齐，避免 CPU 空转。
         let elapsed = frame_start.elapsed();
         let target = Duration::from_millis(33);
         if elapsed < target {
             std::thread::sleep(target - elapsed);
         }
     }
-}
-
-fn pickup_ground(world: &mut World) {
-    ops::pickup_ground(world)
-}
-
-fn on_stairs(world: &World) -> bool {
-    ops::on_stairs(world)
-}
-
-fn process_key(
-    code: KeyCode,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    modal_flag: &AtomicBool,
-    world: &mut World,
-    game_start: Instant,
-) -> io::Result<bool> {
-    // 页栈分派
-    let page = world.resource::<dungeon_action::PageStack>().current().clone();
-    match page {
-        dungeon_action::Page::Game => process_game_key(code, terminal, modal_flag, world, game_start),
-        dungeon_action::Page::Look => process_look_key(code, world),
-        dungeon_action::Page::ThrowSelect => process_throw_select_key(code, world),
-        dungeon_action::Page::ThrowAim => process_throw_aim_key(code, world),
-        dungeon_action::Page::Inventory => process_inventory_key(code, world),
-        dungeon_action::Page::Dialog(title) => process_dialog_key(code, world, &title),
-    }
-}
-
-/// 光标查看页按键处理
-fn process_look_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
-    match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            world.resource_mut::<LookCursor>().y = world.resource::<LookCursor>().y.saturating_sub(1);
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            world.resource_mut::<LookCursor>().y = (world.resource::<LookCursor>().y + 1).min(MAP_HEIGHT - 1);
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            world.resource_mut::<LookCursor>().x = world.resource::<LookCursor>().x.saturating_sub(1);
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            world.resource_mut::<LookCursor>().x = (world.resource::<LookCursor>().x + 1).min(MAP_WIDTH - 1);
-        }
-        KeyCode::Char('x') | KeyCode::Esc => {
-            world.resource_mut::<LookCursor>().active = false;
-            world.resource_mut::<dungeon_action::PageStack>().pop();
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-/// 投掷选择页
-fn process_throw_select_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
-    match code {
-        KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('y') => {
-            // 自动从背包装填投掷物到副手
-            dungeon_tui::throw::auto_equip_throwable(world);
-            let has_offhand = world.try_query::<(&Player, &Equipment)>()
-                .and_then(|mut q| q.iter(world).next()
-                    .map(|(_, eq)| eq.off_hand.is_some()))
-                .unwrap_or(false);
-            if has_offhand {
-                let (cx, cy) = {
-                    let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
-                    q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
-                };
-                world.insert_resource(ThrowPreview { active: true, cursor: (cx, cy), path: Vec::new(), valid_target: false });
-                world.insert_resource(LookCursor { active: true, x: cx, y: cy });
-                dungeon_tui::throw::update_throw_path(world);
-                world.resource_mut::<dungeon_action::PageStack>().pop();
-                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowAim);
-            }
-        }
-        KeyCode::Esc => {
-            world.resource_mut::<dungeon_action::PageStack>().pop();
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-/// 投掷瞄准页
-fn process_throw_aim_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
-    match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            let mut tp = world.resource_mut::<ThrowPreview>();
-            tp.cursor.1 = tp.cursor.1.saturating_sub(1);
-            drop(tp);
-            dungeon_tui::throw::update_throw_path(world);
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            let mut tp = world.resource_mut::<ThrowPreview>();
-            tp.cursor.1 = (tp.cursor.1 + 1).min(MAP_HEIGHT - 1);
-            drop(tp);
-            dungeon_tui::throw::update_throw_path(world);
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            let mut tp = world.resource_mut::<ThrowPreview>();
-            tp.cursor.0 = tp.cursor.0.saturating_sub(1);
-            drop(tp);
-            dungeon_tui::throw::update_throw_path(world);
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            let mut tp = world.resource_mut::<ThrowPreview>();
-            tp.cursor.0 = (tp.cursor.0 + 1).min(MAP_WIDTH - 1);
-            drop(tp);
-            dungeon_tui::throw::update_throw_path(world);
-        }
-        KeyCode::Enter => {
-            let (tx, ty) = { let tp = world.resource::<ThrowPreview>(); (tp.cursor.0, tp.cursor.1) };
-            world.resource_mut::<ThrowPreview>().active = false;
-            world.resource_mut::<dungeon_action::PageStack>().pop();
-            // 执行投掷
-            let Some(player) = dungeon_core::ops::player_entity(world) else { return Ok(false) };
-            let agility = world.get::<Stats>(player).map(|s| s.agility).unwrap_or(10);
-            let reaction = agility_to_reaction(agility);
-            let factor = agility_speed_factor(agility);
-            let av = reaction + 190.0 * factor;
-            let has_action = dungeon_action::handle_timed_action(
-                world, player, dungeon_action::ActionKindV3::Throw { tx, ty }, av);
-            return Ok(has_action);
-        }
-        KeyCode::Esc | KeyCode::Char('x') => {
-            world.resource_mut::<ThrowPreview>().active = false;
-            world.resource_mut::<dungeon_action::PageStack>().pop();
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-/// 背包页面按键处理
-fn process_inventory_key(code: KeyCode, world: &mut World) -> io::Result<bool> {
-    let detail;
-    let detail_source;
-    let detail_idx;
-    let panel;
-    let left_sel;
-    let right_sel;
-    let left_total;
-    let ground_total;
-    {
-        let inv_state = world.resource::<InventoryUI>();
-        detail = inv_state.detail;
-        detail_source = inv_state.detail_source;
-        detail_idx = inv_state.detail_idx;
-        panel = inv_state.panel;
-        left_sel = inv_state.left_sel;
-        right_sel = inv_state.right_sel;
-    } // drop inv_state immutable borrow
-    {
-        left_total = world.try_query::<(&Player, &Inventory)>()
-            .map(|mut q| q.iter(world).next().map(|(_, inv)| inv.stacks.len()).unwrap_or(0))
-            .unwrap_or(0);
-    }
-    {
-        let mut q = world.try_query::<(Entity, &Position, &dungeon_core::ItemPickup)>()
-            .expect("ItemPickup+Pos reg");
-        let px = world.try_query::<(&Player, &Position)>().expect("Player+Pos reg").iter(world)
-            .next().map(|(_, p)| (p.x, p.y));
-        ground_total = px.map(|(px, py)| q.iter(world).filter(|(_, p, _)| p.x == px && p.y == py).count()).unwrap_or(0);
-    } // drop query borrows
-
-    match code {
-        KeyCode::Esc => {
-            if detail {
-                world.resource_mut::<InventoryUI>().detail = false;
-            } else {
-                world.resource_mut::<dungeon_action::PageStack>().pop();
-            }
-        }
-        KeyCode::Left => world.resource_mut::<InventoryUI>().panel = false,
-        KeyCode::Right => world.resource_mut::<InventoryUI>().panel = true,
-        KeyCode::Up => {
-            let mut s = world.resource_mut::<InventoryUI>();
-            if !s.detail {
-                if !panel { s.left_sel = left_sel.saturating_sub(1); }
-                else { s.right_sel = right_sel.saturating_sub(1); }
-            }
-        }
-        KeyCode::Down => {
-            let mut s = world.resource_mut::<InventoryUI>();
-            if !s.detail {
-                if !panel { s.left_sel = (left_sel + 1).min(left_total.saturating_sub(1)); }
-                else { s.right_sel = (right_sel + 1).min(ground_total.saturating_sub(1)); }
-            }
-        }
-        KeyCode::Enter => {
-            let mut s = world.resource_mut::<InventoryUI>();
-            if !panel && left_total > 0 {
-                s.detail = true;
-                if left_sel < 4 { s.detail_source = 1; s.detail_idx = left_sel; }
-                else { s.detail_source = 0; s.detail_idx = left_sel - 4; }
-            } else if panel && ground_total > 0 {
-                s.detail = true; s.detail_source = 2; s.detail_idx = right_sel;
-            }
-        }
-        KeyCode::Char('e') if detail && detail_source == 0 => {
-            // 装备：背包物品 → 装备槽
-            if let Some(p) = dungeon_core::ops::player_entity(world) {
-                let stack = world.get::<Inventory>(p).and_then(|inv| inv.stacks.get(detail_idx + 4).cloned());
-                if let Some(s) = stack {
-                    let mut inv = world.get_mut::<Inventory>(p).unwrap();
-                    inv.remove(detail_idx + 4, 1);
-                    let def = s.def().unwrap();
-                    let slot = def.slot.unwrap();
-                    let mut eq = world.get_mut::<Equipment>(p).unwrap();
-                    let old = match slot {
-                        dungeon_core::EquipmentSlot::MainHand => eq.main_hand.replace(s),
-                        dungeon_core::EquipmentSlot::OffHand => eq.off_hand.replace(s),
-                        dungeon_core::EquipmentSlot::Armor => eq.armor.replace(s),
-                        dungeon_core::EquipmentSlot::Ring => eq.ring.replace(s),
-                    };
-                    if let Some(old_stack) = old {
-                        world.get_mut::<Inventory>(p).unwrap().add(old_stack.item_id, old_stack.count);
-                    }
-                    world.resource_mut::<EventLog>().push(format!("装备了{}", def.name));
-                }
-            }
-            world.resource_mut::<InventoryUI>().detail = false;
-        }
-        KeyCode::Char('d') if detail => {
-            let player = dungeon_core::ops::player_entity(world);
-            let pos = player.and_then(|p| world.get::<Position>(p).map(|pp| (pp.x, pp.y))).unwrap_or((0, 0));
-            let idx = if detail_source == 0 { detail_idx + 4 } else { detail_idx };
-            if let Some(p) = player {
-                let stack = world.get_mut::<Inventory>(p).and_then(|mut inv| {
-                    if idx < inv.stacks.len() { Some(inv.stacks.remove(idx)) } else { None }
-                });
-                if let Some(s) = stack {
-                    world.spawn((dungeon_core::ItemPickup { stack: dungeon_core::ItemStack::new(s.item_id, s.count) },
-                        dungeon_core::Position { x: pos.0, y: pos.1 },
-                        dungeon_core::Renderable { glyph: '?', color: (180, 180, 180) }));
-                    world.resource_mut::<EventLog>().push("丢弃了物品");
-                }
-            }
-            world.resource_mut::<InventoryUI>().detail = false;
-        }
-        KeyCode::Char('g') if !panel && !detail => {
-            ops::pickup_ground(world);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-/// 游戏页按键处理
-fn process_game_key(
-    code: KeyCode,
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    modal_flag: &AtomicBool,
-    world: &mut World,
-    game_start: Instant,
-) -> io::Result<bool> {
-    // 先按大写字母处理（KeyCode::Char('E') 等）
-    let code = match code {
-        KeyCode::Char(c) if c.is_ascii_uppercase() => KeyCode::Char(c.to_ascii_lowercase()),
-        other => other,
-    };
-    let Some(action) = dungeon_tui::keymap::resolve(code) else {
-        return Ok(false);
-    };
-    match action {
-        PlayerAction::Move(dx, dy) => Ok(handle_player_direction(world, *dx, *dy)),
-        PlayerAction::Wait => Ok(handle_wait(world)),
-        PlayerAction::Skill(i) => Ok(handle_skill(world, *i)),
-
-        // ── 页栈弹入对话框 ──
-        PlayerAction::Quit => {
-            if world.resource::<TurnManager>().game_over {
-                world.resource_mut::<TurnManager>().wants_quit = true;
-            } else {
-                world.resource_mut::<dungeon_action::PageStack>().push(
-                    dungeon_action::Page::Dialog("确认退出？".into()));
-            }
-            Ok(false)
-        }
-        PlayerAction::DescendStairs => {
-            if on_stairs(world) {
-                world.resource_mut::<dungeon_action::PageStack>().push(
-                    dungeon_action::Page::Dialog("确认下楼？".into()));
-            }
-            Ok(false)
-        }
-
-        // ── 模态（阻塞式 UI，需暂停输入线程） ──
-        PlayerAction::Throw => {
-            // 检查是否有副手物品 → 直接进入瞄准，否则先进选择页
-            if world.try_query::<(&Player, &Equipment)>()
-                .and_then(|mut q| q.iter(world).next()
-                    .map(|(_, eq)| eq.off_hand.is_some()))
-                .unwrap_or(false)
-            {
-                let (cx, cy) = {
-                    let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
-                    q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((0, 0))
-                };
-                world.insert_resource(ThrowPreview { active: true, cursor: (cx, cy), path: Vec::new(), valid_target: false });
-                world.insert_resource(LookCursor { active: true, x: cx, y: cy });
-                dungeon_tui::throw::update_throw_path(world);
-                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowAim);
-            } else {
-                world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::ThrowSelect);
-            }
-            Ok(false)
-        }
-        PlayerAction::OpenInventory => {
-            world.insert_resource(InventoryUI::default());
-            world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Inventory);
-            Ok(false)
-        }
-        PlayerAction::OpenLook => {
-            let (cx, cy) = {
-                let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
-                q.iter(world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
-            };
-            world.insert_resource(LookCursor { active: true, x: cx, y: cy });
-            world.resource_mut::<dungeon_action::PageStack>().push(dungeon_action::Page::Look);
-            Ok(false)
-        }
-        PlayerAction::PickupGround => {
-            pickup_ground(world);
-            Ok(false)
-        }
-        PlayerAction::SaveGame => {
-            if let Ok(data) = bincode::serialize(&GameSave::capture(world)) {
-                std::fs::write("save.bin", data).ok();
-                world.resource_mut::<EventLog>().push("已保存");
-            }
-            Ok(false)
-        }
-        PlayerAction::LoadGame => {
-            if let Ok(data) = std::fs::read("save.bin")
-                && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
-                    save.restore(world);
-                    let _ = world.run_system_once(fov_system);
-                    ops::update_map_memory(world);
-                    ops::update_visible_memory(world);
-                    ops::rebuild_occupancy(world);
-                    world.resource_mut::<EventLog>().push("已读档");
-                }
-            Ok(false)
-        }
-    }
-}
-
-/// 对话框页按键处理
-fn process_dialog_key(code: KeyCode, world: &mut World, _title: &str) -> io::Result<bool> {
-    match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            // 弹出前获取对话标题来决定行为
-            let page = world.resource_mut::<dungeon_action::PageStack>().pop();
-            match page {
-                Some(dungeon_action::Page::Dialog(title)) => {
-                    match title.as_str() {
-                        "确认退出？" => {
-                            world.resource_mut::<TurnManager>().wants_quit = true;
-                        }
-                        "确认下楼？" => {
-                            if ops::on_stairs(world) {
-                                descend(world);
-                                let _ = world.run_system_once(fov_system);
-                                ops::update_map_memory(world);
-                                ops::update_visible_memory(world);
-                                ops::rebuild_occupancy(world);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-            Ok(false)
-        }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            world.resource_mut::<dungeon_action::PageStack>().pop();
-            Ok(false)
-        }
-        _ => Ok(false),
-    }
-}
-
-#[allow(dead_code)]
-fn open_modal(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    title: &str,
-) -> bool {
-    let _ = terminal.draw(|frame| {
-        let area = frame.area();
-        let msg = Paragraph::new(vec![
-            Line::from(Span::styled(title, Style::default().fg(Color::Yellow).bold())),
-            Line::from(Span::styled(" Y)是  N)否", Style::default().fg(Color::DarkGray))),
-        ])
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)))
-        .alignment(Alignment::Center);
-        frame.render_widget(msg, Rect {
-            x: area.width / 2 - 12, y: area.height / 2,
-            width: 24, height: 5,
-        });
-    });
-    loop {
-        if let Ok(Event::Key(k)) = event::read() {
-            return matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y'));
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn open_look_mode(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-    world: &mut World,
-    game_start: Instant,
-) -> io::Result<()> {
-    let (cx, cy) = {
-        let mut q = world.try_query::<(&Player, &Position)>().expect("Player+Position registered");
-        q.iter(&*world).next().map(|(_, p)| (p.x, p.y)).unwrap_or((MAP_WIDTH / 2, MAP_HEIGHT / 2))
-    };
-    world.insert_resource(LookCursor { active: true, x: cx, y: cy });
-    loop {
-        let _ = terminal.draw(|frame| render_ui(frame, game_start, &*world));
-        if let Ok(Event::Key(k)) = event::read() {
-            let mut cursor = world.resource_mut::<LookCursor>();
-            match k.code {
-                KeyCode::Up => cursor.y = cursor.y.saturating_sub(1),
-                KeyCode::Down => cursor.y = (cursor.y + 1).min(MAP_HEIGHT - 1),
-                KeyCode::Left => cursor.x = cursor.x.saturating_sub(1),
-                KeyCode::Right => cursor.x = (cursor.x + 1).min(MAP_WIDTH - 1),
-                KeyCode::Home => { cursor.x = 0; cursor.y = 0; }
-                KeyCode::End => { cursor.x = MAP_WIDTH - 1; cursor.y = MAP_HEIGHT - 1; }
-                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Esc => break,
-                _ => {}
-            }
-        }
-    }
-    world.resource_mut::<LookCursor>().active = false;
-    Ok(())
 }
 
 fn title_screen(
@@ -572,15 +187,11 @@ fn title_screen(
                     return Ok((world, Instant::now()));
                 }
                 KeyCode::F(9) => {
-                    if let Ok(data) = std::fs::read("save.bin")
-                        && let Ok(save) = bincode::deserialize::<GameSave>(&data) {
-                            let mut world = setup_world();
-                            save.restore(&mut world);
-                            let _ = world.run_system_once(fov_system);
-                            ops::update_map_memory(&mut world);
-                            ops::update_visible_memory(&mut world);
-                            return Ok((world, Instant::now()));
-                        }
+                    // A37: 读档走 dungeon_world::load_game 单入口（双格式兼容 + post_load_refresh）
+                    let mut world = setup_world();
+                    if load_game(&mut world, "save.bin").is_ok() {
+                        return Ok((world, Instant::now()));
+                    }
                 }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     disable_raw_mode()?;

@@ -1,11 +1,11 @@
 //! 标题画面与升级画面的绘制。
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 /// 绘制标题画面。
@@ -32,5 +32,3 @@ pub fn draw_title(frame: &mut Frame) {
     );
     frame.render_widget(msg, inner);
 }
-
-
