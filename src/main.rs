@@ -86,12 +86,12 @@ fn run(
         loop {
             // 如果未来某处把 thread_flag 置为 true，则暂停读取终端输入。
             if thread_flag.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(16));
+                thread::sleep(Duration::from_millis(33));
                 continue;
             }
 
             // 非阻塞轮询终端事件；没有事件就继续循环，避免忙等。
-            if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false)
+            if crossterm::event::poll(Duration::from_millis(33)).unwrap_or(false)
                 && let Ok(Event::Key(key)) = crossterm::event::read()
             {
                 // 现代终端会区分 Press/Repeat/Release；
