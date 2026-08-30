@@ -1,0 +1,3 @@
+[submodule "terrain-forge"]
+path = terrain-forge
+url = https://github.com/EliasVahlberg/terrain-forge.git
