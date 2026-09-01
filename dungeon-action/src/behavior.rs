@@ -1,6 +1,4 @@
-//! GameAction 实现 — ChaseAction/FleeAction/WanderAction
-//!
-//! 放在独立模块中，所有 impl 在 compile 时可被 crate 内其他模块发现。
+﻿//! `GameAction` implementations for monster behaviors.
 
 use crate::execute;
 use crate::types::*;
