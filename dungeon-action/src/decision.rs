@@ -23,7 +23,7 @@ pub fn chase_decision_system(
     out.0.clear();
     let player_pos = player.iter().next().map(|p| (p.x, p.y));
     for (entity, chase, stats, view, mut last_known) in &mut monsters {
-        let can_see = player_pos.is_some_and(|pp| view.visible_tiles.contains(&pp));
+        let can_see = player_pos.is_some_and(|pp| view.can_see(pp));
         if can_see {
             // 看到玩家 → 更新记忆位置
             if let Some(pp) = player_pos {
@@ -47,7 +47,7 @@ pub fn flee_decision_system(
 ) {
     out.0.clear();
     for (entity, flee, stats) in &monsters {
-        let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
+        let hp_ratio = stats.hp_ratio();
         if CanFlee::condition(hp_ratio) {
             let av = agility_to_reaction(stats.agility)
                 + flee.duration * agility_speed_factor(stats.agility);

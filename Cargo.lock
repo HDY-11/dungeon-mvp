@@ -653,6 +653,7 @@ dependencies = [
  "dungeon-core",
  "dungeon-render",
  "dungeon-world",
+ "log",
  "ratatui",
 ]
 

@@ -1,4 +1,4 @@
-﻿//! Monster action execution: chase, flee, wander.
+//! Monster action execution: chase, flee, wander.
 
 use bevy_ecs::prelude::*;
 use dungeon_core::OptionLogExt;
@@ -20,7 +20,7 @@ pub(crate) fn chase_condition(world: &World, entity: Entity) -> bool {
     if let Some((px, py)) = player_pos
         && world
             .get::<Viewshed>(entity)
-            .map(|v| v.visible_tiles.contains(&(px, py)))
+            .map(|v| v.can_see((px, py)))
             .unwrap_or(false)
     {
         return true;
@@ -34,7 +34,7 @@ pub(crate) fn chase_condition(world: &World, entity: Entity) -> bool {
 pub(crate) fn flee_condition(world: &World, entity: Entity) -> bool {
     world
         .get::<Stats>(entity)
-        .map(|s| (s.hp as f32 / s.max_hp as f32) < FLEE_HP_RATIO)
+        .map(|s| s.hp_ratio() < FLEE_HP_RATIO)
         .unwrap_or(false)
 }
 
@@ -47,30 +47,25 @@ pub(crate) fn execute_chase(world: &mut World, entity: Entity) {
     else {
         return;
     };
-    let player_pos = world.get::<Position>(player_entity).map(|p| (p.x, p.y));
-    let pos = match world.get::<Position>(entity) {
-        Some(p) => (p.x, p.y),
-        None => return,
+    let Some(player_pos) = world
+        .get::<Position>(player_entity)
+        .map(Position::to_tuple)
+    else {
+        return;
+    };
+    let Some(self_pos) = world.get::<Position>(entity).map(Position::to_tuple) else {
+        return;
     };
 
-    let (target_visible, target) = if let Some((ppx, ppy)) = player_pos {
-        let can_see = world
-            .get::<Viewshed>(entity)
-            .map(|v| v.visible_tiles.contains(&(ppx, ppy)))
-            .unwrap_or(false);
-        if can_see {
-            (true, Some((ppx, ppy)))
-        } else {
-            (
-                false,
-                world.get::<LastKnownPlayerPos>(entity).and_then(|l| l.0),
-            )
-        }
+    let can_see = world
+        .get::<Viewshed>(entity)
+        .map(|v| v.can_see(player_pos))
+        .unwrap_or(false);
+
+    let target = if can_see {
+        Some(player_pos)
     } else {
-        (
-            false,
-            world.get::<LastKnownPlayerPos>(entity).and_then(|l| l.0),
-        )
+        world.get::<LastKnownPlayerPos>(entity).and_then(|l| l.0)
     };
 
     let Some((px, py)) = target else {
@@ -80,17 +75,19 @@ pub(crate) fn execute_chase(world: &mut World, entity: Entity) {
         return;
     };
 
-    if target_visible
-        && pos.0.abs_diff(px) <= 1
-        && pos.1.abs_diff(py) <= 1
-        && (pos.0 != px || pos.1 != py)
-    {
+    let self_position = Position {
+        x: self_pos.0,
+        y: self_pos.1,
+    };
+    let target_position = Position { x: px, y: py };
+
+    if can_see && self_position.is_near(&target_position) {
         monster_attack_player(world, entity, player_entity);
     } else {
         let next_step = {
             let map = world.resource::<Map>();
             let occ = world.resource::<OccupancyMap>();
-            dungeon_core::pathfinding::astar(pos, (px, py), &map.tiles, Some(occ))
+            dungeon_core::pathfinding::astar(self_pos, (px, py), &map.tiles, Some(occ))
                 .and_then(|path| path.first().copied())
         };
         if let Some((nx, ny)) = next_step
@@ -101,11 +98,11 @@ pub(crate) fn execute_chase(world: &mut World, entity: Entity) {
         }
     }
 
-    if !target_visible
+    if !can_see
         && let Some(mut lkp) = world.get_mut::<LastKnownPlayerPos>(entity)
         && let Some((lkx, lky)) = lkp.0
-        && pos.0.abs_diff(lkx) <= 2
-        && pos.1.abs_diff(lky) <= 2
+        && self_pos.0.abs_diff(lkx) <= 2
+        && self_pos.1.abs_diff(lky) <= 2
     {
         lkp.0 = None;
     }
@@ -143,7 +140,7 @@ pub(crate) fn execute_flee(world: &mut World, entity: Entity) {
             }
             let nx = pos.0.wrapping_add_signed(dx);
             let ny = pos.1.wrapping_add_signed(dy);
-            let d = nx.abs_diff(px) + ny.abs_diff(py);
+            let d = Position { x: nx, y: ny }.manhattan(&Position { x: px, y: py });
             if d > best_dist {
                 best_dist = d;
                 best = Some((nx, ny));
@@ -172,7 +169,7 @@ fn monster_atk_visible(world: &World, entity: Entity, target: Entity) -> bool {
     };
     world
         .get::<Viewshed>(entity)
-        .map(|v| v.visible_tiles.contains(&(px, py)))
+        .map(|v| v.can_see((px, py)))
         .unwrap_or(false)
 }
 

@@ -1,4 +1,4 @@
-﻿//! Throw action execution and confirmation.
+//! Throw action execution and confirmation.
 
 use crate::types::*;
 use bevy_ecs::prelude::*;
@@ -23,15 +23,16 @@ fn validate_throw(
     if !has_throwable {
         return Err("没有可投掷的物品");
     }
-    let Some(pos) = world.get::<Position>(attacker).map(|p| (p.x, p.y)) else {
+    let Some(pos) = world.get::<Position>(attacker) else {
         return Err("无法定位投掷者");
     };
-    if ops::chebyshev(pos, (tx, ty)) > THROW_RANGE {
+    let from = pos.to_tuple();
+    if pos.chebyshev(&Position { x: tx, y: ty }) > THROW_RANGE {
         return Err("目标超出射程");
     }
     let los_clear = {
         let map = world.resource::<Map>();
-        ops::los_clear(map, pos, (tx, ty))
+        ops::los_clear(map, from, (tx, ty))
     };
     if !los_clear {
         return Err("视线受阻，无法投掷");
@@ -112,12 +113,12 @@ pub(crate) fn execute_throw(world: &mut World, attacker: Entity, tx: usize, ty: 
             .unwrap_or("怪物".into());
 
         if let Some(mut s) = world.get_mut::<Stats>(target_entity) {
-            s.hp -= final_dmg;
+            s.take_damage(final_dmg);
         }
 
         let dead = world
             .get::<Stats>(target_entity)
-            .map(|s| s.hp <= 0)
+            .map(|s| s.is_dead())
             .unwrap_or(false);
         if dead {
             handle_kill(world, target_entity, &target_name);

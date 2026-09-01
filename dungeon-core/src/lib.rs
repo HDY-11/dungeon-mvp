@@ -27,6 +27,8 @@ pub use ops::*;
 pub use resources::*;
 pub use systems::*;
 
+pub use log::*;
+
 use rand::Rng;
 
 pub use components::EntityName;

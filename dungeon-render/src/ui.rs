@@ -516,7 +516,7 @@ fn panel_header(scene: &crate::pipeline::RenderScene) -> Vec<Line<'static>> {
         out.push(Line::from(Span::raw("(无数据)")));
         return out;
     };
-    let hp_color = if s.hp as f32 <= s.max_hp as f32 * dungeon_core::LOW_HP_RATIO {
+    let hp_color = if s.is_low_hp(dungeon_core::LOW_HP_RATIO) {
         Color::Red
     } else {
         Color::Cyan

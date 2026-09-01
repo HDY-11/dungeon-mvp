@@ -59,6 +59,31 @@ pub struct Position {
     pub y: usize,
 }
 
+// 为组件添加的快捷方法，用于优化性能和提高内聚性
+impl Position {
+    pub fn to_tuple(&self) -> (usize, usize) {
+        (self.x, self.y)
+    }
+
+    /// 判断八个方位（相邻且不同格）
+    pub fn is_near(&self, other: &Position) -> bool {
+        let dx = self.x as isize - other.x as isize;
+        let dy = self.y as isize - other.y as isize;
+        (dx > -2 && dx < 2) && (dy > -2 && dy < 2) && (dx | dy) != 0
+    }
+
+    /// 切比雪夫距离（8 方向移动距离）
+    pub fn chebyshev(&self, other: &Position) -> usize {
+        self.x.abs_diff(other.x).max(self.y.abs_diff(other.y))
+    }
+
+    /// 曼哈顿距离（4 方向移动距离）
+    pub fn manhattan(&self, other: &Position) -> usize {
+        self.x.abs_diff(other.x) + self.y.abs_diff(other.y)
+    }
+}
+
+
 #[derive(Component, Clone, Debug)]
 pub struct Renderable {
     pub glyph: char,
@@ -73,6 +98,13 @@ pub struct Viewshed {
     pub range: usize,
     pub visible_tiles: Vec<(usize, usize)>,
 }
+
+impl Viewshed {
+    pub fn can_see(&self, pos: (usize, usize)) -> bool {
+        self.visible_tiles.contains(&pos)
+    }
+}
+
 
 #[derive(Component)]
 pub struct Monster;
@@ -137,6 +169,42 @@ impl Stats {
             crit_damage: 0.50,
         }
     }
+
+    pub fn hp_ratio(&self) -> f32 {
+        self.hp as f32 / self.max_hp as f32
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.hp <= 0
+    }
+
+    pub fn is_low_hp(&self, ratio: f32) -> bool {
+        self.hp_ratio() <= ratio
+    }
+
+    pub fn heal(&mut self, amount: i32) -> i32 {
+        let actual = amount.min(self.max_hp - self.hp);
+        self.hp += actual;
+        actual
+    }
+
+    pub fn restore_mp(&mut self, amount: i32) -> i32 {
+        let actual = amount.min(self.max_mp - self.mp);
+        self.mp += actual;
+        actual
+    }
+
+    pub fn can_afford_mp(&self, cost: i32) -> bool {
+        self.mp >= cost
+    }
+
+    pub fn spend_mp(&mut self, cost: i32) {
+        self.mp -= cost;
+    }
+
+    pub fn take_damage(&mut self, amount: i32) {
+        self.hp -= amount;
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -160,6 +228,13 @@ pub struct Skill {
 pub struct Skills {
     pub list: Vec<Skill>,
 }
+
+impl Skills {
+    pub fn index_of_key(&self, key: char) -> Option<usize> {
+        self.list.iter().position(|sk| sk.key == key)
+    }
+}
+
 
 #[derive(Component, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerClass {
@@ -203,7 +278,22 @@ impl ActiveBuffs {
     pub fn new() -> Self {
         Self(Vec::new())
     }
+
+    pub fn set(&mut self, kind: BuffKind, remaining_av: f32, magnitude: i32) {
+        if let Some(existing) = self.0.iter_mut().find(|b| b.kind == kind) {
+            existing.remaining_av = remaining_av;
+            existing.magnitude = magnitude;
+        } else {
+            self.0.push(Buff {
+                kind,
+                remaining_av,
+                magnitude,
+                stack_type: BuffStackType::None,
+            });
+        }
+    }
 }
+
 impl Default for ActiveBuffs {
     fn default() -> Self {
         Self::new()

@@ -23,9 +23,6 @@ impl GameAction for ChaseAction {
     fn clone_box(&self) -> Box<dyn GameAction> {
         Box::new(self.clone())
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 impl GameAction for FleeAction {
@@ -47,9 +44,6 @@ impl GameAction for FleeAction {
     fn clone_box(&self) -> Box<dyn GameAction> {
         Box::new(self.clone())
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 impl GameAction for WanderAction {
@@ -70,8 +64,5 @@ impl GameAction for WanderAction {
     }
     fn clone_box(&self) -> Box<dyn GameAction> {
         Box::new(self.clone())
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }

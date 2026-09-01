@@ -1,4 +1,4 @@
-﻿//! Combat execution: melee attack, monster attack, critical hit, death handling.
+//! Combat execution: melee attack, monster attack, critical hit, death handling.
 
 use bevy_ecs::prelude::*;
 use dungeon_core::OptionLogExt;
@@ -37,7 +37,7 @@ pub(crate) fn monster_attack_player(world: &mut World, entity: Entity, player_en
         .map(|n| n.0.clone())
         .unwrap_or("怪物".into());
     if let Some(mut ps) = world.get_mut::<Stats>(player_entity) {
-        ps.hp -= dmg;
+        ps.take_damage(dmg);
     }
     let crit_suffix = if is_crit { "（暴击）" } else { "" };
     world
@@ -107,8 +107,8 @@ pub(crate) fn execute_attack(world: &mut World, attacker: Entity, target: Entity
         let Some(mut target_stats) = world.get_mut::<Stats>(target) else {
             return;
         };
-        target_stats.hp -= dmg;
-        if target_stats.hp <= 0 {
+        target_stats.take_damage(dmg);
+        if target_stats.is_dead() {
             handle_kill(world, target, &name);
         } else {
             world

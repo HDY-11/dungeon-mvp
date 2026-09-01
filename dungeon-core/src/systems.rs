@@ -16,7 +16,7 @@ pub fn check_death_system(
     mut event_log: ResMut<EventLog>,
 ) {
     if let Ok(stats) = player_query.single()
-        && stats.hp <= 0
+        && stats.is_dead()
     {
         event_log.push(crate::EventMessage::danger("你死了".to_string()));
         turn_manager.game_over = true;

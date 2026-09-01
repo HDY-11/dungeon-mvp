@@ -659,8 +659,7 @@ pub fn use_item(item_id: usize, world: &mut World, user: Entity) -> bool {
         // Dsn24: 地形消耗品——蘑菇回 HP、海藻回 MP（上限钳制） [⃞试调: 蘑菇+6 低于治愈卷轴，海藻+4]
         ITEM_MUSHROOM => {
             if let Some(mut st) = world.get_mut::<Stats>(user) {
-                let heal = 6i32.min(st.max_hp - st.hp);
-                st.hp += heal;
+                let heal = st.heal(6);
                 world
                     .resource_mut::<EventLog>()
                     .push(crate::EventMessage::item(if heal > 0 {
@@ -675,8 +674,7 @@ pub fn use_item(item_id: usize, world: &mut World, user: Entity) -> bool {
         }
         ITEM_SEAWEED => {
             if let Some(mut st) = world.get_mut::<Stats>(user) {
-                let restore = 4i32.min(st.max_mp - st.mp);
-                st.mp += restore;
+                let restore = st.restore_mp(4);
                 world
                     .resource_mut::<EventLog>()
                     .push(crate::EventMessage::item(if restore > 0 {

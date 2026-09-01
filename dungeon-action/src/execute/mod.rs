@@ -1,4 +1,4 @@
-﻿//! Action execution engine: queue advancement, keep-alive check, dispatch.
+//! Action execution engine: queue advancement, keep-alive check, dispatch.
 
 mod combat;
 mod monster;
@@ -92,7 +92,7 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
             if let Some((px, py)) = player_pos
                 && world
                     .get::<Viewshed>(entry.entity)
-                    .map(|v| v.visible_tiles.contains(&(px, py)))
+                    .map(|v| v.can_see((px, py)))
                     .unwrap_or(false)
             {
                 return true;
@@ -105,7 +105,7 @@ fn check_condition(world: &World, entry: &ActionEntry) -> bool {
         ActionKindV3::Flee => {
             world
                 .get::<Stats>(entry.entity)
-                .map(|s| (s.hp as f32 / s.max_hp as f32) < dungeon_core::FLEE_HP_RATIO_EXIT)
+                .map(|s| s.hp_ratio() < dungeon_core::FLEE_HP_RATIO_EXIT)
                 .unwrap_or(false)
         }
         ActionKindV3::Wander | ActionKindV3::Wait => true,

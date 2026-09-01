@@ -133,7 +133,7 @@ pub fn handle_skill(world: &mut World, idx: usize) -> bool {
         // 在已学技能列表中按快捷键查找实际索引
         let real_idx = world
             .get::<dungeon_core::Skills>(e)
-            .and_then(|s| s.list.iter().position(|sk| sk.key == key_char));
+            .and_then(|s| s.index_of_key(key_char));
         let Some(real_idx) = real_idx else {
             world
                 .resource_mut::<dungeon_core::EventLog>()

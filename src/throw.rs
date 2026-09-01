@@ -19,7 +19,8 @@ pub fn update_throw_path(world: &mut World) {
     let cursor = world.resource::<ThrowPreview>().cursor;
     let (cx, cy) = cursor;
     // I68: 射程/视线判定收敛到 core（与 execute_throw::validate_throw 同一实现）
-    let in_range = ops::chebyshev(player_pos, (cx, cy)) <= dungeon_core::THROW_RANGE;
+    let player_position = Position { x: player_pos.0, y: player_pos.1 };
+    let in_range = player_position.chebyshev(&Position { x: cx, y: cy }) <= dungeon_core::THROW_RANGE;
     let los_clear = {
         let map = world.resource::<dungeon_core::Map>();
         ops::los_clear(map, player_pos, (cx, cy))
