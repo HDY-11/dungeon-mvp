@@ -1,4 +1,4 @@
-﻿//! Action layer: player/monster behavior, action queue, execution/validation, tap-tap input.
+//! Action layer: player/monster behavior, action queue, execution/validation, tap-tap input.
 //!
 //! Depends on `dungeon-core` for pure data, and is consumed by `dungeon-world` and the TUI.
 //!
@@ -9,6 +9,7 @@ mod behavior;
 mod decision;
 mod execute;
 mod player;
+pub mod state_action;
 mod tick;
 mod types;
 
