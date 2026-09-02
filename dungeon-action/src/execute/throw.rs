@@ -1,5 +1,6 @@
 //! Throw action execution and confirmation.
 
+use crate::state_action::*;
 use crate::types::*;
 use bevy_ecs::prelude::*;
 use dungeon_core::{
@@ -54,18 +55,22 @@ pub fn confirm_throw(world: &mut World) -> bool {
     };
     world.resource_mut::<ThrowPreview>().active = false;
     world.resource_mut::<LookCursor>().active = false;
-    world.resource_mut::<PlayerPreview>().kind = None;
+    world.resource_mut::<PlayerPreview>().action = None;
     world.resource_mut::<PageStack>().pop();
     let Some(player) = dungeon_core::ops::player_entity(world) else {
         return false;
     };
     let agility = world.get::<Stats>(player).map(|s| s.agility).unwrap_or(10);
-    let av = agility_to_reaction(agility) + THROW_DURATION * agility_speed_factor(agility);
-    world.resource_mut::<ActionQueue>().enqueue_or_replace(
-        player,
-        ActionKindV3::Throw { tx, ty },
-        av,
-    );
+    let av = crate::types::agility_to_reaction(agility)
+        + THROW_DURATION * crate::types::agility_speed_factor(agility);
+
+    clear_concrete_actions(world, player);
+    if let Ok(mut entity_mut) = world.get_entity_mut(player) {
+        entity_mut.remove::<Active>();
+        entity_mut.remove::<ActionTimer>();
+    }
+    start_action(world, player, av);
+    world.entity_mut(player).insert(Throw { tx, ty });
     true
 }
 

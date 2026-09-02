@@ -1,6 +1,5 @@
 ﻿//! Player input / preview types.
 
-use super::action::ActionKindV3;
 use bevy_ecs::prelude::*;
 
 /// Player-triggered actions from keyboard.
@@ -19,8 +18,17 @@ pub enum PlayerAction {
     Quit,
 }
 
+/// Timed action waiting for tap-tap confirmation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TimedPlayerAction {
+    Move { dx: isize, dy: isize },
+    Wait,
+    Attack { target: Entity },
+    Skill(usize),
+}
+
 /// tap-tap preview state.
 #[derive(Resource, Default)]
 pub struct PlayerPreview {
-    pub kind: Option<ActionKindV3>,
+    pub action: Option<TimedPlayerAction>,
 }

@@ -1,10 +1,7 @@
 //! World 初始化与下楼
 
 use bevy_ecs::prelude::*;
-use dungeon_action::{
-    ActionQueue, CanChase, CanFlee, CanMove, CanWait, CanWander, ChaseIntents, FleeIntents,
-    PlayerPreview, WanderIntents,
-};
+use dungeon_action::{CanChase, CanFlee, CanMove, CanWait, CanWander, Idle, PlayerPreview};
 use dungeon_core::OptionLogExt;
 use dungeon_core::{MAP_HEIGHT, MAP_WIDTH, Map, components::*, items::*, resources::*};
 use rand::{Rng, SeedableRng};
@@ -50,6 +47,7 @@ fn spawn_monsters(
         cmd.insert(CanFlee::new(200));
         cmd.insert(CanWander::new(50));
         cmd.insert(CanWait::new(0));
+        cmd.insert(Idle);
         // I35: 将独特色写入 Renderable.color，持久化后跨存档/下楼一致
         if let Some(mut rend) = world.get_mut::<Renderable>(entity) {
             rend.color = dungeon_core::color::entity_color(entity.to_bits(), 0);
@@ -302,11 +300,7 @@ pub fn setup_world() -> World {
         x: 0,
         y: 0,
     });
-    world.insert_resource(ActionQueue::default());
     world.insert_resource(PlayerPreview::default());
-    world.insert_resource(ChaseIntents::default());
-    world.insert_resource(FleeIntents::default());
-    world.insert_resource(WanderIntents::default());
     world.insert_resource(dungeon_core::ThrowPreview::default());
 
     let (spawn_x, spawn_y) = map.spawn_point();
@@ -336,6 +330,7 @@ pub fn setup_world() -> World {
     ));
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
+        cmd.insert(Idle);
     cmd.insert(dungeon_core::Skills { list: pc.skills() });
     cmd.insert(ActiveBuffs::new());
 
@@ -456,13 +451,6 @@ pub fn descend(world: &mut World) {
         let _ = w.despawn(e);
     }
 
-    // G34: 实体已全部 despawn，同步清空行动队列与意图缓冲区，避免残留失效 Entity 条目
-    w.resource_mut::<dungeon_action::ActionQueue>()
-        .entries
-        .clear();
-    w.resource_mut::<dungeon_action::ChaseIntents>().0.clear();
-    w.resource_mut::<dungeon_action::FleeIntents>().0.clear();
-    w.resource_mut::<dungeon_action::WanderIntents>().0.clear();
 
     let base_seed = w.resource::<MapSeed>().0;
     let mut rng = rand::rngs::SmallRng::seed_from_u64(base_seed.wrapping_add(f as u64));
@@ -506,6 +494,7 @@ pub fn descend(world: &mut World) {
     cmd.insert(ActiveBuffs(player_active_buffs_vec)); // D9: 保存并恢复 ActiveBuffs
     cmd.insert(CanMove::new(100));
     cmd.insert(CanWait::new(0));
+    cmd.insert(Idle);
 
     // ── 楼梯放置（避开出生点，G9） ──
     let stairs_pos = {

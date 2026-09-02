@@ -84,11 +84,15 @@ pub fn ready_entities(world: &mut World) -> Vec<Entity> {
 
 /// Executes all ready actions and updates `Idle` / `Failure` markers.
 pub fn execute_ready_actions(world: &mut World) {
+    use bevy_ecs::system::RunSystemOnce;
+
     let ready = ready_entities(world);
     for entity in ready {
         let ok = execute_one(world, entity);
         if ok {
             finish_action_success(world, entity);
+            let _ = world.run_system_once(dungeon_core::systems::apply_exp_system);
+            dungeon_core::ops::rebuild_occupancy(world);
         } else {
             finish_action_failure(world, entity);
         }
@@ -218,7 +222,13 @@ mod tests {
 
     #[test]
     fn execute_ready_wait_returns_to_idle() {
+        use dungeon_core::{EventLog, OccupancyMap, PendingExp};
+
         let mut world = World::new();
+        world.insert_resource(OccupancyMap::new());
+        world.insert_resource(PendingExp::default());
+        world.insert_resource(EventLog::new());
+
         let entity = entity_with_idle(&mut world);
 
         start_action(&mut world, entity, 0.0);

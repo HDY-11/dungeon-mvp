@@ -1,9 +1,6 @@
 //! 存档/读档：GameSave 序列化、V0 旧档兼容、capture/restore 与楼层/实体重建。
 
-use dungeon_action::{
-    ActionEntry, ActionKindV3, ActionQueue, CanChase, CanFlee, CanMove, CanWait, CanWander,
-    ChaseIntents, FleeIntents, PlayerPreview, WanderIntents,
-};
+use dungeon_action::{CanChase, CanFlee, CanMove, CanWait, CanWander, Idle, PlayerPreview};
 use dungeon_core::{MAP_HEIGHT, MAP_WIDTH, Map, Tile, components::*, items::*, resources::*};
 
 use bevy_ecs::prelude::*;
@@ -17,47 +14,6 @@ pub struct SavedStack {
 }
 
 /// 可序列化的行动种类（A35: Attack 按目标坐标重映射，不再丢失）
-#[derive(Serialize, Deserialize, Clone)]
-pub enum SavedActionKind {
-    Move {
-        dx: isize,
-        dy: isize,
-    },
-    Chase,
-    Flee,
-    Wander,
-    Wait,
-    Skill(usize),
-    Throw {
-        tx: u16,
-        ty: u16,
-    },
-    /// 追加于末尾：bincode 变体索引不变，旧存档兼容
-    Attack {
-        tx: u16,
-        ty: u16,
-    },
-}
-
-/// 可序列化的行动条目（按实体位置 + 行动种类标识）
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SavedActionEntry {
-    pub x: u16,
-    pub y: u16, // 实体所在位置（用于 restore 时重映射 Entity）
-    pub kind: SavedActionKind,
-    pub av_remaining: f32,
-}
-
-/// 可序列化的意图条目（按实体位置 + 优先级 + AV + 种类）
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SavedIntentEntry {
-    pub x: u16,
-    pub y: u16,
-    pub priority: u32,
-    pub av: f32,
-    pub kind: SavedActionKind,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SavedActiveBuff {
     pub kind: u8,
@@ -137,19 +93,12 @@ pub struct GameSave {
     pub sx: u16,
     pub sy: u16,
     pub player_class: Option<PlayerClass>,
-    pub action_queue: Vec<SavedActionEntry>,
-    #[serde(default)]
-    pub chase_intents: Vec<SavedIntentEntry>,
-    #[serde(default)]
-    pub flee_intents: Vec<SavedIntentEntry>,
-    #[serde(default)]
-    pub wander_intents: Vec<SavedIntentEntry>,
     #[serde(default)]
     pub active_buffs: Vec<SavedActiveBuff>,
     /// Skills 序列化，#[serde(default)] 兼容旧存档
     #[serde(default)]
     pub skills: Vec<SavedSkill>,
-    // ── 以下为新格式（DSV1）字段，旧档经 GameSaveV0 转换补默认 ──
+    // ── 以下为新格式（DSV1）字段 ──
     /// 背包容量（A40: 不再硬编码 36）
     #[serde(default)]
     pub inv_capacity: usize,
@@ -158,85 +107,6 @@ pub struct GameSave {
     pub rng_state: u64,
     #[serde(default)]
     pub rng_steps: u64,
-}
-
-/// 旧版存档结构（无 magic 前缀、无新字段）——仅用于读取历史 save.bin
-#[derive(Serialize, Deserialize)]
-pub struct GameSaveV0 {
-    pub floor: u32,
-    pub map_seed: u64,
-    pub px: u16,
-    pub py: u16,
-    pub st: dungeon_core::Stats,
-    pub inv: Vec<SavedStack>,
-    pub weapon_item_id: Option<usize>,
-    pub weapon_count: Option<u32>,
-    pub armor_item_id: Option<usize>,
-    pub armor_count: Option<u32>,
-    pub ring_item_id: Option<usize>,
-    pub ring_count: Option<u32>,
-    #[serde(default)]
-    pub off_hand_item_id: Option<usize>,
-    #[serde(default)]
-    pub off_hand_count: Option<u32>,
-    pub map_tiles: Vec<Tile>,
-    pub rooms: Vec<dungeon_core::Room>,
-    pub explored: Vec<u8>,
-    pub monsters: Vec<SavedMonster>,
-    pub items: Vec<SavedGroundItem>,
-    pub sx: u16,
-    pub sy: u16,
-    pub player_class: Option<PlayerClass>,
-    pub action_queue: Vec<SavedActionEntry>,
-    #[serde(default)]
-    pub chase_intents: Vec<SavedIntentEntry>,
-    #[serde(default)]
-    pub flee_intents: Vec<SavedIntentEntry>,
-    #[serde(default)]
-    pub wander_intents: Vec<SavedIntentEntry>,
-    #[serde(default)]
-    pub active_buffs: Vec<SavedActiveBuff>,
-    #[serde(default)]
-    pub skills: Vec<SavedSkill>,
-}
-
-/// 旧档 → 现行结构的字段级迁移（新字段取默认：容量 36、RNG 无状态可恢复）
-impl From<GameSaveV0> for GameSave {
-    fn from(v: GameSaveV0) -> Self {
-        Self {
-            floor: v.floor,
-            map_seed: v.map_seed,
-            px: v.px,
-            py: v.py,
-            st: v.st,
-            inv: v.inv,
-            weapon_item_id: v.weapon_item_id,
-            weapon_count: v.weapon_count,
-            armor_item_id: v.armor_item_id,
-            armor_count: v.armor_count,
-            ring_item_id: v.ring_item_id,
-            ring_count: v.ring_count,
-            off_hand_item_id: v.off_hand_item_id,
-            off_hand_count: v.off_hand_count,
-            map_tiles: v.map_tiles,
-            rooms: v.rooms,
-            explored: v.explored,
-            monsters: v.monsters,
-            items: v.items,
-            sx: v.sx,
-            sy: v.sy,
-            player_class: v.player_class,
-            action_queue: v.action_queue,
-            chase_intents: v.chase_intents,
-            flee_intents: v.flee_intents,
-            wander_intents: v.wander_intents,
-            active_buffs: v.active_buffs,
-            skills: v.skills,
-            inv_capacity: 36,
-            rng_state: 0,
-            rng_steps: 0,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -431,69 +301,6 @@ impl GameSave {
                 .collect()
         };
 
-        let action_queue: Vec<SavedActionEntry> = {
-            let queue = w.resource::<ActionQueue>();
-            queue
-                .entries
-                .iter()
-                .filter_map(|entry| {
-                    // 保存实体位置用于 restore 时重映射
-                    let pos = w.get::<Position>(entry.entity)?;
-                    let kind = match &entry.kind {
-                        ActionKindV3::Move { dx, dy } => SavedActionKind::Move { dx: *dx, dy: *dy },
-                        ActionKindV3::Chase => SavedActionKind::Chase,
-                        ActionKindV3::Flee => SavedActionKind::Flee,
-                        ActionKindV3::Wander => SavedActionKind::Wander,
-                        ActionKindV3::Wait => SavedActionKind::Wait,
-                        ActionKindV3::Skill(idx) => SavedActionKind::Skill(*idx),
-                        ActionKindV3::Throw { tx, ty } => SavedActionKind::Throw {
-                            tx: *tx as u16,
-                            ty: *ty as u16,
-                        },
-                        ActionKindV3::Attack { target } => {
-                            // A35: 按目标坐标重映射（与 restore 侧反查一致），不再静默丢弃
-                            let tp = w.get::<Position>(*target)?;
-                            SavedActionKind::Attack {
-                                tx: tp.x as u16,
-                                ty: tp.y as u16,
-                            }
-                        }
-                    };
-                    Some(SavedActionEntry {
-                        x: pos.x as u16,
-                        y: pos.y as u16,
-                        kind,
-                        av_remaining: entry.av_remaining,
-                    })
-                })
-                .collect()
-        };
-
-        let save_intent = |entries: &Vec<(Entity, u32, f32, ActionKindV3)>| {
-            entries
-                .iter()
-                .filter_map(|(e, pri, av, kind)| {
-                    let pos = w.get::<Position>(*e)?;
-                    let sk = match kind {
-                        ActionKindV3::Chase => SavedActionKind::Chase,
-                        ActionKindV3::Flee => SavedActionKind::Flee,
-                        ActionKindV3::Wander => SavedActionKind::Wander,
-                        _ => return None,
-                    };
-                    Some(SavedIntentEntry {
-                        x: pos.x as u16,
-                        y: pos.y as u16,
-                        priority: *pri,
-                        av: *av,
-                        kind: sk,
-                    })
-                })
-                .collect()
-        };
-        let chase_intents = save_intent(&w.resource::<ChaseIntents>().0);
-        let flee_intents = save_intent(&w.resource::<FleeIntents>().0);
-        let wander_intents = save_intent(&w.resource::<WanderIntents>().0);
-
         // A40: 保存背包容量（不再依赖 restore 硬编码 36）
         let inv_capacity = {
             let mut q = w
@@ -535,10 +342,6 @@ impl GameSave {
             sx,
             sy,
             player_class,
-            action_queue,
-            chase_intents,
-            flee_intents,
-            wander_intents,
             inv_capacity,
             rng_state,
             rng_steps,
@@ -599,11 +402,7 @@ impl GameSave {
         w.insert_resource(EventLog::new());
         w.insert_resource(TurnManager::new());
         w.insert_resource(OccupancyMap::new());
-        w.insert_resource(ActionQueue::default());
         w.insert_resource(PlayerPreview::default());
-        w.insert_resource(ChaseIntents::default());
-        w.insert_resource(FleeIntents::default());
-        w.insert_resource(WanderIntents::default());
         // G32: 精确恢复 RNG 状态（rng_state==0 表示旧档 → 保持旧派生种子行为）
         if self.rng_state != 0 {
             w.insert_resource(GameRng::from_state(self.rng_state, self.rng_steps));
@@ -677,6 +476,7 @@ impl GameSave {
             AttackName("斩击".into()),
             CanMove::new(100),
             CanWait::new(0),
+            Idle,
         ));
         let restored_buffs: Vec<Buff> = self
             .active_buffs
@@ -744,6 +544,7 @@ impl GameSave {
                 CanFlee::new(200),
                 CanWander::new(50),
                 CanWait::new(0),
+                Idle,
                 // A31: 与 setup_world/descend 三路径一致（L44 第五次）——缺失则 chase 决策查询过滤，追击 AI 失效
                 LastKnownPlayerPos::default(),
             ));
@@ -774,96 +575,12 @@ impl GameSave {
             ));
         }
 
-        // 恢复 ActionQueue：根据位置重映射 Entity
-        let mut entries: Vec<ActionEntry> = Vec::new();
-        for saved in &self.action_queue {
-            let kind = match &saved.kind {
-                SavedActionKind::Move { dx, dy } => ActionKindV3::Move { dx: *dx, dy: *dy },
-                SavedActionKind::Chase => ActionKindV3::Chase,
-                SavedActionKind::Flee => ActionKindV3::Flee,
-                SavedActionKind::Wander => ActionKindV3::Wander,
-                SavedActionKind::Wait => ActionKindV3::Wait,
-                SavedActionKind::Skill(idx) => ActionKindV3::Skill(*idx),
-                SavedActionKind::Throw { tx, ty } => ActionKindV3::Throw {
-                    tx: *tx as usize,
-                    ty: *ty as usize,
-                },
-                SavedActionKind::Attack { tx, ty } => {
-                    // A35: 按坐标反查目标怪物实体；查不到（目标已不在）则取消该行动并记日志
-                    let target =
-                        w.query::<(Entity, &Monster, &Position)>()
-                            .iter(w)
-                            .find_map(|(e, _, p)| {
-                                if p.x == *tx as usize && p.y == *ty as usize {
-                                    Some(e)
-                                } else {
-                                    None
-                                }
-                            });
-                    let Some(target) = target else {
-                        log::warn!("读档：攻击目标 ({},{}) 不存在，攻击行动已取消", tx, ty);
-                        continue;
-                    };
-                    ActionKindV3::Attack { target }
-                }
-            };
-            // 在当前位置找对应实体（不可变查询，不需要 &mut World）
-            let entity = w.query::<(Entity, &Position)>().iter(w).find_map(|(e, p)| {
-                if p.x as u16 == saved.x && p.y as u16 == saved.y {
-                    Some(e)
-                } else {
-                    None
-                }
-            });
-            if let Some(entity) = entity {
-                entries.push(ActionEntry {
-                    entity,
-                    kind,
-                    action: None,
-                    av_remaining: saved.av_remaining,
-                });
-            }
-        }
-        // 一次性写入队列
-        {
-            let mut queue = w.resource_mut::<ActionQueue>();
-            queue.entries.extend(entries);
-        }
-
-        // 恢复意图缓冲区：根据位置重映射 Entity
-        // 先收集所有 entity→position 映射
-        let pos_map: Vec<(Entity, u16, u16)> = w
-            .query::<(Entity, &Position)>()
-            .iter(w)
-            .map(|(e, p)| (e, p.x as u16, p.y as u16))
-            .collect();
-        let remap = |saved: &[SavedIntentEntry]| -> Vec<(Entity, u32, f32, ActionKindV3)> {
-            saved
-                .iter()
-                .filter_map(|entry| {
-                    let entity = pos_map
-                        .iter()
-                        .find(|(_, px, py)| *px == entry.x && *py == entry.y)?
-                        .0;
-                    let kind = match &entry.kind {
-                        SavedActionKind::Chase => ActionKindV3::Chase,
-                        SavedActionKind::Flee => ActionKindV3::Flee,
-                        SavedActionKind::Wander => ActionKindV3::Wander,
-                        _ => return None,
-                    };
-                    Some((entity, entry.priority, entry.av, kind))
-                })
-                .collect()
-        };
-        w.resource_mut::<ChaseIntents>().0 = remap(&self.chase_intents);
-        w.resource_mut::<FleeIntents>().0 = remap(&self.flee_intents);
-        w.resource_mut::<WanderIntents>().0 = remap(&self.wander_intents);
     }
 }
 
 // ── 存档 I/O 单入口（A37：main.rs/game.rs 两处调用方收敛至此） ──
 
-/// 新格式 magic 前缀：`DSV1` + bincode(GameSave)。旧存档为裸 bincode(GameSaveV0)。
+/// 新格式 magic 前缀：`DSV1` + bincode(GameSave)。
 pub const SAVE_MAGIC: &[u8; 4] = b"DSV1";
 
 /// 保存游戏到 path（总是写新格式）
@@ -877,17 +594,14 @@ pub fn save_game(world: &World, path: &str) -> Result<(), String> {
 }
 
 /// 从 path 读档并 restore 到 world（含 post_load_refresh）。
-/// 兼容旧格式（裸 bincode GameSaveV0）：转换后新字段取默认值。
+/// 从 path 读取并 restore 到 world（含 post_load_refresh）。
 pub fn load_game(world: &mut World, path: &str) -> Result<(), String> {
     let data = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
-    let save: GameSave = if data.starts_with(SAVE_MAGIC) {
-        bincode::deserialize::<GameSave>(&data[SAVE_MAGIC.len()..])
-            .map_err(|e| format!("存档解析失败（新格式）: {e}"))?
-    } else {
-        let v0 = bincode::deserialize::<GameSaveV0>(&data)
-            .map_err(|e| format!("存档解析失败（旧格式）: {e}"))?;
-        GameSave::from(v0)
-    };
+    if !data.starts_with(SAVE_MAGIC) {
+        return Err("不支持的存档格式".to_string());
+    }
+    let save: GameSave = bincode::deserialize::<GameSave>(&data[SAVE_MAGIC.len()..])
+        .map_err(|e| format!("存档解析失败: {e}"))?;
     save.restore(world);
     dungeon_core::ops::post_load_refresh(world);
     Ok(())

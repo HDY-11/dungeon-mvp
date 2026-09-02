@@ -3,7 +3,7 @@
 use bevy_ecs::prelude::*;
 use dungeon_core::OptionLogExt;
 use dungeon_core::{
-    FLEE_HP_RATIO, Map, OccupancyMap, Player, Position, Stats, Viewshed, components::*,
+    Map, OccupancyMap, Player, Position, Viewshed, components::*,
     resources::*,
 };
 
@@ -28,13 +28,6 @@ pub(crate) fn chase_condition(world: &World, entity: Entity) -> bool {
     world
         .get::<LastKnownPlayerPos>(entity)
         .map(|l| l.0.is_some())
-        .unwrap_or(false)
-}
-
-pub(crate) fn flee_condition(world: &World, entity: Entity) -> bool {
-    world
-        .get::<Stats>(entity)
-        .map(|s| s.hp_ratio() < FLEE_HP_RATIO)
         .unwrap_or(false)
 }
 
