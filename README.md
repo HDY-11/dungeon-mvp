@@ -2,79 +2,46 @@
 
 Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 
-## 架构（5 crate 拆分）
+## 当前状态（refactor）
+
+本分支正在向 **业务领域只存在于 `core`** 的方向重构。
+
+- `core/` 是新的唯一业务/领域层，完全采用 ECS 范式。
+- 旧代码（`dungeon-core/`、`dungeon-action/`、`dungeon-world/`、`dungeon-render/`、`src/`）视为历史/过渡实现，参考价值有限。
+- 旧组件体系（`Stats`、`ActionKindV3`、`ActionQueue` 等）不再作为新功能基础。
+
+## 架构（目标形态）
 
 ```
-terrain-forge/            ← 程序化地图生成引擎（被 dungeon-core 使用）
-
-dungeon-core/             ← 纯数据 + 工具函数（被所有其他 crate 依赖）
-  action_types.rs          ← 行动系统类型：ActionKindV3、ActionQueue、PlayerPreview、CanMove/Chase/…
-  components.rs            ← ECS 组件（Stats, Buffs, Player, Monster, LootTable, …）
-  resources.rs             ← ECS 资源（PendingExp, EventLog, VisibleMemory, TurnManager, …）
-  items.rs                 ← ItemRegistry（OnceLock 单例）、ItemStack、Inventory、Equipment
-  monster_def.rs           ← 怪物定义：MonsterKindId、属性公式、掉落、生成权重
-  ops.rs                   ← 工具函数：碰撞图 rebuild、视野记忆、拾取、渲染收集、A* 寻路（8 方向）
-  systems.rs               ← 基础 ECS System（FOV、死亡检测、经验应用、buff 衰减）
-  api.rs                   ← 旧版 setup_world（仅测试使用）
-
-dungeon-action/           ← 行动执行逻辑（依赖 core）
-  execute.rs               ← advance_action_queue、保活检查、execute_entry（移动/攻击/技能/怪物 AI）
-  monster.rs               ← 并行决策 system（chase / flee / wander → arbitration）
-  player.rs                ← 玩家 tap-tap 行动处理（direction / wait / skill）
-  tick.rs                  ← 串行编排：advance_until_player_acted
-
-dungeon-world/            ← 世界生命周期 + 并行调度（依赖 action + core）
-  init.rs                  ← setup_world（正式入口）、descend（下楼）
-  persist.rs               ← GameSave（存档/读档，显式 &World 参数）
-  systems.rs               ← 世界级 ECS System 包装（fov / death / buff / exp）
-  tick.rs                  ← 并行 Schedule（advance_and_settle_parallel）
-
-dungeon-render/           ← 渲染层（依赖 core + action，仅行动类型；**不依赖 world**）
-  color.rs                 ← (u8,u8,u8) → ratatui::Color 转换
-  timeline.rs              ← build_timeline（行动轴面板）
-  ui.rs                    ← render_ui + build_stats_panel（含 VisibleMemory 灰色渲染）
-  title.rs                 ← draw_title（标题画面）
-
-src/main.rs               ← 应用层：入口 + 标题画面 + 独立输入线程 + 主循环
-src/pages/                ← 页栈按键处理器，按页拆分（Game / Look / ThrowSelect / ThrowAim / Inventory / Dialog）
-src/keymap.rs             ← 声明式键位绑定表（按键 → PlayerAction）
-src/throw.rs              ← 投掷辅助（弹道预览 update_throw_path / 自动装填 auto_equip_throwable / confirm_throw）
+core/                     ← 唯一业务/领域层，完全 ECS
+  components.rs           ← 领域组件：Position、Health、Magic、Level、Experience、Attack、Defense、…
+  entity_cls.rs           ← 实体类型 marker：Player、Rat、…
+  events.rs               ← 领域事件：AttackEvent、…
+  resources.rs            ← 领域资源（规划中）
+  system.rs               ← 领域系统：死亡、受击记录、普攻执行、…
+  map_gen.rs              ← 地图生成（规划中）
 ```
 
-### 实际依赖链
+旧 crate 在迁移完成前暂时保留：
 
 ```
-core ← action ← world
-  ↕        ↗
-render ───╯（依赖 core + action——仅行动类型引用，不依赖 world）
+dungeon-core/             ← 旧领域数据/工具（历史参考）
+dungeon-action/           ← 旧行动执行（历史参考）
+dungeon-world/            ← 旧世界生命周期（历史参考）
+dungeon-render/           ← 旧渲染（历史参考）
+src/                      ← 旧应用层（历史参考）
+terrain-forge/            ← 地图生成子模块（按需保留）
 ```
 
-核心 crate 不依赖渲染或世界生命周期，渲染 crate 直接从 ECS World 查询组件。这意味着修改渲染逻辑不需要重新编译其他 crate，但 render 与 core 的组件布局存在隐式耦合。render 对 action 的依赖仅限类型引用（`timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview`），不依赖行动执行逻辑——若未来行动类型提取为独立 crate，render 可切换依赖取消对 action 的耦合（Dsn1）。
+## 行动模型（core 方向）
 
-## 行动系统 v3
+采用 **ECS 原生组件模型**，不再使用全局 `ActionQueue`：
 
-采用 **AV 统一值 + 全局单队列 + 保活检查 + 持续推进** 模型。
-
-### 核心概念
-
-- **行动即组件**：`CanMove`、`CanChase`、`CanFlee`、`CanWander`、`CanWait`
-- **AV = 反应时 + 耗时 × speed_factor**：单一值入队，av_remaining 递减至 0 自动执行
-- **敏捷修正**：反应时 `max(100 - agi×3, 20)`，耗时系数 `max(1.0 - agi×0.02, 0.5)`
-- **`ActionQueue` 全局单队列**：玩家与怪物混排，按 av 值决定顺序
-- **8 方向移动**：玩家 Home↖ ↑ ↗ PgUp ← → End↙ ↓ ↘ PgDn，怪物 AI 使用 A* 寻路
-- **事件式推进**：`next_event_distance()` → 同步推进 → `pop_ready()` → 保活检查 → 执行
-
-### 保活检查
-
-执行前验证条件是否仍满足：
-
-| 行动 | 检查内容 |
-|------|----------|
-| Move | 目标格是 Floor 且未被占用 |
-| Attack | 目标实体仍是 Monster |
-| Chase | 玩家仍在视野内 |
-| Flee | HP 比率仍低于 25% |
-| Wander/Wait/Skill | 始终通过 |
+- 实体用 `Idle` / `Active` / `Failure` 表达行动状态
+- `Can*` 组件表达行动能力
+- 具体 Action 组件表达当前正在执行什么（如 `BasicAttack { target }`）
+- 领域事件（如 `AttackEvent`）在系统间传递意图/结果
+- 时间/推进由 ECS 资源与系统管理，按最小剩余 AV 推进
 
 ## 输入系统
 
@@ -197,8 +164,8 @@ fn write_something(world: &mut World) { ... }
 ### 构建
 
 ```bash
+cargo check -p core
 cargo run
-cargo test -p dungeon-core -- --test-threads=1
 ```
 
 ## 设计参考

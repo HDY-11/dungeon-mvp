@@ -724,3 +724,21 @@ impl MonsterTemplate {
 
 **状态：** 已落地。分支楼梯（多楼梯/树状分支）待类型系统稳定后单独规划。
 
+---
+
+### Dsn25 业务领域收敛至 `core`，旧组件体系作废（进行中）
+
+**决策**
+
+未来只有 `core` 承载游戏逻辑/业务领域内容；`core` 内部完全采用 ECS 范式。
+
+- 领域以 ECS 组件/实体/事件/系统表达，不再依赖旧的聚合 `Stats`、`ActionKindV3`、`ActionQueue` 等模型。
+- `core` 是后续所有游戏逻辑的权威层；旧 `dungeon-*` 与 `src/` 视为历史/过渡代码，参考价值有限。
+- 旧组件体系不迁移，只作为理解历史的参考；新代码以 `core/src` 中的组件和系统为准。
+- 当前先按 `core/src/components.rs` 中的方向补全：基础数值组件（`Position`/`Health`/`Magic`/`Level`/`Experience`/`Attack`/...），行动状态（`Idle`/`Active`/`Failure`），能力标记（`Can*`），具体行动组件（`BasicAttack`），领域事件（`AttackEvent`）。
+
+**背景**
+
+refactor 分支已经删除旧模型并引入 ECS 原生行动模型，但旧 crate 仍保留了大量历史实现。继续在旧 crate 上修修补补会延续架构债，因此把业务领域收敛到一个新的 `core` crate，逐步摆脱对旧组件体系和旧目录结构的依赖。
+
+**状态：** 初步补全中。旧文档中的 ActionQueue/ActionKindV3/Stats 描述不再代表未来方向。

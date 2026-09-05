@@ -4,8 +4,8 @@
 
 ## Gm1 行动系统
 
-所有行动有耗时（duration），AV = 反应时 + 耗时，作为单一值入队倒计时。
-av_remaining 递减至 0 时自动执行。行动队列为全局单队列，玩家与怪物混排。
+所有行动有耗时（duration），AV = 反应时 + 耗时，作为实体上的单一倒计时值。
+av_remaining 递减至 0 时自动执行；由 ECS 系统管理推进，不再维护全局 ActionQueue。
 
 ### 行动定义
 
@@ -39,32 +39,21 @@ AV = 反应时 + 耗时 × 修正系数
 | 20 | 40 | ×0.60 |
 | 25+ | 20（反应时下限） | ×0.50（耗时下限） |
 
-### 行动队列推进
+### 行动推进（ECS 组件模型）
 
-`advance_action_queue()` 每帧由主循环调用：
-1. 查最小 av_remaining（next_event_distance）
-2. 所有条目同步推进该距离
-3. 弹出 av ≤ 0 的条目，逐个执行
-4. 每个条目执行前保活检查（check_condition），条件不满足则丢弃
-5. 每执行一个条目后重建碰撞图，防止实体重叠
+- 每个已挂载行动的实体带有剩余 AV 计时，系统查询最小剩余值并同步推进。
+- 倒计时到 0 后执行对应具体 Action 组件。
+- 执行前做保活检查；条件不满足则标记失败/回到 Idle，不执行。
+- 执行后清理行动组件并回到 Idle，按需触发后续系统（死亡、掉落、碰撞重建等）。
 
 ### 玩家确认后持续推进
 
-玩家确认行动后，`advance_until_player_acted()` 循环调用 advance_action_queue 直到玩家的行动被执行完毕（或队列空）。
+玩家确认行动后，推进循环持续运行到玩家行动执行完毕或没有可推进行动为止。
 
-### 怪物决策（并行 Schedule）
+### 怪物决策
 
-每帧一次，通过 bevy Schedule 并行执行三个决策 system：
-
-```
-chase_decision_system  ─┐
-flee_decision_system   ─┤ 并发 → arbitration_system → ActionQueue
-wander_decision_system ─┘
-```
-
-- 每个 system 检查自己的条件，写入独立意图缓冲区
-- `arbitration_system` 按优先级排序，合并入 ActionQueue
-- 已有队列条目的实体不再重复入队
+决策层查询 Idle/Failure 且具备能力的实体，按优先级选择行动并装载具体 Action 组件：
+Flee > Chase > Wander > Wait 等。当前 core 方向不再依赖 ActionQueue/意图缓冲区。
 
 ## Gm2 战斗公式
 
