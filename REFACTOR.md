@@ -23,6 +23,22 @@
 
 ---
 
+## 1.1 Crate 布局
+
+重构目标下的 workspace 分层：
+
+| crate | 职责 | 禁止 |
+|---|---|---|
+| `utils` | 无状态、无业务的通用工具与数据结构 | 依赖 bevy / ratatui / crossterm / 业务 crate |
+| `core` | 唯一业务/领域层，ECS 组件、系统、地图、AI、战斗、初始化 | UI、OS 交互、纯工具函数 |
+| `sys` | OS 交互：终端状态、输入线程、文件字节读写、文件日志 | 业务规则、ECS 组件、渲染 |
+| `tui` | 渲染与 UI 状态：颜色转换、布局工具、Canvas、页面渲染 | 终端事件读取、文件 IO、业务规则 |
+| `dungeon-app` | 根 crate / 应用装配：主循环、输入到 core、core 到 tui | 具体业务实现 |
+
+`terrain-forge` 保持为外部地图生成引擎，不并入任何业务 crate。
+
+---
+
 ## 2. 组件设计
 
 ### 2.1 实体范畴 enum
@@ -221,6 +237,56 @@ apply_exp_system
 
 ---
 
+## 6.5 世界初始化系统
+
+首次世界初始化由 `core::init` 中的系统链完成：
+
+```text
+generate_map_system
+  ↓
+spawn_player_system
+  ↓
+spawn_stairs_system
+  ↓
+spawn_monsters_system
+  ↓
+fov_system
+  ↓
+update_map_memory_system
+  ↓
+update_visible_memory_system
+  ↓
+rebuild_occupancy_system
+```
+
+- `insert_core_resources` 直接插入 `MapSeed / FloorNumber / Map / GameRng / ...`，不经过延迟 Commands。
+- `generate_map_system` 读 `(MapSeed, FloorNumber)`，调用 `generate_map_from_seed`，地图结果完全确定。
+- `spawn_player_system` 使用玩家工厂生成基础组件束。
+- `spawn_stairs_system` 写入 `StairsPos`，并保证出生点与楼梯连通。
+- `spawn_monsters_system` 使用噪声密度 + 元胞扩散生成怪物，排除出生点与楼梯。
+- 系统链通过 `.chain()` 强制顺序；未加顺序约束时，Bevy 可能在地图生成前运行怪物系统。
+
+---
+
+## 6.6 最小可运行闭环
+
+不依赖物品、背包、掉落、装备的最小版本已经可运行：
+
+```text
+sys::spawn_key_source()
+  → dungeon-app 将 KeyCode 翻译为 PlayerCommand
+  → core::player_action_generation_system 挂载玩家行动
+  → core::advance_until_player_acted 推进并执行
+  → core::decide_monster_actions 为怪物挂载下一轮行动
+  → core::run_settle_systems 结算死亡/经验/FOV/记忆/占用图
+  → tui::render_game 渲染
+```
+
+当前可用内容：地图生成、玩家移动/攻击/等待、怪物追击/逃跑/游荡、
+近战伤害/暴击、玩家死亡、经验升级、FOV 与探索记忆、事件日志、游戏结束。
+
+---
+
 ## 7. 装备与物品方向
 
 旧架构只允许玩家持有装备。新架构方向：
@@ -245,14 +311,21 @@ apply_exp_system
 - 战斗公式、暴击、经验、升级、死亡事件
 - 怪物模板与生成权重
 - 威胁系统接口
+- 首次世界初始化系统链：地图、玩家、楼梯、怪物、FOV/记忆/占用图
+- 玩家输入生成系统 `player_action_generation_system`
+- 最小世界循环 `world_loop::new_game / apply_player_command`
+- 新增 `utils`：颜色、几何、Grid、文本工具
+- 新增 `sys`：终端、输入线程、文件读写、文件日志
+- 新增 `tui`：颜色转换、布局工具、Canvas、UI 状态、新 core 场景渲染
+- 根 crate 更名为 `dungeon-app`
 
 本轮明确不迁入：
 
-- 渲染、输入
+- 旧渲染管线、旧页面处理器
 - 物品、背包、装备
 - buff 与技能效果
 - 掉落表
-- 世界初始化、种群放置、存档读档
+- 下楼（descend）、存档读档
 
 ---
 

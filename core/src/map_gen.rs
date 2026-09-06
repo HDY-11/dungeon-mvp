@@ -608,11 +608,12 @@ fn is_away_from_rooms(map: &Map, x: usize, y: usize, min_dist: usize) -> bool {
 // 地图生成入口
 // ══════════════════════════════════════════════════════
 
-/// 使用 terrain-forge 生成洞穴地图并执行环境修饰管线。
-pub fn generate_map(map: &mut Map, kind: MapKind, rng: &mut impl Rng) {
-    use rand::RngExt;
+/// 使用指定种子生成洞穴地图并执行环境修饰管线。
+///
+/// 这是系统化初始化的推荐入口：地图结果完全由 `(kind, seed)` 决定。
+pub fn generate_map_from_seed(map: &mut Map, kind: MapKind, seed: u64) {
+    use rand::SeedableRng;
 
-    let seed: u64 = rng.random();
     map.tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
     map.rooms.clear();
 
@@ -667,11 +668,21 @@ pub fn generate_map(map: &mut Map, kind: MapKind, rng: &mut impl Rng) {
         }
     }
 
+    // 环境修饰函数内部使用派生 seed，传入的 rng 只是兼容旧签名。
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(0);
     let env = kind.env_params();
-    generate_water(map, rng, seed.wrapping_add(100), &env);
-    carve_expand(map, rng, seed.wrapping_add(150));
-    generate_obstacles(map, rng, seed.wrapping_add(200), &env, kind);
-    generate_terrain_decor(map, rng, seed.wrapping_add(250), &env, kind);
-    ensure_connectivity(map, rng, seed.wrapping_add(300));
-    ensure_spawn_accessible(map, rng, seed.wrapping_add(350));
+    generate_water(map, &mut rng, seed.wrapping_add(100), &env);
+    carve_expand(map, &mut rng, seed.wrapping_add(150));
+    generate_obstacles(map, &mut rng, seed.wrapping_add(200), &env, kind);
+    generate_terrain_decor(map, &mut rng, seed.wrapping_add(250), &env, kind);
+    ensure_connectivity(map, &mut rng, seed.wrapping_add(300));
+    ensure_spawn_accessible(map, &mut rng, seed.wrapping_add(350));
+}
+
+/// 兼容旧调用：从 rng 中取一个种子后生成地图。
+pub fn generate_map(map: &mut Map, kind: MapKind, rng: &mut impl Rng) {
+    use rand::RngExt;
+
+    let seed: u64 = rng.random();
+    generate_map_from_seed(map, kind, seed);
 }

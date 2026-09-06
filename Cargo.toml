@@ -1,5 +1,5 @@
 [package]
-name = "dungeon-tui"
+name = "dungeon-app"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,11 +11,25 @@ dungeon-core = { path = "dungeon-core" }
 dungeon-action = { path = "dungeon-action" }
 dungeon-world = { path = "dungeon-world" }
 dungeon-render = { path = "dungeon-render" }
+core = { path = "core" }
+utils = { path = "utils" }
+sys = { path = "sys" }
+tui = { path = "tui" }
 bincode = "1.3"
 log = "0.4"
 
 [workspace]
-members = ["dungeon-core", "dungeon-action", "dungeon-world", "dungeon-render", "terrain-forge", "core"]
+members = [
+    "dungeon-core",
+    "dungeon-action",
+    "dungeon-world",
+    "dungeon-render",
+    "terrain-forge",
+    "core",
+    "utils",
+    "sys",
+    "tui",
+]
 
 [workspace.dependencies]
 log = "0.4"

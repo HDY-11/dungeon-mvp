@@ -9,6 +9,7 @@ use crate::balance::{
 };
 use crate::combat::{adjacent_8, resolve_melee};
 use crate::components::*;
+use crate::entity_cls::Monster;
 use crate::map::Map;
 use crate::movement::can_move_to;
 use crate::pathfinding::astar;
@@ -200,6 +201,7 @@ pub fn decide_monster_actions(world: &mut World) {
         let mut query = world.query_filtered::<
             Entity,
             (
+                With<Monster>,
                 Or<(With<Idle>, With<Failure>)>,
                 Or<(
                     With<CanChase>,
