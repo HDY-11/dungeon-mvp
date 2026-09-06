@@ -8,8 +8,8 @@ use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
 use crate::combat::compute_melee_damage;
 use crate::components::*;
 use crate::entity_cls::{EntityClass, Player, Stairs};
-use crate::events::{AttackEvent, DeathEvent, LevelUpEvent};
-use crate::fov::calculate_visible_tiles;
+use crate::events::{AttackEvent, AttackIntentEvent, DeathEvent, LevelUpEvent};
+use crate::spatial::fov::calculate_visible_tiles;
 use crate::map::Map;
 use crate::resources::{
     EventLog, EventMessage, GameRng, MapMemory, OccupancyMap, PendingExp, TurnManager,
@@ -18,61 +18,55 @@ use crate::resources::{
 use bevy_ecs::prelude::*;
 use std::collections::HashSet;
 
-// ── 行动执行 ─────────────────────────────────────────
+// ── 行动执行与伤害 ───────────────────────────────────
+// 攻击执行系统位于 `action::execution::execute_basic_attack_system`。
+// 这里只保留伤害结算与应用系统。
 
-/// 读取 `Active + BasicAttack`，计算伤害并写 `AttackEvent`，然后清行动状态。
-///
-/// 伤害应用交给 `apply_damage_system`，本系统不直接修改 `Health`。
-pub fn execute_basic_attack_system(
-    mut commands: Commands,
-    actors: Query<(Entity, &BasicAttack), With<Active>>,
-    positions: Query<&Position>,
+/// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
+pub fn resolve_attack_system(
+    mut attack_intents: EventReader<AttackIntentEvent>,
     attacks: Query<&Attack>,
     defenses: Query<&Defense>,
     crits: Query<(&CritRate, &CritDamage)>,
-    healths: Query<&Health>,
+    names: Query<&EntityName>,
     mut rng: ResMut<GameRng>,
     mut attack_events: EventWriter<AttackEvent>,
+    mut event_log: ResMut<EventLog>,
 ) {
-    for (entity, action) in actors.iter() {
-        let (Some(apos), Some(tpos)) = (
-            positions.get(entity).ok(),
-            positions.get(action.target).ok(),
-        ) else {
-            continue;
-        };
-
-        let adjacent = apos.x.abs_diff(tpos.x) <= 1 && apos.y.abs_diff(tpos.y) <= 1;
-        let target_alive = healths
-            .get(action.target)
-            .map(|h| h.is_alive())
-            .unwrap_or(false);
-        if !adjacent || !target_alive {
-            commands.entity(entity).remove::<Active>();
-            commands.entity(entity).remove::<BasicAttack>();
-            commands.entity(entity).insert(Failure);
-            continue;
-        }
-
-        let attack = attacks.get(entity).map(|a| a.0).unwrap_or(0.0);
-        let defense = defenses.get(action.target).map(|d| d.0).unwrap_or(0.0);
+    for intent in attack_intents.read() {
+        let attack = attacks.get(intent.attacker).map(|a| a.0).unwrap_or(0.0);
+        let defense = defenses.get(intent.target).map(|d| d.0).unwrap_or(0.0);
         let (crit_rate, crit_damage) = crits
-            .get(entity)
+            .get(intent.attacker)
             .map(|(r, d)| (r.0, d.0))
             .unwrap_or((0.0, 0.0));
         let crit_roll = rng.random_f64();
         let result = compute_melee_damage(attack, defense, crit_rate, crit_damage, crit_roll);
 
+        log::debug!(
+            "伤害结算: attacker={:?}, target={:?}, attack={attack:.2}, defense={defense:.2}, damage={:.2}, crit={}",
+            intent.attacker,
+            intent.target,
+            result.damage,
+            result.is_crit
+        );
+
+        let target_name = names
+            .get(intent.target)
+            .map(|n| n.0.as_str())
+            .unwrap_or("目标");
+        event_log.push(EventMessage::combat(format!(
+            "对{target_name}造成 {:.0} 点伤害{}",
+            result.damage,
+            if result.is_crit { "（暴击）" } else { "" }
+        )));
+
         attack_events.write(AttackEvent {
-            attacker: entity,
-            target: action.target,
+            attacker: intent.attacker,
+            target: intent.target,
             damage: result.damage,
             is_crit: result.is_crit,
         });
-
-        commands.entity(entity).remove::<Active>();
-        commands.entity(entity).remove::<BasicAttack>();
-        commands.entity(entity).insert(Idle);
     }
 }
 
@@ -114,13 +108,14 @@ pub fn check_death_system(
         &Health,
         Option<&Player>,
         Option<&ExperienceReward>,
+        Option<&EntityName>,
     )>,
     mut death_events: EventWriter<DeathEvent>,
     mut pending_exp: ResMut<PendingExp>,
     mut turn_manager: ResMut<TurnManager>,
     mut event_log: ResMut<EventLog>,
 ) {
-    for (entity, health, player, reward) in query.iter() {
+    for (entity, health, player, reward, name) in query.iter() {
         if health.is_alive() {
             continue;
         }
@@ -128,10 +123,15 @@ pub fn check_death_system(
         death_events.write(DeathEvent { entity });
 
         if player.is_some() {
+            log::warn!("玩家死亡");
             turn_manager.game_over = true;
             event_log.push(EventMessage::danger("你死了"));
             continue;
         }
+
+        let name = name.map(|n| n.0.as_str()).unwrap_or("怪物");
+        log::info!("实体死亡: {name} ({entity:?})");
+        event_log.push(EventMessage::combat(format!("{name} 倒下了")));
 
         if let Some(reward) = reward {
             pending_exp.amount += reward.0;
@@ -258,17 +258,20 @@ pub fn rebuild_occupancy_system(
 /// 构建标准结算 Schedule。调用方可在前后插入自己的系统。
 pub fn build_core_schedule() -> Schedule {
     let mut schedule = Schedule::default();
-    schedule.add_systems((
-        execute_basic_attack_system,
-        apply_damage_system,
-        record_be_attacked_system,
-        check_death_system,
-        apply_exp_system,
-        fov_system,
-        update_map_memory_system,
-        update_visible_memory_system,
-        rebuild_occupancy_system,
-    ));
+    schedule.add_systems(
+        (
+            resolve_attack_system,
+            apply_damage_system,
+            record_be_attacked_system,
+            check_death_system,
+            apply_exp_system,
+            fov_system,
+            update_map_memory_system,
+            update_visible_memory_system,
+            rebuild_occupancy_system,
+        )
+            .chain(),
+    );
     schedule
 }
 

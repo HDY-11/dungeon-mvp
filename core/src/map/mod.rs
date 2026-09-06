@@ -4,6 +4,10 @@ use bevy_ecs::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+pub mod map_gen;
+
+pub use map_gen::*;
+
 pub const MAP_WIDTH: usize = 80;
 pub const MAP_HEIGHT: usize = 60;
 
@@ -211,7 +215,7 @@ impl Map {
 
     /// 使用 terrain-forge 生成洞穴地图。
     pub fn generate(&mut self, kind: MapKind, rng: &mut impl Rng) {
-        crate::map_gen::generate_map(self, kind, rng);
+        crate::map::map_gen::generate_map(self, kind, rng);
     }
 
     pub fn count_tile(&self, tile: Tile) -> usize {

@@ -11,10 +11,10 @@ use core::world_loop::{apply_player_command, new_game, request_quit};
 use core::PlayerCommand;
 use ratatui::Terminal;
 use sys::{self, try_recv_key};
-use tui::render_game;
+use tui::{DevLogBuffer, render_game};
 
 fn main() -> io::Result<()> {
-    sys::init_logging();
+    let log_rx = sys::init_logging();
     sys::enter_raw_mode()?;
     sys::enter_alternate_screen()?;
 
@@ -23,6 +23,7 @@ fn main() -> io::Result<()> {
         .unwrap_or_default()
         .as_nanos() as u64;
     let mut world: World = new_game(seed);
+    world.insert_resource(DevLogBuffer::new(80));
 
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
     terminal.draw(|frame| render_game(frame, &mut world))?;
@@ -42,6 +43,15 @@ fn main() -> io::Result<()> {
                 }
                 _ => {}
             }
+        }
+
+        while let Ok(record) = log_rx.try_recv() {
+            let mut buffer = world.resource_mut::<DevLogBuffer>();
+            buffer.push(
+                record.level.to_string(),
+                record.target,
+                record.message,
+            );
         }
 
         terminal.draw(|frame| render_game(frame, &mut world))?;

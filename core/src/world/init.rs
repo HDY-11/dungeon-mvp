@@ -10,12 +10,13 @@ use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
 use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
-    ActionFailedEvent, ActionSucceededEvent, AttackEvent, DeathEvent, LevelUpEvent, ThreatEvent,
+    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
+    LevelUpEvent, ThreatEvent,
 };
 use crate::map::{
     map_kind_for, Map, MapKind, Tile, MAP_HEIGHT, MAP_WIDTH,
 };
-use crate::map_gen::{ensure_connection_between, generate_map_from_seed};
+use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::monster::{monster_template, roll_one_kind, MonsterKindId};
 use crate::resources::*;
 use crate::system::{
@@ -66,12 +67,15 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
 
+    world.insert_resource(bevy_ecs::event::Events::<AttackIntentEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<AttackEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<DeathEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ThreatEvent>::default());
+
+    log::info!("core 资源初始化完成: seed={}", config.map_seed);
 }
 // ── 地图生成系统 ─────────────────────────────────────
 
@@ -83,6 +87,7 @@ pub fn generate_map_system(
 ) {
     let kind = map_kind_for(map_seed.0, floor.0);
     let seed = map_seed_for_floor(map_seed.0, floor.0);
+    log::info!("生成地图: seed={seed}, floor={}, kind={kind:?}", floor.0);
     generate_map_from_seed(&mut map, kind, seed);
 }
 
@@ -118,6 +123,7 @@ pub fn spawn_player_system(
 ) {
     let pos = map.spawn_point();
     spawn.0 = pos;
+    log::info!("玩家出生: {pos:?}");
 
     commands
         .spawn(player_base_bundle(pos))
@@ -189,6 +195,7 @@ pub fn spawn_stairs_system(
     let pos = pick_stair_pos(&map, player_spawn.0, &mut rng);
     ensure_connection_between(&mut map, &mut rng, player_spawn.0, pos);
     stairs_pos.0 = pos;
+    log::info!("楼梯位置: {pos:?}");
 
     commands.spawn((
         Stairs,
@@ -337,6 +344,7 @@ pub fn spawn_monsters_system(
 
     let population =
         generate_monster_population(kind, &map.tiles, floor.0, &mut rng, &exclude);
+    log::info!("生成怪物: count={}, kind={kind:?}", population.len());
 
     for (monster_kind, x, y) in population {
         let template = monster_template(monster_kind);

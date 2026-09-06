@@ -1,10 +1,11 @@
 //! 最小可运行世界循环：初始化、玩家行动、怪物决策、结算。
 
-use crate::action::{advance_until_player_acted, mount_action};
-use crate::ai::decide_monster_actions;
+use crate::action::mount_action;
+use crate::action::execution::run_action_cycle;
+use crate::action::generation::ai::decide_monster_actions;
 use crate::components::Active;
-use crate::init::run_initialization;
-use crate::input_action::{player_action_generation_system, PlayerActionRequest, PlayerCommand};
+use crate::world::init::run_initialization;
+use crate::action::generation::player::{player_action_generation_system, PlayerActionRequest, PlayerCommand};
 use crate::resources::TurnManager;
 use crate::system::run_settle_systems;
 use bevy_ecs::prelude::*;
@@ -12,6 +13,7 @@ use bevy_ecs::system::RunSystemOnce;
 
 /// 创建并初始化一局新游戏。
 pub fn new_game(map_seed: u64) -> World {
+    log::info!("创建新游戏: seed={map_seed}");
     let mut world = World::new();
     run_initialization(&mut world, map_seed);
     decide_monster_actions(&mut world);
@@ -20,10 +22,24 @@ pub fn new_game(map_seed: u64) -> World {
 
 /// 玩家是否正在行动中。
 pub fn player_is_busy(world: &World) -> bool {
-    let Some(entity) = crate::query::player_entity(world) else {
+    let Some(entity) = crate::world::query::player_entity(world) else {
         return false;
     };
     world.get::<Active>(entity).is_some()
+}
+
+fn any_active_entity(world: &mut World) -> bool {
+    let mut query = world.query_filtered::<Entity, With<Active>>();
+    query.iter(world).next().is_some()
+}
+
+fn advance_until_player_acted(world: &mut World) {
+    for _ in 0..10_000 {
+        if !player_is_busy(world) || !any_active_entity(world) {
+            break;
+        }
+        run_action_cycle(world);
+    }
 }
 
 /// 将玩家命令写入请求并推进世界。
@@ -37,6 +53,7 @@ pub fn apply_player_command(world: &mut World, command: PlayerCommand) -> bool {
         return false;
     }
 
+    log::debug!("玩家命令: {command:?}");
     world.insert_resource(PlayerActionRequest::new(command));
     let _ = world.run_system_once(player_action_generation_system);
 
@@ -62,5 +79,5 @@ pub fn mount_player_action(world: &mut World, entity: Entity, action: crate::act
 
 /// 当前是否有玩家实体存活。
 pub fn player_alive(world: &World) -> bool {
-    crate::query::player_entity(world).is_some()
+    crate::world::query::player_entity(world).is_some()
 }

@@ -76,6 +76,40 @@ pub struct InventoryUI {
     pub detail_idx: usize,
 }
 
+/// 开发者日志面板数据。由应用层从 `sys::LogRecord` 转换后写入。
+#[derive(Debug, Clone)]
+pub struct DevLogLine {
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
+#[derive(Resource, Default)]
+pub struct DevLogBuffer {
+    pub lines: std::collections::VecDeque<DevLogLine>,
+    pub max: usize,
+}
+
+impl DevLogBuffer {
+    pub fn new(max: usize) -> Self {
+        Self {
+            lines: std::collections::VecDeque::new(),
+            max,
+        }
+    }
+
+    pub fn push(&mut self, level: String, target: String, message: String) {
+        self.lines.push_back(DevLogLine {
+            level,
+            target,
+            message,
+        });
+        while self.lines.len() > self.max {
+            self.lines.pop_front();
+        }
+    }
+}
+
 /// 由渲染层记录的实体最后可见位置。
 #[derive(Resource, Default)]
 pub struct RenderMemory {

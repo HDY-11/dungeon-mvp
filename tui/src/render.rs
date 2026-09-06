@@ -1,5 +1,6 @@
 //! 最小游戏画面渲染。
 
+use crate::state::DevLogBuffer;
 use crate::scene::{
     EntityView, Scene, VIEW_HEIGHT, VIEW_WIDTH, extract_scene, tile_bg, tile_color, tile_glyph,
 };
@@ -18,14 +19,21 @@ pub fn render_game(frame: &mut Frame, world: &mut World) {
     let scene = extract_scene(world);
     let area = frame.area();
 
+    let [main_area, debug_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(8),
+    ])
+    .areas(area);
+
     let [map_area, side_area] = Layout::horizontal([
         Constraint::Length((VIEW_WIDTH + 2) as u16),
         Constraint::Min(24),
     ])
-    .areas(area);
+    .areas(main_area);
 
     render_map(frame, map_area, &scene);
     render_side(frame, side_area, &scene);
+    render_debug_panel(frame, debug_area, world);
 }
 
 fn rgb_color(rgb: Rgb) -> Color {
@@ -164,6 +172,43 @@ fn render_side(frame: &mut Frame, area: Rect, scene: &Scene) {
     }
 
     let block = Block::default().borders(Borders::ALL).title("状态");
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_debug_panel(frame: &mut Frame, area: Rect, world: &World) {
+    let lines = world
+        .get_resource::<DevLogBuffer>()
+        .map(|buffer| {
+            buffer
+                .lines
+                .iter()
+                .rev()
+                .take(area.height.saturating_sub(2) as usize)
+                .rev()
+                .map(|entry| {
+                    let level_color = match entry.level.as_str() {
+                        "ERROR" => Color::Red,
+                        "WARN" => Color::Yellow,
+                        "INFO" => Color::Cyan,
+                        _ => Color::DarkGray,
+                    };
+                    Line::from(vec![
+                        Span::styled(
+                            format!("[{}] ", entry.level),
+                            Style::default().fg(level_color),
+                        ),
+                        Span::styled(
+                            format!("{}: ", entry.target),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::raw(entry.message.clone()),
+                    ])
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let block = Block::default().borders(Borders::ALL).title("Debug");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 

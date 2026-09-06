@@ -8,7 +8,7 @@ use crate::balance::{action_av, UNARMED_ATTACK_DURATION, WAIT_DURATION};
 use crate::components::*;
 use crate::entity_cls::{Monster, Player};
 use crate::map::{Map, MAP_HEIGHT, MAP_WIDTH};
-use crate::movement::can_move_to;
+use crate::action::execution::movement::can_move_to;
 use crate::resources::OccupancyMap;
 use bevy_ecs::prelude::*;
 
@@ -43,12 +43,15 @@ pub fn player_action_generation_system(
     let Some(command) = request.command.take() else {
         return;
     };
+    log::debug!("处理玩家行动请求: {command:?}");
 
     let Ok((player, pos, agility, active)) = players.single() else {
+        log::warn!("玩家实体不存在或查询失败，忽略行动请求");
         return;
     };
 
     if active.is_some() {
+        log::debug!("玩家已有 Active 行动，忽略请求: {command:?}");
         return;
     }
 
@@ -73,6 +76,7 @@ pub fn player_action_generation_system(
     };
 
     let Some(action) = action else {
+        log::debug!("行动请求无效，未挂载: {command:?}");
         return;
     };
 

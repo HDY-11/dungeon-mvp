@@ -4,6 +4,13 @@
 
 use bevy_ecs::prelude::*;
 
+/// 一次已确认的普通攻击意图。伤害尚未计算。
+#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttackIntentEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+}
+
 /// 一次已结算的普通攻击结果。
 ///
 /// `damage` 是已经过攻击/防御/暴击计算后的最终伤害。

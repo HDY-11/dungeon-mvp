@@ -37,6 +37,43 @@
 
 `terrain-forge` 保持为外部地图生成引擎，不并入任何业务 crate。
 
+### core 模块层级
+
+```text
+core/src/
+  components.rs / entity_cls.rs / events.rs / resources.rs / balance.rs
+  map/
+    mod.rs / map_gen.rs
+  spatial/
+    fov.rs / pathfinding.rs / line.rs
+  action/
+    mod.rs
+    execution/
+      mod.rs / movement.rs
+    generation/
+      ai.rs / player.rs
+  combat/
+    mod.rs
+  monster/
+    mod.rs
+  system/
+    mod.rs
+  world/
+    init.rs / loop_.rs / query.rs
+```
+
+依赖方向：
+
+```text
+components/events/resources/balance
+        ↓
+map → spatial
+        ↓
+combat + action + monster
+        ↓
+system + world
+```
+
 ---
 
 ## 2. 组件设计
@@ -201,6 +238,9 @@ pub struct ActionIntent {
 
 ```text
 execute_basic_attack_system
+        ↓ 写 AttackIntentEvent { attacker, target }
+resolve_attack_system
+        ↓ 查 Attack/Defense/Crit + RNG
         ↓ 写 AttackEvent { attacker, target, damage, is_crit }
 apply_damage_system
         ↓
@@ -214,9 +254,10 @@ apply_exp_system
 
 设计理由：
 
-- 攻击系统只计算意图和结果，不直接处理死亡、掉落、日志。
-- 死亡、经验、后续掉落/日志各自独立消费事件。
-- 未来威胁系统可直接消费 `AttackEvent` / `DeathEvent`，不需要侵入战斗代码。
+- 攻击系统只负责保活校验和意图，不计算伤害。
+- 伤害结算独立消费意图事件，未来远程/技能/DoT 可复用。
+- 伤害应用系统只消费已结算结果，不读取攻击者属性。
+- 死亡、经验、日志各自独立消费事件。
 
 ---
 
@@ -307,6 +348,8 @@ sys::spawn_key_source()
 - 细粒度数值组件、范畴与身份标记
 - 地图、Tile、地图生成、FOV、A*、LOS、碰撞占用图
 - 行动状态机、AV 推进、行动挂载与执行
+- 行动执行已拆分为与行动组件一一对应的系统
+- 攻击已拆分为 `execute -> resolve -> apply`
 - 移动、近战、等待、追击、逃跑、游荡
 - 战斗公式、暴击、经验、升级、死亡事件
 - 怪物模板与生成权重
@@ -314,9 +357,10 @@ sys::spawn_key_source()
 - 首次世界初始化系统链：地图、玩家、楼梯、怪物、FOV/记忆/占用图
 - 玩家输入生成系统 `player_action_generation_system`
 - 最小世界循环 `world_loop::new_game / apply_player_command`
+- core 开发者日志：行动、战斗、AI、初始化
 - 新增 `utils`：颜色、几何、Grid、文本工具
-- 新增 `sys`：终端、输入线程、文件读写、文件日志
-- 新增 `tui`：颜色转换、布局工具、Canvas、UI 状态、新 core 场景渲染
+- 新增 `sys`：终端、输入线程、文件读写、文件日志 + 可捕获日志
+- 新增 `tui`：颜色转换、布局工具、Canvas、UI 状态、新 core 场景渲染、Debug 日志面板
 - 根 crate 更名为 `dungeon-app`
 
 本轮明确不迁入：
