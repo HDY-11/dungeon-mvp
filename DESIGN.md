@@ -771,3 +771,42 @@ core ──> presentation ──> render-api <── tui / gpu
 **关联：** REFACTOR.md §1.1 | DESIGN.md Dsn20（渲染优化属于 TUI 后端内部）| Dsn21（页栈状态放 presentation，渲染放后端）
 
 **状态：** `render-api` v1 已落地（34 个测试通过，`cargo clippy -p render-api -D warnings` 干净）。下一步：`presentation` 提取层 + `tui` 去 `core` 依赖。
+
+
+---
+
+### Dsn27 行动即实体 + 速度组件：AV 系统的 ECS 化（草案，待 PoC）
+
+**决策**
+
+两条相关决策，合并为一次行动系统重构：
+
+**① 行动即实体（替代 `ActionKind`）**
+
+- 一个行动 = 一个 actor 的子实体（action entity），不再用中央 `ActionKind` enum 分派。
+- Action 实体组件：`ChildOf(actor)`、`ActionPriority(u32)`、`ActionTimer`、`ActionSource`、生命周期标记 `Candidate` / `ActiveAction` / `Ready`，以及具体行动 ZST/payload（`Wait` / `Move { dx, dy }` / `BasicAttack { target }` / `Chase` / `Flee` / `Wander`）。
+- `Can*` **保持 actor 上的 ZST 组件**，不子实体化：能力回答“能不能做”，action 实体回答“正在考虑/执行什么”。
+- 系统流程：生成系统只 spawn 候选 → 仲裁系统唯一写入 actor 行动状态（按 `ActionPriority` + `action_entity.to_bits()` 全序）→ Tick 推进 AV 并加 `Ready` → 执行系统按行动类型专用 query（零中央 match）→ completion 系统消费 `ActionSucceeded/FailedEvent` 并回收 action 实体。
+- 玩家行动直接生成 active action，不进入 AI 仲裁。
+
+**② 速度组件（替代 `Agility`）**
+
+- 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）。
+- `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`。
+- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 `WAIT_DURATION`（或后续 `WaitSpeed`，待定）。
+- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；是否保留常数 `BASE_REACTION` 待定。
+- 未来武器速度 → `AttackSpeed`，重甲/地形 → `MoveSpeed`，Buff/装备可动态增删组件。
+
+**背景**
+
+当前 `ActionKind` 中央 enum + `mount_action` match 让新增行动要改多处；`Can*` + ZST + 专用 query 的执行方式其实可以完全去掉 `ActionKind`。同时当前 `ActionTimer` 从未参与执行门禁（I89）、事件也因 Schedule 重建 + 缺少 `Events::update()` 被重复读取（I90）；这两项已在第 1 步修复，否则速度组件不会真正影响行为。
+
+**代价**
+
+- action 实体带来每轮候选 spawn/despawn 的 churn；当前规模可接受，未来可改持久 `ActionSlot` 或行为实体池化。
+- 仲裁需要 `ChildOf` 分组；Bevy 0.16 `Children` 是 `linked_spawn`，父实体 despawn 会联动 despawn 子实体。
+- 事件必须有真实消费者；`ActionSucceeded/Failed` 正好由 completion 消费，`DeathEvent`/`LevelUpEvent` 要么接线要么删除。
+
+**关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
+
+**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；下一步 action entity PoC（actor + Wander + Move），最后迁移全部行动与速度组件。

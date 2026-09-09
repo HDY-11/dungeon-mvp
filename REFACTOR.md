@@ -374,6 +374,8 @@ fn execute_move_system(
 
 #### 3.6.7 与 AV 修复的关系
 
+> **进展：** AV 门禁已在当前 actor-component 模型落地（I89：`Ready` + 每轮生成/结算）；action 实体方案沿用同一语义。
+
 当前实现里 `ActionTimer` 从未被用于执行门禁，所有 `Active` 行动每轮都会执行。行动实体方案必须同时修复：
 
 - 只有 `Ready` 的 action 才执行；
@@ -381,6 +383,8 @@ fn execute_move_system(
 - 这样 `MoveSpeed` / `AttackSpeed` 才真正决定“谁先动、谁动得多”。
 
 #### 3.6.8 事件与生命周期
+
+> **进展：** 事件生命周期已修（I90：持久 Schedule + `update_events_system` 每轮 `Events::update()`）；消费者接线仍待做。
 
 - `ActionSucceededEvent` / `ActionFailedEvent`：由 completion 系统消费；
 - `AttackIntentEvent` / `AttackEvent`：保留为战斗扩展点（技能/投射物），但必须有真实消费者；
@@ -566,13 +570,15 @@ sys::spawn_key_source()
 
 ### 8.1 行动系统目标重构（未落地）
 
+> **进展：** AV 门禁（I89）与事件生命周期（I90）已落地；`ActionKind` 删除 / action 实体 PoC 仍待做。
+
 以 §3.6 行动实体方案为准，下一步需要：
 
 - 删除 `ActionKind` 与 `mount_action` 的中央 match；
 - 行动候选/执行改为 action 子实体（`ChildOf` + `ActionPriority` + `ActionTimer` + ZST/payload + `Candidate/ActiveAction/Ready`）；
 - 生成系统只 spawn 候选；仲裁系统唯一写入 actor 行动状态；执行系统专用 query；completion 系统消费 `ActionSucceeded/FailedEvent`；
-- 修复 AV 门禁：只有 `Ready` 的 action 执行，且每轮都运行 generation/arbitration/tick/execution；
-- 修复事件生命周期：持久 Schedule + 每轮 `Events::update()`；
+- ~~修复 AV 门禁：只有 `Ready` 的 action 执行，且每轮都运行 generation/arbitration/tick/execution~~ ✅（I89）；
+- ~~修复事件生命周期：持久 Schedule + 每轮 `Events::update()`~~ ✅（I90）；
 - 清理同类死抽象：未读取的 `Rat/Scorpion/...` 身份 ZST、`EntityClass`/`CreatureKind`、无消费者事件、`BeAttacked`、`PendingExp`、死 combat 函数等（见 §10.6）；
 - `Can*` 保持 actor 上的 ZST 组件，不子实体化。
 
@@ -615,8 +621,8 @@ sys::spawn_key_source()
 | 范围 | 等级 | 稳定的是 | 会变的是 | 测试基线 |
 |---|---|---|---|---|
 | `render-api` | **S1（契约）** | `SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的只读契约方向；`CONTRACT_VERSION = 1`；34 个测试 | 首个消费者（presentation/tui）落地前字段可能调整；破坏性改动必须递增版本 | ✅ 34 |
-| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `Agility` 将被 `MoveSpeed/AttackSpeed` 取代；`ActionKind` 计划删除（见 §3.6）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ⚠️ 0 单测 |
-| `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 会改成注册式 Schedule；事件生命周期待修 | ❌ doctest 失败 |
+| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `Agility` 将被 `MoveSpeed/AttackSpeed` 取代；`ActionKind` 计划删除（见 §3.6）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ✅ 4 |
+| `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 已改持久 Schedule；事件生命周期已修（I90） | ✅ 4 |
 | 行动实体设计（§3.6） | **S3（目标设计，未落地）** | action 子实体、`ActionPriority`、`ActionTimer`、`Ready`、completion 的语义 | 命名/字段/池化策略在 PoC 后可能调整；`ActionKind` 将被删除 | ⚠️ 0 |
 | `utils` | **S1** | 无业务依赖的通用工具 | 基本不变；缺测试 | ⚠️ 0 |
 | `sys` | **S2** | 终端/文件/日志的 OS 封装可用 | 输入 API 从 `Receiver<KeyCode>` 改为 `InputQueue`；终端生命周期可能移入 `TuiPlugin`；`log/std` 依赖需显式声明 | ❌ 独立编译失败 |
@@ -631,15 +637,15 @@ sys::spawn_key_source()
 |---|---|---|
 | `components.rs` | S1 | `Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/CritRate/CritDamage` 等细粒度组件；`Agility` 计划由 `MoveSpeed`/`AttackSpeed` 取代（§2.6）。数值 `f64`；新增字段必须追加并考虑 serde。 |
 | `entity_cls.rs` | S1（待清理） | `Player/Monster/Stairs` 等查询用 ZST 稳定；`EntityClass` / `CreatureKind` 目前无实际读取方（§2.1），`Item/Buff` 是 S4 占位；身份 ZST `Rat/...` 与 `MonsterKindId` 重复（§2.2），待定去留。 |
-| `events.rs` | S2 | 事件链方向稳定，但当前 `DeathEvent`/`LevelUpEvent` 无消费者、`ActionSucceeded/Failed` 未接线、且 `Events::update` 未调用；按 §3.6.8 补齐消费者与生命周期后再冻结。 |
+| `events.rs` | S2 | 事件生命周期已修（I90，每轮 `Events::update()`）；`DeathEvent`/`LevelUpEvent` 仍无消费者、`ActionSucceeded/Failed` 未接线，按 §3.6.8 补齐后再冻结。 |
 | `resources.rs` | S1 | `GameRng`（确定性 xorshift64* + steps，回放/存档语义）、`MapMemory`、`VisibleMemory`、`OccupancyMap`、`EventLog`、`TurnManager`、`MapSeed`、`FloorNumber`。`PendingExp` 可能在 `DeathEvent` 接上消费者后删除；`ThreatTable` 是 S4。 |
 | `map/` | S1（含 serde 兼容约束） | `Tile` 以 u8 0..10 序列化，**只能末尾追加**；`MapKind` 变体只能末尾追加；`Map/Room` 新字段用 `#[serde(default)]`。`Tile::glyph()` 属于显示数据，后续会移到 TUI catalog，不要当领域契约。 |
 | `spatial/` | S1 | FOV / LOS / A* 纯函数；行为稳定，但新 core 无专项测试。 |
-| `action/` | S2（重构中） | 生成/仲裁/执行三段式与 `Idle/Active/Failure` 状态机方向稳定；目标设计见 §3.6：删除 `ActionKind`，行动改为 action 子实体；`Can*` 保留 actor 组件；AV 门禁/事件生命周期待修。 |
+| `action/` | S2（重构中） | 生成/仲裁/执行三段式与 `Idle/Active/Failure` 状态机方向稳定；AV 门禁已修（I89，`Ready`）；目标设计见 §3.6：删除 `ActionKind`，行动改为 action 子实体；`Can*` 保留 actor 组件。 |
 | `combat/` | S1 | 近战伤害/暴击公式稳定；`prepare_attack_event` / `resolve_melee` / `damage_entity` 是死代码/重复路径（§10.6），建议删除。 |
 | `monster/` | S1（serde 兼容约束） | `MonsterKindId` 变体只能末尾追加；`MonsterTemplate` 含 glyph/color（显示数据，后续移出）；数值公式可调但需 GAME.md 记录；身份 ZST 与 `MonsterKindId` 的重复见 §2.2 / §10.6。 |
-| `system/` | S2 | 系统本身稳定；`build_core_schedule()` 每次新建 Schedule，插件化后会改成注册式；调用方应优先用 `run_settle_systems` 包装。 |
-| `world/init.rs` | S2 | `run_initialization` 是应用入口；`build_init_schedule()` 同上，插件化后改注册式。 |
+| `system/` | S2 | 系统本身稳定；`build_core_schedule()` 已改为持久 Schedule（I90），插件化后由 App 管理；调用方继续用 `run_settle_systems` 包装。 |
+| `world/init.rs` | S2 | `run_initialization` 是应用入口；`build_init_schedule()` 已注册为持久 Schedule（I90）。 |
 | `world/loop_.rs` | S2 | 应用层入口 `new_game / apply_player_command / request_quit`；语义稳定（回合制、命令驱动），API 可能被 `CorePlugin` 包装。 |
 | `world/query.rs` | S1（待清理） | 只读查询辅助函数；`update_visible_memory` / `rebuild_occupancy` 与 `system/` 重复且无调用方（§10.6），建议删除。 |
 | `balance.rs` | S1 | 数值公式；具体值可能随 GAME.md 调整；`agility_to_reaction` / `agility_speed_factor` 计划随 §2.6 删除。 |
@@ -654,13 +660,13 @@ sys::spawn_key_source()
 | `cargo clippy -p render-api --all-targets -- -D warnings` | ✅ | 0 警告 |
 | `cargo test -p utils --offline` | ⚠️ 0 | 编译通过，无测试 |
 | `cargo test -p tui --offline` | ⚠️ 0 | 编译通过，无测试 |
-| `cargo test -p core --offline` | ❌ | 单测 0；doctest 因 `core::convert::Infallible` 失败（crate 名 `core` 与标准库 `core` 冲突） |
+| `cargo test -p core --offline` | ✅ 4 | AV 门禁 2 + 事件生命周期 1 + 闭环 1；doctest 已修（I86） |
 | `cargo test -p sys --offline` | ❌ | `log::set_boxed_logger` 被 `log/std` feature 门禁；workspace 构建因 feature 合并偶然通过 |
 | `cargo test -p dungeon-app --offline --no-run` | ❌ | 旧集成测试 `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧架构 |
 | `cargo clippy -p core --all-targets -- -D warnings` | ❌ | 既有 `too_many_arguments` / `type_complexity`（rustc 1.95 / clippy 1.95，与本轮改动无关） |
 | 旧 crate 测试（dungeon-core/action/world/render） | ✅（旧架构） | 只覆盖旧实现，不能作为新 `core` 的回归保障 |
 
-结论：**新代码里只有 `render-api` 有可观的测试覆盖；`core` 是“迁移完成但未被测试保护”的状态。** 进入下半前，`core` 至少要有冒烟级回归，否则 presentation/tui 一旦改到 core 边界，没有自动信号。
+结论：**`render-api` 有可观测试覆盖；`core` 已补上 AV 门禁 / 事件生命周期 4 个回归（I89/I90），但地图确定性、战斗、AI 等仍缺冒烟测试。** 进入下半前，至少把 §10.6 第 2 项补齐。
 
 ### 10.5 进入下半前的冻结清单（presentation/tui 期间）
 
@@ -686,8 +692,8 @@ sys::spawn_key_source()
 
 ### 10.6 进入下半前建议处理（按优先级）
 
-1. **修复 `core` doctest 失败**：`core::convert::Infallible` → `std::convert::Infallible`（或 `::core::convert::Infallible`）；确认 `cargo test -p core` 至少 doctest 通过。长期考虑把 crate 改名为 `game-core` / `domain`，避免与标准库 `core` 同名。
-2. **给 `core` 加冒烟回归**：地图生成确定性（同 seed 同结果）、玩家移动/攻击/等待、怪物行动推进、死亡→经验→升级、FOV/记忆/占用图；另外补两个关键回归——AV 门禁（快怪多动/慢怪等待）和事件只结算一次。哪怕只有 5–8 个测试，也能给下半重构提供安全网。
+1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl；`cargo test -p core` 通过（4 单测 + doctest）。长期仍建议评估 crate 改名（`game-core` / `domain`），避免与标准库 `core` 同名。
+2. **给 `core` 加冒烟回归**：进行中 — 已补 AV 门禁（快怪多动/慢怪等待）与事件只结算一次（I89/I90，共 4 个测试）；地图生成确定性、玩家移动/攻击、死亡→经验→升级、FOV/记忆/占用图仍待补。
 3. **修复 `sys` 独立构建**：给 `sys` 的 `log` 依赖显式加 `features = ["std"]`（或 workspace `log` 统一声明），确保 `cargo test -p sys` 不依赖 feature 合并偶然通过；补输入/日志测试。
 4. **处理失效的根集成测试**：`tests/scenario_test.rs` / `tests/throw_test.rs` 针对旧 crate；要么删除/归档，要么重写为新 `core` + `render-api` 的 headless 测试。不要让 `cargo test --workspace` 长期失败。
 5. **建立 CI/本地门禁**：至少 `cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui`（修复后）+ `cargo clippy -p render-api -- -D warnings`；旧 crate 测试单独标记，不计入新代码门禁。

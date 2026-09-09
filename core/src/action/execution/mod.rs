@@ -18,6 +18,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::event::Events;
 
 /// 推进所有行动计时器：所有剩余 AV 同时减去当前最小正剩余值。
+///
+/// `remaining_av <= 0` 的实体插入 [`Ready`]，执行系统只处理 `With<Ready>`。
 pub fn tick_action_timers_system(world: &mut World) {
     let min = {
         let mut query = world.query_filtered::<&ActionTimer, With<Active>>();
@@ -26,22 +28,30 @@ pub fn tick_action_timers_system(world: &mut World) {
             .map(|timer| timer.remaining_av)
             .filter(|remaining| *remaining > 0.0)
             .min_by(|a, b| a.partial_cmp(b).expect("ActionTimer must not be NaN"))
-    };
-    let Some(min) = min else {
-        return;
+            .unwrap_or(0.0)
     };
 
-    let mut query = world.query::<&mut ActionTimer>();
-    for mut timer in query.iter_mut(world) {
-        if timer.remaining_av > 0.0 {
-            timer.remaining_av = (timer.remaining_av - min).max(0.0);
+    let mut ready_entities = Vec::new();
+    {
+        let mut query = world.query_filtered::<(Entity, &mut ActionTimer), With<Active>>();
+        for (entity, mut timer) in query.iter_mut(world) {
+            if timer.remaining_av > 0.0 {
+                timer.remaining_av = (timer.remaining_av - min).max(0.0);
+            }
+            if timer.remaining_av <= 0.0 {
+                ready_entities.push(entity);
+            }
         }
+    }
+
+    for entity in ready_entities {
+        world.entity_mut(entity).insert(Ready);
     }
 }
 
 pub fn execute_wait_system(world: &mut World) {
     let entities: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, (With<Active>, With<Wait>)>();
+        let mut query = world.query_filtered::<Entity, (With<Active>, With<Wait>, With<Ready>)>();
         query.iter(world).collect()
     };
     for entity in entities {
@@ -53,7 +63,7 @@ pub fn execute_wait_system(world: &mut World) {
 
 pub fn execute_move_system(world: &mut World) {
     let actions: Vec<(Entity, isize, isize)> = {
-        let mut query = world.query_filtered::<(Entity, &Move), With<Active>>();
+        let mut query = world.query_filtered::<(Entity, &Move), (With<Active>, With<Ready>)>();
         query
             .iter(world)
             .map(|(e, m)| (e, m.dx, m.dy))
@@ -74,7 +84,7 @@ pub fn execute_move_system(world: &mut World) {
 
 pub fn execute_basic_attack_system(world: &mut World) {
     let actions: Vec<(Entity, Entity)> = {
-        let mut query = world.query_filtered::<(Entity, &BasicAttack), With<Active>>();
+        let mut query = world.query_filtered::<(Entity, &BasicAttack), (With<Active>, With<Ready>)>();
         query
             .iter(world)
             .map(|(e, a)| (e, a.target))
@@ -102,7 +112,7 @@ pub fn execute_basic_attack_system(world: &mut World) {
 
 pub fn execute_chase_system(world: &mut World) {
     let actors: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, (With<Active>, With<Chase>)>();
+        let mut query = world.query_filtered::<Entity, (With<Active>, With<Chase>, With<Ready>)>();
         query.iter(world).collect()
     };
 
@@ -184,7 +194,7 @@ pub fn execute_chase_system(world: &mut World) {
 
 pub fn execute_flee_system(world: &mut World) {
     let actors: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, (With<Active>, With<Flee>)>();
+        let mut query = world.query_filtered::<Entity, (With<Active>, With<Flee>, With<Ready>)>();
         query.iter(world).collect()
     };
 
@@ -260,7 +270,7 @@ pub fn execute_flee_system(world: &mut World) {
 
 pub fn execute_wander_system(world: &mut World) {
     let actors: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, (With<Active>, With<Wander>)>();
+        let mut query = world.query_filtered::<Entity, (With<Active>, With<Wander>, With<Ready>)>();
         query.iter(world).collect()
     };
 
@@ -310,4 +320,48 @@ pub fn run_action_cycle(world: &mut World) {
     execute_chase_system(world);
     execute_flee_system(world);
     execute_wander_system(world);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn av_gate_only_executes_ready_actions() {
+        let mut world = World::new();
+        let ready = world
+            .spawn((Active, Wait, ActionTimer { remaining_av: 100.0 }))
+            .id();
+        let waiting = world
+            .spawn((Active, Wait, ActionTimer { remaining_av: 200.0 }))
+            .id();
+
+        tick_action_timers_system(&mut world);
+        assert!(world.get::<Ready>(ready).is_some());
+        assert!(world.get::<Ready>(waiting).is_none());
+
+        execute_wait_system(&mut world);
+        assert!(world.get::<Idle>(ready).is_some());
+        assert!(world.get::<Wait>(waiting).is_some());
+        assert!(world.get::<Active>(waiting).is_some());
+        assert_eq!(
+            world.get::<ActionTimer>(waiting).unwrap().remaining_av,
+            100.0
+        );
+    }
+
+    #[test]
+    fn zero_timer_is_marked_ready_without_positive_peers() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((Active, Wait, ActionTimer { remaining_av: 0.0 }))
+            .id();
+
+        tick_action_timers_system(&mut world);
+        assert!(world.get::<Ready>(entity).is_some());
+
+        execute_wait_system(&mut world);
+        assert!(world.get::<Idle>(entity).is_some());
+        assert!(world.get::<Ready>(entity).is_none());
+    }
 }

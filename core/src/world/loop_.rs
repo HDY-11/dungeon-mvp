@@ -28,17 +28,16 @@ pub fn player_is_busy(world: &World) -> bool {
     world.get::<Active>(entity).is_some()
 }
 
-fn any_active_entity(world: &mut World) -> bool {
-    let mut query = world.query_filtered::<Entity, With<Active>>();
-    query.iter(world).next().is_some()
-}
-
 fn advance_until_player_acted(world: &mut World) {
     for _ in 0..10_000 {
-        if !player_is_busy(world) || !any_active_entity(world) {
+        if !player_is_busy(world) || world.resource::<TurnManager>().game_over {
             break;
         }
+        // 每轮先为 Idle/Failure 的怪物生成新行动，再推进 AV、执行 Ready 行动并结算。
+        // 这样 AV 更小的快怪可以在玩家行动期间执行多次。
+        decide_monster_actions(world);
         run_action_cycle(world);
+        run_settle_systems(world);
     }
 }
 
@@ -62,8 +61,8 @@ pub fn apply_player_command(world: &mut World, command: PlayerCommand) -> bool {
     }
 
     advance_until_player_acted(world);
+    // 为下一轮准备怪物行动；本轮结算已在循环内完成。
     decide_monster_actions(world);
-    run_settle_systems(world);
     true
 }
 
@@ -80,4 +79,16 @@ pub fn mount_player_action(world: &mut World, entity: Entity, action: crate::act
 /// 当前是否有玩家实体存活。
 pub fn player_alive(world: &World) -> bool {
     crate::world::query::player_entity(world).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::generation::player::PlayerCommand;
+
+    #[test]
+    fn apply_wait_command_advances_without_panic() {
+        let mut world = new_game(7);
+        assert!(apply_player_command(&mut world, PlayerCommand::Wait));
+    }
 }

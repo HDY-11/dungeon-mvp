@@ -1710,6 +1710,24 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 ---
 
+### 🟡 D29 — 行动实体 + 速度组件：AV 系统与 `ActionKind` 的替代设计（草案）
+
+**问题：** 当前行动系统由 `ActionKind` 中央 enum + actor 上的 ZST 行动组件 + exclusive `&mut World` 系统组成；AV 计时器没有参与执行门禁，事件生命周期也不正确。继续加行动/行为会继续增加中央 match 和耦合。
+
+**决策草案：** 按 REFACTOR.md §3.6 改为 action 实体方案：
+
+- 一个行动 = 一个 actor 的子实体（`ChildOf` + `ActionPriority` + `ActionTimer` + ZST/payload + `Candidate/ActiveAction/Ready`）；
+- `Can*` 保持 actor 上的 ZST 组件，不子实体化；
+- 生成系统只 spawn 候选；仲裁系统唯一写入 actor 行动状态；执行系统按行动类型专用 query，零中央 match；completion 系统消费 `ActionSucceeded/FailedEvent`；
+- 删除 `ActionKind` 与 `mount_action` 中央 match；
+- 速度按 REFACTOR.md §2.6 改为 `MoveSpeed` / `AttackSpeed`，删除 `Agility`。
+
+**状态：** 草案；AV 门禁（I89）与事件生命周期（I90）已修；下一步 action entity PoC。
+
+**关联：** REFACTOR.md §2.6 / §3.6 / §10.6；ISSUES A41/A42/A43、I89/I90、G35。
+
+---
+
 ## 二、架构层面（Architecture）
 
 ### 🟡 A32 — dungeon-core 承载执行逻辑，违反「纯数据/纯查询」分层
@@ -1832,6 +1850,57 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 ---
 
+### 🟡 A41 — 玩法系统用 exclusive `&mut World` 代替正常系统
+
+**问题：** `action/execution/mod.rs` 的 tick/执行系统、`action/generation/ai.rs::decide_monster_actions`、`action/mod.rs::mount_action/finish_action_*`、`world/loop_.rs` 的推进函数都收 `&mut World`，手动 query/改实体/发事件；`run_action_cycle` 手动顺序调用系统。玩法逻辑被写成过程式代码，无法用 `Query`/`Commands`/`EventWriter` 组合，也无法并行。
+
+**影响：** 🟡 中高 — 阻断 action 实体方案（REFACTOR §3.6）的落地；每次新增行动/行为都要改多个 exclusive 函数。
+
+**位置：** `core/src/action/execution/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/mod.rs`、`core/src/world/loop_.rs`、`core/src/combat/mod.rs`（直接执行辅助）
+
+**状态：** 部分修复 — AV 门禁 / 事件生命周期已修（I89/I90）；exclusive `&mut World` 执行/生成系统仍待 action 实体方案（A42）改造。
+
+**关联：** REFACTOR.md §3.6 / §8.1；ISSUES A42、I89。
+
+---
+
+### 🟡 A42 — 删除 `ActionKind`：行动改为 action 子实体
+
+**问题：** `ActionKind` 是中央分派 enum，`mount_action` 对它做 match；新增行动要改 enum + 中央 match + 生成/执行分支。`REFACTOR.md §3.2–3.5` 描述的 `ActionIntent + 仲裁` 方案从未落地，当前 `ai.rs::choose_action` 是独占的 `if/else` 函数。
+
+**影响：** 🟡 中 — 扩展成本高；与 `Can*` + ZST + 专用 query 的 ECS 方向不一致。
+
+**决策：** 按 REFACTOR.md §3.6 改为 action 实体方案；`Can*` 保持组件；不再需要 `ActionKind`。
+
+**位置：** `core/src/action/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/generation/player.rs`、`core/src/world/loop_.rs`
+
+**状态：** 目标设计，未落地；I89/I90 已修，下一步 PoC（actor + Wander + Move），再迁移全部行动。
+
+**关联：** D29、REFACTOR.md §3.6。
+
+---
+
+### 🟡 A43 — 同类死抽象/重复表示清理
+
+**问题：** 与 `ActionKind` 同类的中央 token / 提前抽象 / 重复表示：
+
+- 身份 ZST `Rat/Scorpion/...` 由 `MonsterKindId` match 后插入，但无任何读取方；与 `MonsterKindId` 重复；
+- `CreatureKind` 无读取方；`EntityClass` 唯一读取是未迁移的 `Item` 判断；
+- `ActionSucceededEvent` / `ActionFailedEvent` 无人发/读；`DeathEvent` / `LevelUpEvent` 写入但无消费者；`ThreatEvent` / `ThreatTable` 占位未接线；
+- `BeAttacked` / `NeedRecordBeAttacked` 写入但无读取；`PendingExp` 是绕过 `DeathEvent` 的旁路；
+- `MeleeResult` + `prepare_attack_event` / `resolve_melee` / `damage_entity` 是死代码/重复战斗路径；
+- `MonsterStats` / `WorldInitConfig` 是低优先级中间层。
+
+**影响：** 🟡 中 — 死抽象让文档/代码看起来比实际复杂，且容易误以为扩展点已存在。
+
+**位置：** 见 REFACTOR.md §10.8 逐项清单。
+
+**状态：** 待用户逐项判断；原则是“每个保留的抽象必须有真实读取方/消费者”。
+
+**关联：** REFACTOR.md §10.8。
+
+---
+
 ## 三、实现层面（Implementation）
 
 ### 🟡 I24 — Buff/Skill 系统缺陷（子项 I24b/I24c 已关闭）
@@ -1851,6 +1920,92 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 **剩余缺口：** dungeon-render 0 测试；应用层（main.rs 装备/投掷 UI 流程）0 测试。
 
 **风险：** UI 流程（装备原子性 I58、投掷 Enter 验证 I59）依赖手动验证。
+
+---
+
+### I86 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复
+
+**问题：** `core/src/resources.rs:65` 写 `core::convert::Infallible`；doctest 编译时 `core::` 解析到本地 `core` crate 而非标准库，`cargo test -p core` 的 doctest 失败（单测为 0）。
+
+**影响：** 🟡 中 — `core` 的测试门禁不可用；crate 名 `core` 与 Rust 标准库同名是长期隐患。
+
+**位置：** `core/src/resources.rs:65`
+
+**状态：** ✅已修复（crate 改名仍待长期评估）。
+
+**修复：**
+
+- `core/src/resources.rs:65` 改为 `std::convert::Infallible`；
+- `core/src/schedule.rs` 的 `ScheduleLabel` 改为手写 impl（`derive` 宏展开会引用 `core::fmt` / `core::hash`，在 crate 名为 `core` 时被本地 crate 遮蔽）；
+- `cargo test -p core` 现在通过（3 个单测 + doctest）。
+
+**关联：** REFACTOR.md §10.6 第 1 项
+
+---
+
+### 🟡 I87 — `sys` 独立构建缺少 `log/std`
+
+**问题：** `sys/src/logger.rs:46` 调用 `log::set_boxed_logger`，但 `sys` 的 `log` 依赖没有显式启用 `std` feature；`cargo test -p sys` 独立编译失败。workspace 构建只是靠其他 crate 的 feature 合并偶然通过。
+
+**影响：** 🟡 中 — feature 合并依赖脆弱；`cargo test -p sys` 不能作为独立门禁。
+
+**位置：** `sys/Cargo.toml`、`sys/src/logger.rs:46`
+
+**状态：** 待修（§10.6 第 3 项）：给 `log` 显式加 `features = ["std"]`。
+
+---
+
+### 🟡 I88 — 根集成测试失效，`cargo test -p dungeon-app` 无法编译
+
+**问题：** `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧 `dungeon-*` 架构。`cargo test -p dungeon-app --no-run` 失败。
+
+**影响：** 🟡 中 — `cargo test --workspace` 长期失败；新 `core` 没有端到端测试目标。
+
+**位置：** `tests/scenario_test.rs`、`tests/throw_test.rs`、`Cargo.toml`
+
+**状态：** 待处理（§10.6 第 4 项）：删除/归档或重写为新 core + render-api 的 headless 测试。
+
+---
+
+### I89 — AV 门禁缺失：`ActionTimer` 未参与执行判断 ✅已修复
+
+**问题：** `tick_action_timers_system` 把所有 `Active` 计时器减去最小正剩余 AV，只有最快的一个归零；但 `execute_*_system` 的查询只有 `With<Active>` + 行动组件，没有检查 `remaining_av <= 0`。结果所有 `Active` 行动每轮都会执行，AV/敏捷/速度不控制执行顺序或频率。
+
+**影响：** 🔴 高 — 速度/AV 系统实际无效；REFACTOR.md / GAME.md 的 AV 描述与实现不符；在修复前更换速度公式没有意义。
+
+**位置：** `core/src/action/execution/mod.rs:21-38`（tick）、`:42-303`（execute_*）、`:305-313`（run_action_cycle）；`core/src/world/loop_.rs:36-43`（advance_until_player_acted）
+
+**修复：**
+
+- 新增 `Ready` 组件（`core/src/components.rs`）；`tick_action_timers_system` 在 `remaining_av <= 0` 时插入 `Ready`；
+- 所有 `execute_*_system` 查询加 `With<Ready>`；`mount_action` / `finish_action_*` / `player.rs::mount_player_action` 清理 `Ready`；
+- `advance_until_player_acted` 每轮生成怪物行动 + tick/执行 + 结算，快怪可以在玩家行动期间执行多次；
+- 回归测试：`action::execution::tests::av_gate_only_executes_ready_actions`、`zero_timer_is_marked_ready_without_positive_peers`。
+
+**状态：** ✅已修复。
+
+**关联：** A41、A42、G35。
+
+---
+
+### I90 — 事件生命周期错误：`EventReader` 每轮重读历史事件 ✅已修复
+
+**问题：** `build_core_schedule()` / `run_settle_systems()` 每次调用都新建 Schedule，`EventReader` 游标随之归零；同时 `insert_core_resources` 只注册 `Events<T>`，从未调用 `Events::update()`。因此每轮结算都会重读历史上所有 `AttackIntentEvent` / `AttackEvent`，旧伤害被反复结算，事件缓冲无限增长。
+
+**影响：** 🔴 高 — 战斗结果不可信（伤害重复、死亡日志重复、内存增长）；任何基于事件的扩展点都不可靠。
+
+**位置：** `core/src/system/mod.rs:257-282`（build_core_schedule/run_settle_systems）、`core/src/world/init.rs:70-76`（Events 注册）、`core/src/world/init.rs:393-416`（build_init_schedule/run_initialization）
+
+**修复：**
+
+- `insert_core_resources` 注册持久 Schedule（`CoreInitSchedule` / `CoreSettleSchedule`）；
+- `build_core_schedule` 使用 `Schedule::new(CoreSettleSchedule)`，`run_settle_systems` 用 `world.run_schedule(CoreSettleSchedule)`，不再每轮重建；
+- 新增 `update_events_system` 在结算末尾对 7 种事件调用 `Events::update()`；
+- 回归测试：`system::tests::settle_does_not_reapply_old_events`。
+
+**状态：** ✅已修复。
+
+**关联：** A41、REFACTOR.md §3.6.8 / §5。
 
 ---
 
@@ -1902,6 +2057,27 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 **状态：** Won't Fix — MVP 范围决策。触发条件：怪物种类 ≥8 或武器类型 ≥3 时重新评估。
 
 **位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
+
+### 🟡 G35 — 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed`
+
+**问题：** 当前 `Agility` 同时承担“反应时”和“耗时修正”，公式为 `AV = max(100 - agility*3, 20) + duration * max(1 - agility*0.02, 0.5)`。它把速度绑在一个聚合数值上，装备/防具/Buff 无法分别影响移动与攻击节奏；且 I89 修复前该公式对执行没有实际影响。
+
+**决策（REFACTOR.md §2.6）：** 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）：
+
+- `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`；
+- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 duration（或后续 `WaitSpeed`，待定）；
+- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；
+- 玩家/怪物模板按旧敏捷映射初值，再用 GAME.md `[⃞试调]` 校准。
+
+**影响：** 🟡 中 — 平衡改动，不是等价重构；必须先修 I89（AV 门禁），否则速度不影响行为；需同步 GAME.md（反应时/耗时章节、玩家/怪物敏捷表、武器速度章节）、DESIGN.md、REFACTOR.md §2.6/§10。
+
+**位置：** `core/src/components.rs:171`、`core/src/balance.rs:21-48`、`core/src/world/init.rs:112`、`core/src/monster/mod.rs`（模板/`MonsterStats`）、`core/src/action/generation/player.rs:38/87`、`core/src/action/generation/ai.rs:78-87`
+
+**状态：** 待实现（第 4 步）；先完成 I89 + core 冒烟测试，再双轨迁移。
+
+**关联：** D29、I89、REFACTOR.md §2.6 / §3.6.7。
+
+---
 
 ## 其他
 

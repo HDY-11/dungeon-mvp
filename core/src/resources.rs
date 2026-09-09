@@ -62,7 +62,7 @@ impl GameRng {
 }
 
 impl rand::rand_core::TryRng for GameRng {
-    type Error = core::convert::Infallible;
+    type Error = std::convert::Infallible;
 
     fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         Ok(self.xorshift_next() as u32)

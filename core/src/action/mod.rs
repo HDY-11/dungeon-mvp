@@ -31,6 +31,7 @@ pub fn mount_action(world: &mut World, entity: Entity, action: ActionKind, av: f
     entity_mut.remove::<Failure>();
     entity_mut.remove::<Active>();
     entity_mut.remove::<ActionTimer>();
+    entity_mut.remove::<Ready>();
     entity_mut.insert(Active);
     entity_mut.insert(ActionTimer { remaining_av: av.max(0.0) });
 
@@ -86,4 +87,5 @@ fn clear_action_state(world: &mut World, entity: Entity) {
     let mut entity_mut = world.entity_mut(entity);
     entity_mut.remove::<Active>();
     entity_mut.remove::<ActionTimer>();
+    entity_mut.remove::<Ready>();
 }

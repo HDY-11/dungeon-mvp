@@ -19,8 +19,9 @@ use crate::map::{
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::monster::{monster_template, roll_one_kind, MonsterKindId};
 use crate::resources::*;
+use crate::schedule::CoreInitSchedule;
 use crate::system::{
-    fov_system, rebuild_occupancy_system, update_map_memory_system,
+    build_core_schedule, fov_system, rebuild_occupancy_system, update_map_memory_system,
     update_visible_memory_system,
 };
 use bevy_ecs::prelude::*;
@@ -74,6 +75,10 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ThreatEvent>::default());
+
+    // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
+    world.add_schedule(build_init_schedule());
+    world.add_schedule(build_core_schedule());
 
     log::info!("core 资源初始化完成: seed={}", config.map_seed);
 }
@@ -391,7 +396,7 @@ pub fn spawn_monsters_system(
 // ── 初始化调度 ───────────────────────────────────────
 
 pub fn build_init_schedule() -> Schedule {
-    let mut schedule = Schedule::default();
+    let mut schedule = Schedule::new(CoreInitSchedule);
     schedule.add_systems(
         (
             generate_map_system,
@@ -411,6 +416,5 @@ pub fn build_init_schedule() -> Schedule {
 /// 运行完整首次初始化。
 pub fn run_initialization(world: &mut World, map_seed: u64) {
     insert_core_resources(world, WorldInitConfig { map_seed });
-    let mut schedule = build_init_schedule();
-    schedule.run(world);
+    world.run_schedule(CoreInitSchedule);
 }

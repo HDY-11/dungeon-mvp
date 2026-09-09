@@ -228,6 +228,14 @@ pub struct ActionTimer {
     pub remaining_av: f64,
 }
 
+/// 当前行动的 AV 已归零，可以执行。
+///
+/// 由 `tick_action_timers_system` 在 `remaining_av <= 0` 时插入；
+/// 执行系统只处理 `With<Ready>` 的实体；`finish_action_*` / `mount_action`
+/// 会清理它。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Ready;
+
 // ── 能力组件（纯标记） ───────────────────────────────
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]

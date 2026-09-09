@@ -8,13 +8,17 @@ use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
 use crate::combat::compute_melee_damage;
 use crate::components::*;
 use crate::entity_cls::{EntityClass, Player, Stairs};
-use crate::events::{AttackEvent, AttackIntentEvent, DeathEvent, LevelUpEvent};
+use crate::events::{
+    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
+    LevelUpEvent, ThreatEvent,
+};
 use crate::spatial::fov::calculate_visible_tiles;
 use crate::map::Map;
 use crate::resources::{
     EventLog, EventMessage, GameRng, MapMemory, OccupancyMap, PendingExp, TurnManager,
     VisibleMemory,
 };
+use crate::schedule::CoreSettleSchedule;
 use bevy_ecs::prelude::*;
 use std::collections::HashSet;
 
@@ -255,9 +259,34 @@ pub fn rebuild_occupancy_system(
 
 // ── Schedule 与便捷入口 ──────────────────────────────
 
-/// 构建标准结算 Schedule。调用方可在前后插入自己的系统。
+/// 每轮结算末尾更新所有事件缓冲。
+///
+/// 必须在所有 `EventReader` 之后运行：它交换双缓冲并清理旧事件，
+/// 防止下一轮重新读取历史事件。
+pub fn update_events_system(
+    mut attack_intents: ResMut<Events<AttackIntentEvent>>,
+    mut attack_events: ResMut<Events<AttackEvent>>,
+    mut death_events: ResMut<Events<DeathEvent>>,
+    mut level_up_events: ResMut<Events<LevelUpEvent>>,
+    mut action_succeeded: ResMut<Events<ActionSucceededEvent>>,
+    mut action_failed: ResMut<Events<ActionFailedEvent>>,
+    mut threat_events: ResMut<Events<ThreatEvent>>,
+) {
+    attack_intents.update();
+    attack_events.update();
+    death_events.update();
+    level_up_events.update();
+    action_succeeded.update();
+    action_failed.update();
+    threat_events.update();
+}
+
+/// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。
+///
+/// `insert_core_resources` 会把它注册到 `World`；调用方可通过
+/// `world.get_schedule_mut(CoreSettleSchedule)` 在前后插入自己的系统。
 pub fn build_core_schedule() -> Schedule {
-    let mut schedule = Schedule::default();
+    let mut schedule = Schedule::new(CoreSettleSchedule);
     schedule.add_systems(
         (
             resolve_attack_system,
@@ -269,6 +298,7 @@ pub fn build_core_schedule() -> Schedule {
             update_map_memory_system,
             update_visible_memory_system,
             rebuild_occupancy_system,
+            update_events_system,
         )
             .chain(),
     );
@@ -276,7 +306,43 @@ pub fn build_core_schedule() -> Schedule {
 }
 
 /// 直接运行一次核心结算系统。
+///
+/// Schedule 已由 `insert_core_resources` 注册；这里只按 label 运行，
+/// 不重新构建，因此 `EventReader` 游标等系统状态会跨轮保留。
 pub fn run_settle_systems(world: &mut World) {
-    let mut schedule = build_core_schedule();
-    schedule.run(world);
+    world.run_schedule(CoreSettleSchedule);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{Attack, CritDamage, CritRate, Defense, Health};
+    use crate::events::AttackIntentEvent;
+
+    #[test]
+    fn settle_does_not_reapply_old_events() {
+        let mut world = crate::world_loop::new_game(42);
+        let attacker = world
+            .spawn((Attack(10.0), CritRate(0.0), CritDamage(0.0)))
+            .id();
+        let target = world.spawn((Health::new(100.0), Defense(0.0))).id();
+
+        world
+            .resource_mut::<Events<AttackIntentEvent>>()
+            .send(AttackIntentEvent { attacker, target });
+
+        run_settle_systems(&mut world);
+        let hp_after_first = world.get::<Health>(target).unwrap().current;
+        run_settle_systems(&mut world);
+        let hp_after_second = world.get::<Health>(target).unwrap().current;
+
+        assert!(
+            hp_after_first < 100.0,
+            "first settle should apply the attack"
+        );
+        assert_eq!(
+            hp_after_first, hp_after_second,
+            "old AttackIntentEvent must not be re-read on the next settle"
+        );
+    }
 }

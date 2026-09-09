@@ -100,6 +100,7 @@ fn mount_player_action(
         .remove::<Failure>()
         .remove::<Active>()
         .remove::<ActionTimer>()
+        .remove::<Ready>()
         .remove::<Wait>()
         .remove::<Move>()
         .remove::<BasicAttack>()
