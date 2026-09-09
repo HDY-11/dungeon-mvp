@@ -26,6 +26,7 @@ members = [
     "dungeon-render",
     "terrain-forge",
     "core",
+    "render-api",
     "utils",
     "sys",
     "tui",
@@ -34,3 +35,4 @@ members = [
 [workspace.dependencies]
 log = "0.4"
 bevy_ecs = "0.16"
+render-api = { path = "render-api" }

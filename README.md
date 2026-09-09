@@ -33,6 +33,19 @@ src/                      ← 旧应用层（历史参考）
 terrain-forge/            ← 地图生成子模块（按需保留）
 ```
 
+渲染契约（新增，见 [DESIGN.md Dsn26](DESIGN.md)）：
+
+```
+render-api/               ← 后端无关的只读数据契约
+  scene.rs                ← SceneFrame：每帧从 ECS 提取的场景快照
+  visual.rs               ← VisualKey / VisualLayer：语义外观键与渲染层级
+  ui.rs                   ← UiView：页面级视图模型
+  input.rs                ← InputEvent / InputQueue / SurfaceInfo：后端无关输入与表面尺寸
+```
+
+- `tui` / 未来的 `gpu` 只依赖 `render-api`，不依赖 `core`；
+- `presentation`（下一步）负责把 `core` 提取成 `SceneFrame`。
+
 ## 行动模型（core 方向）
 
 采用 **ECS 原生组件模型**，不再使用全局 `ActionQueue`：
