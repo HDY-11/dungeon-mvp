@@ -371,6 +371,8 @@ sys::spawn_key_source()
 - 掉落表
 - 下楼（descend）、存档读档
 
+各模块的稳定等级、测试基线与冻结清单见 **§10 新代码稳定程度**。
+
 ---
 
 ## 9. 设计理由摘要
@@ -381,3 +383,111 @@ sys::spawn_key_source()
 - **事件驱动战斗**：意图与结果分离，死亡、经验、日志、威胁都能独立演化。
 - **组件式授权**：`Can*` 表达能力，新增行为不修改统一决策流程。
 - **不恢复全局 World**：继续显式 `&World / &mut World` 参数传递，由借用检查器防止重入与死锁。
+
+
+---
+
+## 10. 新代码稳定程度（进入渲染/插件重构前的基线）
+
+> 本节只评价**新代码**：`core`、`utils`、`sys`、`tui`、`render-api`、根 crate `dungeon-app`。
+> 旧 `dungeon-*` 与 `src/pages` 不在承诺范围内（见 §8：历史参考）。
+> 基线：refactor 分支，`render-api` v1 落地后。
+
+### 10.1 稳定度等级
+
+| 等级 | 含义 | 变更政策 |
+|---|---|---|
+| **S0 冻结** | 已定型，只允许 bug 修复 | 破坏性改动需要迁移方案 + DESIGN 记录 |
+| **S1 稳定** | 语义/API 基本确定 | 以追加为主；破坏性改动需 DESIGN + 测试更新 |
+| **S2 可用但会变** | 当前可用，但已知下半重构会改 API | 调用方需预期迁移；不要在其上做深度封装 |
+| **S3 过渡/临时** | 只服务当前闭环，计划替换/删除 | 禁止在其上构建新功能 |
+| **S4 未迁移/占位** | 类型/接口存在但无实现或明确未迁 | 不得依赖；UI 页面不得假装它可用 |
+
+### 10.2 总览
+
+| 范围 | 等级 | 稳定的是 | 会变的是 | 测试基线 |
+|---|---|---|---|---|
+| `render-api` | **S1（契约）** | `SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的只读契约方向；`CONTRACT_VERSION = 1`；34 个测试 | 首个消费者（presentation/tui）落地前字段可能调整；破坏性改动必须递增版本 | ✅ 34 |
+| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | 公共 API 目前 `pub use *` 全暴露；调度入口可能被插件包装；物品/技能等会追加 | ⚠️ 0 单测 |
+| `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 会改成注册式 Schedule | ❌ doctest 失败 |
+| `utils` | **S1** | 无业务依赖的通用工具 | 基本不变；缺测试 | ⚠️ 0 |
+| `sys` | **S2** | 终端/文件/日志的 OS 封装可用 | 输入 API 从 `Receiver<KeyCode>` 改为 `InputQueue`；终端生命周期可能移入 `TuiPlugin`；`log/std` 依赖需显式声明 | ❌ 独立编译失败 |
+| `tui` | **S3** | 当前能渲染最小闭环 | `scene.rs` 提取移到 `presentation`；`render.rs` 改为消费 `SceneFrame`；`state.rs` UI 状态移到 `presentation`；`render_game` / `extract_scene` 会删除 | ⚠️ 0 |
+| `dungeon-app`（根） | **S3** | 当前 main 循环可跑通 | 将被 `App` + `Plugin` + `ScheduleRunnerPlugin` 替换；`keymap.rs` / `throw.rs` 是旧应用层代码；旧集成测试已失效 | ❌ 测试目标编译失败 |
+| 旧 `dungeon-*` / `src/pages` | **S4** | 仅历史参考 | 不再扩展；迁移完成后删除/归档 | 旧测试不属于新代码 |
+| `terrain-forge` | **S1（外部）** | 地图生成引擎接口 | 上游变更可能影响地图确定性；由 `(seed, floor)` 锁定行为 | 新 core 无专项测试 |
+
+### 10.3 `core` 细分
+
+| 模块 | 等级 | 说明 |
+|---|---|---|
+| `components.rs` | S1 | `Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/Agility/CritRate/CritDamage` 等细粒度组件；数值 `f64`。组件名/语义是下半重构的冻结项；新增字段必须追加并考虑 serde。 |
+| `entity_cls.rs` | S1 | `EntityClass` / `CreatureKind` 范畴 + `Player/Monster/Stairs` 等 ZST marker。`Item/Buff` 等范畴是 S4 占位。 |
+| `events.rs` | S1 | `AttackIntentEvent -> AttackEvent -> DeathEvent -> LevelUpEvent` 事件链稳定；`ThreatEvent` 是 S4 接口占位。 |
+| `resources.rs` | S1 | `GameRng`（确定性 xorshift64* + steps，回放/存档语义）、`MapMemory`、`VisibleMemory`、`OccupancyMap`、`EventLog`、`TurnManager`、`PendingExp`、`MapSeed`、`FloorNumber`。`ThreatTable` 是 S4。 |
+| `map/` | S1（含 serde 兼容约束） | `Tile` 以 u8 0..10 序列化，**只能末尾追加**；`MapKind` 变体只能末尾追加；`Map/Room` 新字段用 `#[serde(default)]`。`Tile::glyph()` 属于显示数据，后续会移到 TUI catalog，不要当领域契约。 |
+| `spatial/` | S1 | FOV / LOS / A* 纯函数；行为稳定，但新 core 无专项测试。 |
+| `action/` | S2 | 生成/仲裁/执行三段式与 `Idle/Active/Failure` 状态机稳定；`ActionKind` 目前只有 `Wait/Move/BasicAttack/Chase/Flee/Wander`，`PlayerCommand` 只有 `Move/Wait`，后续会追加。 |
+| `combat/` | S1 | 近战伤害/暴击公式；新增技能/远程会复用，不改现有公式语义。 |
+| `monster/` | S1（serde 兼容约束） | `MonsterKindId` 变体只能末尾追加；`MonsterTemplate` 含 glyph/color（显示数据，后续移出）；数值公式可调但需 GAME.md 记录。 |
+| `system/` | S2 | 系统本身稳定；`build_core_schedule()` 每次新建 Schedule，插件化后会改成注册式；调用方应优先用 `run_settle_systems` 包装。 |
+| `world/init.rs` | S2 | `run_initialization` 是应用入口；`build_init_schedule()` 同上，插件化后改注册式。 |
+| `world/loop_.rs` | S2 | 应用层入口 `new_game / apply_player_command / request_quit`；语义稳定（回合制、命令驱动），API 可能被 `CorePlugin` 包装。 |
+| `world/query.rs` | S1 | 只读查询辅助函数。 |
+| `balance.rs` | S1 | 数值公式；具体值可能随 GAME.md 调整，公式结构稳定。 |
+| 物品/背包/装备/buff/技能/掉落/下楼/存档 | **S4** | 明确未迁移；UI 页面（Inventory/Throw 等）不得假装可用。 |
+
+### 10.4 测试与构建基线（本轮实测）
+
+| 命令 | 结果 | 说明 |
+|---|---|---|
+| `cargo check --workspace --offline` | ✅ | lib/bin 目标通过 |
+| `cargo test -p render-api --offline` | ✅ 34 | 30 单测 + 4 集成 |
+| `cargo clippy -p render-api --all-targets -- -D warnings` | ✅ | 0 警告 |
+| `cargo test -p utils --offline` | ⚠️ 0 | 编译通过，无测试 |
+| `cargo test -p tui --offline` | ⚠️ 0 | 编译通过，无测试 |
+| `cargo test -p core --offline` | ❌ | 单测 0；doctest 因 `core::convert::Infallible` 失败（crate 名 `core` 与标准库 `core` 冲突） |
+| `cargo test -p sys --offline` | ❌ | `log::set_boxed_logger` 被 `log/std` feature 门禁；workspace 构建因 feature 合并偶然通过 |
+| `cargo test -p dungeon-app --offline --no-run` | ❌ | 旧集成测试 `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧架构 |
+| `cargo clippy -p core --all-targets -- -D warnings` | ❌ | 既有 `too_many_arguments` / `type_complexity`（rustc 1.95 / clippy 1.95，与本轮改动无关） |
+| 旧 crate 测试（dungeon-core/action/world/render） | ✅（旧架构） | 只覆盖旧实现，不能作为新 `core` 的回归保障 |
+
+结论：**新代码里只有 `render-api` 有可观的测试覆盖；`core` 是“迁移完成但未被测试保护”的状态。** 进入下半前，`core` 至少要有冒烟级回归，否则 presentation/tui 一旦改到 core 边界，没有自动信号。
+
+### 10.5 进入下半前的冻结清单（presentation/tui 期间）
+
+冻结（只允许追加/修 bug，不允许重命名/重排/改语义）：
+
+- `core` 组件/资源/事件的**名称与语义**：`Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/Agility/CritRate/CritDamage`；`Player/Monster/Stairs` marker；`Idle/Active/Failure`、`Can*`、`ActionTimer`、`Wait/Move/BasicAttack/Chase/Flee/Wander`。
+- `core` 资源：`Map/MapSeed/FloorNumber/GameRng/MapMemory/VisibleMemory/OccupancyMap/EventLog/TurnManager/PendingExp`。
+- `core` 事件：`AttackIntentEvent/AttackEvent/DeathEvent/LevelUpEvent`。
+- serde 兼容：`Tile` u8 0..10、`MonsterKindId` 变体、`MapKind` 变体只能末尾追加；新字段 `#[serde(default)]`。
+- `core::world_loop::{new_game, apply_player_command, request_quit}` 的调用语义（名字可保留兼容包装）。
+- `render-api` v1 契约：`SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的字段可以追加；破坏性改动递增 `CONTRACT_VERSION`。
+- 架构边界：`core` 不依赖 `bevy_app` / ratatui / wgpu / `render-api` / `presentation`；`tui` / `gpu` 不依赖 `core`。
+
+允许/预期变更（不要在新代码里深度依赖）：
+
+- `tui` 的 `scene.rs` / `render.rs` / `state.rs` 会被拆解/删除；
+- `sys` 的 `Receiver<KeyCode>` 输入 API 会被 `InputQueue` 取代；
+- 根 `main.rs` 会被 `App` / `Plugin` / runner 替换；
+- `core` 的 `build_init_schedule` / `build_core_schedule` 会改成注册式 Schedule；
+- `core` 的 `pub use *` 公共面可能收紧；
+- 旧 `dungeon-*` / `src/pages` 不再维护。
+
+### 10.6 进入下半前建议处理（按优先级）
+
+1. **修复 `core` doctest 失败**：`core::convert::Infallible` → `std::convert::Infallible`（或 `::core::convert::Infallible`）；确认 `cargo test -p core` 至少 doctest 通过。长期考虑把 crate 改名为 `game-core` / `domain`，避免与标准库 `core` 同名。
+2. **给 `core` 加冒烟回归**：地图生成确定性（同 seed 同结果）、玩家移动/攻击/等待、怪物行动推进、死亡→经验→升级、FOV/记忆/占用图。哪怕只有 5–8 个测试，也能给下半重构提供安全网。
+3. **修复 `sys` 独立构建**：给 `sys` 的 `log` 依赖显式加 `features = ["std"]`（或 workspace `log` 统一声明），确保 `cargo test -p sys` 不依赖 feature 合并偶然通过；补输入/日志测试。
+4. **处理失效的根集成测试**：`tests/scenario_test.rs` / `tests/throw_test.rs` 针对旧 crate；要么删除/归档，要么重写为新 `core` + `render-api` 的 headless 测试。不要让 `cargo test --workspace` 长期失败。
+5. **建立 CI/本地门禁**：至少 `cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui`（修复后）+ `cargo clippy -p render-api -- -D warnings`；旧 crate 测试单独标记，不计入新代码门禁。
+6. **`render-api` 消费验证**：presentation/tui 接上后，补 `SceneFrame` golden 测试 + `TestBackend` 渲染快照；确认 `VisualKey` payload 映射与 core 实际枚举一致。
+
+### 10.7 兼容性与确定性规则
+
+- **无存档承诺**：新 `core` 尚未迁移存档；旧 `dungeon-world` 的存档格式不兼容新组件。在存档迁移完成前，不要对外承诺“新 core 可读旧档”。
+- **serde 只追加**：已 derive serde 的类型（`Tile` / `MapKind` / `MonsterKindId` / `Map` / `Room` 等）不得重排变体、不得复用旧判别值；新增字段用 `#[serde(default)]`。
+- **确定性随机**：`GameRng` 的算法与 `steps` 语义是回放/存档基础；改变算法必须视为存档格式变更。
+- **地图确定性**：`generate_map_from_seed` 对 `(MapSeed, FloorNumber)` 必须确定；修改地图生成算法会改变同 seed 地图，需要 DESIGN 记录 + golden seed 测试。
+- **显示数据不属于领域**：`Tile::glyph`、`MonsterTemplate::glyph/color` 等是渲染数据，后续迁移到 `presentation` / `tui` catalog；不要把它们当 core 稳定契约。
