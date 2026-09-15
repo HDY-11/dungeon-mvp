@@ -280,6 +280,11 @@ Candidate / ActiveAction / Ready  ← 生命周期标记
 Move { dx, dy } / BasicAttack { target } / Flee / Chase / Wander / Wait
 ```
 
+> **实现注记（Phase B）：** 实际落地为 `ActionPriority(i32)`，仲裁取 `(ActionPriority, to_bits())`
+> 的**最小**者，因此 §3.5 的 200/100/50/0 单调映射为 `-200/-100/-50/0`（常量
+> `PRIORITY_FLEE/CHASE/WANDER/WAIT`）。这样“优先级高 = 数值小”与“同优先级取小 bits”
+> 共用同一个比较方向，避免两套方向混用出错。
+
 - action 实体是“意图”和“正在执行的行动”的统一表示：
   - `Candidate`：生成系统产出、等待仲裁；
   - `ActiveAction`：仲裁选中、等待/正在执行；
@@ -767,12 +772,12 @@ sys::spawn_key_source()
 
 | 阶段 | 内容 | 依赖 | 主要产物 | 验收 |
 |---|---|---|---|---|
-| **A** | core 冒烟测试 | I89/I90 已修 | 地图确定性、移动/攻击、死亡/经验、FOV/记忆/占用图测试 | `cargo test -p core` ≥ 10 通过 |
-| **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | PoC 测试通过；不接主循环 |
+| **A** | core 冒烟测试 | I89/I90 已修 | 地图确定性、移动/攻击、死亡/经验、FOV/记忆/占用图测试 | ✅ `cargo test -p core` 4 → 18 通过（commit 95449a9） |
+| **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | ✅ `core/src/action/entity.rs` + 9 个 PoC 测试；未接主循环 |
 | **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | 行为 parity 测试通过；无 `ActionKind` 引用 |
 | **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | 无 `Agility` 引用；AV 单调/clamp 测试通过 |
 | **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | 每个保留抽象有真实读取方/消费者 |
-| **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | `cargo test --workspace` 通过或明确排除 |
+| **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
 | **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | 见早前渲染方案 |
 
 ```text
@@ -796,19 +801,31 @@ A ──▶ F（并行）
 
 **注意：** `core` crate 名与标准库 `core` 同名；新增测试优先用单元测试（`#[cfg(test)]`），不新增依赖 `core::` 的 doctest。
 
-#### Phase B — action 实体 PoC
+#### Phase B — action 实体 PoC（✅ 已完成）
 
-| 编号 | 任务 | 位置 | 验收 |
-|---|---|---|---|
-| B1 | 定义 action 实体组件：`ActionPriority(u32)`、`ActionTimer`（复用）、`Candidate`、`ActiveAction`、`Ready`（复用） | `core/src/action/entity.rs`（新模块） | 组件可插入/查询 |
-| B2 | `wander_generation_system`：actor 满足 `CanWander`、`Idle/Failure`、`Without<Active>` 时 `Commands::spawn((ChildOf(actor), ActionPriority(50), ActionTimer{...}, Candidate, Wander))` | 同上 | 只 spawn 候选，不改 actor 状态 |
-| B3 | `action_arbitration_system`：按 `ChildOf.parent()` 分组，选 `(ActionPriority, entity.to_bits())` 最大者，winner 去 `Candidate` 加 `ActiveAction`，actor 加 `Active`，loser despawn | 同上 | 每个 actor 至多一个 `ActiveAction` |
-| B4 | `tick_action_timers_system`（action 实体版）：只推进 `With<ActiveAction>`，归零加 `Ready` | 同上 | 未归零不执行 |
-| B5 | `execute_move_system`（action 实体版）：`Query<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>`，移动 actor，成功/失败发 `ActionSucceeded/FailedEvent` | 同上 | actor `Position` 只变一次 |
-| B6 | `action_completion_system`：消费事件，despawn action 实体，actor 回 `Idle`/`Failure` | 同上 | 无残留 `ActiveAction`/候选子实体 |
-| B7 | PoC 测试：手建 actor + `CanWander`，跑上述系统链若干轮，断言“生成 → 仲裁 → Ready → 移动 → 完成”，并检查 loser despawn | `core/src/action/entity.rs` 测试 | 全链路通过 |
+> **落地记录（commit 待补）：** `core/src/action/entity.rs` + 测试拆到 `core/src/action/entity_tests.rs`；
+> 调度标签 `ActionPocSchedule`（`core/src/schedule.rs`），由 `build_action_poc_schedule()` 构建，**未接主循环**。
 
-**约束：** PoC 不接主循环、不删旧系统；先证明 action 实体方案可行。
+| 编号 | 任务 | 落地情况 |
+|---|---|---|
+| B1 | action 实体组件 | ✅ `ActionPriority(i32)`（取**最小**者胜出，与 §3.5 的 200/100/50/0 单调对应）、`ActionSource`、`Candidate`、`ActiveAction`、`ActionName`；`ActionTimer` / `Ready` 复用 `components.rs` |
+| B2 | 生成系统 | ✅ `wander_generation_system` + `flee_generation_system`（后者让仲裁真的需要比较优先级）；两者只 spawn 候选，不写 actor 状态 |
+| B3 | 仲裁系统 | ✅ 按 `ChildOf::parent()` 分组，赢家取 `(ActionPriority, action_entity.to_bits())` 最小者；先剔除“已有 `ActiveAction` 的 actor”的候选（`Without<ActiveAction>` 挡不住这种情况）；loser 一律 despawn |
+| B4 | Tick | ✅ 只推进 `With<ActiveAction>`；与旧 tick 同一「最小正 AV」口径；归零加 `Ready` |
+| B5 | 执行系统 | ✅ `execute_wander_system`（参数化系统，随机 8 方向 + 碰撞检查）与 `execute_move_system`（**exclusive `&mut World`**，见下）；只发 `ActionSucceeded/FailedEvent`，不回收实体 |
+| B6 | completion | ✅ 消费两个事件 → despawn 该 actor 的 action 实体 → actor 回 `Idle`/`Failure`；`ActionSucceeded/FailedEvent` 从死事件变成真实状态回转机制 |
+| B7 | PoC 测试 | ✅ 9 个（全链路 / 优先级 / 平局 / 忙碌 actor / 生成不写状态 / 不重复生成 / 低血双候选 / 低血仲裁到 Flee / 玩家不被 AI 生成）+ 1 个旧路径对照测试 |
+
+**PoC 结论与遗留：**
+
+- 链路可行：生成 → 仲裁 → tick → 执行 → completion 全通，无残留 action 子实体、无 actor 卡在 `Active`。
+- **`execute_move_system` 仍是 exclusive `&mut World`**：`movement::execute_move` 直接改 `World`，
+  action 实体 → actor 位置的读写在普通 `Query` 里无法安全表达。Phase C 需二选一：
+  把移动规则改写成参数化系统（推荐，`can_move_to` 已是纯函数），或接受 exclusive 执行器并收窄 A41 的范围。
+- `ActiveAction` 在 actor 行动的那一轮内就被执行并回收，所以“一个 actor 至多一个 `ActiveAction`”
+  只能在**仲裁之后、执行之前**断言（测试已按相位拆开）。
+
+**约束复核：** PoC 未接主循环、未删旧系统、未触碰 §10.8/A43 死抽象清单。
 
 #### Phase C — 全量行动迁移
 

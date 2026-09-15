@@ -2091,9 +2091,9 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** `core/src/action/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/generation/player.rs`、`core/src/world/loop_.rs`
 
-**状态：** 目标设计，未落地；I89/I90 已修，下一步 PoC（actor + Wander + Move），再迁移全部行动。
+**状态：** 部分落地 — **Phase B（action 实体 PoC）已完成**：`core/src/action/entity.rs` 实现 `ActionPriority` / `ActionSource` / `Candidate` / `ActiveAction` / `ActionName` + 生成（Wander/Flee）/ 仲裁（全序 `(priority, to_bits())`）/ tick（`Ready` 门禁）/ 执行（`Move` exclusive + `Wander` 参数化）/ completion（消费 `ActionSucceeded/FailedEvent` 并回收 action 实体）全链路，9 个 PoC 测试通过；旧模型（`ActionKind` / `mount_action` / `choose_action`）**仍在使用且未删除**——PoC 未接主循环，删除留到 Phase C（逐行动迁移 Wait → Move → BasicAttack → Wander → Chase → Flee）。
 
-**关联：** D29、REFACTOR.md §3.6。
+**关联：** D29、REFACTOR.md §3.6 / §11.3 Phase B。
 
 ---
 

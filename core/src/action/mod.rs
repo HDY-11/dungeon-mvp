@@ -1,13 +1,22 @@
 //! 行动模型：行动类型、挂载与状态轮转。
 //!
 //! 具体执行系统位于 `execution`；生成系统位于 `generation`。
+//! `entity` 是 action 子实体方案（REFACTOR §3.6）的 PoC，Phase B 期间与旧模型并存、
+//! 不接主循环。
 
 use crate::components::*;
 use bevy_ecs::prelude::*;
 
+pub mod entity;
 pub mod execution;
 pub mod generation;
 
+// entity 模块的**系统**与旧 `execution` 重名（Phase B 期间两套模型并存），
+// 因此这里只重导出数据组件与优先级常量，系统一律用 `action::entity::*` 全路径。
+pub use entity::{
+    ActionName, ActionPriority, ActionSource, ActiveAction, Candidate, PRIORITY_CHASE,
+    PRIORITY_FLEE, PRIORITY_WAIT, PRIORITY_WANDER,
+};
 pub use execution::*;
 pub use generation::*;
 

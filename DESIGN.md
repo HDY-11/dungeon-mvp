@@ -812,7 +812,13 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；§11.6 已按推荐确认（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。下一步 Phase A 冒烟测试，之后 action entity PoC。
+**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；§11.6 已按推荐确认（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
+
+**进展（Phase A/B）：**
+
+- Phase A：core 冒烟测试补齐（地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 / 快怪多动），`cargo test -p core` 从 4 → 18 个测试（ISSUES P9）。
+- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路，9 个测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。**PoC 刻意不接主循环、不删旧模型**；`ActionKind` / `mount_action` / `choose_action` 与 PoC 并存，删除属 Phase C。
+- 已知边界：`execute_move_system`（action 实体版）仍是 exclusive `&mut World` 系统——移动规则直接改 `World`，多实体读写在普通 `Query` 里无法安全表达。Phase C 需决定：参数化重写移动规则，或保留 exclusive 执行器（A41 的边界在 PoC 阶段就暴露出来）。
 
 ---
 

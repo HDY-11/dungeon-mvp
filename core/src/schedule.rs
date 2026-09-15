@@ -44,3 +44,24 @@ impl ScheduleLabel for CoreSettleSchedule {
         Hash::hash(self, &mut state);
     }
 }
+
+/// 行动实体 PoC 链路（REFACTOR.md §11.3 Phase B）。
+///
+/// 仅供 PoC 测试使用：`world/loop_.rs` 仍走旧的 `decide_monster_actions` +
+/// `mount_action`；Phase C 会把这条链路接进主循环。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActionPocSchedule;
+
+impl ScheduleLabel for ActionPocSchedule {
+    fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
+        Box::new(self.clone())
+    }
+
+    fn as_dyn_eq(&self) -> &dyn DynEq {
+        self
+    }
+
+    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
+        Hash::hash(self, &mut state);
+    }
+}
