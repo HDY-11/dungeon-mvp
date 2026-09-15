@@ -1722,7 +1722,7 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 - 删除 `ActionKind` 与 `mount_action` 中央 match；
 - 速度按 REFACTOR.md §2.6 改为 `MoveSpeed` / `AttackSpeed`，删除 `Agility`。
 
-**状态：** 草案；AV 门禁（I89）与事件生命周期（I90）已修；下一步 action entity PoC。
+**状态：** 草案；AV 门禁（I89）与事件生命周期（I90）已修；§11.6 已按推荐确认（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为、Phase E 先记录）；下一步 Phase A 冒烟测试。
 
 **关联：** REFACTOR.md §2.6 / §3.6 / §10.6；ISSUES A41/A42/A43、I89/I90、G35。
 
@@ -1895,7 +1895,9 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** 见 REFACTOR.md §10.8 逐项清单。
 
-**状态：** 待用户逐项判断；原则是“每个保留的抽象必须有真实读取方/消费者”。
+**状态：** 清单已记录（REFACTOR.md §10.8）。用户决定**先记录，不执行删除**；Phase A/B/C 期间不阻塞，Phase E 开始前逐项确认是否删除/接线。原则是“每个保留的抽象必须有真实读取方/消费者”。
+
+**确认记录：** 2026-09 对话；§11.6 第 6 项。
 
 **关联：** REFACTOR.md §10.8。
 
@@ -1951,7 +1953,7 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** `sys/Cargo.toml`、`sys/src/logger.rs:46`
 
-**状态：** 待修（§10.6 第 3 项）：给 `log` 显式加 `features = ["std"]`。
+**状态：** 待修；已确认（§11.6 第 7 项）：Phase A 后立即修，给 `log` 显式加 `features = ["std"]`。
 
 ---
 
@@ -1963,7 +1965,7 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** `tests/scenario_test.rs`、`tests/throw_test.rs`、`Cargo.toml`
 
-**状态：** 待处理（§10.6 第 4 项）：删除/归档或重写为新 core + render-api 的 headless 测试。
+**状态：** 待处理；已确认（§11.6 第 7 项）：Phase A 后立即处理，删除/归档或重写为新 core + render-api headless 测试。
 
 ---
 
@@ -2073,7 +2075,7 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** `core/src/components.rs:171`、`core/src/balance.rs:21-48`、`core/src/world/init.rs:112`、`core/src/monster/mod.rs`（模板/`MonsterStats`）、`core/src/action/generation/player.rs:38/87`、`core/src/action/generation/ai.rs:78-87`
 
-**状态：** 待实现（第 4 步）；先完成 I89 + core 冒烟测试，再双轨迁移。
+**状态：** 待实现；§11.6 已确认：`MoveSpeed` / `AttackSpeed` 倍率、`AV = base_duration / speed`、先删反应时、`Wait` 固定、怪物速度先按旧敏捷保行为；Phase C 完成后执行（REFACTOR §11 Phase D）。
 
 **关联：** D29、I89、REFACTOR.md §2.6 / §3.6.7。
 

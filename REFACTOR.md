@@ -716,6 +716,8 @@ sys::spawn_key_source()
 
 与 `ActionKind` 同类的问题：**中央 token / 提前抽象 / 重复表示**。以下为清查结果，去留由用户判断：
 
+> **用户决定（2026-09）：** 本清单先记录，Phase A/B/C 期间不执行删除；Phase E 开始前逐项确认是否删除/接线。对应 ISSUES A43。
+
 | 项 | 证据 | 判断/建议 |
 |---|---|---|
 | `ActionKind` | `action/mod.rs`；`mount_action` 中央 match；`ai.rs` / `player.rs` / `world/loop_.rs` 引用 | 按 §3.6 删除 |
@@ -905,18 +907,22 @@ A ──▶ F（并行）
 - GAME.md 数值改动用 `[⃞计算]` / `[⃞直觉]` / `[⃞试调]` 标注。
 - 每个 commit 前跑对应测试门禁；Phase F 完成后跑全门禁。
 
-### 11.6 开放决策（执行前确认）
+### 11.6 决策确认（已按推荐执行）
 
-| # | 决策 | 推荐 |
+> **确认记录（2026-09）：** 以下 8 项按推荐执行；第 6 项按用户要求“先记录，Phase E 前逐项确认”。
+
+| # | 决策 | 决定 |
 |---|---|---|
-| 1 | Phase C 迁移顺序：逐行动 vs 一次性 | 逐行动（Wait → Move → BasicAttack → Wander → Chase → Flee），每步 parity 测试 |
-| 2 | Phase D 速度语义：倍率 vs AV 消耗 | 倍率：`AV = base_duration / speed`，clamp `[MIN, MAX]` |
-| 3 | 反应时：删除 vs 常数 `BASE_REACTION` | 先删除（公式最简）；若试玩觉得先手感不足，再加统一常数 |
-| 4 | `Wait`：固定 vs `MoveSpeed` | 固定 `WAIT_DURATION`；试玩后再决定是否引入 `WaitSpeed` |
-| 5 | 怪物速度映射：保行为 vs 重新设计 | 先按旧敏捷映射出初值（保行为），再在 GAME.md 中 `[⃞试调]` 重调 |
-| 6 | Phase E 死抽象：删除 vs 保留占位 | 无真实读取方/消费者就删除；S4 占位必须显式标注 |
-| 7 | I87/I88：先修 vs 最后统一修 | 建议 Phase A 后立即修，恢复 `cargo test` 门禁 |
-| 8 | `core` 改名（I86 长期） | 本轮不改；记录为独立决策 |
+| 1 | Phase C 迁移顺序 | **逐行动**（Wait → Move → BasicAttack → Wander → Chase → Flee），每步 parity 测试 |
+| 2 | Phase D 速度语义 | **倍率**：`AV = base_duration / speed`，clamp `[MIN, MAX]` |
+| 3 | 反应时 | **先删除**；试玩需要时再加统一常数 `BASE_REACTION` |
+| 4 | `Wait` | **固定 `WAIT_DURATION`**；后续再评估 `WaitSpeed` |
+| 5 | 怪物速度映射 | **先按旧敏捷保行为映射**，再在 GAME.md 用 `[⃞试调]` 重调 |
+| 6 | Phase E 死抽象 | **先记录，不删除**；Phase E 前逐项确认是否删除/接线（见 §10.8 / A43） |
+| 7 | I87/I88 | **Phase A 后立即修**，恢复 `cargo test` 门禁 |
+| 8 | `core` 改名 | **本轮不改**；独立决策 |
+
+**下一步：** 从 Phase A 开始执行。
 
 ### 11.7 风险与缓解
 
@@ -944,6 +950,59 @@ A ──▶ F（并行）
 | F | 0.5–1 天 |
 | G | 1–2 天（TUI 解耦） |
 
-**下一步：** 确认 §11.6 的开放决策后，从 Phase A 开始执行。建议先用 A1–A5 建立安全网，再进入 action 实体 PoC。
+**下一步：** §11.6 已确认（按推荐）；从 Phase A 开始执行。建议先用 A1–A5 建立安全网，再进入 action 实体 PoC。
+
+---
+
+## 12. 渲染后端插件化（摘要，详见 DESIGN Dsn28）
+
+> **状态：** 草案；`render-api` v1 已落地。正式内容见 **DESIGN.md Dsn28**；本节只保留分支内摘要。
+
+**依赖方向**
+
+```text
+core ──> presentation ──> render-api <── tui / gpu
+                              ▲
+                       dungeon-app（装配 + runner 选择）
+```
+
+- `render-api`：`SceneFrame` / `VisualKey` / `UiView` / `InputEvent` / `SurfaceInfo`；不依赖 core/ratatui/wgpu。
+- `presentation`：core → `SceneFrame` 提取、`VisualKey` 映射、camera、`PageStack`/UI 状态、输入映射。
+- `tui` / 未来 `gpu`：只消费 `render-api`，**不依赖 core**。
+- `dungeon-app`：按 feature 添加 `TuiPlugins` 或 `GpuPlugins`，选择 runner。
+
+**插件**
+
+| 插件 | 职责 |
+|---|---|
+| `CorePlugin` | Startup 初始化；Update 消费 `PlayerCommand`、推进、结算 |
+| `PresentationPlugin` | PostUpdate 提取 `SceneFrame` + camera；UI/日志状态 |
+| `InputMapPlugin` | PreUpdate 输入路由；PageStack → UiAction / PlayerCommand；tap-tap |
+| `SysInputPlugin` | sys 键盘线程 → `InputQueue` |
+| `TuiPlugin` | 终端生命周期 + `TuiCatalog` + Last 绘制 |
+| `GpuPlugin`（未来） | winit + wgpu/Bevy；消费同一 `SceneFrame` |
+| runner | TUI: `ScheduleRunnerPlugin::run_loop(33ms)`；GPU: winit/自定义 runner；二者互斥 |
+
+**迁移阶段**
+
+| 阶段 | 内容 |
+|---|---|
+| R0（已完成） | `render-api` v1（34 tests） |
+| R1 | `presentation` 提取层；`tui` 去 `core` 依赖；`TuiPlugin` 消费 `SceneFrame` |
+| R2 | 页栈 UI（Game/Dialog/Look 优先；Inventory/Throw 等 core 迁移） |
+| R3 | `bevy_app` 宿主 + `ScheduleRunner`；替换 main 循环 |
+| R4 | GPU 后端；同一 `SceneFrame`，core 零改动 |
+| R5 | 清理旧 `dungeon-*` / `src/pages`；文档同步 |
+
+**开放决策**
+
+- `bevy_app` 0.16 真实依赖 vs 离线 shim；
+- GPU 路线：完整 Bevy renderer vs 独立 `wgpu`；
+- UI 模型粒度：页面级 `UiView` 先行；
+- `tui` / `sys` 边界；输入轮询保持在 `sys`/`SysInputPlugin`；
+- 编译期 feature vs 运行时后端选择；
+- crate 命名。
+
+**执行时机：** core Phase A–F 完成后，作为 §11 Phase G 启动。
 
 > 原则：**每个保留的抽象必须有真实读取方/消费者；否则就是下一个 `ActionKind`。**

@@ -44,7 +44,8 @@ render-api/               ← 后端无关的只读数据契约
 ```
 
 - `tui` / 未来的 `gpu` 只依赖 `render-api`，不依赖 `core`；
-- `presentation`（下一步）负责把 `core` 提取成 `SceneFrame`。
+- `presentation`（下一步）负责把 `core` 提取成 `SceneFrame`；
+- 完整渲染后端插件化方案（presentation / TuiPlugin / bevy_app / GPU 切换）见 [DESIGN.md Dsn28](DESIGN.md) 与 [REFACTOR.md §12](REFACTOR.md)。
 
 ## 行动模型（core 方向）
 

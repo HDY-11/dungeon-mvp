@@ -795,8 +795,9 @@ core ──> presentation ──> render-api <── tui / gpu
 
 - 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）。
 - `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`。
-- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 `WAIT_DURATION`（或后续 `WaitSpeed`，待定）。
-- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；是否保留常数 `BASE_REACTION` 待定。
+- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 `WAIT_DURATION`（已确认；后续再评估 `WaitSpeed`）。
+- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；先不保留 `BASE_REACTION`（已确认；试玩需要时再加统一常数）。
+- 迁移顺序：逐行动（Wait → Move → BasicAttack → Wander → Chase → Flee）；怪物速度先按旧敏捷保行为映射，再在 GAME.md 用 `[⃞试调]` 重调。
 - 未来武器速度 → `AttackSpeed`，重甲/地形 → `MoveSpeed`，Buff/装备可动态增删组件。
 
 **背景**
@@ -811,4 +812,94 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；下一步 action entity PoC（actor + Wander + Move），最后迁移全部行动与速度组件。
+**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；§11.6 已按推荐确认（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。下一步 Phase A 冒烟测试，之后 action entity PoC。
+
+---
+
+### Dsn28 渲染后端插件化：`render-api` / `presentation` / TUI / GPU（草案）
+
+**决策**
+
+渲染器可替换的关键是“后端与游戏逻辑之间的只读数据契约”，而不是把渲染简单包成插件。采用三层 + 装配层：
+
+```text
+core ──> presentation ──> render-api <── tui / gpu
+                              ▲
+                       dungeon-app（装配 + runner 选择）
+```
+
+| crate | 职责 | 禁止依赖 |
+|---|---|---|
+| `render-api` | 纯数据契约：`SceneFrame` / `VisualKey` / `UiView` / `InputEvent` / `SurfaceInfo` / `CONTRACT_VERSION` | `core`、ratatui、wgpu、`bevy_app` |
+| `presentation` | 唯一知道 `core` 的集成层：提取 `SceneFrame`、`VisualKey` 映射、camera、`PageStack`/UI 状态、输入映射 | ratatui、crossterm、wgpu |
+| `tui` | TUI 后端插件：终端生命周期、`TuiCatalog`、`SceneFrame` → ratatui 绘制 | `core`、`presentation` |
+| `gpu`（未来） | GPU 后端插件：winit + wgpu/Bevy；`GpuCatalog`；消费同一个 `SceneFrame` | `core`、`presentation`、ratatui |
+| `dungeon-app` | 装配：选择 backend/runner；`CorePlugin` + `PresentationPlugin` + 输入 + 后端 | 业务实现 |
+
+**契约原则**
+
+- `SceneFrame` 是只读视图模型，不是第二套游戏状态；不持久化；后端不得反向修改。
+- `VisualKey` 只表达“这是什么”（`Player` / `Monster(id)` / `Tile(id)` / ...），不包含 glyph / 颜色 / 纹理；TUI 与 GPU 各自用自己的 catalog 映射外观。
+- `UiView` 是页面级视图模型；页栈状态在 `presentation`，后端负责布局/绘制。
+- `InputEvent` / `InputQueue` 后端无关；平台事件 → `InputEvent` 的翻译在各自后端，页栈路由与 tap-tap 只在 `presentation` 实现一次。
+- `SurfaceInfo` 统一终端格子与 GPU 像素；camera 计算在 `presentation`。
+- 不建持久渲染 ECS / render world；TUI 每帧快照即可；GPU 后端内部再做 buffer/atlas 与 diff。
+
+**插件与调度**
+
+- `CorePlugin`（`presentation`/app 层）：Startup 初始化；Update 消费 `PlayerCommand`、推进、结算。
+- `PresentationPlugin`：PostUpdate 提取 `SceneFrame` + camera；UI/日志状态。
+- `InputMapPlugin`：PreUpdate 输入路由；`PageStack` → `UiAction` / `PlayerCommand`；tap-tap。
+- `SysInputPlugin`：`sys` 键盘线程 → `InputQueue`。
+- `TuiPlugin`：终端生命周期 + `TuiCatalog` + Last 绘制。
+- `GpuPlugin`（未来）：winit + wgpu/Bevy；Last/PostUpdate 同步。
+- runner：TUI 用 `ScheduleRunnerPlugin::run_loop(33ms)`；GPU 用 winit / 自定义 runner；两者互斥，由装配层选择。
+
+调度顺序：
+
+```text
+Startup     : core init, terminal setup
+PreUpdate   : poll input -> map
+Update      : drain PlayerCommand -> core sim -> settle
+PostUpdate  : extract SceneFrame + camera
+Last        : TUI draw / GPU sync
+```
+
+**后端切换**
+
+- Cargo feature：`tui`（默认）/ `gpu`；装配层添加 `TuiPlugins` 或 `GpuPlugins`。
+- 切换后端不改 `core`；只改根 crate 装配与 feature。
+- TUI 保留用于 CI/调试；GPU 不要求 TUI 依赖。
+
+**迁移阶段**
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| R0（已完成） | `render-api` v1（34 tests） | 契约可用 |
+| R1 | 新建 `presentation`；`tui` 去掉 `core` 依赖；`TuiPlugin` 消费 `SceneFrame` | `cargo tree -p tui` 无 `core`；`TestBackend` 测试 |
+| R2 | 页栈 UI（Game/Dialog/Look 优先；Inventory/Throw 等 core 迁移） | `UiView` 渲染；页栈输入 headless 测试 |
+| R3 | 引入 `bevy_app` 插件宿主 + `ScheduleRunner`；替换 `main` 循环 | headless `App::update()` 测试 |
+| R4 | GPU 后端：`GpuPlugin` + winit/wgpu/Bevy；消费同一 `SceneFrame` | feature 切换；`core` 零改动 |
+| R5 | 清理旧 `dungeon-*` / `src/pages`；文档同步 | workspace 干净 |
+
+**开放决策**
+
+- `bevy_app` 版本/获取：真实 0.16（联网）vs 本地 shim；不升级 `bevy_ecs` 0.17+（事件改名）。
+- GPU 路线：完整 Bevy renderer（`bevy_render`/`bevy_winit`/`bevy_sprite`）vs 独立 `wgpu`；前者生态全，后者可控。
+- UI 模型粒度：页面级 `UiView` 先行；3+ 页面共性后再抽 `ListView`/`DetailView`。
+- `tui` / `sys` 边界：`tui` 是否依赖 `sys` 的 `TerminalSession`；输入轮询保持在 `sys`/`SysInputPlugin`，`tui` 不读输入。
+- feature flag vs 运行时 `--renderer` 选择；初期用编译期 feature。
+- 命名：`render-api` / `presentation` / `tui` / `gpu`。
+
+**风险**
+
+- 契约过度抽象：只加后端真正需要的字段；`SceneFrame` 保持视图模型。
+- 提取成本：80×60 全量快照可接受；后续 dirty/chunk。
+- 插件顺序：`SystemSet` + `.chain()` 显式；`App::update()` headless 测试。
+- 终端生命周期：`NonSend` + panic-safe guard；Ctrl+C；resize。
+- 输入去重/tap-tap：保持在 `presentation`；GPU repeat 归一化。
+- GPU 非 drop-in：需要 asset catalog、camera、runner、UI 文本；先做平铺 tilemap + sprite。
+
+**关联：** DESIGN Dsn1 / Dsn20 / Dsn21 / Dsn26；REFACTOR §12；ISSUES I87/I88；README 渲染契约章节。
+
+**状态：** 草案；R0 已落地；R1 起待 core Phase A–F 完成后启动（REFACTOR §11 Phase G）。
