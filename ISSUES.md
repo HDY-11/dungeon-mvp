@@ -8,9 +8,41 @@
 问题按维度分组：**设计 / 架构 / 实现 / 游戏逻辑**，组内按严重程度降序。
 优先级标记：🔴 高（影响正确性或游戏体验） / 🟡 中（维护性或功能缺口） / 🟢 低（整洁或边缘情况）
 
-> **编号状态** — D: D1~D28 | A: A1~A40（含 A4L/A4La 子条目）| I: I1~I85（含 I27L/I27La 子条目）| G: G1~G34（含 G4L/G4La 子条目）| P: P1~P8 | R: R1
+> **编号状态** — D: D1~D28 | A: A1~A40（含 A4L/A4La 子条目）| I: I1~I85（含 I27L/I27La 子条目）| G: G1~G34（含 G4L/G4La 子条目）| P: P1~P9 | R: R1
 
 ## ✅ 已修复
+
+### P9 — 新 `core` 冒烟测试缺口：地图/移动/战斗/成长/视野/AI 无回归保障 ✅已修复
+
+**问题：** 新 `core`（core crate）目前只有 4 个测试（AV 门禁 2 个、事件生命周期 1 个、最小闭环 1 个）。地图生成确定性、玩家移动与阻挡、攻击伤害只结算一次、死亡→经验→升级、FOV/记忆/占用图、快怪多动这些核心语义都没有测试；而 `ActionKind` → action 实体（A42）与 `Agility` → 速度组件（G35）两项重构即将改动同一批系统，没有安全网就无法判断行为漂移。
+
+**影响：** 🟡 中高 — 重构期间任何行为漂移都只能在人工试玩中发现；不能让 `cargo test -p core` 的门禁停留在 4 个测试。
+
+**位置：** `core/src/`（`world/init.rs`、`world/loop_.rs`、`system/mod.rs`、`action/execution/mod.rs`）；新增测试 helper `core/src/test_util.rs`
+
+**状态：** ✅已修复（Phase A）— A1–A7 全部落地，`cargo test -p core` 从 4 个测试增加到 **18 个**通过（+1 个 doctest 目标 0）。
+
+**修复后：**
+
+- 新增 `core/src/test_util.rs`（`#[cfg(test)]`）：`test_world` / `fill_map` / `carve_single_floor` / `single_tile_scene` / `spawn_test_actor` / `spawn_test_player` / `spawn_test_monster` / `kill_entity` / `world_snapshot` 等 helper；
+
+- A1 `world::loop_::tests::map_generation_is_deterministic`：同 seed 两次 `new_game` 的 tiles/rooms/出生点/楼梯/怪物全量快照相等；`different_seed_changes_the_world` 作反面对照；
+
+- A2 `player_move_into_free_tile` / `player_move_blocked_by_wall` / `player_move_out_of_bounds_is_rejected` / `rejected_move_leaves_player_idle`：合法移动改变 `Position`，撞墙/越界/被占用被拒且位置不变、玩家不卡在 `Active`；
+
+- A3 `system::tests::attack_applies_damage_once`：HP 精确扣 10、重复 settle 不再扣、日志恰好两条；
+
+- A4 `monster_death_rewards_exp_and_levels_up` / `experience_below_threshold_does_not_level_up`：死亡 despawn、经验入账、跨阈值升级并重算 HP/MP 上限与回满；
+
+- A5 `fov_memory_and_occupancy_update` / `occupancy_tracks_actors_but_not_stairs`：视野非空含自身、`MapMemory` 已探索、`OccupancyMap` 记录玩家与怪物、移动后新旧格同步、楼梯不占位；
+
+- A6 `fast_actor_gets_more_actions` / `tick_advances_to_the_next_event_and_empties_only_the_fastest` / `only_the_action_whose_timer_hit_zero_executes`：同时间预算内 AV=100 的行动次数多于 AV=300；时间轴推进与旧实现 `timer_advances_to_next_event` 一致；
+
+- 顺带修正 `tick_action_timers_system`：推进量抽取为 `positive_timer_delta`，`min == 0`（全部已归零）时仍补齐 `Ready`。该口径与旧架构 `dungeon-action/src/state_action/runtime.rs` 一致。
+
+**关联：** REFACTOR.md §10.4 / §10.6 第 2 项 / §11.3 Phase A；ISSUES I23、I86、A42、G35。
+
+---
 
 ### 🟡 D21 — Gm4 玩家初始 HP 文档算术错误：28 vs 实现 33 ✅已修复
 
@@ -2089,4 +2121,3 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 **问题：** tap-tap 双击确认后行动进入 `ActionQueue` 无法撤回。
 
 **说明：** 事件帧模式（D5，已 defer）可以部分解决此问题——事件帧模式下玩家可以在自己行动执行前切换方向。在 D5 重新评估前此问题无解。
-

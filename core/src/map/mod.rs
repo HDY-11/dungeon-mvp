@@ -80,7 +80,8 @@ pub fn map_kind_for(seed: u64, floor: u32) -> MapKind {
 /// 数值映射：Wall=0, Floor=1, ShallowWater=2, DeepWater=3, Stalactite=4,
 /// Mycelium=5, FungalPatch=6, HangingVine=7, Sand=8, Seagrass=9, CoralReef=10。
 /// 新变体只能在末尾追加，不能插入或重排已有项。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 派生 `Ord` 只为测试快照排序，判别值以自定义 serde 映射为准。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tile {
     Wall,
     Floor,

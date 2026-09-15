@@ -9,7 +9,10 @@ use bevy_ecs::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// 怪物数据键。派生 `Ord` 只为排序/快照比较，不表示强度序。
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub enum MonsterKindId {
     Rat,
     Scorpion,
