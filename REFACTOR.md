@@ -736,4 +736,212 @@ sys::spawn_key_source()
 | `Tile` / `MapKind` / `RoomShape` | 领域/算法数据 enum | 保留；不是行为分派 token |
 | `EventLevel` vs `render-api::LogLevel` | 跨层重复 | 故意分层；保留，映射集中一处 |
 
+
+---
+
+## 11. 实施计划（第 2 步起）
+
+> **状态：** 计划稿，执行前先确认 §11.6 的开放决策。
+> **基线：** I89（AV 门禁）/ I90（事件生命周期）/ I86（core doctest）已修；`cargo test -p core` 4 个测试通过。
+> **开放：** A41（exclusive `&mut World`）、A42（ActionKind → action 实体）、A43（死抽象清理）、G35（Agility → 速度组件）、I87（sys `log/std`）、I88（根集成测试）。
+
+### 11.1 目标与范围
+
+**目标：** 在保持当前最小闭环可玩的前提下，依次完成：
+
+1. 可靠的 core 冒烟测试基线（Phase A）；
+2. action 实体方案 PoC（Phase B）；
+3. 全部行动迁移到 action 实体（Phase C）；
+4. `Agility` → `MoveSpeed` / `AttackSpeed`（Phase D）；
+5. 同类死抽象/重复表示清理（Phase E）；
+6. 构建/测试门禁修复（Phase F）；
+7. 回到 `presentation` + `tui` 解耦（Phase G）。
+
+**不做：** 物品/背包/装备、buff/技能、掉落表、下楼、存档读档；这些仍按 §8 保持 S4。
+
+### 11.2 阶段总览
+
+| 阶段 | 内容 | 依赖 | 主要产物 | 验收 |
+|---|---|---|---|---|
+| **A** | core 冒烟测试 | I89/I90 已修 | 地图确定性、移动/攻击、死亡/经验、FOV/记忆/占用图测试 | `cargo test -p core` ≥ 10 通过 |
+| **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | PoC 测试通过；不接主循环 |
+| **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | 行为 parity 测试通过；无 `ActionKind` 引用 |
+| **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | 无 `Agility` 引用；AV 单调/clamp 测试通过 |
+| **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | 每个保留抽象有真实读取方/消费者 |
+| **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | `cargo test --workspace` 通过或明确排除 |
+| **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | 见早前渲染方案 |
+
+```text
+A ──▶ B ──▶ C ──▶ D ──▶ E ──▶ G
+A ──▶ F（并行）
+```
+
+### 11.3 详细任务
+
+#### Phase A — core 冒烟测试
+
+| 编号 | 任务 | 位置/测试 | 验收 |
+|---|---|---|---|
+| A1 | 地图生成确定性：同 seed 两次 `new_game`，比较 `Map.tiles`、`rooms`、`StairsPos`、`PlayerSpawn`、怪物位置/种类 | `core/src/world/init.rs` 测试或 `core/src/world/loop_.rs` | 两次完全相等 |
+| A2 | 玩家移动：可控 World（`insert_core_resources` + 手 spawn 玩家，或 `new_game` 后清怪）分别验证合法移动与撞墙/越界 | `core/src/world/loop_.rs` 测试 | `Position` 正确变化/保持不变 |
+| A3 | 攻击与伤害：手 spawn attacker/target，发 `AttackIntentEvent`，settle 后 HP 只扣一次 | `core/src/system/mod.rs` 测试（扩展已有） | HP 精确减少；重复 settle 不再扣 |
+| A4 | 死亡→经验→升级：怪物 HP 归零后 despawn、玩家获得 `Experience`，跨阈值时 `Level` 提升、HP/MP 重算 | `core/src/system/mod.rs` 测试 | 经验/等级/属性断言通过 |
+| A5 | FOV/记忆/占用图：settle 后 `Viewshed.visible_tiles` 非空、`MapMemory.explored` 有增量、`OccupancyMap` 含玩家与怪物；移动后占用图更新 | `core/src/system/mod.rs` 测试 | 计数/包含关系断言通过 |
+| A6 | 快怪多动：两个 actor 不同 AV，连续 `run_action_cycle`，AV 小的执行次数更多 | `core/src/action/execution/mod.rs` 测试 | 执行计数符合 AV |
+| A7 | 测试辅助：统一的 `test_world()`/`spawn_test_actor()` helper，避免每个测试重复搭 World | `core/src/test_util.rs`（`#[cfg(test)]`） | helper 编译且被复用 |
+
+**注意：** `core` crate 名与标准库 `core` 同名；新增测试优先用单元测试（`#[cfg(test)]`），不新增依赖 `core::` 的 doctest。
+
+#### Phase B — action 实体 PoC
+
+| 编号 | 任务 | 位置 | 验收 |
+|---|---|---|---|
+| B1 | 定义 action 实体组件：`ActionPriority(u32)`、`ActionTimer`（复用）、`Candidate`、`ActiveAction`、`Ready`（复用） | `core/src/action/entity.rs`（新模块） | 组件可插入/查询 |
+| B2 | `wander_generation_system`：actor 满足 `CanWander`、`Idle/Failure`、`Without<Active>` 时 `Commands::spawn((ChildOf(actor), ActionPriority(50), ActionTimer{...}, Candidate, Wander))` | 同上 | 只 spawn 候选，不改 actor 状态 |
+| B3 | `action_arbitration_system`：按 `ChildOf.parent()` 分组，选 `(ActionPriority, entity.to_bits())` 最大者，winner 去 `Candidate` 加 `ActiveAction`，actor 加 `Active`，loser despawn | 同上 | 每个 actor 至多一个 `ActiveAction` |
+| B4 | `tick_action_timers_system`（action 实体版）：只推进 `With<ActiveAction>`，归零加 `Ready` | 同上 | 未归零不执行 |
+| B5 | `execute_move_system`（action 实体版）：`Query<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>`，移动 actor，成功/失败发 `ActionSucceeded/FailedEvent` | 同上 | actor `Position` 只变一次 |
+| B6 | `action_completion_system`：消费事件，despawn action 实体，actor 回 `Idle`/`Failure` | 同上 | 无残留 `ActiveAction`/候选子实体 |
+| B7 | PoC 测试：手建 actor + `CanWander`，跑上述系统链若干轮，断言“生成 → 仲裁 → Ready → 移动 → 完成”，并检查 loser despawn | `core/src/action/entity.rs` 测试 | 全链路通过 |
+
+**约束：** PoC 不接主循环、不删旧系统；先证明 action 实体方案可行。
+
+#### Phase C — 全量行动迁移
+
+推荐**逐行动迁移**，每步保持可编译、可测试：
+
+| 顺序 | 行动 | 迁移内容 | parity 测试 |
+|---|---|---|---|
+| C1 | `Wait` | `wait_generation_system` + action 实体执行 + completion | 等待后 actor 回 Idle，AV 正确 |
+| C2 | `Move` | `move_generation_system`（玩家路径直接 active action） + 移动执行 | 合法/阻挡/对角规则与旧版一致 |
+| C3 | `BasicAttack` | `basic_attack_generation_system` + 执行；保留 `AttackIntentEvent` 或合并 | 伤害/暴击/死亡链路一致 |
+| C4 | `Wander` | `wander_generation_system` + 执行 | 随机方向、碰撞行为一致 |
+| C5 | `Chase` | `chase_generation_system` + 执行 | 视野/LastKnownPlayerPos/相邻攻击一致 |
+| C6 | `Flee` | `flee_generation_system` + 执行 | 低血滞回、逃跑方向一致 |
+| C7 | 集成 | `advance_until_player_acted` 每轮 generation → arbitration → tick → execution → completion → settle；删除 `decide_monster_actions`/`choose_action`/`run_action_cycle` | 闭环测试、场景测试通过 |
+| C8 | 删除 | `ActionKind`、`mount_action` 中央 match、actor 上的行动 ZST（移到 action 实体）；`ActionSucceeded/Failed` 成为 completion 的真实输入 | 全库无 `ActionKind` 引用 |
+| C9 | Parity 套件 | Wait/Move/Attack/Chase/Flee/Wander 各一个受控场景，断言位置/HP/状态/子实体数量 | 全部通过 |
+
+**关键点：**
+
+- 玩家行动直接 spawn `ActiveAction`（或保留最高优先级），AI generation 过滤 `With<Monster>`，不得覆盖玩家。
+- 仲裁比较器只用 `(ActionPriority, action_entity.to_bits())`，无 RNG。
+- 每轮结束必须清空候选：winner 转 `ActiveAction`，loser despawn。
+- actor 已有 `ActiveAction` 时跳过仲裁；候选查询的 `Without<ActiveAction>` 不够。
+- 用 `.chain()` / `ApplyDeferred` 保证 generation 的 `Commands` 在 arbitration 前落盘。
+
+#### Phase D — `Agility` → `MoveSpeed` / `AttackSpeed`
+
+| 编号 | 任务 | 验收 |
+|---|---|---|
+| D1 | 新增 `MoveSpeed(f64)` / `AttackSpeed(f64)`；新增 `action_av_for(kind, move_speed, attack_speed)`；保留 `Agility` 作对照 | 新旧 AV 对比测试通过 |
+| D2 | 玩家/怪物模板与 spawn 迁移到速度组件；生成系统按行动类别取速度 | 无新代码读取 `Agility` |
+| D3 | 删除 `Agility`、`agility_to_reaction`、`agility_speed_factor`、旧 `action_av` | 全库无 `Agility` 引用 |
+| D4 | GAME.md 反应时/耗时章节、玩家/怪物数值表、武器速度章节同步；DESIGN/ISSUES 更新 | 文档与公式一致 |
+| D5 | 速度测试：单调性、clamp、怪物速度组件存在、回合顺序场景 | 测试通过 |
+
+**待确认语义：** 倍率 `AV = base_duration / speed`；是否保留 `BASE_REACTION`；`Wait` 固定 duration 还是用 `MoveSpeed`；旧敏捷→新速度映射表（见 §2.6/§11.6）。
+
+#### Phase E — 死抽象/重复表示清理
+
+按 §10.8 清单逐项处理，每项先确认“读取方/消费者”：
+
+| 项 | 建议 | 验证 |
+|---|---|---|
+| 身份 ZST `Rat/...` | 保留 `MonsterKindId` 作为数据键，删除无读取方 ZST；需要 `With<Rat>` 时再加 | 编译通过，怪物功能不变 |
+| `EntityClass` / `CreatureKind` | 无读者则删除；需要时改为 ZST 标记 + 专用 query | 无未使用范畴 |
+| `DeathEvent` / `LevelUpEvent` | 接线到经验/掉落/UI，或删除 | 每个事件有 reader |
+| `ThreatEvent` / `ThreatTable` | 保留为 S4 占位或删除；不允许“注册但永不用” | 明确状态 |
+| `BeAttacked` / `NeedRecordBeAttacked` | 接威胁/AI 或删除 | 无 write-only 组件 |
+| `PendingExp` | `DeathEvent` 接消费者后删除 | 经验链路仍通过 |
+| `MeleeResult` + dead combat helpers | 删除，保留纯函数 | 无零调用方函数 |
+| `MonsterStats` / `WorldInitConfig` | 可选折叠/内联；低优先级 | 无多余 DTO |
+| `Idle/Active/Failure` | 保留 ZST + debug 断言，或评估单一 `ActionState` | 状态互斥测试 |
+
+#### Phase F — 构建/测试门禁
+
+| 编号 | 任务 | 验收 |
+|---|---|---|
+| F1 | I87：`sys` 的 `log` 依赖显式 `features = ["std"]` | `cargo test -p sys` 通过 |
+| F2 | I88：删除/归档旧根集成测试；重写为新 core + render-api headless 测试 | `cargo test -p dungeon-app` 通过（或明确不纳入） |
+| F3 | core clippy：`too_many_arguments`/`type_complexity`/`collapsible_if` 历史警告 | `cargo clippy -p core --all-targets -- -D warnings` 通过（可选） |
+| F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | 一条命令可跑 |
+| F5 | `core` crate 改名评估（I86 长期） | 记录决策，不阻塞本轮 |
+
+#### Phase G — 回到 presentation + tui
+
+按早前的渲染方案执行：
+
+- 新建 `presentation`：`core` → `SceneFrame` 提取 + `VisualKey` 映射 + UI 状态/页栈 + 输入映射；
+- `tui` 去掉 `core` 依赖，改为 `TuiPlugin` + `SceneFrame` 消费 + `TestBackend` 测试；
+- 然后才是 `bevy_app` 插件宿主与未来 GPU 后端。
+
+### 11.4 测试矩阵
+
+| 测试 | 阶段 | 目的 |
+|---|---|---|
+| `map_generation_is_deterministic` | A | 同 seed 地图/怪位一致 |
+| `player_move_and_blocked_move` | A/C | 移动规则与旧版一致 |
+| `attack_applies_damage_once` | A/C | 伤害只结算一次 |
+| `monster_death_rewards_exp_and_levels_up` | A | 死亡→经验→升级链路 |
+| `fov_memory_occupancy_update` | A | 视野/记忆/占用图 |
+| `fast_actor_gets_more_actions` | A/C | AV 门禁与多动 |
+| `action_entity_poc_round_trip` | B | 生成/仲裁/Tick/执行/完成 |
+| `arbitration_priority_and_cleanup` | B/C | 优先级、loser despawn、无残留 |
+| `player_action_not_overridden_by_ai` | C | 玩家路径独立 |
+| `action_parity_wait/move/attack/chase/flee/wander` | C | 行为 parity |
+| `speed_av_monotonic_and_clamped` | D | 速度公式 |
+| `monster_speed_components_present` | D | 模板迁移完整 |
+| `no_action_kind_references` / `no_agility_references` | C/D | 用 grep/脚本作为门禁 |
+| `cargo test -p sys` / `cargo test --workspace` | F | 构建门禁 |
+
+### 11.5 提交与文档策略
+
+- 每个 Phase 至少一个 commit；Phase C 建议逐行动 commit，便于回滚。
+- 修复 ISSUES 条目后：在条目内标 `✅已修复` + “修复前/修复后” + 位置；必要时加 LESSONS。
+- 设计变化：追加 DESIGN.md（不删旧条目）；REFACTOR.md 只在本分支维护，合并前折叠进 DESIGN。
+- GAME.md 数值改动用 `[⃞计算]` / `[⃞直觉]` / `[⃞试调]` 标注。
+- 每个 commit 前跑对应测试门禁；Phase F 完成后跑全门禁。
+
+### 11.6 开放决策（执行前确认）
+
+| # | 决策 | 推荐 |
+|---|---|---|
+| 1 | Phase C 迁移顺序：逐行动 vs 一次性 | 逐行动（Wait → Move → BasicAttack → Wander → Chase → Flee），每步 parity 测试 |
+| 2 | Phase D 速度语义：倍率 vs AV 消耗 | 倍率：`AV = base_duration / speed`，clamp `[MIN, MAX]` |
+| 3 | 反应时：删除 vs 常数 `BASE_REACTION` | 先删除（公式最简）；若试玩觉得先手感不足，再加统一常数 |
+| 4 | `Wait`：固定 vs `MoveSpeed` | 固定 `WAIT_DURATION`；试玩后再决定是否引入 `WaitSpeed` |
+| 5 | 怪物速度映射：保行为 vs 重新设计 | 先按旧敏捷映射出初值（保行为），再在 GAME.md 中 `[⃞试调]` 重调 |
+| 6 | Phase E 死抽象：删除 vs 保留占位 | 无真实读取方/消费者就删除；S4 占位必须显式标注 |
+| 7 | I87/I88：先修 vs 最后统一修 | 建议 Phase A 后立即修，恢复 `cargo test` 门禁 |
+| 8 | `core` 改名（I86 长期） | 本轮不改；记录为独立决策 |
+
+### 11.7 风险与缓解
+
+| 风险 | 缓解 |
+|---|---|
+| action 实体引入行为漂移 | Phase A 测试 + Phase C 逐行动 parity + 旧代码保留到对应 commit 通过 |
+| 实体 churn（每轮候选 spawn/despawn） | 只为 `Idle/Failure` 且 `Without<Active>` 生成；仲裁立即 despawn loser；必要时持久 `ActionSlot`/池化 |
+| 子实体生命周期泄漏 | Bevy 0.16 `Children` 是 `linked_spawn`；completion 主动 despawn；测试断言子实体数量 |
+| 事件消费者缺失/重复 | 每个事件必须有 reader；每轮 `Events::update()`（已修 I90）；`ActionSucceeded/Failed` 由 completion 消费 |
+| 玩家被 AI 覆盖 | 玩家路径直接 active action / 保留最高优先级；AI 过滤 `With<Monster>` |
+| 仲裁不确定 | `(ActionPriority, entity.to_bits())` 全序；比较器无 RNG |
+| 速度迁移破坏平衡 | D1 双轨对比、D5 场景测试、GAME.md 试调标注 |
+| 测试基础设施缺失 | Phase A 先补 helper；I87/I88 先修 |
+| 范围蔓延 | 每阶段 timebox；Phase E 只做 §10.8 清单 |
+
+### 11.8 预估与下一步
+
+| 阶段 | 预估 |
+|---|---|
+| A | 0.5–1 天 |
+| B | 0.5–1 天 |
+| C | 2–3 天 |
+| D | 1–2 天 |
+| E | 0.5–1 天 |
+| F | 0.5–1 天 |
+| G | 1–2 天（TUI 解耦） |
+
+**下一步：** 确认 §11.6 的开放决策后，从 Phase A 开始执行。建议先用 A1–A5 建立安全网，再进入 action 实体 PoC。
+
 > 原则：**每个保留的抽象必须有真实读取方/消费者；否则就是下一个 `ActionKind`。**
