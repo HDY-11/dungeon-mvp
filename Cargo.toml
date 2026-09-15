@@ -18,6 +18,11 @@ tui = { path = "tui" }
 bincode = "1.3"
 log = "0.4"
 
+[dev-dependencies]
+# 集成测试直接操作 `core` 的世界，需要与 `core` 同一份 bevy_ecs 类型
+# （`World` / `Entity` / `With` 等来自 ECS，不由 `core` 重新导出）。
+bevy_ecs = { workspace = true }
+
 [workspace]
 members = [
     "dungeon-core",

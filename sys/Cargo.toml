@@ -5,4 +5,6 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.29.0"
-log = { workspace = true }
+# I87：`log::set_boxed_logger` 被 `log/std` feature 门禁，必须显式启用，
+# 否则 `cargo test -p sys` 只能靠其他 crate 的 feature 合并偶然通过。
+log = { workspace = true, features = ["std"] }

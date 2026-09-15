@@ -44,6 +44,191 @@
 
 ---
 
+### I86 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复
+
+
+
+**问题：** `core/src/resources.rs:65` 写 `core::convert::Infallible`；doctest 编译时 `core::` 解析到本地 `core` crate 而非标准库，`cargo test -p core` 的 doctest 失败（单测为 0）。
+
+
+
+**影响：** 🟡 中 — `core` 的测试门禁不可用；crate 名 `core` 与 Rust 标准库同名是长期隐患。
+
+
+
+**位置：** `core/src/resources.rs:65`
+
+
+
+**状态：** ✅已修复（crate 改名仍待长期评估）。
+
+
+
+**修复：**
+
+
+
+- `core/src/resources.rs:65` 改为 `std::convert::Infallible`；
+
+- `core/src/schedule.rs` 的 `ScheduleLabel` 改为手写 impl（`derive` 宏展开会引用 `core::fmt` / `core::hash`，在 crate 名为 `core` 时被本地 crate 遮蔽）；
+
+- `cargo test -p core` 现在通过（3 个单测 + doctest）。
+
+
+
+**关联：** REFACTOR.md §10.6 第 1 项
+
+
+
+---
+
+
+
+### I87 — `sys` 独立构建缺少 `log/std` ✅已修复
+
+
+
+**修复前：** `sys/src/logger.rs:46` 调用 `log::set_boxed_logger`，但 `sys` 的 `log` 依赖未显式启用 `std` feature；`cargo test -p sys` 独立编译失败（`cannot find function set_boxed_logger`），workspace 构建只靠其他 crate 的 feature 合并偶然通过。
+
+
+
+**修复后：** `sys/Cargo.toml` 改为 `log = { workspace = true, features = ["std"] }` 并加注释说明原因；`cargo test -p sys` 独立通过（0 测试，不再依赖 feature 合并）。
+
+
+
+**位置：** `sys/Cargo.toml:8`、`sys/src/logger.rs:46`
+
+
+
+**关联：** REFACTOR.md §10.4 / §10.6 第 3 项 / §11.3 Phase F（F1）。
+
+
+
+---
+
+
+
+### I88 — 根集成测试失效，`cargo test -p dungeon-app` 无法编译 ✅已修复
+
+
+
+**修复前：** `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧 `dungeon-*` 架构（`setup_world` / `advance_and_settle_parallel` / `dungeon_action` / `dungeon_render`）。`cargo test -p dungeon-app --no-run` 直接编译失败。
+
+
+
+**修复后：**
+
+
+
+- 两个失效文件 `git mv` 到 `archive/legacy-tests/`（不参与编译），附 `README.md` 说明失效原因、归档理由与替代品；
+
+- 新增 `tests/core_loop_test.rs`：只用新 `core` 公共 API（`new_game` / `apply_player_command` / `player_alive` / `request_quit`）的 headless 端到端测试 8 个（初始化、等待、移动、被墙拒绝、击败相邻怪物、退出请求、game_over 拒绝命令、玩家死亡结束游戏）；
+
+- `Cargo.toml` 增加 `[dev-dependencies] bevy_ecs`（集成测试直接操作 `core` 的世界，需要同一份 ECS 类型）；
+
+- `cargo test -p dungeon-app` 通过（8 passed）。
+
+
+
+**注意：** 渲染快照测试（`SceneFrame` golden / `TestBackend`）属于 Phase G，本轮不新增。
+
+
+
+**位置：** `tests/`、`archive/legacy-tests/`、`Cargo.toml`
+
+
+
+**关联：** REFACTOR.md §10.4 / §10.6 第 4 项 / §11.3 Phase F（F2）。
+
+
+
+---
+
+
+
+### I89 — AV 门禁缺失：`ActionTimer` 未参与执行判断 ✅已修复
+
+
+
+**问题：** `tick_action_timers_system` 把所有 `Active` 计时器减去最小正剩余 AV，只有最快的一个归零；但 `execute_*_system` 的查询只有 `With<Active>` + 行动组件，没有检查 `remaining_av <= 0`。结果所有 `Active` 行动每轮都会执行，AV/敏捷/速度不控制执行顺序或频率。
+
+
+
+**影响：** 🔴 高 — 速度/AV 系统实际无效；REFACTOR.md / GAME.md 的 AV 描述与实现不符；在修复前更换速度公式没有意义。
+
+
+
+**位置：** `core/src/action/execution/mod.rs:21-38`（tick）、`:42-303`（execute_*）、`:305-313`（run_action_cycle）；`core/src/world/loop_.rs:36-43`（advance_until_player_acted）
+
+
+
+**修复：**
+
+
+
+- 新增 `Ready` 组件（`core/src/components.rs`）；`tick_action_timers_system` 在 `remaining_av <= 0` 时插入 `Ready`；
+
+- 所有 `execute_*_system` 查询加 `With<Ready>`；`mount_action` / `finish_action_*` / `player.rs::mount_player_action` 清理 `Ready`；
+
+- `advance_until_player_acted` 每轮生成怪物行动 + tick/执行 + 结算，快怪可以在玩家行动期间执行多次；
+
+- 回归测试：`action::execution::tests::av_gate_only_executes_ready_actions`、`zero_timer_is_marked_ready_without_positive_peers`。
+
+
+
+**状态：** ✅已修复。
+
+
+
+**关联：** A41、A42、G35。
+
+
+
+---
+
+
+
+### I90 — 事件生命周期错误：`EventReader` 每轮重读历史事件 ✅已修复
+
+
+
+**问题：** `build_core_schedule()` / `run_settle_systems()` 每次调用都新建 Schedule，`EventReader` 游标随之归零；同时 `insert_core_resources` 只注册 `Events<T>`，从未调用 `Events::update()`。因此每轮结算都会重读历史上所有 `AttackIntentEvent` / `AttackEvent`，旧伤害被反复结算，事件缓冲无限增长。
+
+
+
+**影响：** 🔴 高 — 战斗结果不可信（伤害重复、死亡日志重复、内存增长）；任何基于事件的扩展点都不可靠。
+
+
+
+**位置：** `core/src/system/mod.rs:257-282`（build_core_schedule/run_settle_systems）、`core/src/world/init.rs:70-76`（Events 注册）、`core/src/world/init.rs:393-416`（build_init_schedule/run_initialization）
+
+
+
+**修复：**
+
+
+
+- `insert_core_resources` 注册持久 Schedule（`CoreInitSchedule` / `CoreSettleSchedule`）；
+
+- `build_core_schedule` 使用 `Schedule::new(CoreSettleSchedule)`，`run_settle_systems` 用 `world.run_schedule(CoreSettleSchedule)`，不再每轮重建；
+
+- 新增 `update_events_system` 在结算末尾对 7 种事件调用 `Events::update()`；
+
+- 回归测试：`system::tests::settle_does_not_reapply_old_events`。
+
+
+
+**状态：** ✅已修复。
+
+
+
+**关联：** A41、REFACTOR.md §3.6.8 / §5。
+
+
+
+---
+
+
 ### 🟡 D21 — Gm4 玩家初始 HP 文档算术错误：28 vs 实现 33 ✅已修复
 
 **修复前：** Gm4 标注 `HP = 20 + 等级×5 + 防御×2 = 28`，代码 `max_hp_for(1,4)=33`，文档漏加 `等级×5=5`。
@@ -1957,91 +2142,6 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 ---
 
-### I86 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复
-
-**问题：** `core/src/resources.rs:65` 写 `core::convert::Infallible`；doctest 编译时 `core::` 解析到本地 `core` crate 而非标准库，`cargo test -p core` 的 doctest 失败（单测为 0）。
-
-**影响：** 🟡 中 — `core` 的测试门禁不可用；crate 名 `core` 与 Rust 标准库同名是长期隐患。
-
-**位置：** `core/src/resources.rs:65`
-
-**状态：** ✅已修复（crate 改名仍待长期评估）。
-
-**修复：**
-
-- `core/src/resources.rs:65` 改为 `std::convert::Infallible`；
-- `core/src/schedule.rs` 的 `ScheduleLabel` 改为手写 impl（`derive` 宏展开会引用 `core::fmt` / `core::hash`，在 crate 名为 `core` 时被本地 crate 遮蔽）；
-- `cargo test -p core` 现在通过（3 个单测 + doctest）。
-
-**关联：** REFACTOR.md §10.6 第 1 项
-
----
-
-### 🟡 I87 — `sys` 独立构建缺少 `log/std`
-
-**问题：** `sys/src/logger.rs:46` 调用 `log::set_boxed_logger`，但 `sys` 的 `log` 依赖没有显式启用 `std` feature；`cargo test -p sys` 独立编译失败。workspace 构建只是靠其他 crate 的 feature 合并偶然通过。
-
-**影响：** 🟡 中 — feature 合并依赖脆弱；`cargo test -p sys` 不能作为独立门禁。
-
-**位置：** `sys/Cargo.toml`、`sys/src/logger.rs:46`
-
-**状态：** 待修；已确认（§11.6 第 7 项）：Phase A 后立即修，给 `log` 显式加 `features = ["std"]`。
-
----
-
-### 🟡 I88 — 根集成测试失效，`cargo test -p dungeon-app` 无法编译
-
-**问题：** `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧 `dungeon-*` 架构。`cargo test -p dungeon-app --no-run` 失败。
-
-**影响：** 🟡 中 — `cargo test --workspace` 长期失败；新 `core` 没有端到端测试目标。
-
-**位置：** `tests/scenario_test.rs`、`tests/throw_test.rs`、`Cargo.toml`
-
-**状态：** 待处理；已确认（§11.6 第 7 项）：Phase A 后立即处理，删除/归档或重写为新 core + render-api headless 测试。
-
----
-
-### I89 — AV 门禁缺失：`ActionTimer` 未参与执行判断 ✅已修复
-
-**问题：** `tick_action_timers_system` 把所有 `Active` 计时器减去最小正剩余 AV，只有最快的一个归零；但 `execute_*_system` 的查询只有 `With<Active>` + 行动组件，没有检查 `remaining_av <= 0`。结果所有 `Active` 行动每轮都会执行，AV/敏捷/速度不控制执行顺序或频率。
-
-**影响：** 🔴 高 — 速度/AV 系统实际无效；REFACTOR.md / GAME.md 的 AV 描述与实现不符；在修复前更换速度公式没有意义。
-
-**位置：** `core/src/action/execution/mod.rs:21-38`（tick）、`:42-303`（execute_*）、`:305-313`（run_action_cycle）；`core/src/world/loop_.rs:36-43`（advance_until_player_acted）
-
-**修复：**
-
-- 新增 `Ready` 组件（`core/src/components.rs`）；`tick_action_timers_system` 在 `remaining_av <= 0` 时插入 `Ready`；
-- 所有 `execute_*_system` 查询加 `With<Ready>`；`mount_action` / `finish_action_*` / `player.rs::mount_player_action` 清理 `Ready`；
-- `advance_until_player_acted` 每轮生成怪物行动 + tick/执行 + 结算，快怪可以在玩家行动期间执行多次；
-- 回归测试：`action::execution::tests::av_gate_only_executes_ready_actions`、`zero_timer_is_marked_ready_without_positive_peers`。
-
-**状态：** ✅已修复。
-
-**关联：** A41、A42、G35。
-
----
-
-### I90 — 事件生命周期错误：`EventReader` 每轮重读历史事件 ✅已修复
-
-**问题：** `build_core_schedule()` / `run_settle_systems()` 每次调用都新建 Schedule，`EventReader` 游标随之归零；同时 `insert_core_resources` 只注册 `Events<T>`，从未调用 `Events::update()`。因此每轮结算都会重读历史上所有 `AttackIntentEvent` / `AttackEvent`，旧伤害被反复结算，事件缓冲无限增长。
-
-**影响：** 🔴 高 — 战斗结果不可信（伤害重复、死亡日志重复、内存增长）；任何基于事件的扩展点都不可靠。
-
-**位置：** `core/src/system/mod.rs:257-282`（build_core_schedule/run_settle_systems）、`core/src/world/init.rs:70-76`（Events 注册）、`core/src/world/init.rs:393-416`（build_init_schedule/run_initialization）
-
-**修复：**
-
-- `insert_core_resources` 注册持久 Schedule（`CoreInitSchedule` / `CoreSettleSchedule`）；
-- `build_core_schedule` 使用 `Schedule::new(CoreSettleSchedule)`，`run_settle_systems` 用 `world.run_schedule(CoreSettleSchedule)`，不再每轮重建；
-- 新增 `update_events_system` 在结算末尾对 7 种事件调用 `Events::update()`；
-- 回归测试：`system::tests::settle_does_not_reapply_old_events`。
-
-**状态：** ✅已修复。
-
-**关联：** A41、REFACTOR.md §3.6.8 / §5。
-
----
 
 ## 四、游戏逻辑层面（Game Logic）
 
