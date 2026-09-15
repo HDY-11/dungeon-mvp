@@ -331,6 +331,8 @@ fn flee_generation_system(
 ```
 
 - 生成系统之间相互独立，不需要知道其他行为；
+- 保留生成/仲裁分离，不因当前规模合并为单函数（用户决策；这是 2.1 的 OCP 扩展点）。
+- 普通怪 = 新模板 / Bundle（不同 `Can*`）；新增普通怪不需要修改 AI / 生成 / 执行代码。
 - 新增行为 = 新增一个生成系统 + `Can*`，不需要改仲裁/执行/已有生成系统；
 - 生成系统只 spawn 候选，不修改 actor 的 `Active/Idle/Failure`；仲裁才是唯一写入方；
 - 玩家路径：`player_action_generation_system` 直接 spawn 一个带 `ActiveAction` 的 action 实体（或带保留优先级），AI 生成系统用 `With<Monster>` 过滤，不会覆盖玩家。
