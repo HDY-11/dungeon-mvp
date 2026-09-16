@@ -5,8 +5,9 @@
 
 use super::*;
 use crate::action::generation::player::PlayerCommand;
-use crate::components::{CanBasicAttack, CanMove, CanWait, Viewshed};
+use crate::components::{CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Viewshed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
+use crate::resources::PendingExp;
 use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_test_monster};
 use crate::world_loop::apply_player_command;
 use bevy_ecs::system::RunSystemOnce;
@@ -1525,6 +1526,331 @@ fn flee_generation_requires_low_health() {
         candidates(&mut world).is_empty(),
         "血量充足时不得生成逃跑候选"
     );
+}
+
+// ── C9：六行动 parity 套件 ───────────────────────────
+
+/// 一次「到期 → 执行 → 完成」的往返，返回 action 实体是否已被回收。
+///
+/// **执行器只负责发事件**：`Ready` 的清理分两条路——`execute_move_system`
+/// 显式 `remove::<Ready>()`，其余执行器靠 completion despawn action 实体顺带清掉。
+/// 因此这一层的断言是「事件已发出」，而不是「Ready 已被移除」。
+/// 只跑该行动的专属执行器 + completion，避免整轮调度把「一步」变成多步。
+fn run_one_action_roundtrip(world: &mut World, action: Entity) {
+    use crate::events::{ActionFailedEvent, ActionSucceededEvent};
+    use bevy_ecs::event::Events;
+
+    let _ = world.run_system_once(tick_action_timers_system);
+    assert!(
+        world.get::<Ready>(action).is_some(),
+        "AV 归零后 action 必须被标记 Ready"
+    );
+
+    // 清空两类事件缓冲，后续只数本轮产生的。
+    world
+        .resource_mut::<Events<ActionSucceededEvent>>()
+        .update();
+    world.resource_mut::<Events<ActionFailedEvent>>().update();
+
+    let _ = world.run_system_once(execute_wait_system);
+    let _ = world.run_system_once(execute_move_system);
+    let _ = world.run_system_once(execute_basic_attack_system);
+    let _ = world.run_system_once(execute_chase_system);
+    let _ = world.run_system_once(execute_flee_system);
+    let _ = world.run_system_once(execute_wander_system);
+
+    let emitted = world.resource::<Events<ActionSucceededEvent>>().len()
+        + world.resource::<Events<ActionFailedEvent>>().len();
+    assert_eq!(
+        emitted, 1,
+        "每个到期的 action 必须恰好产生一个完成/失败事件"
+    );
+
+    world_run_completion_only(world);
+    assert!(
+        world.get_entity(action).is_err(),
+        "completion 必须回收 action 实体"
+    );
+}
+
+/// C9：`Wait` —— 什么都不做、无条件成功。
+#[test]
+fn parity_wait_scenario() {
+    let (mut world, _player) = poc_world();
+    let actor = poc_actor(&mut world, (10, 10));
+    let start = world.get::<Position>(actor).unwrap().to_tuple();
+    let action = run_wait_candidate(&mut world, actor);
+
+    run_one_action_roundtrip(&mut world, action);
+    assert_eq!(
+        world.get::<Position>(actor).unwrap().to_tuple(),
+        start,
+        "Wait 不得移动"
+    );
+    assert!(world.get::<Idle>(actor).is_some());
+}
+
+/// C9：`Move` —— 恰好移动一格（玩家路径产出的 payload）。
+#[test]
+fn parity_move_scenario() {
+    let (mut world, player) = player_move_scene((10, 10));
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let action = action_entities_of(&mut world, player)[0];
+
+    run_one_action_roundtrip(&mut world, action);
+    assert_eq!(
+        world.get::<Position>(player).unwrap().to_tuple(),
+        (11, 10),
+        "Move 必须恰好移动一格"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+}
+
+/// C9：`BasicAttack` —— 只发意图、伤害由结算链路落地、目标死亡后 despawn。
+#[test]
+fn parity_basic_attack_scenario() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    let (mut world, player) = player_move_scene((10, 10));
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (11, 10),
+        6.0,
+        1.0,
+        1.0,
+    );
+    world.entity_mut(monster).insert(ExperienceReward(10.0));
+    crate::system::run_settle_systems(&mut world);
+    world.resource_mut::<Events<AttackIntentEvent>>().update();
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let action = action_entities_of(&mut world, player)[0];
+    assert!(world.get::<BasicAttack>(action).is_some());
+
+    // 执行器只发意图。
+    let _ = world.run_system_once(tick_action_timers_system);
+    let _ = world.run_system_once(execute_basic_attack_system);
+    assert_eq!(
+        world.resource::<Events<AttackIntentEvent>>().len(),
+        1,
+        "攻击执行器必须恰好发一个意图"
+    );
+    assert_eq!(
+        world.get::<Health>(monster).unwrap().current,
+        6.0,
+        "执行器不得自己结算伤害"
+    );
+
+    world_run_completion_only(&mut world);
+    assert!(world.get_entity(action).is_err());
+    assert!(world.get::<Idle>(player).is_some());
+
+    // 结算链路把伤害/死亡/经验走完。
+    crate::system::run_settle_systems(&mut world);
+    assert!(
+        world.get_entity(monster).is_err(),
+        "6 血 1 防的怪应当被一击打死并 despawn"
+    );
+    assert_eq!(
+        world.resource::<PendingExp>().amount,
+        0.0,
+        "经验应当被 apply_exp_system 消费"
+    );
+    assert!(
+        world.get::<Experience>(player).unwrap().exp > 0.0,
+        "玩家应当得到经验"
+    );
+}
+
+/// C9：`Wander` —— 走一步或原地不动，但一定完成。
+#[test]
+fn parity_wander_scenario() {
+    let (mut world, _player) = poc_world();
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+    let actor = poc_actor(&mut world, (20, 20));
+    let start = world.get::<Position>(actor).unwrap().to_tuple();
+    let action = world
+        .spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_WANDER),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Wander,
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(actor).remove::<Idle>().insert(Active);
+
+    run_one_action_roundtrip(&mut world, action);
+    let after = world.get::<Position>(actor).unwrap().to_tuple();
+    assert!(
+        start.0.abs_diff(after.0) <= 1 && start.1.abs_diff(after.1) <= 1,
+        "Wander 只能走一步：{start:?} → {after:?}"
+    );
+    assert!(world.get::<Idle>(actor).is_some());
+}
+
+/// C9：`Chase` —— 可见且不相邻时朝玩家走一步。
+#[test]
+fn parity_chase_scenario() {
+    let player_tile = (40, 40);
+    let monster_tile = (34, 40);
+    let (mut world, _player, monster) = chase_parity_scene(11, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, true);
+    let action = mount_ready_chase(&mut world, monster);
+
+    run_one_action_roundtrip(&mut world, action);
+    assert_ne!(
+        world.get::<Position>(monster).unwrap().to_tuple(),
+        monster_tile,
+        "Chase 应当朝玩家走一步"
+    );
+    assert_eq!(
+        world
+            .get::<LastKnownPlayerPos>(monster)
+            .and_then(|known| known.0),
+        Some(player_tile),
+        "追击可见时必须更新最后已知位置"
+    );
+    assert!(world.get::<Idle>(monster).is_some());
+}
+
+/// C9：`Flee` —— 低血时逃离玩家。
+#[test]
+fn parity_flee_scenario() {
+    let player_tile = (40, 40);
+    let monster_tile = (36, 40);
+    let (mut world, _player, monster) =
+        flee_parity_scene(51, player_tile, monster_tile, 0.10, true);
+    let action = mount_ready_flee(&mut world, monster);
+
+    run_one_action_roundtrip(&mut world, action);
+    let after = world.get::<Position>(monster).unwrap().to_tuple();
+    assert!(
+        Position::new(after.0, after.1).manhattan(Position::new(player_tile.0, player_tile.1))
+            > Position::new(monster_tile.0, monster_tile.1)
+                .manhattan(Position::new(player_tile.0, player_tile.1)),
+        "Flee 必须增大与玩家的距离：{monster_tile:?} → {after:?}"
+    );
+    assert!(world.get::<Idle>(monster).is_some());
+}
+
+/// C9：六个行动共同的不变量——执行后不留 action 子实体、actor 不残留 `Active`、
+/// `Idle`/`Failure` 恰好有一个。
+///
+/// 逐个行动在同一套观察口径下跑一遍（每个用例自己搭好所需的上下文：
+/// 攻击要目标、追击要视野、逃跑要低血）。
+#[test]
+fn parity_all_actions_leave_no_residue() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    // 每个元素：行动名 + 搭场景并返回 (world, actor, action)。
+    type Case = (&'static str, fn() -> (World, Entity, Entity));
+
+    fn wait_case() -> (World, Entity, Entity) {
+        let (mut world, _player) = poc_world();
+        let actor = poc_actor(&mut world, (10, 10));
+        let action = run_wait_candidate(&mut world, actor);
+        (world, actor, action)
+    }
+    fn move_case() -> (World, Entity, Entity) {
+        let (mut world, player) = player_move_scene((10, 10));
+        world.resource_mut::<PlayerActionRequest>().command =
+            Some(PlayerCommand::Move { dx: 1, dy: 0 });
+        let _ = world.run_system_once(player_action_generation_system);
+        let action = action_entities_of(&mut world, player)[0];
+        (world, player, action)
+    }
+    fn attack_case() -> (World, Entity, Entity) {
+        let (mut world, player) = player_move_scene((10, 10));
+        spawn_test_monster(
+            &mut world,
+            crate::monster::MonsterKindId::Goblin,
+            (11, 10),
+            30.0,
+            1.0,
+            1.0,
+        );
+        crate::system::run_settle_systems(&mut world);
+        world.resource_mut::<Events<AttackIntentEvent>>().update();
+        world.resource_mut::<PlayerActionRequest>().command =
+            Some(PlayerCommand::Move { dx: 1, dy: 0 });
+        let _ = world.run_system_once(player_action_generation_system);
+        let action = action_entities_of(&mut world, player)[0];
+        (world, player, action)
+    }
+    fn wander_case() -> (World, Entity, Entity) {
+        let (mut world, _player) = poc_world();
+        world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+        let actor = poc_actor(&mut world, (20, 20));
+        let action = world
+            .spawn((
+                ChildOf(actor),
+                ActionPriority(PRIORITY_WANDER),
+                ActionTimer { remaining_av: 0.0 },
+                Wander,
+                ActiveAction,
+                Ready,
+            ))
+            .id();
+        world.entity_mut(actor).remove::<Idle>().insert(Active);
+        (world, actor, action)
+    }
+    fn chase_case() -> (World, Entity, Entity) {
+        let (mut world, _player, monster) = chase_parity_scene(11, (40, 40), (34, 40));
+        set_visibility(&mut world, monster, (40, 40), true);
+        let action = mount_ready_chase(&mut world, monster);
+        (world, monster, action)
+    }
+    fn flee_case() -> (World, Entity, Entity) {
+        let (mut world, _player, monster) = flee_parity_scene(51, (40, 40), (36, 40), 0.10, true);
+        let action = mount_ready_flee(&mut world, monster);
+        (world, monster, action)
+    }
+
+    let cases: [Case; 6] = [
+        ("Wait", wait_case),
+        ("Move", move_case),
+        ("BasicAttack", attack_case),
+        ("Wander", wander_case),
+        ("Chase", chase_case),
+        ("Flee", flee_case),
+    ];
+
+    for (name, build) in cases {
+        let (mut world, actor, action) = build();
+
+        // 执行器必须消费 Ready（否则同一行动会被反复执行）。
+        run_one_action_roundtrip(&mut world, action);
+
+        // 共同不变量。
+        assert!(
+            world.get_entity(action).is_err(),
+            "情形「{name}」：action 实体必须被回收"
+        );
+        assert!(
+            world.get::<Active>(actor).is_none(),
+            "情形「{name}」：actor 不得残留 Active"
+        );
+        let idle = world.get::<Idle>(actor).is_some();
+        let failure = world.get::<Failure>(actor).is_some();
+        assert!(
+            idle ^ failure,
+            "情形「{name}」：Idle/Failure 必须恰好有一个（I91），实际 idle={idle} failure={failure}"
+        );
+        assert!(
+            action_entities_of(&mut world, actor).is_empty(),
+            "情形「{name}」：不得给 actor 留子实体"
+        );
+    }
 }
 
 #[test]
