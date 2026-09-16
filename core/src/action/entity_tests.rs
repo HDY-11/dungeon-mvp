@@ -1319,6 +1319,221 @@ fn idle_and_failure_are_mutually_exclusive() {
     assert!(world.get_entity(action).is_err());
 }
 
+// ── C6：逃跑迁移对照 ─────────────────────────────────
+
+/// Bevy 陷阱之二：**参数校验失败是"报错并跳过系统"，不是 panic**。
+///
+/// 参数缺失/查询无法初始化时，`run_system_once` 走错误处理器（默认只打印），
+/// 系统体一行都不执行，调用方只看返回值——极容易被当成"逻辑跑过了但没生效"。
+/// 与 L49（查询静默返回空）是同一类问题的两个面。
+///
+/// 这里的触发方式是「查询依赖的组件类型从未注册」：空世界里没有任何实体带
+/// `Player`，`Query<Entity, With<Player>>` 无法初始化。
+#[test]
+fn run_system_once_skips_system_when_param_validation_fails() {
+    // 空世界：`Player` 组件类型未注册 → 追击系统无法初始化 → 返回 Err。
+    let mut world = World::new();
+    world.insert_resource(Map::new());
+    world.insert_resource(OccupancyMap::new());
+    let result = world.run_system_once(execute_chase_system);
+    assert!(
+        result.is_err(),
+        "查询无法初始化时 run_system_once 必须返回 Err（而不是静默成功）"
+    );
+
+    // 同一个系统在类型就绪的世界里就能跑：证明上一步确实是参数校验拦下的。
+    let (mut ready_world, player) = poc_world();
+    assert!(ready_world.get::<Player>(player).is_some());
+    assert!(
+        ready_world.run_system_once(execute_chase_system).is_ok(),
+        "类型就绪时系统应当正常执行"
+    );
+}
+
+/// 逃跑场景：全平地、怪物低血、玩家位置给定。
+fn flee_parity_scene(
+    seed: u64,
+    player_tile: (usize, usize),
+    monster_tile: (usize, usize),
+    monster_hp_ratio: f64,
+    sees_player: bool,
+) -> (World, Entity, Entity) {
+    let mut world = crate::world_loop::new_game(seed);
+    let monsters: Vec<Entity> = {
+        let mut query = world.query_filtered::<Entity, With<Monster>>();
+        query.iter(&world).collect()
+    };
+    for monster in monsters {
+        world.despawn(monster);
+    }
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<Player>>();
+        query.iter(&world).next().expect("新游戏必须有玩家")
+    };
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+    {
+        let mut pos = world.get_mut::<Position>(player).unwrap();
+        pos.x = player_tile.0;
+        pos.y = player_tile.1;
+    }
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        monster_tile,
+        100.0,
+        4.0,
+        5.0,
+    );
+    world
+        .entity_mut(monster)
+        .insert((CanFlee, Viewshed::new(10), LastKnownPlayerPos::default()));
+    let hp = 100.0 * monster_hp_ratio;
+    *world.get_mut::<Health>(monster).unwrap() = Health::full(hp, 100.0);
+    set_visibility(&mut world, monster, player_tile, sees_player);
+    crate::system::run_settle_systems(&mut world);
+    world.add_schedule(build_action_poc_schedule());
+    (world, player, monster)
+}
+
+/// 给怪物挂一个已到期的 `Flee` action 实体。
+fn mount_ready_flee(world: &mut World, monster: Entity) -> Entity {
+    let action = world
+        .spawn((
+            ChildOf(monster),
+            ActionPriority(PRIORITY_FLEE),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Flee,
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(monster).remove::<Idle>().insert(Active);
+    action
+}
+
+/// C6：逃跑执行器与旧 `&mut World` 版逐条对照（落点 / 攻击意图 / 结局）。
+#[test]
+fn flee_action_matches_legacy_flee_step() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    let player_tile = (40, 40);
+    let monster_tile = (36, 40);
+
+    type FleeOutcome = (Option<(usize, usize)>, usize, bool);
+    fn outcome_of(world: &World, monster: Entity) -> FleeOutcome {
+        (
+            world.get::<Position>(monster).map(Position::to_tuple),
+            world.resource::<Events<AttackIntentEvent>>().len(),
+            world.get::<Idle>(monster).is_some(),
+        )
+    }
+
+    let cases: [(&str, f64, bool, (usize, usize)); 4] = [
+        ("低血滞回内逃跑", 0.10, true, monster_tile),
+        ("血量回到退出阈值以上", 0.50, true, monster_tile),
+        ("相邻被堵（可见）", 0.10, true, (39, 40)),
+        ("相邻被堵（不可见）", 0.10, false, (39, 40)),
+    ];
+
+    for (name, hp_ratio, sees, tile) in cases {
+        // ---- 旧路径 ----
+        let (mut legacy, _legacy_player, legacy_monster) =
+            flee_parity_scene(51, player_tile, tile, hp_ratio, sees);
+        legacy.entity_mut(legacy_monster).insert((
+            Active,
+            Ready,
+            Flee,
+            ActionTimer { remaining_av: 0.0 },
+        ));
+        crate::action::execution::execute_flee_system(&mut legacy);
+        world_run_completion_only(&mut legacy);
+        let legacy_outcome = outcome_of(&legacy, legacy_monster);
+
+        // ---- 新路径 ----
+        let (mut modern, _modern_player, modern_monster) =
+            flee_parity_scene(51, player_tile, tile, hp_ratio, sees);
+        mount_ready_flee(&mut modern, modern_monster);
+        let _ = modern.run_system_once(execute_flee_system);
+        world_run_completion_only(&mut modern);
+        let modern_outcome = outcome_of(&modern, modern_monster);
+
+        assert_eq!(
+            modern_outcome, legacy_outcome,
+            "情形「{name}」逃跑结果不一致（位置 / 攻击意图 / 结局）"
+        );
+    }
+}
+
+/// C6：逃跑选向必须"合法且离玩家最远"（此处四面通路，只能远离）。
+#[test]
+fn flee_picks_the_farthest_legal_tile() {
+    let player_tile = (10, 10);
+    let monster_tile = (15, 10);
+    let (mut world, _player, monster) = flee_parity_scene(61, player_tile, monster_tile, 0.1, true);
+    mount_ready_flee(&mut world, monster);
+
+    let _ = world.run_system_once(execute_flee_system);
+
+    let after = world.get::<Position>(monster).unwrap().to_tuple();
+    assert!(
+        Position::new(after.0, after.1).manhattan(Position::new(player_tile.0, player_tile.1))
+            > Position::new(monster_tile.0, monster_tile.1)
+                .manhattan(Position::new(player_tile.0, player_tile.1)),
+        "逃跑必须增大与玩家的距离：{monster_tile:?} → {after:?}"
+    );
+}
+
+/// C6：血量回到退出阈值以上 → 保活失败 → `Failure`。
+#[test]
+fn flee_fails_when_hp_recovers_above_exit_threshold() {
+    let (mut world, _player, monster) = flee_parity_scene(71, (40, 40), (36, 40), 0.50, true);
+    let action = mount_ready_flee(&mut world, monster);
+
+    let _ = world.run_system_once(execute_flee_system);
+    world_run_completion_only(&mut world);
+
+    assert!(
+        world.get::<Failure>(monster).is_some(),
+        "回到退出阈值以上必须让逃跑行动失败"
+    );
+    assert!(world.get::<Idle>(monster).is_none(), "不得残留 Idle（I91）");
+    assert!(world.get_entity(action).is_err(), "action 实体应被回收");
+    assert_eq!(
+        world.get::<Position>(monster).unwrap().to_tuple(),
+        (36, 40),
+        "保活失败时不得移动"
+    );
+}
+
+/// C6：逃跑候选的生成条件（低血才产生）。
+#[test]
+fn flee_generation_requires_low_health() {
+    let player_tile = (40, 40);
+    let monster_tile = (36, 40);
+
+    // 低血 → 生成。
+    let (mut world, _player, _monster) =
+        flee_parity_scene(81, player_tile, monster_tile, 0.10, true);
+    let _ = world.run_system_once(flee_generation_system);
+    let spawned = candidates(&mut world);
+    assert_eq!(spawned.len(), 1, "低血时应当生成逃跑候选");
+    assert_eq!(
+        world.get::<ActionPriority>(spawned[0]).unwrap().0,
+        PRIORITY_FLEE
+    );
+
+    // 高血 → 不生成。
+    let (mut world, _player, _monster) =
+        flee_parity_scene(81, player_tile, monster_tile, 0.60, true);
+    let _ = world.run_system_once(flee_generation_system);
+    assert!(
+        candidates(&mut world).is_empty(),
+        "血量充足时不得生成逃跑候选"
+    );
+}
+
 #[test]
 fn legacy_player_path_still_works_alongside_poc() {
     let (mut world, player) = poc_world();

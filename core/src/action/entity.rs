@@ -35,8 +35,8 @@
 
 use crate::action::generation::player::PlayerCommand;
 use crate::balance::{
-    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION,
-    WANDER_DURATION, action_av,
+    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, FLEE_HP_RATIO_EXIT, UNARMED_ATTACK_DURATION,
+    WAIT_DURATION, WANDER_DURATION, action_av,
 };
 use crate::components::{
     ActionTimer, Active, Agility, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
@@ -46,7 +46,7 @@ use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{GameRng, OccupancyMap};
-use crate::schedule::ActionPocSchedule;
+use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
 use std::collections::{HashMap, HashSet};
@@ -359,6 +359,28 @@ pub fn player_action_generation_system(
     log::debug!("玩家行动已挂载: {action:?} player={player:?}");
 }
 
+/// 挂载玩家行动（C2/C3）：生成 + 仲裁两段，**不含** tick/执行/completion。
+///
+/// 主循环（`world/loop_.rs::apply_player_command`）在推进世界之前先单独运行这一次，
+/// 用来「确认命令是否被接受」：
+///
+/// - 旧实现同样是先 `player_action_generation_system` 挂载、再进推进循环；
+/// - 若把挂载和推进放在同一次调度里，玩家会在这一轮就把行动跑完，
+///   调用方随后看到的 `player_is_busy == false` 只是「已经做完了」，
+///   无法区分「命令被拒绝」（本文件第一版就踩了这个坑）。
+pub fn build_player_mount_schedule() -> Schedule {
+    let mut schedule = Schedule::new(PlayerMountSchedule);
+    schedule.add_systems(
+        (
+            player_action_generation_system,
+            ApplyDeferred,
+            action_arbitration_system,
+        )
+            .chain(),
+    );
+    schedule
+}
+
 // ── 仲裁系统 ─────────────────────────────────────────
 
 /// 每个 actor 至多留下一个 `ActiveAction`，其余候选与落后候选一律 despawn。
@@ -534,6 +556,114 @@ pub fn execute_wait_system(
     for (action, child_of) in &actions {
         let actor = child_of.parent();
         log::debug!("PoC 等待: actor={actor:?}（action={action:?}）");
+        succeeded.write(ActionSucceededEvent { entity: actor });
+    }
+}
+
+/// 执行到期的 `Flee`（C6）：与旧 `execution::execute_flee_system` 逐条对齐。
+///
+/// 1. **保活**：仍处于逃跑滞回区间（`Health.ratio() < FLEE_HP_RATIO_EXIT`），
+///    否则 `ActionFailedEvent`；
+/// 2. 在 8 个方向里选**合法且曼哈顿距离玩家最远**的落点（严格 `>` 比较，
+///    平局保留方向表里更靠前的那个——顺序与原实现一致）；
+/// 3. 有可逃方向 → 走过去；全被堵住时，若**相邻且可见**则改为声明攻击
+///    （顶到墙角也要反咬一口），否则原地不动；
+/// 4. 逃跑总是以成功结束。
+pub fn execute_flee_system(
+    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Flee>)>,
+    mut positions: Query<&mut Position>,
+    healths: Query<&Health>,
+    viewsheds: Query<&Viewshed>,
+    player: Query<Entity, With<Player>>,
+    map: Res<Map>,
+    occupancy: Res<OccupancyMap>,
+    mut intents: EventWriter<AttackIntentEvent>,
+    mut succeeded: EventWriter<ActionSucceededEvent>,
+    mut failed: EventWriter<ActionFailedEvent>,
+) {
+    const DIRECTIONS: [(isize, isize); 8] = [
+        (0, -1),
+        (0, 1),
+        (-1, 0),
+        (1, 0),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 1),
+    ];
+
+    for (action, child_of) in &actions {
+        let actor = child_of.parent();
+
+        // 保活：滞回退出阈值。
+        if !healths
+            .get(actor)
+            .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
+        {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        }
+
+        let Ok(player_entity) = player.single() else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+        let player_tile = Position::new(player_position.0, player_position.1);
+
+        let mut best: Option<Position> = None;
+        let mut best_distance = 0usize;
+        for (dx, dy) in DIRECTIONS {
+            if crate::action::execution::movement::can_move_to(
+                &map,
+                &occupancy,
+                self_position.0,
+                self_position.1,
+                dx,
+                dy,
+            ) {
+                let (nx, ny) = Position::new(self_position.0, self_position.1).offset(dx, dy);
+                let candidate = Position::new(nx, ny);
+                let distance = candidate.manhattan(player_tile);
+                if distance > best_distance {
+                    best_distance = distance;
+                    best = Some(candidate);
+                }
+            }
+        }
+
+        match best {
+            Some(next) => {
+                if let Ok(mut position) = positions.get_mut(actor) {
+                    position.x = next.x;
+                    position.y = next.y;
+                }
+            }
+            None => {
+                // 无路可逃：相邻且看得见玩家就反咬一口（与旧实现一致）。
+                let adjacent_visible = Position::new(self_position.0, self_position.1)
+                    .is_near(player_tile)
+                    && viewsheds
+                        .get(actor)
+                        .ok()
+                        .is_some_and(|viewshed| viewshed.can_see(player_position));
+                if adjacent_visible {
+                    intents.write(AttackIntentEvent {
+                        attacker: actor,
+                        target: player_entity,
+                    });
+                }
+            }
+        }
+
+        log::debug!("PoC 逃跑: actor={actor:?} action={action:?}");
         succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
@@ -827,6 +957,7 @@ pub fn build_action_poc_schedule() -> Schedule {
             execute_move_system,
             execute_basic_attack_system,
             execute_chase_system,
+            execute_flee_system,
             execute_wander_system,
             ApplyDeferred,
             action_completion_system,

@@ -45,14 +45,35 @@ impl ScheduleLabel for CoreSettleSchedule {
     }
 }
 
-/// 行动实体 PoC 链路（REFACTOR.md §11.3 Phase B）。
+/// 行动链路：生成（玩家 + AI）→ 仲裁 → tick → 执行 → completion。
 ///
-/// 仅供 PoC 测试使用：`world/loop_.rs` 仍走旧的 `decide_monster_actions` +
-/// `mount_action`；Phase C 会把这条链路接进主循环。
+/// C7 起**已接进主循环**（`world/loop_.rs` 每轮运行它）。名字里的 “Poc” 是
+/// Phase B 的遗留，为少改调用点而保留；Phase C 收尾时可改名为 `CoreActionSchedule`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ActionPocSchedule;
 
 impl ScheduleLabel for ActionPocSchedule {
+    fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
+        Box::new(self.clone())
+    }
+
+    fn as_dyn_eq(&self) -> &dyn DynEq {
+        self
+    }
+
+    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
+        Hash::hash(self, &mut state);
+    }
+}
+
+/// 玩家行动挂载：生成 + 仲裁，**不含**推进/执行。
+///
+/// `apply_player_command` 先单独跑这一次来确认命令是否被接受；见
+/// `action::entity::build_player_mount_schedule` 的说明。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlayerMountSchedule;
+
+impl ScheduleLabel for PlayerMountSchedule {
     fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
         Box::new(self.clone())
     }

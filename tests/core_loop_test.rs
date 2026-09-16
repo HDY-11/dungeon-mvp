@@ -224,6 +224,84 @@ fn request_quit_sets_the_flag() {
     assert!(world.resource::<TurnManager>().wants_quit);
 }
 
+/// C7：主循环接到 action 实体后，长跑一串命令不得卡死/panic，且世界状态自洽。
+///
+/// 这是 headless 的「可玩性冒烟」：混合移动/等待，跑到玩家死亡或回合上限为止，
+/// 每轮检查位置合法、HP 在界内、玩家空闲时没有残留 action 子实体。
+#[test]
+fn long_random_walk_keeps_world_consistent() {
+    let mut world = new_game(20260915);
+    let player = player_entity(&world);
+
+    let directions: [(isize, isize); 8] = [
+        (0, -1),
+        (0, 1),
+        (-1, 0),
+        (1, 0),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 1),
+    ];
+    let mut accepted_commands = 0usize;
+
+    for round in 0..300 {
+        if world.resource::<TurnManager>().game_over {
+            break;
+        }
+        // 交替等待与移动：两条玩家路径都被覆盖。
+        let accepted = if round % 3 == 0 {
+            apply_player_command(&mut world, PlayerCommand::Wait)
+        } else {
+            let (dx, dy) = directions[round % directions.len()];
+            apply_player_command(&mut world, PlayerCommand::Move { dx, dy })
+        };
+        if accepted {
+            accepted_commands += 1;
+        }
+
+        // 不变量 1：位置在界内且可走。
+        let (px, py) = player_pos(&world);
+        assert!(px < MAP_WIDTH && py < MAP_HEIGHT, "玩家越界: ({px},{py})");
+        assert!(
+            world.resource::<Map>().tiles[py][px].walkable(),
+            "玩家站在不可走格上: ({px},{py})"
+        );
+
+        // 不变量 2：HP 在界内。
+        let health = world.get::<Health>(player).unwrap();
+        assert!(
+            health.current >= 0.0 && health.current <= health.max,
+            "HP 越界: {} / {}",
+            health.current,
+            health.max
+        );
+
+        // 不变量 3：玩家空闲时不得残留 action 子实体。
+        if world.get::<core::Idle>(player).is_some() {
+            let leftovers = {
+                let mut query =
+                    world.query_filtered::<Entity, With<bevy_ecs::hierarchy::ChildOf>>();
+                query
+                    .iter(&world)
+                    .filter(|child| {
+                        world
+                            .get::<bevy_ecs::hierarchy::ChildOf>(*child)
+                            .is_some_and(|child_of| child_of.parent() == player)
+                    })
+                    .count()
+            };
+            assert_eq!(leftovers, 0, "玩家空闲时不得残留 action 子实体");
+        }
+    }
+
+    assert!(accepted_commands > 0, "至少应当有一条命令被接受");
+    assert!(
+        player_alive(&world) || world.resource::<TurnManager>().game_over,
+        "玩家要么活着，要么已经 game_over"
+    );
+}
+
 #[test]
 fn game_over_stops_further_commands() {
     let mut world = new_game(7);
