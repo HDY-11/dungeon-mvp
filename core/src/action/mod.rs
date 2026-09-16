@@ -42,7 +42,9 @@ pub fn mount_action(world: &mut World, entity: Entity, action: ActionKind, av: f
     entity_mut.remove::<ActionTimer>();
     entity_mut.remove::<Ready>();
     entity_mut.insert(Active);
-    entity_mut.insert(ActionTimer { remaining_av: av.max(0.0) });
+    entity_mut.insert(ActionTimer {
+        remaining_av: av.max(0.0),
+    });
 
     match action {
         ActionKind::Wait => {
@@ -68,15 +70,27 @@ pub fn mount_action(world: &mut World, entity: Entity, action: ActionKind, av: f
     log::debug!("挂载行动: entity={entity:?}, action={action:?}, av={av:.2}");
 }
 
+/// 行动成功：回 `Idle`。
+///
+/// `Idle` 与 `Failure` **互斥**：先清掉 `Failure` 再插 `Idle`（I91）。
 pub fn finish_action_success(world: &mut World, entity: Entity) {
     clear_action_state(world, entity);
-    world.entity_mut(entity).insert(Idle);
+    let mut entity_mut = world.entity_mut(entity);
+    entity_mut.remove::<Failure>();
+    entity_mut.insert(Idle);
     log::debug!("行动成功: {entity:?}");
 }
 
+/// 行动失败：回 `Failure`。
+///
+/// `Idle` 与 `Failure` **互斥**：先清掉 `Idle` 再插 `Failure`（I91）。
+/// 修复前这里不清 `Idle`，导致 actor 同时持有两者——虽然当前消费方都用
+/// `Or<(With<Idle>, With<Failure>)>` 判定、行为没变，但不变式已被破坏。
 pub fn finish_action_failure(world: &mut World, entity: Entity) {
     clear_action_state(world, entity);
-    world.entity_mut(entity).insert(Failure);
+    let mut entity_mut = world.entity_mut(entity);
+    entity_mut.remove::<Idle>();
+    entity_mut.insert(Failure);
     log::debug!("行动失败: {entity:?}");
 }
 

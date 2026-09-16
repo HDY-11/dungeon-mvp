@@ -2124,6 +2124,18 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 ## 三、实现层面（Implementation）
 
+### 🟢 I91 — `finish_action_failure` 不清 `Idle`：actor 可同时持有 `Idle` + `Failure`
+
+**问题：** `finish_action_failure` 只走 `clear_action_state`（清 `Active`/`ActionTimer`/`Ready`），然后 `insert(Failure)`，**没有 `remove::<Idle>()`**。于是「行动失败」的 actor 会同时持有 `Idle` 和 `Failure` 两个互斥状态组件。`finish_action_success` 有同样的对称问题（不清 `Failure`），只是成功路径上通常已经不在 `Failure`。
+
+**影响：** 🟢 低（发现时无实际行为后果）——当前所有消费方（`ai.rs::decide_monster_actions`、`world/query.rs`、TUI 状态栏）都用 `Or<(With<Idle>, With<Failure>)>` 或「取其中一个」，冗余的第二个标记不会改变判定。但状态互斥被破坏，`Idle`/`Failure` 的 debug 断言与未来的状态机重构都会踩到它。
+
+**位置：** `core/src/action/mod.rs:71-81`（`finish_action_success` / `finish_action_failure`）
+
+**状态：** Phase C5 迁移对照测试时发现（新链路的 `action_completion_system` 一开始也照抄了这个疏漏，已同批修正）。修复：`finish_action_failure` 先 `remove::<Idle>()`，`finish_action_success` 先 `remove::<Failure>()`，恢复「两者互斥」不变式。
+
+**关联：** REFACTOR.md §11.3 Phase C（C5）
+
 ### 🟡 I24 — Buff/Skill 系统缺陷（子项 I24b/I24c 已关闭）
 
 **I24b — 技能数量少且职业锁定 （Won't Fix — 已被 Dsn13 取代）**

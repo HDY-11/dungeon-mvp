@@ -1029,6 +1029,296 @@ fn wander_blocked_still_succeeds() {
     );
 }
 
+// ── C5：追击迁移对照 ─────────────────────────────────
+
+/// 追击对照场景：同 seed、全平地、玩家与怪物位置固定、怪物带视野与记忆。
+fn chase_parity_scene(
+    seed: u64,
+    player_tile: (usize, usize),
+    monster_tile: (usize, usize),
+) -> (World, Entity, Entity) {
+    let mut world = crate::world_loop::new_game(seed);
+    let monsters: Vec<Entity> = {
+        let mut query = world.query_filtered::<Entity, With<Monster>>();
+        query.iter(&world).collect()
+    };
+    for monster in monsters {
+        world.despawn(monster);
+    }
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<Player>>();
+        query.iter(&world).next().expect("新游戏必须有玩家")
+    };
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+    {
+        let mut pos = world.get_mut::<Position>(player).unwrap();
+        pos.x = player_tile.0;
+        pos.y = player_tile.1;
+    }
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        monster_tile,
+        10.0,
+        4.0,
+        5.0,
+    );
+    world
+        .entity_mut(monster)
+        .insert((CanChase, Viewshed::new(10), LastKnownPlayerPos::default()));
+    crate::system::run_settle_systems(&mut world);
+    // `new_game` 只注册 init/settle 两条调度；用行动链路还需要 PoC 调度。
+    world.add_schedule(build_action_poc_schedule());
+    (world, player, monster)
+}
+
+/// 直接设定「能否看见玩家」，避免依赖 FOV 细节。
+fn set_visibility(world: &mut World, monster: Entity, player_tile: (usize, usize), sees: bool) {
+    let mut viewshed = world.get_mut::<Viewshed>(monster).unwrap();
+    viewshed.visible_tiles = if sees { vec![player_tile] } else { Vec::new() };
+}
+
+/// 给怪物挂一个已到期的 action 实体（`Chase`），并让它进入 `Active`。
+fn mount_ready_chase(world: &mut World, monster: Entity) -> Entity {
+    let action = world
+        .spawn((
+            ChildOf(monster),
+            ActionPriority(PRIORITY_CHASE),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Chase,
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(monster).remove::<Idle>().insert(Active);
+    action
+}
+
+/// C5：追击执行器与旧 `&mut World` 版逐条对照（落点 / 记忆 / 攻击意图 / 结局）。
+///
+/// **只比较「一次执行」的结果**：新路径跑完执行器就取快照，**不要再跑完整调度**
+/// ——completion 会立刻把 actor 放回 `Idle`，下一轮生成系统又会给它挂新的追击，
+/// 那样量到的是「两步」而不是「一步」（本用例第一版就踩了这个坑）。
+#[test]
+fn chase_action_matches_legacy_chase_step() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    let player_tile = (40, 40);
+    let monster_tile = (34, 40);
+
+    // 一次执行的观察结果：位置 / 记忆 / 攻击意图数 / **是否处于 Idle**。
+    //
+    // 第三个字段用「Idle 是否存在」而不是「Failure 是否存在」：旧模型里有能力的
+    // actor 平时就是 `Idle`，`spawn_test_monster` 也会给 `Idle`；统一用「Idle 还在不在」
+    // 表达「这一步是成功结束还是失败结束」，两种模型的语义一致。
+    type ChaseOutcome = (Option<(usize, usize)>, Option<(usize, usize)>, usize, bool);
+    fn outcome_of(world: &World, monster: Entity) -> ChaseOutcome {
+        (
+            world.get::<Position>(monster).map(Position::to_tuple),
+            world
+                .get::<LastKnownPlayerPos>(monster)
+                .and_then(|known| known.0),
+            world.resource::<Events<AttackIntentEvent>>().len(),
+            world.get::<Idle>(monster).is_some(),
+        )
+    }
+
+    let cases: [(&str, bool, Option<(usize, usize)>); 3] = [
+        ("可见走一步", true, None),
+        ("不可见但有记忆", false, Some((35, 40))),
+        ("不可见且无记忆", false, None),
+    ];
+
+    for (name, sees, memory) in cases {
+        // ---- 旧路径：action 组件挂在 actor 上 ----
+        let (mut legacy, _legacy_player, legacy_monster) =
+            chase_parity_scene(11, player_tile, monster_tile);
+        set_visibility(&mut legacy, legacy_monster, player_tile, sees);
+        legacy
+            .get_mut::<LastKnownPlayerPos>(legacy_monster)
+            .unwrap()
+            .0 = memory;
+        legacy.entity_mut(legacy_monster).insert((
+            Active,
+            Ready,
+            Chase,
+            ActionTimer { remaining_av: 0.0 },
+        ));
+        crate::action::execution::execute_chase_system(&mut legacy);
+        // 旧执行器自己完成状态回转；新执行器把回转交给 completion。
+        // 为了让两步比较处在同一生命周期阶段，这里给旧路径补跑一次 completion
+        // （它的查寻依赖 `ActiveAction`，对旧模型实体不匹配，因此是纯空跑）。
+        world_run_completion_only(&mut legacy);
+        let legacy_outcome = outcome_of(&legacy, legacy_monster);
+
+        // ---- 新路径：action 子实体（只跑一次执行器）----
+        let (mut modern, _modern_player, modern_monster) =
+            chase_parity_scene(11, player_tile, monster_tile);
+        set_visibility(&mut modern, modern_monster, player_tile, sees);
+        modern
+            .get_mut::<LastKnownPlayerPos>(modern_monster)
+            .unwrap()
+            .0 = memory;
+        mount_ready_chase(&mut modern, modern_monster);
+        let _ = modern.run_system_once(execute_chase_system);
+        // 执行器只发事件；把事件翻成 Idle/Failure 的是 completion，
+        // 所以这里单独跑一次 completion（不再跑生成/仲裁，避免多走一步）。
+        world_run_completion_only(&mut modern);
+        let modern_outcome = outcome_of(&modern, modern_monster);
+
+        assert_eq!(
+            modern_outcome, legacy_outcome,
+            "情形「{name}」追击结果不一致（位置 / 记忆 / 攻击意图 / 结局）"
+        );
+    }
+}
+
+/// 只跑 completion（消费 `ActionSucceeded/FailedEvent`），不跑生成/仲裁/执行。
+fn world_run_completion_only(world: &mut World) {
+    let mut schedule = Schedule::new(ActionPocSchedule);
+    schedule.add_systems(action_completion_system);
+    world.add_schedule(schedule);
+    world.run_schedule(ActionPocSchedule);
+}
+
+/// C5：可见 + 相邻 → 声明攻击而不是移动。
+#[test]
+fn chase_adjacent_visible_declares_attack() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    let player_tile = (40, 40);
+    let monster_tile = (41, 40);
+    let (mut world, _player, monster) = chase_parity_scene(21, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, true);
+    mount_ready_chase(&mut world, monster);
+
+    let _ = world.run_system_once(execute_chase_system);
+
+    assert_eq!(
+        world.get::<Position>(monster).unwrap().to_tuple(),
+        monster_tile,
+        "相邻时不得移动（应当原地攻击）"
+    );
+    assert_eq!(
+        world.resource::<Events<AttackIntentEvent>>().len(),
+        1,
+        "相邻且可见时应当发出一个攻击意图"
+    );
+}
+
+/// C5：追击候选的生成条件（可见 或 有记忆）。
+#[test]
+fn chase_generation_requires_sight_or_memory() {
+    let player_tile = (40, 40);
+    let monster_tile = (30, 40);
+
+    // 情形 A：看不见且无记忆 → 不生成。
+    let (mut world, _player, monster) = chase_parity_scene(31, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, false);
+    let _ = world.run_system_once(chase_generation_system);
+    assert!(
+        candidates(&mut world).is_empty(),
+        "看不见又没记忆时不得生成追击候选"
+    );
+
+    // 情形 B：可见 → 生成，优先级 CHASE。
+    let (mut world, _player, monster) = chase_parity_scene(31, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, true);
+    let _ = world.run_system_once(chase_generation_system);
+    let spawned = candidates(&mut world);
+    assert_eq!(spawned.len(), 1, "可见时应当生成一个追击候选");
+    assert_eq!(
+        world.get::<ActionPriority>(spawned[0]).unwrap().0,
+        PRIORITY_CHASE
+    );
+    assert_eq!(world.get::<ChildOf>(spawned[0]).unwrap().parent(), monster);
+
+    // 情形 C：看不见但有记忆 → 生成。
+    let (mut world, _player, monster) = chase_parity_scene(31, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, false);
+    world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = Some((35, 40));
+    let _ = world.run_system_once(chase_generation_system);
+    assert_eq!(
+        candidates(&mut world).len(),
+        1,
+        "有最后已知位置时应当生成追击候选"
+    );
+}
+
+/// C5：抵达最后已知位置后清空记忆（旧实现的「放弃搜索」语义）。
+#[test]
+fn chase_clears_memory_when_reaching_last_known_position() {
+    let player_tile = (40, 40);
+    let monster_tile = (36, 40);
+    let (mut world, _player, monster) = chase_parity_scene(41, player_tile, monster_tile);
+    set_visibility(&mut world, monster, player_tile, false);
+    // 最后已知位置就在脚下（切比雪夫距离 0 ≤ 2）。
+    world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = Some(monster_tile);
+    mount_ready_chase(&mut world, monster);
+
+    let _ = world.run_system_once(execute_chase_system);
+
+    assert_eq!(
+        world
+            .get::<LastKnownPlayerPos>(monster)
+            .and_then(|known| known.0),
+        None,
+        "抵达最后已知位置后必须清空记忆"
+    );
+}
+
+/// I91 回归：`Idle` 与 `Failure` 必须互斥（成功清 Failure，失败清 Idle）。
+///
+/// 旧 `finish_action_failure` 不清 `Idle`，会让 actor 同时持有两者；
+/// 新链路的 `action_completion_system` 一开始也照抄了这个疏漏，本用例钉住不变式。
+#[test]
+fn idle_and_failure_are_mutually_exclusive() {
+    // 旧模型：finish_action_failure / finish_action_success。
+    let mut world = crate::test_util::test_world();
+    let actor = world
+        .spawn((Idle, Failure, Active, ActionTimer { remaining_av: 0.0 }))
+        .id();
+
+    crate::action::finish_action_failure(&mut world, actor);
+    assert!(world.get::<Failure>(actor).is_some());
+    assert!(
+        world.get::<Idle>(actor).is_none(),
+        "失败后不得残留 Idle（I91）"
+    );
+
+    crate::action::finish_action_success(&mut world, actor);
+    assert!(world.get::<Idle>(actor).is_some());
+    assert!(
+        world.get::<Failure>(actor).is_none(),
+        "成功后不得残留 Failure（I91）"
+    );
+
+    // 新模型：action_completion_system 走失败分支后同样只剩 Failure。
+    let (mut world, _player) = poc_world();
+    let monster = poc_actor(&mut world, (5, 5));
+    // 追击需要视野与记忆组件；这里给空的（既看不见也没记忆）。
+    world
+        .entity_mut(monster)
+        .insert((CanChase, Viewshed::new(0), LastKnownPlayerPos::default()));
+    let action = mount_ready_chase(&mut world, monster);
+
+    let _ = world.run_system_once(execute_chase_system);
+    assert!(
+        world.get::<Idle>(monster).is_none(),
+        "执行器发失败事件前不得改动状态"
+    );
+    world_run_completion_only(&mut world);
+    assert!(world.get::<Failure>(monster).is_some(), "必须落到 Failure");
+    assert!(
+        world.get::<Idle>(monster).is_none(),
+        "失败后不得残留 Idle（I91）"
+    );
+    assert!(world.get_entity(action).is_err());
+}
+
 #[test]
 fn legacy_player_path_still_works_alongside_poc() {
     let (mut world, player) = poc_world();

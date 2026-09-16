@@ -35,12 +35,12 @@
 
 use crate::action::generation::player::PlayerCommand;
 use crate::balance::{
-    FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION, WANDER_DURATION,
-    action_av,
+    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION,
+    WANDER_DURATION, action_av,
 };
 use crate::components::{
-    ActionTimer, Active, Agility, BasicAttack, CanFlee, CanWait, CanWander, Failure, Flee, Health,
-    Idle, Move, Position, Ready, Wait, Wander,
+    ActionTimer, Active, Agility, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
+    Failure, Flee, Health, Idle, LastKnownPlayerPos, Move, Position, Ready, Viewshed, Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
@@ -182,6 +182,56 @@ pub fn wait_generation_system(
                 remaining_av: action_av(WAIT_DURATION, agility.0),
             },
             Wait,
+            Candidate,
+        ));
+    }
+}
+
+/// 追击候选（C5）：玩家可见、或仍有最后已知位置（§3.3 表）。
+///
+/// 条件与旧 `ai.rs::choose_action` 的 `chase_condition` 一致：
+/// `player_visible_to(actor) || LastKnownPlayerPos.0.is_some()`。
+pub fn chase_generation_system(
+    mut commands: Commands,
+    actors: Query<
+        (Entity, &Agility),
+        (
+            With<Monster>,
+            With<CanChase>,
+            Without<Active>,
+            Or<(With<Idle>, With<Failure>)>,
+        ),
+    >,
+    viewsheds: Query<&Viewshed>,
+    last_known: Query<&LastKnownPlayerPos>,
+    player: Query<&Position, With<Player>>,
+) {
+    let Ok(player_position) = player.single() else {
+        return;
+    };
+    let player_position = player_position.to_tuple();
+
+    for (actor, agility) in &actors {
+        let can_see = viewsheds
+            .get(actor)
+            .ok()
+            .is_some_and(|viewshed| viewshed.can_see(player_position));
+        let has_memory = last_known
+            .get(actor)
+            .ok()
+            .is_some_and(|known| known.0.is_some());
+        if !can_see && !has_memory {
+            continue;
+        }
+        commands.spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_CHASE),
+            ActionSource::Ai,
+            ActionName("Chase"),
+            ActionTimer {
+                remaining_av: action_av(CHASE_DURATION, agility.0),
+            },
+            Chase,
             Candidate,
         ));
     }
@@ -488,6 +538,102 @@ pub fn execute_wait_system(
     }
 }
 
+/// 执行到期的 `Chase`（C5）：与旧 `execution::execute_chase_system` 逐条对齐。
+///
+/// 1. **保活**：仍可见玩家，或仍有最后已知位置；否则 `ActionFailedEvent`；
+/// 2. 可见时把玩家当前位置写入 `LastKnownPlayerPos`（执行器的合法写入之一，
+///    旧实现同样在这里写）；
+/// 3. 目标 = 可见时玩家实时位置，否则最后已知位置；
+/// 4. 可见且相邻 → 写 `AttackIntentEvent`（伤害仍归结算链路）；
+///    否则 A* 走一步（`astar(..., Some(occupancy))`，与旧实现同一调用口径）；
+/// 5. 不可见且已抵达最后已知位置（切比雪夫 ≤2）→ 清空 `LastKnownPlayerPos`。
+///
+/// 追击总是以成功结束（保活通过就算这一步做完），与旧实现一致。
+#[allow(clippy::too_many_arguments)]
+pub fn execute_chase_system(
+    mut positions: Query<&mut Position>,
+    viewsheds: Query<&Viewshed>,
+    mut last_known: Query<&mut LastKnownPlayerPos>,
+    player: Query<Entity, With<Player>>,
+    map: Res<Map>,
+    occupancy: Res<OccupancyMap>,
+    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Chase>)>,
+    mut intents: EventWriter<AttackIntentEvent>,
+    mut succeeded: EventWriter<ActionSucceededEvent>,
+    mut failed: EventWriter<ActionFailedEvent>,
+) {
+    use crate::spatial::pathfinding::astar;
+
+    for (action, child_of) in &actions {
+        let actor = child_of.parent();
+
+        let Ok(player_entity) = player.single() else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
+
+        let can_see = viewsheds
+            .get(actor)
+            .ok()
+            .is_some_and(|viewshed| viewshed.can_see(player_position));
+        let memory = last_known.get(actor).ok().and_then(|known| known.0);
+        // 保活：既看不见又没有记忆 → 行动失败。
+        if !can_see && memory.is_none() {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        }
+
+        if can_see && let Ok(mut known) = last_known.get_mut(actor) {
+            known.0 = Some(player_position);
+        }
+
+        let target = if can_see {
+            Some(player_position)
+        } else {
+            memory
+        };
+        if let Some((tx, ty)) = target {
+            let self_tile = Position::new(self_position.0, self_position.1);
+            let target_tile = Position::new(tx, ty);
+            if can_see && self_tile.is_near(target_tile) {
+                // 相邻且可见：声明攻击，伤害交给结算链路。
+                intents.write(AttackIntentEvent {
+                    attacker: actor,
+                    target: player_entity,
+                });
+            } else if let Some((nx, ny)) =
+                astar(self_position, (tx, ty), &map.tiles, Some(&occupancy))
+                    .and_then(|path| path.first().copied())
+                && let Ok(mut position) = positions.get_mut(actor)
+            {
+                position.x = nx;
+                position.y = ny;
+            }
+
+            // 不可见且已抵达最后已知位置附近 → 记忆失效。
+            if !can_see
+                && let Ok(mut known) = last_known.get_mut(actor)
+                && let Some((kx, ky)) = known.0
+                && self_position.0.abs_diff(kx) <= 2
+                && self_position.1.abs_diff(ky) <= 2
+            {
+                known.0 = None;
+            }
+        }
+
+        log::debug!("PoC 追击: actor={actor:?} action={action:?} can_see={can_see}");
+        succeeded.write(ActionSucceededEvent { entity: actor });
+    }
+}
+
 /// 执行到期的 `BasicAttack { target }`（C3）：保活检查 → 发 `AttackIntentEvent`。
 ///
 /// 与旧 `execution::execute_basic_attack_system` **完全同语义**：
@@ -638,9 +784,13 @@ pub fn action_completion_system(
             actor_cmd.remove::<Active>();
             actor_cmd.remove::<ActionTimer>();
             actor_cmd.remove::<Ready>();
+            // `Idle` 与 `Failure` 互斥：必须显式清掉另一个再插入，
+            // 否则 actor 会同时持有两者（旧 `finish_action_success/failure` 也是这样清的）。
             if is_success {
+                actor_cmd.remove::<Failure>();
                 actor_cmd.insert(Idle);
             } else {
+                actor_cmd.remove::<Idle>();
                 actor_cmd.insert(Failure);
             }
         }
@@ -664,6 +814,7 @@ pub fn build_action_poc_schedule() -> Schedule {
             (
                 player_action_generation_system,
                 wait_generation_system,
+                chase_generation_system,
                 wander_generation_system,
                 flee_generation_system,
             )
@@ -675,6 +826,7 @@ pub fn build_action_poc_schedule() -> Schedule {
             execute_wait_system,
             execute_move_system,
             execute_basic_attack_system,
+            execute_chase_system,
             execute_wander_system,
             ApplyDeferred,
             action_completion_system,
