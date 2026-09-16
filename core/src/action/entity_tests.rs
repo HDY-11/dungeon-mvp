@@ -899,6 +899,136 @@ fn player_second_request_is_ignored_while_busy() {
     );
 }
 
+// ── C4：游荡（AI 侧）迁移对照 ────────────────────────
+
+/// 造一个「全平地 + 一只具 CanWander 的怪 + 同 seed RNG」的世界。
+///
+/// RNG 状态由 `new_game(seed)` 决定，两个世界用同一 seed 即同一随机序列。
+fn wander_parity_scene(seed: u64, pos: (usize, usize)) -> (World, Entity) {
+    let mut world = crate::world_loop::new_game(seed);
+    // 清掉地图生成的怪物，只留玩家 + 我们要测的那只怪。
+    let monsters: Vec<Entity> = {
+        let mut query = world.query_filtered::<Entity, With<Monster>>();
+        query.iter(&world).collect()
+    };
+    for monster in monsters {
+        world.despawn(monster);
+    }
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+    let actor = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        pos,
+        10.0,
+        4.0,
+        5.0,
+    );
+    world.entity_mut(actor).insert((CanWander,));
+    crate::system::run_settle_systems(&mut world);
+    (world, actor)
+}
+
+/// C4：新参数化游荡执行器与旧 `&mut World` 版行为一致（落点 + RNG 步数）。
+///
+/// 旧实现先抽方向、再判断能否移动；新实现必须保持同一顺序，否则随机序列漂移
+/// （`GameRng::steps` 是存档回放的基础）。用多个 seed 覆盖不同随机方向。
+#[test]
+fn wander_action_matches_legacy_wander_step() {
+    let pos = (30, 30);
+
+    for seed in [1u64, 2, 3, 4, 5, 6, 7, 8] {
+        // 旧路径：action 组件挂在 actor 上。
+        let (mut legacy, legacy_actor) = wander_parity_scene(seed, pos);
+        legacy.entity_mut(legacy_actor).insert((
+            Active,
+            Ready,
+            Wander,
+            ActionTimer { remaining_av: 0.0 },
+        ));
+        let rng_before = legacy.resource::<GameRng>().steps;
+        crate::action::execution::execute_wander_system(&mut legacy);
+        let legacy_position = legacy.get::<Position>(legacy_actor).unwrap().to_tuple();
+        let legacy_steps = legacy.resource::<GameRng>().steps - rng_before;
+        assert_eq!(legacy_steps, 1, "一次游荡应当恰好抽一次方向");
+
+        // 新路径：action 实体。
+        let (mut modern, modern_actor) = wander_parity_scene(seed, pos);
+        let _action = modern
+            .spawn((
+                ChildOf(modern_actor),
+                ActionPriority(PRIORITY_WANDER),
+                ActionSource::Ai,
+                ActionTimer { remaining_av: 0.0 },
+                Wander,
+                ActiveAction,
+                Ready,
+            ))
+            .id();
+        modern
+            .entity_mut(modern_actor)
+            .remove::<Idle>()
+            .insert(Active);
+        let modern_rng_before = modern.resource::<GameRng>().steps;
+        let _ = modern.run_system_once(execute_wander_system);
+        let modern_position = modern.get::<Position>(modern_actor).unwrap().to_tuple();
+        let modern_steps = modern.resource::<GameRng>().steps - modern_rng_before;
+
+        assert_eq!(
+            modern_position, legacy_position,
+            "seed={seed} 时新旧游荡落点必须一致"
+        );
+        assert_eq!(
+            modern_steps, legacy_steps,
+            "seed={seed} 时新旧游荡消耗的随机步数必须一致"
+        );
+    }
+}
+
+/// C4：游荡被墙挡住时原地不动，但仍算“完成”（等价旧实现的无条件成功）。
+#[test]
+fn wander_blocked_still_succeeds() {
+    let (mut world, _player) = poc_world();
+    world.resource_mut::<Map>().tiles = [[Tile::Wall; MAP_WIDTH]; MAP_HEIGHT];
+    world.resource_mut::<Map>().tiles[30][30] = Tile::Floor;
+    let actor = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        (30, 30),
+        10.0,
+        4.0,
+        5.0,
+    );
+    let action = world
+        .spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_WANDER),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Wander,
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(actor).remove::<Idle>().insert(Active);
+
+    let _ = world.run_system_once(execute_wander_system);
+
+    assert_eq!(
+        world.get::<Position>(actor).unwrap().to_tuple(),
+        (30, 30),
+        "四周都是墙时不得移动"
+    );
+    world.run_schedule(ActionPocSchedule);
+    assert!(
+        world.get_entity(action).is_err(),
+        "被挡也算完成，实体应被回收"
+    );
+    assert!(
+        world.get::<Idle>(actor).is_some(),
+        "被挡的游荡仍然回 Idle（不落 Failure）"
+    );
+}
+
 #[test]
 fn legacy_player_path_still_works_alongside_poc() {
     let (mut world, player) = poc_world();

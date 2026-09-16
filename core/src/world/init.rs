@@ -13,11 +13,9 @@ use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
     LevelUpEvent, ThreatEvent,
 };
-use crate::map::{
-    map_kind_for, Map, MapKind, Tile, MAP_HEIGHT, MAP_WIDTH,
-};
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
-use crate::monster::{monster_template, roll_one_kind, MonsterKindId};
+use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
+use crate::monster::{MonsterKindId, monster_template, roll_one_kind};
 use crate::resources::*;
 use crate::schedule::CoreInitSchedule;
 use crate::system::{
@@ -93,11 +91,7 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
 // ── 地图生成系统 ─────────────────────────────────────
 
 /// 读取 `MapSeed` 与 `FloorNumber`，确定性生成当前层地图。
-pub fn generate_map_system(
-    mut map: ResMut<Map>,
-    map_seed: Res<MapSeed>,
-    floor: Res<FloorNumber>,
-) {
+pub fn generate_map_system(mut map: ResMut<Map>, map_seed: Res<MapSeed>, floor: Res<FloorNumber>) {
     let kind = map_kind_for(map_seed.0, floor.0);
     let seed = map_seed_for_floor(map_seed.0, floor.0);
     log::info!("生成地图: seed={seed}, floor={}, kind={kind:?}", floor.0);
@@ -129,11 +123,7 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
     )
 }
 
-pub fn spawn_player_system(
-    mut commands: Commands,
-    map: Res<Map>,
-    mut spawn: ResMut<PlayerSpawn>,
-) {
+pub fn spawn_player_system(mut commands: Commands, map: Res<Map>, mut spawn: ResMut<PlayerSpawn>) {
     let pos = map.spawn_point();
     spawn.0 = pos;
     log::info!("玩家出生: {pos:?}");
@@ -298,10 +288,7 @@ fn generate_monster_population(
         attempts += 1;
         let x = rng.random_range(3..MAP_WIDTH - 3);
         let y = rng.random_range(3..MAP_HEIGHT - 3);
-        if tiles[y][x].walkable()
-            && !positions.contains(&(x, y))
-            && !exclude.contains(&(x, y))
-        {
+        if tiles[y][x].walkable() && !positions.contains(&(x, y)) && !exclude.contains(&(x, y)) {
             positions.push((x, y));
         }
     }
@@ -355,8 +342,7 @@ pub fn spawn_monsters_system(
     let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
     let exclude = [player_spawn.0, stairs_pos.0];
 
-    let population =
-        generate_monster_population(kind, &map.tiles, floor.0, &mut rng, &exclude);
+    let population = generate_monster_population(kind, &map.tiles, floor.0, &mut rng, &exclude);
     log::info!("生成怪物: count={}, kind={kind:?}", population.len());
 
     for (monster_kind, x, y) in population {
