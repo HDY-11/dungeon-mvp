@@ -33,14 +33,18 @@
 //! action 实体是瞬态子实体；存档只存 actor 状态，读档后重新生成行动
 //! （见 REFACTOR.md §10.7）。
 
-use crate::balance::{FLEE_DURATION, FLEE_HP_RATIO, WAIT_DURATION, WANDER_DURATION, action_av};
+use crate::action::generation::player::PlayerCommand;
+use crate::balance::{
+    FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION, WANDER_DURATION,
+    action_av,
+};
 use crate::components::{
     ActionTimer, Active, Agility, CanFlee, CanWait, CanWander, Failure, Flee, Health, Idle, Move,
     Position, Ready, Wait, Wander,
 };
-use crate::entity_cls::Monster;
+use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent};
-use crate::map::Map;
+use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{GameRng, OccupancyMap};
 use crate::schedule::ActionPocSchedule;
 use bevy_ecs::prelude::*;
@@ -56,6 +60,10 @@ pub const PRIORITY_FLEE: i32 = -200;
 pub const PRIORITY_CHASE: i32 = -100;
 pub const PRIORITY_WANDER: i32 = -50;
 pub const PRIORITY_WAIT: i32 = 0;
+
+/// 玩家行动不进入 AI 仲裁（§3.5「玩家行动不进入此表」），因此这里给一个
+/// 明确凌驾于 AI 之上的值：即使未来玩家行动被写进仲裁路径，也不会被 AI 覆盖。
+pub const PRIORITY_PLAYER: i32 = -1000;
 
 // ── action 实体组件 ──────────────────────────────────
 
@@ -177,6 +185,116 @@ pub fn wait_generation_system(
             Candidate,
         ));
     }
+}
+
+// ── 玩家路径生成（C2） ────────────────────────────────
+//
+// 玩家输入不走 AI 生成/仲裁：`PlayerActionRequest` → 直接产出 active action。
+
+/// 玩家行动请求（C2）：与旧 `generation::player::PlayerActionRequest` 同形，
+/// 但由 action 实体链路消费——**玩家路径直接产出 active action，不进 AI 仲裁**
+/// （§3.6.4）。C3 补上「走向怪物 = 攻击」的分支。
+#[derive(Resource, Default)]
+pub struct PlayerActionRequest {
+    pub command: Option<PlayerCommand>,
+}
+
+impl PlayerActionRequest {
+    pub fn new(command: PlayerCommand) -> Self {
+        Self {
+            command: Some(command),
+        }
+    }
+}
+
+/// 玩家路径的行动种类（内部用，避免与 `ActionKind` 混淆）。
+#[derive(Debug, Clone, Copy)]
+enum PlayerAction {
+    Wait,
+    Move(Move),
+}
+
+/// 玩家行动生成（C2）：把已确认的玩家命令翻译成 **active action 实体**。
+///
+/// 与 AI 生成系统的三条差别（都是 §3.6.4 的规定）：
+///
+/// 1. 过滤 `With<Player>` 而不是 `With<Monster>`——玩家与怪物互不覆盖；
+/// 2. 直接产出 `ActiveAction` 并写 actor 的 `Active`，**不经过仲裁**；
+/// 3. 产出前先做同一套合法性检查（越界 / 占用 / [`moved_position`]），
+///    失败即拒绝请求（等价旧 `player_action_generation_system` 的「请求无效，未挂载」）。
+///
+/// **忙碌判定的依据**：查询用 `Without<Active>` 而不是 `Without<ActiveAction>`。
+/// `ActiveAction` 挂在**子实体**上，actor 身上看不到它；actor 自己的 `Active`
+/// 才是「正在行动」的权威标记（与仲裁系统用 `Without<Active>` 过滤 AI 候选一致）。
+///
+/// 计时迁移期沿用旧口径：`Move` 用 `UNARMED_ATTACK_DURATION`、`Wait` 用
+/// `WAIT_DURATION`，都乘敏捷系数（Phase D 才换成 `MoveSpeed`/`AttackSpeed` 倍率）。
+///
+/// [`moved_position`]: crate::action::execution::movement::moved_position
+pub fn player_action_generation_system(
+    mut commands: Commands,
+    mut request: ResMut<PlayerActionRequest>,
+    players: Query<(Entity, &Position, &Agility), (With<Player>, Without<Active>)>,
+    map: Res<Map>,
+    occupancy: Res<OccupancyMap>,
+) {
+    let Some(command) = request.command.take() else {
+        return;
+    };
+
+    let Ok((player, position, agility)) = players.single() else {
+        log::warn!("玩家请求无法处理（玩家不存在或已有行动）: {command:?}");
+        return;
+    };
+
+    let (action, duration) = match command {
+        PlayerCommand::Wait => (PlayerAction::Wait, WAIT_DURATION),
+        PlayerCommand::Move { dx, dy } => {
+            let (nx, ny) = position.offset(dx, dy);
+            if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {
+                log::debug!("玩家移动越界，拒绝请求: ({dx},{dy})");
+                return;
+            }
+            if occupancy.entity_at(nx, ny).is_some() {
+                // C3 的分支：走向怪物 = 攻击；本轮只拒绝（与旧实现一致）。
+                log::debug!("玩家移动目标被占用，暂不处理（攻击见 C3）: ({nx},{ny})");
+                return;
+            }
+            if crate::action::execution::movement::moved_position(
+                &map, &occupancy, *position, dx, dy,
+            )
+            .is_none()
+            {
+                log::debug!("玩家移动非法，拒绝请求: ({dx},{dy})");
+                return;
+            }
+            (PlayerAction::Move(Move { dx, dy }), UNARMED_ATTACK_DURATION)
+        }
+    };
+
+    let mut action_cmd = commands.spawn((
+        ChildOf(player),
+        ActionPriority(PRIORITY_PLAYER),
+        ActionSource::Player,
+        ActionTimer {
+            remaining_av: action_av(duration, agility.0),
+        },
+        ActiveAction,
+    ));
+    match action {
+        PlayerAction::Wait => {
+            action_cmd.insert((ActionName("Wait"), Wait));
+        }
+        PlayerAction::Move(action_move) => {
+            action_cmd.insert((ActionName("Move"), action_move));
+        }
+    }
+
+    let mut player_cmd = commands.entity(player);
+    player_cmd.remove::<Idle>();
+    player_cmd.remove::<Failure>();
+    player_cmd.insert(Active);
+    log::debug!("玩家行动已挂载: {action:?} player={player:?}");
 }
 
 // ── 仲裁系统 ─────────────────────────────────────────
@@ -466,20 +584,22 @@ pub fn action_completion_system(
     }
 }
 
-// ── PoC 调度 ─────────────────────────────────────────
-
-/// Phase B 的完整 PoC 调度：生成 → 仲裁 → tick → 执行 → completion。
-///
-/// 全链路都是**普通系统**：没有 exclusive `&mut World` 系统，因此这条调度可以被
-/// 自由组合（见 `entity_tests.rs` 里把它追加进 `CoreSettleSchedule` 的共存测试）。
-///
-/// **只给测试使用**（`world/loop_.rs` 仍走旧路径）；Phase C 才把它接进主循环并
-/// 用真正的 `CoreSettleSchedule` 前后置系统替换这里的顺序。
+// ── PoC 调度（Phase C 逐步扩成正式链路） ──────────────
+//
+// 生成（AI 候选 + 玩家 active）→ 仲裁 → tick → 执行 → completion。
+//
+// 全链路都是**普通系统**：没有 exclusive `&mut World` 系统，因此这条调度可以被
+// 自由组合（见 `entity_tests.rs` 里把它追加进 `CoreSettleSchedule` 的共存测试）。
+//
+// **仍未接主循环**：`world/loop_.rs` 继续走旧的 `decide_monster_actions` +
+// `mount_action`；C7 才做接线切换。玩家路径的生成系统已经就位（C2），
+// 但主循环尚未把 `PlayerCommand` 写进 [`PlayerActionRequest`]。
 pub fn build_action_poc_schedule() -> Schedule {
     let mut schedule = Schedule::new(ActionPocSchedule);
     schedule.add_systems(
         (
             (
+                player_action_generation_system,
                 wait_generation_system,
                 wander_generation_system,
                 flee_generation_system,

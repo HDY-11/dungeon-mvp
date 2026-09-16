@@ -510,6 +510,268 @@ fn new_wait_semantics_match_legacy_wait() {
     assert!(world.get_entity(wait).is_err(), "action 实体必须被回收");
 }
 
+// ── C2：玩家 Move 路径 ───────────────────────────────
+
+/// 玩家请求用的场景：全平地 + 玩家位置，返回 `(world, player)`。
+fn player_move_scene(player_pos: (usize, usize)) -> (World, Entity) {
+    let (mut world, player) = poc_world();
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+    {
+        let mut pos = world.get_mut::<Position>(player).unwrap();
+        pos.x = player_pos.0;
+        pos.y = player_pos.1;
+    }
+    crate::system::run_settle_systems(&mut world);
+    (world, player)
+}
+
+/// 当前挂在某个 actor 名下的 action 实体。
+fn action_entities_of(world: &mut World, actor: Entity) -> Vec<Entity> {
+    let mut query = world.query_filtered::<Entity, With<ChildOf>>();
+    query
+        .iter(world)
+        .filter(|action| {
+            world
+                .get::<ChildOf>(*action)
+                .is_some_and(|child_of| child_of.parent() == actor)
+        })
+        .collect()
+}
+
+/// 玩家 `Wait` 命令：直接产出 active action（不进仲裁），完成后回 `Idle`。
+#[test]
+fn player_wait_spawns_active_action_without_arbitration() {
+    let (mut world, player) = player_move_scene((10, 10));
+
+    world.resource_mut::<PlayerActionRequest>().command = Some(PlayerCommand::Wait);
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let actions = action_entities_of(&mut world, player);
+    assert_eq!(actions.len(), 1, "玩家应当恰好有一个 action 实体");
+    let action = actions[0];
+    assert!(
+        world.get::<ActiveAction>(action).is_some(),
+        "玩家行动必须直接是 ActiveAction（不经仲裁）"
+    );
+    assert!(
+        world.get::<Candidate>(action).is_none(),
+        "玩家行动不得留在候选态"
+    );
+    assert_eq!(
+        world.get::<ActionSource>(action),
+        Some(&ActionSource::Player)
+    );
+    assert_eq!(
+        world.get::<ActionPriority>(action).unwrap().0,
+        PRIORITY_PLAYER
+    );
+    assert!(world.get::<Wait>(action).is_some());
+    assert!(
+        world.get::<Wait>(player).is_none(),
+        "行动组件必须挂在 action 实体上，不能回到 actor"
+    );
+    assert!(world.get::<Active>(player).is_some());
+    assert!(world.get::<Idle>(player).is_none());
+
+    // 一次完整往返：tick → 执行 → completion。
+    world.run_schedule(ActionPocSchedule);
+    assert!(world.get::<Idle>(player).is_some(), "完成后回 Idle");
+    assert!(world.get::<Active>(player).is_none());
+    assert!(
+        action_entities_of(&mut world, player).is_empty(),
+        "completion 之后不得残留 action 实体"
+    );
+}
+
+/// 玩家 `Move` 命令：payload 挂在 action 实体上，执行后恰好移动一格。
+#[test]
+fn player_move_spawns_move_action_and_moves_one_tile() {
+    let (mut world, player) = player_move_scene((0, 0));
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let actions = action_entities_of(&mut world, player);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        world.get::<Move>(actions[0]),
+        Some(&Move { dx: 1, dy: 0 }),
+        "payload 必须挂在 action 实体上"
+    );
+
+    world.run_schedule(ActionPocSchedule);
+
+    assert_eq!(
+        world.get::<Position>(player).unwrap().to_tuple(),
+        (1, 0),
+        "执行后玩家必须恰好移动一格"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+}
+
+/// 玩家移动与旧 `apply_player_command` 的落点一致（迁移期一致性）。
+#[test]
+fn player_move_via_action_entity_matches_legacy_command() {
+    // 旧路径
+    let (mut legacy, legacy_player) = player_move_scene((0, 0));
+    assert!(
+        apply_player_command(&mut legacy, PlayerCommand::Move { dx: 1, dy: 0 }),
+        "旧路径应当接受该移动"
+    );
+
+    // 新路径（action 实体）
+    let (mut modern, modern_player) = player_move_scene((0, 0));
+    modern.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = modern.run_system_once(player_action_generation_system);
+    modern.run_schedule(ActionPocSchedule);
+
+    assert_eq!(
+        modern.get::<Position>(modern_player).unwrap().to_tuple(),
+        legacy.get::<Position>(legacy_player).unwrap().to_tuple(),
+        "新旧路径的玩家落点必须一致"
+    );
+}
+
+/// 非法移动（撞墙 / 越界）必须被拒绝：不挂载 action，玩家保持 `Idle`。
+#[test]
+fn player_invalid_move_is_rejected() {
+    let (mut world, player) = player_move_scene((10, 10));
+
+    // 撞墙：目标格改成墙。
+    world.resource_mut::<Map>().tiles[10][11] = Tile::Wall;
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    assert!(
+        action_entities_of(&mut world, player).is_empty(),
+        "撞墙的移动不得挂载 action"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+    assert!(world.get::<Active>(player).is_none());
+
+    // 越界：移到 (0,0) 后往负方向。
+    {
+        let mut pos = world.get_mut::<Position>(player).unwrap();
+        pos.x = 0;
+        pos.y = 0;
+    }
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: -1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    assert!(
+        action_entities_of(&mut world, player).is_empty(),
+        "越界的移动不得挂载 action"
+    );
+    assert_eq!(world.get::<Position>(player).unwrap().to_tuple(), (0, 0));
+}
+
+/// 目标格被占用时本轮不挂载（「走向怪物 = 攻击」属 C3）。
+#[test]
+fn player_move_into_occupied_tile_is_deferred_to_c3() {
+    let (mut world, player) = player_move_scene((10, 10));
+    let blocker = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (11, 10),
+        10.0,
+        4.0,
+        5.0,
+    );
+    crate::system::run_settle_systems(&mut world);
+    assert!(
+        world.resource::<OccupancyMap>().is_occupied(11, 10),
+        "测试前提：目标格必须已被占用"
+    );
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    assert!(
+        action_entities_of(&mut world, player).is_empty(),
+        "被占用的目标格本轮不得挂载 action（攻击属 C3）"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+    assert!(world.get_entity(blocker).is_ok());
+}
+
+/// 球员行动与 AI 行动互不覆盖：仲裁不得动玩家的 active action。
+#[test]
+fn arbitration_does_not_touch_player_active_action() {
+    let (mut world, player) = player_move_scene((10, 10));
+    let monster = poc_actor(&mut world, (20, 20));
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let player_actions = action_entities_of(&mut world, player);
+    assert_eq!(player_actions.len(), 1);
+    let player_action = player_actions[0];
+
+    // 只跑 AI 生成 + 仲裁：玩家已经 active，AI 生成系统会跳过它。
+    let _ = world.run_system_once(wait_generation_system);
+    let _ = world.run_system_once(wander_generation_system);
+    let _ = world.run_system_once(action_arbitration_system);
+
+    assert!(
+        world.get::<ActiveAction>(player_action).is_some(),
+        "玩家的 active action 不得被仲裁夺走"
+    );
+    assert_eq!(
+        world.get::<ActionSource>(player_action),
+        Some(&ActionSource::Player)
+    );
+    // 对照：怪物确实拿到了 AI 行动（说明仲裁跑过并正常授予）。
+    assert!(
+        !action_entities_of(&mut world, monster).is_empty()
+            || world.get::<Active>(monster).is_some(),
+        "AI 侧仲裁应当照常给怪物授予行动"
+    );
+}
+
+/// 玩家命令被消费后不会残留（`PlayerActionRequest` 必须被 take 掉）。
+#[test]
+fn player_request_is_consumed_even_when_rejected() {
+    let (mut world, player) = player_move_scene((10, 10));
+    world.resource_mut::<Map>().tiles[10][11] = Tile::Wall;
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+
+    let _ = world.run_system_once(player_action_generation_system);
+    assert!(
+        world.resource::<PlayerActionRequest>().command.is_none(),
+        "被拒绝的请求也必须被消费，否则会每轮重试"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+}
+
+/// 玩家已有 action 时，第二个请求不得再挂载第二个 action（防重复行动）。
+#[test]
+fn player_second_request_is_ignored_while_busy() {
+    let (mut world, player) = player_move_scene((10, 10));
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let first = action_entities_of(&mut world, player);
+    assert_eq!(first.len(), 1);
+
+    // 玩家还在 Active 中时再发一个请求：必须被忽略，且请求要被消费掉。
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 0, dy: 1 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let after = action_entities_of(&mut world, player);
+    assert_eq!(after.len(), 1, "忙碌状态下不得再挂载 action：{after:?}");
+    assert_eq!(after[0], first[0], "原有 action 不得被替换");
+    assert!(
+        world.resource::<PlayerActionRequest>().command.is_none(),
+        "请求必须被消费，不能留到下一轮"
+    );
+}
+
 #[test]
 fn legacy_player_path_still_works_alongside_poc() {
     let (mut world, player) = poc_world();

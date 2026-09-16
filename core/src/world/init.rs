@@ -67,6 +67,10 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(ThreatTable::default());
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
+    // 玩家行动请求（C2）：action 实体链路的输入口。旧链路的
+    // `action::generation::player::PlayerActionRequest` 由调用方按需插入；
+    // C7 接线时两者合并为一个。
+    world.insert_resource(crate::action::entity::PlayerActionRequest::default());
 
     world.insert_resource(bevy_ecs::event::Events::<AttackIntentEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<AttackEvent>::default());
