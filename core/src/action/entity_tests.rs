@@ -667,11 +667,11 @@ fn player_invalid_move_is_rejected() {
     assert_eq!(world.get::<Position>(player).unwrap().to_tuple(), (0, 0));
 }
 
-/// 目标格被占用时本轮不挂载（「走向怪物 = 攻击」属 C3）。
+/// C3：玩家走向怪物 = 声明攻击（`BasicAttack` 挂 action 实体，payload 是目标）。
 #[test]
-fn player_move_into_occupied_tile_is_deferred_to_c3() {
+fn player_move_into_monster_declares_attack() {
     let (mut world, player) = player_move_scene((10, 10));
-    let blocker = spawn_test_monster(
+    let monster = spawn_test_monster(
         &mut world,
         crate::monster::MonsterKindId::Goblin,
         (11, 10),
@@ -679,6 +679,133 @@ fn player_move_into_occupied_tile_is_deferred_to_c3() {
         4.0,
         5.0,
     );
+    crate::system::run_settle_systems(&mut world);
+    assert!(
+        world.resource::<OccupancyMap>().is_occupied(11, 10),
+        "测试前提：目标格必须已被怪物占用"
+    );
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let actions = action_entities_of(&mut world, player);
+    assert_eq!(actions.len(), 1, "应当声明一个攻击行动");
+    assert_eq!(
+        world.get::<BasicAttack>(actions[0]),
+        Some(&BasicAttack { target: monster }),
+        "攻击 payload 必须指向那只怪物"
+    );
+    assert!(
+        world.get::<Move>(actions[0]).is_none(),
+        "声明攻击时不得同时挂 Move"
+    );
+    assert_eq!(
+        world.get::<ActionName>(actions[0]).map(|name| name.0),
+        Some("BasicAttack")
+    );
+}
+
+/// C3：攻击执行只发 `AttackIntentEvent`，伤害仍由结算链路负责（只结算一次）。
+#[test]
+fn attack_action_emits_intent_and_damage_resolves_once() {
+    use crate::events::AttackIntentEvent;
+    use bevy_ecs::event::Events;
+
+    let (mut world, player) = player_move_scene((10, 10));
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (11, 10),
+        30.0,
+        4.0,
+        5.0,
+    );
+    crate::system::run_settle_systems(&mut world);
+    let monster_hp_before = world.get::<Health>(monster).unwrap().current;
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let action = action_entities_of(&mut world, player)[0];
+
+    // 只跑执行器：应当恰好发一个 AttackIntentEvent，且不动血量。
+    let _ = world.run_system_once(tick_action_timers_system);
+    let _ = world.run_system_once(execute_basic_attack_system);
+    assert_eq!(
+        world.resource::<Events<AttackIntentEvent>>().len(),
+        1,
+        "执行器应当恰好发出一个攻击意图"
+    );
+    assert_eq!(
+        world.get::<Health>(monster).unwrap().current,
+        monster_hp_before,
+        "执行器不得自己结算伤害"
+    );
+
+    // 再跑结算：伤害落地一次，重复结算不再扣。
+    crate::system::run_settle_systems(&mut world);
+    let after_first = world.get::<Health>(monster).unwrap().current;
+    assert!(after_first < monster_hp_before, "结算后应当扣血");
+    crate::system::run_settle_systems(&mut world);
+    assert_eq!(
+        world.get::<Health>(monster).unwrap().current,
+        after_first,
+        "重复结算不得再扣血（I90 保证）"
+    );
+
+    // completion 回收 action 实体，玩家回 Idle。
+    world.run_schedule(ActionPocSchedule);
+    assert!(world.get_entity(action).is_err());
+    assert!(world.get::<Idle>(player).is_some());
+}
+
+/// C3：保活失败（目标已跑远）→ `ActionFailedEvent` → 玩家进 `Failure`。
+#[test]
+fn attack_action_fails_when_target_is_far() {
+    let (mut world, player) = player_move_scene((10, 10));
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (11, 10),
+        30.0,
+        4.0,
+        5.0,
+    );
+    crate::system::run_settle_systems(&mut world);
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    // 目标已经跑远：保活失败。
+    {
+        let mut pos = world.get_mut::<Position>(monster).unwrap();
+        pos.x = 40;
+        pos.y = 40;
+    }
+    let _ = world.run_system_once(tick_action_timers_system);
+    let _ = world.run_system_once(execute_basic_attack_system);
+    world.run_schedule(ActionPocSchedule);
+
+    assert!(
+        world.get::<Failure>(player).is_some(),
+        "保活失败必须让 actor 落到 Failure"
+    );
+    assert!(world.get::<Active>(player).is_none());
+    assert_eq!(
+        world.get::<Health>(monster).unwrap().current,
+        30.0,
+        "保活失败不得造成伤害"
+    );
+}
+
+/// 目标格被非怪物占用时仍然拒绝（等价旧实现：占用者不是怪物 → 请求无效）。
+#[test]
+fn player_move_into_non_monster_occupant_is_rejected() {
+    let (mut world, player) = player_move_scene((10, 10));
+    // 用一个没有 Monster 标记的实体占住目标格。
+    let obstacle = world.spawn((Position::new(11, 10), Health::new(10.0))).id();
     crate::system::run_settle_systems(&mut world);
     assert!(
         world.resource::<OccupancyMap>().is_occupied(11, 10),
@@ -691,10 +818,10 @@ fn player_move_into_occupied_tile_is_deferred_to_c3() {
 
     assert!(
         action_entities_of(&mut world, player).is_empty(),
-        "被占用的目标格本轮不得挂载 action（攻击属 C3）"
+        "占用者不是怪物时不得挂载行动"
     );
     assert!(world.get::<Idle>(player).is_some());
-    assert!(world.get_entity(blocker).is_ok());
+    assert!(world.get_entity(obstacle).is_ok());
 }
 
 /// 球员行动与 AI 行动互不覆盖：仲裁不得动玩家的 active action。

@@ -39,11 +39,11 @@ use crate::balance::{
     action_av,
 };
 use crate::components::{
-    ActionTimer, Active, Agility, CanFlee, CanWait, CanWander, Failure, Flee, Health, Idle, Move,
-    Position, Ready, Wait, Wander,
+    ActionTimer, Active, Agility, BasicAttack, CanFlee, CanWait, CanWander, Failure, Flee, Health,
+    Idle, Move, Position, Ready, Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
-use crate::events::{ActionFailedEvent, ActionSucceededEvent};
+use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{GameRng, OccupancyMap};
 use crate::schedule::ActionPocSchedule;
@@ -212,9 +212,10 @@ impl PlayerActionRequest {
 enum PlayerAction {
     Wait,
     Move(Move),
+    BasicAttack(Entity),
 }
 
-/// 玩家行动生成（C2）：把已确认的玩家命令翻译成 **active action 实体**。
+/// 玩家行动生成（C2/C3）：把已确认的玩家命令翻译成 **active action 实体**。
 ///
 /// 与 AI 生成系统的三条差别（都是 §3.6.4 的规定）：
 ///
@@ -223,18 +224,22 @@ enum PlayerAction {
 /// 3. 产出前先做同一套合法性检查（越界 / 占用 / [`moved_position`]），
 ///    失败即拒绝请求（等价旧 `player_action_generation_system` 的「请求无效，未挂载」）。
 ///
+/// **「走向怪物 = 攻击」**（C3）：按旧实现的口径——目标格被占用时，占用者是怪物
+/// 就产出 `BasicAttack`，否则拒绝请求。
+///
 /// **忙碌判定的依据**：查询用 `Without<Active>` 而不是 `Without<ActiveAction>`。
 /// `ActiveAction` 挂在**子实体**上，actor 身上看不到它；actor 自己的 `Active`
 /// 才是「正在行动」的权威标记（与仲裁系统用 `Without<Active>` 过滤 AI 候选一致）。
 ///
-/// 计时迁移期沿用旧口径：`Move` 用 `UNARMED_ATTACK_DURATION`、`Wait` 用
-/// `WAIT_DURATION`，都乘敏捷系数（Phase D 才换成 `MoveSpeed`/`AttackSpeed` 倍率）。
+/// 计时迁移期沿用旧口径：`Move`/`BasicAttack` 用 `UNARMED_ATTACK_DURATION`、
+/// `Wait` 用 `WAIT_DURATION`，都乘敏捷系数（Phase D 才换成倍率组件）。
 ///
 /// [`moved_position`]: crate::action::execution::movement::moved_position
 pub fn player_action_generation_system(
     mut commands: Commands,
     mut request: ResMut<PlayerActionRequest>,
     players: Query<(Entity, &Position, &Agility), (With<Player>, Without<Active>)>,
+    monsters: Query<(), With<Monster>>,
     map: Res<Map>,
     occupancy: Res<OccupancyMap>,
 ) {
@@ -255,20 +260,24 @@ pub fn player_action_generation_system(
                 log::debug!("玩家移动越界，拒绝请求: ({dx},{dy})");
                 return;
             }
-            if occupancy.entity_at(nx, ny).is_some() {
-                // C3 的分支：走向怪物 = 攻击；本轮只拒绝（与旧实现一致）。
-                log::debug!("玩家移动目标被占用，暂不处理（攻击见 C3）: ({nx},{ny})");
-                return;
-            }
-            if crate::action::execution::movement::moved_position(
+            if let Some(occupant) = occupancy.entity_at(nx, ny) {
+                if monsters.get(occupant).is_ok() {
+                    // 走向怪物 = 声明攻击（与旧实现一致）。
+                    (PlayerAction::BasicAttack(occupant), UNARMED_ATTACK_DURATION)
+                } else {
+                    log::debug!("玩家移动目标被非怪物占用，拒绝请求: ({nx},{ny})");
+                    return;
+                }
+            } else if crate::action::execution::movement::moved_position(
                 &map, &occupancy, *position, dx, dy,
             )
             .is_none()
             {
                 log::debug!("玩家移动非法，拒绝请求: ({dx},{dy})");
                 return;
+            } else {
+                (PlayerAction::Move(Move { dx, dy }), UNARMED_ATTACK_DURATION)
             }
-            (PlayerAction::Move(Move { dx, dy }), UNARMED_ATTACK_DURATION)
         }
     };
 
@@ -287,6 +296,9 @@ pub fn player_action_generation_system(
         }
         PlayerAction::Move(action_move) => {
             action_cmd.insert((ActionName("Move"), action_move));
+        }
+        PlayerAction::BasicAttack(target) => {
+            action_cmd.insert((ActionName("BasicAttack"), BasicAttack { target }));
         }
     }
 
@@ -476,6 +488,57 @@ pub fn execute_wait_system(
     }
 }
 
+/// 执行到期的 `BasicAttack { target }`（C3）：保活检查 → 发 `AttackIntentEvent`。
+///
+/// 与旧 `execution::execute_basic_attack_system` **完全同语义**：
+///
+/// - 保活检查用 [`crate::combat::can_attack`]（8 方向相邻 + 目标存活）；
+/// - 通过 → 写 `AttackIntentEvent`（伤害仍由结算链路 `resolve_attack_system` →
+///   `apply_damage_system` → `check_death_system` 负责，执行器不算伤害）；
+/// - 不通过 → `ActionFailedEvent`（等价旧的 `finish_action_failure`）。
+///
+/// 因此攻击的「只结算一次」保证（I90）不受迁移影响：执行器依旧只发一次意图。
+pub fn execute_basic_attack_system(
+    actions: Query<(Entity, &ChildOf, &BasicAttack), (With<ActiveAction>, With<Ready>)>,
+    positions: Query<&Position>,
+    healths: Query<&Health>,
+    mut intents: EventWriter<AttackIntentEvent>,
+    mut succeeded: EventWriter<ActionSucceededEvent>,
+    mut failed: EventWriter<ActionFailedEvent>,
+) {
+    for (action, child_of, attack) in &actions {
+        let actor = child_of.parent();
+        let target = attack.target;
+
+        let ok = positions
+            .get(actor)
+            .ok()
+            .zip(positions.get(target).ok())
+            .zip(healths.get(target).ok())
+            .is_some_and(|((attacker_position, target_position), target_health)| {
+                crate::combat::can_attack_positions(
+                    *attacker_position,
+                    *target_position,
+                    target_health,
+                )
+            });
+
+        log::debug!(
+            "PoC 攻击保活检查: attacker={actor:?} target={target:?} ok={ok} action={action:?}"
+        );
+        if !ok {
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        }
+
+        intents.write(AttackIntentEvent {
+            attacker: actor,
+            target,
+        });
+        succeeded.write(ActionSucceededEvent { entity: actor });
+    }
+}
+
 /// 执行到期的 `Move { dx, dy }`：**参数化普通系统**（不再独占 `&mut World`）。
 ///
 /// 为什么这样写是安全的（Phase B 时这里曾是 exclusive，属过度保守）：
@@ -611,6 +674,7 @@ pub fn build_action_poc_schedule() -> Schedule {
             tick_action_timers_system,
             execute_wait_system,
             execute_move_system,
+            execute_basic_attack_system,
             execute_wander_system,
             ApplyDeferred,
             action_completion_system,

@@ -25,8 +25,17 @@ pub fn adjacent_8(world: &World, a: Entity, b: Entity) -> bool {
 
 /// 目标当前是否可被近战攻击。
 pub fn can_attack(world: &World, attacker: Entity, target: Entity) -> bool {
-    adjacent_8(world, attacker, target)
-        && world.get::<Health>(target).is_some_and(|h| h.is_alive())
+    adjacent_8(world, attacker, target) && world.get::<Health>(target).is_some_and(|h| h.is_alive())
+}
+
+/// 目标当前是否可被近战攻击（纯组件版）。
+///
+/// 与 [`can_attack`] 是同一条规则，只是不经过 `World`：参数化执行器
+/// （`action::entity::execute_basic_attack_system`）不能对任意实体做 `World::get`，
+/// 所以规则本身必须能只靠组件引用表达。两处共用 [`Position::is_near`] 与
+/// [`Health::is_alive`]，不存在规则漂移。
+pub fn can_attack_positions(attacker: Position, target: Position, target_health: &Health) -> bool {
+    attacker.is_near(target) && target_health.is_alive()
 }
 
 /// 根据攻击/防御与暴击参数计算最终伤害。
@@ -48,7 +57,11 @@ pub fn compute_melee_damage(
 }
 
 /// 准备一个已结算的普通攻击事件，不修改世界状态。
-pub fn prepare_attack_event(world: &mut World, attacker: Entity, target: Entity) -> Option<AttackEvent> {
+pub fn prepare_attack_event(
+    world: &mut World,
+    attacker: Entity,
+    target: Entity,
+) -> Option<AttackEvent> {
     if !can_attack(world, attacker, target) {
         return None;
     }
@@ -57,7 +70,10 @@ pub fn prepare_attack_event(world: &mut World, attacker: Entity, target: Entity)
         world.get::<Attack>(attacker).map(|a| a.0).unwrap_or(0.0),
         world.get::<Defense>(target).map(|d| d.0).unwrap_or(0.0),
         world.get::<CritRate>(attacker).map(|c| c.0).unwrap_or(0.0),
-        world.get::<CritDamage>(attacker).map(|c| c.0).unwrap_or(0.0),
+        world
+            .get::<CritDamage>(attacker)
+            .map(|c| c.0)
+            .unwrap_or(0.0),
     );
     let crit_roll = world.resource_mut::<GameRng>().random_f64();
     let result = compute_melee_damage(attack, defense, crit_rate, crit_damage, crit_roll);
