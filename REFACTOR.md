@@ -773,8 +773,8 @@ sys::spawn_key_source()
 | 阶段 | 内容 | 依赖 | 主要产物 | 验收 |
 |---|---|---|---|---|
 | **A** | core 冒烟测试 | I89/I90 已修 | 地图确定性、移动/攻击、死亡/经验、FOV/记忆/占用图测试 | ✅ `cargo test -p core` 4 → 18 通过（commit 95449a9） |
-| **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | ✅ `core/src/action/entity.rs` + 9 个 PoC 测试；未接主循环 |
-| **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | 行为 parity 测试通过；无 `ActionKind` 引用 |
+| **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | ✅ `core/src/action/entity.rs` + PoC 测试（commit ac6623f） |
+| **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | ✅ C1–C9 全部完成（commit 83700ff…a8e2175）：六行动 parity 通过、全库无 `ActionKind` 引用、主循环已切换 |
 | **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | 无 `Agility` 引用；AV 单调/clamp 测试通过 |
 | **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | 每个保留抽象有真实读取方/消费者 |
 | **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
@@ -845,29 +845,40 @@ A ──▶ F（并行）
 
 **约束复核：** PoC 未接主循环、未删旧系统、未触碰 §10.8/A43 死抽象清单。
 
-#### Phase C — 全量行动迁移
+#### Phase C — 全量行动迁移（✅ 已完成）
 
-推荐**逐行动迁移**，每步保持可编译、可测试：
+> **落地记录（C1–C9，均已完成）：** `core/src/action/entity.rs` + `entity_tests.rs`；
+> 调度 `ActionPocSchedule`（生成 → 仲裁 → tick → 执行 → completion，C7 起接主循环）
+> 与 `PlayerMountSchedule`（仅生成 + 仲裁，用于判定玩家命令是否被接受）。
+> 逐行动 commit：C1 `83700ff`、C2 `241e6d8`、C3 `6d4163a`、C4 `4d77bdb`、
+> C5 `ecde0cc`、C7 `f0ea1a5`、C8 `4775b42`、C9 `a8e2175`。
 
-| 顺序 | 行动 | 迁移内容 | parity 测试 |
-|---|---|---|---|
-| C1 | `Wait` | `wait_generation_system` + action 实体执行 + completion | 等待后 actor 回 Idle，AV 正确 |
-| C2 | `Move` | `move_generation_system`（玩家路径直接 active action） + 移动执行 | 合法/阻挡/对角规则与旧版一致 |
-| C3 | `BasicAttack` | `basic_attack_generation_system` + 执行；保留 `AttackIntentEvent` 或合并 | 伤害/暴击/死亡链路一致 |
-| C4 | `Wander` | `wander_generation_system` + 执行 | 随机方向、碰撞行为一致 |
-| C5 | `Chase` | `chase_generation_system` + 执行 | 视野/LastKnownPlayerPos/相邻攻击一致 |
-| C6 | `Flee` | `flee_generation_system` + 执行 | 低血滞回、逃跑方向一致 |
-| C7 | 集成 | `advance_until_player_acted` 每轮 generation → arbitration → tick → execution → completion → settle；删除 `decide_monster_actions`/`choose_action`/`run_action_cycle` | 闭环测试、场景测试通过 |
-| C8 | 删除 | `ActionKind`、`mount_action` 中央 match、actor 上的行动 ZST（移到 action 实体）；`ActionSucceeded/Failed` 成为 completion 的真实输入 | 全库无 `ActionKind` 引用 |
-| C9 | Parity 套件 | Wait/Move/Attack/Chase/Flee/Wander 各一个受控场景，断言位置/HP/状态/子实体数量 | 全部通过 |
+| 顺序 | 行动 | 落地情况 |
+|---|---|---|
+| C1 | `Wait` | ✅ `wait_generation_system`（兜底，PRIORITY_WAIT）+ `execute_wait_system`（无条件成功） |
+| C2 | `Move` | ✅ 玩家路径 `PlayerActionRequest` → 直接产出 active action；`execute_move_system` 参数化（executor 见 B 段修正记录） |
+| C3 | `BasicAttack` | ✅ 走向怪物 = 攻击；执行器只发 `AttackIntentEvent`，伤害仍由结算链路负责（I90 保证不变） |
+| C4 | `Wander` | ✅ 已有实现；对照测试钉住「先抽方向再判合法」的 RNG 步数契约 |
+| C5 | `Chase` | ✅ 生成条件（可见或有记忆）+ 执行器（记忆写入/清空、A\*、相邻攻击） |
+| C6 | `Flee` | ✅ 滞回保活、8 方向最远合法落点、被堵时相邻且可见则反咬 |
+| C7 | 集成 | ✅ `world/loop_.rs` 重写为「先挂载、再推进」两段式；`decide_monster_actions` / `mount_action` / `run_action_cycle` 不再被调用 |
+| C8 | 删除 | ✅ `ActionKind`、`mount_action` 中央 match、`finish_action_*`、actor 上的行动 ZST、旧独占执行系统全部删除；全库无残留引用 |
+| C9 | Parity 套件 | ✅ 六行动各一个受控场景 + 共同残留不变量（见 `entity_tests.rs` 的 `parity_*`） |
 
-**关键点：**
+**关键点（实现中的实际结论）：**
 
-- 玩家行动直接 spawn `ActiveAction`（或保留最高优先级），AI generation 过滤 `With<Monster>`，不得覆盖玩家。
+- 玩家行动直接 spawn `ActiveAction`，AI generation 过滤 `With<Monster>`，不覆盖玩家。
 - 仲裁比较器只用 `(ActionPriority, action_entity.to_bits())`，无 RNG。
 - 每轮结束必须清空候选：winner 转 `ActiveAction`，loser despawn。
 - actor 已有 `ActiveAction` 时跳过仲裁；候选查询的 `Without<ActiveAction>` 不够。
 - 用 `.chain()` / `ApplyDeferred` 保证 generation 的 `Commands` 在 arbitration 前落盘。
+- **`Ready` 的清理有两条路**：`execute_move_system` 显式 `remove::<Ready>()`
+  （它不 despawn 实体），其余执行器靠 completion despawn 实体顺带清掉。
+  写测试时断言对象应是「完成/失败事件数」，不是「Ready 是否被移除」。
+- **`Idle` / `Failure` 互斥**：completion 与（曾经的）`finish_action_*` 都必须显式清掉
+  另一个再插入（I91）。
+- **挂载与推进必须分两段**：`apply_player_command` 先跑 `PlayerMountSchedule` 判定
+  「命令是否被接受」，再进推进循环；合并成一次调度会把「已经做完了」误判成「命令被拒绝」。
 
 #### Phase D — `Agility` → `MoveSpeed` / `AttackSpeed`
 

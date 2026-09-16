@@ -812,13 +812,15 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** 草案；I89（AV 门禁）与 I90（事件生命周期）已修（4 个 core 回归）；§11.6 已按推荐确认（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
+**状态：** ①② 均已落地（Phase B/C 完成）；I89（AV 门禁）与 I90（事件生命周期）已修；§11.6 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。① 的后续只剩 Phase D 的 ②（速度组件）。
 
-**进展（Phase A/B）：**
+**进展（Phase A/B/C）：**
 
 - Phase A：core 冒烟测试补齐（地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 / 快怪多动），`cargo test -p core` 从 4 → 18 个测试（ISSUES P9）。
-- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路，测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。**PoC 刻意不接主循环、不删旧模型**；`ActionKind` / `mount_action` / `choose_action` 与 PoC 并存，删除属 Phase C。
-- 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：PoC 调度里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
+- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路；测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。
+- Phase C（全量迁移，C1–C9 完成）：六个行动逐行动迁移并各配 parity 场景；主循环切换到新链路（`world/loop_.rs` 改为「先挂载、再推进」两段式）；`ActionKind` / `mount_action` 中央 match / `finish_action_*` / `decide_monster_actions` / `choose_action` / `run_action_cycle` / 旧独占执行系统与 actor 上的行动 ZST 挂载路径**全部删除**，全库无 `ActionKind` 引用。
+- 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：行动链路里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
+- 迁移期约束（写测试时要注意）：`Ready` 的清理分两条路（`execute_move_system` 显式清，其余靠 completion despawn 实体）；`Idle`/`Failure` 必须互斥（I91）；「挂载玩家行动」与「推进世界」必须分两段调度，否则会把「本轮已执行完」误判成「命令被拒绝」。
 
 ---
 
