@@ -629,3 +629,38 @@ if let Err(reason) = validate_throw(world, attacker, tx, ty) { 取消; return; }
 **为什么更好：** 显示层可能被绕过（直接入队、脚本调用、未来新 UI），执行层是唯一不可绕过的关卡。凡是"玩家能否做 X"的规则，验证必须在执行函数入口重复一次——显示层的检查只负责"提前告知"，不负责"阻止"。
 
 **参见 ISSUES.md #I59**
+
+---
+
+### L49 — Bevy 查询「静默返回空」：空结果既可能是没匹配，也可能是类型没注册
+
+**问题背景：** 为迁移 `Wait` 写「新旧执行器语义对照」测试时，在 `test_world()` 里 spawn 一个 `(Active, Wait)` 实体后调用旧 `execute_wait_system(&mut World)`，断言它回到 `Idle`——失败了。可旧执行器的单元测试（Phase A 的 `av_gate_only_executes_ready_actions`）明明是通过的。
+
+**根因（两层，都很隐蔽）：**
+
+1. Bevy 的 `query_filtered` / `Query` 按 **archetype** 精确匹配：实体必须带上查询要求的**全部**组件。旧执行器查询的是 `(With<Active>, With<Wait>, With<Ready>)`，`Ready` 是 tick 系统后加的——只 spawn `(Active, Wait)` 永远匹配不上。
+2. `test_world()` 只注册资源与事件；`Active` / `Wait` / `Ready` 这些**组件类型**在「某个系统第一次真正碰过它们」之前并未向 World 注册。而对从未注册的类型，Bevy 的查询**静默返回空**，不报错、不 panic。
+
+于是「跑了旧代码，实体没变」有两种完全不同的解释：行为确实不同，或**根本没查到**。用它当对照基线，会得出错误结论。
+
+**错误做法：** 把「查询没匹配」当成「行为差异」，据此改生产代码或改断言——最坏的情况是把真实的语义差异掩盖成"测试写错了"。
+
+**正确做法：**
+
+- 跑对照实验前，先确认**类型已注册 + archetype 齐备**：要么用已注册齐的测试世界（如本项目的 `poc_world()`），要么让实体带上查询要求的全部组件，显式写出来：
+
+```rust
+// ✅ 显式给出查询要求的全部组件，并保留一个"不应被误伤"的对照实体
+let actor = world.spawn((Active, Wait, Ready, ActionTimer { remaining_av: 0.0 })).id();
+legacy_execute_wait_system(&mut world);
+assert!(world.get::<Idle>(actor).is_some());
+assert!(world.get::<Idle>(bystander).is_some());   // 反面对照：没有 Wait 的实体不受影响
+```
+
+- 把「空查询不报错」这条行为本身钉成一条测试（本项目为
+  `unregistered_component_query_returns_empty_without_panic`），下次有人怀疑时不用重新推。
+
+**为什么更好：** ECS 查询的空结果是一个**没有信号**的失败——没有 panic、没有日志、没有类型错误。凡是拿「查询结果」当行为证据的测试或诊断，都必须先排除"类型/archetype 不齐"这一解释，否则会把测量误差当成被测对象的性质。这条与 L21（测试需要独立的 World）互补：独立 World 解决了"互相污染"，但没解决"组件类型没注册"。
+
+**参见 REFACTOR.md §11.3 Phase C（C1 迁移记录）**
+

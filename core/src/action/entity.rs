@@ -33,10 +33,10 @@
 //! action 实体是瞬态子实体；存档只存 actor 状态，读档后重新生成行动
 //! （见 REFACTOR.md §10.7）。
 
-use crate::balance::{FLEE_DURATION, FLEE_HP_RATIO, WANDER_DURATION, action_av};
+use crate::balance::{FLEE_DURATION, FLEE_HP_RATIO, WAIT_DURATION, WANDER_DURATION, action_av};
 use crate::components::{
-    ActionTimer, Active, Agility, CanFlee, CanWander, Failure, Flee, Health, Idle, Move, Position,
-    Ready, Wander,
+    ActionTimer, Active, Agility, CanFlee, CanWait, CanWander, Failure, Flee, Health, Idle, Move,
+    Position, Ready, Wait, Wander,
 };
 use crate::entity_cls::Monster;
 use crate::events::{ActionFailedEvent, ActionSucceededEvent};
@@ -143,6 +143,37 @@ pub fn flee_generation_system(
                 remaining_av: action_av(FLEE_DURATION, agility.0),
             },
             Flee,
+            Candidate,
+        ));
+    }
+}
+
+/// 等待候选（C1）：兜底行为，任何空闲且具 `CanWait` 的 actor 都会产出一个 `Wait`。
+///
+/// 与 `Wander` / `Flee` 的差别：**永远有候选**，因此仲裁必然有结果，
+/// 有能力的 actor 不会出现「没有任何行动」的空转（§3.3 的兜底语义）。
+pub fn wait_generation_system(
+    mut commands: Commands,
+    actors: Query<
+        (Entity, &Agility),
+        (
+            With<Monster>,
+            With<CanWait>,
+            Without<Active>,
+            Or<(With<Idle>, With<Failure>)>,
+        ),
+    >,
+) {
+    for (actor, agility) in &actors {
+        commands.spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_WAIT),
+            ActionSource::Ai,
+            ActionName("Wait"),
+            ActionTimer {
+                remaining_av: action_av(WAIT_DURATION, agility.0),
+            },
+            Wait,
             Candidate,
         ));
     }
@@ -308,6 +339,25 @@ pub fn execute_wander_system(
     }
 }
 
+/// 执行到期的 `Wait`（C1）：什么都不做，直接算完成。
+///
+/// 等价旧 `execution::execute_wait_system` 的语义：**无条件成功**——
+/// 回合照常推进（AV 已经付过），actor 回到 `Idle`。
+///
+/// 这里刻意不 `.remove::<Ready>()`：completion 会 `despawn` 整个 action 实体，
+/// 它上面的 `Ready` 随之消失；而「执行器不得回收实体」这条分层约束
+/// （见 [`execute_move_system`]）在 `Wait` 上同样成立。
+pub fn execute_wait_system(
+    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Wait>)>,
+    mut succeeded: EventWriter<ActionSucceededEvent>,
+) {
+    for (action, child_of) in &actions {
+        let actor = child_of.parent();
+        log::debug!("PoC 等待: actor={actor:?}（action={action:?}）");
+        succeeded.write(ActionSucceededEvent { entity: actor });
+    }
+}
+
 /// 执行到期的 `Move { dx, dy }`：**参数化普通系统**（不再独占 `&mut World`）。
 ///
 /// 为什么这样写是安全的（Phase B 时这里曾是 exclusive，属过度保守）：
@@ -429,11 +479,17 @@ pub fn build_action_poc_schedule() -> Schedule {
     let mut schedule = Schedule::new(ActionPocSchedule);
     schedule.add_systems(
         (
-            (wander_generation_system, flee_generation_system).chain(),
+            (
+                wait_generation_system,
+                wander_generation_system,
+                flee_generation_system,
+            )
+                .chain(),
             ApplyDeferred,
             action_arbitration_system,
             ApplyDeferred,
             tick_action_timers_system,
+            execute_wait_system,
             execute_move_system,
             execute_wander_system,
             ApplyDeferred,

@@ -38,9 +38,42 @@ fn poc_actor(world: &mut World, pos: (usize, usize)) -> Entity {
 }
 
 /// 只跑生成系统（不经仲裁），用于验证“生成不写 actor 状态”。
+///
+/// **显式列出三个生成系统**：Phase C 会逐个加进来，漏加一处会让相应用例在
+/// 「没产生候选」上失败而不是静默通过。
 fn run_generation_systems(world: &mut World) {
+    let _ = world.run_system_once(wait_generation_system);
     let _ = world.run_system_once(wander_generation_system);
     let _ = world.run_system_once(flee_generation_system);
+}
+
+/// 回归陷阱记录：**Bevy 的 `query_filtered` 在组件类型从未注册时会静默返回空**，
+/// 不会报错。这条测试把该行为钉住，避免以后有人以为「跑过了 = 查到了」。
+#[test]
+fn unregistered_component_query_returns_empty_without_panic() {
+    let mut world = World::new();
+    let actor = world.spawn((crate::components::Active, Wait)).id();
+    // `Ready` 在这个世界里从未注册过。
+    let mut query = world.query_filtered::<Entity, (With<Active>, With<Wait>, With<Ready>)>();
+    assert_eq!(query.iter(&world).count(), 0);
+    assert!(world.get::<crate::components::Ready>(actor).is_none());
+    assert!(world.get_entity(actor).is_ok(), "实体仍然活着");
+}
+
+/// 找出「有行动能力但没在行动」的 actor 的等待候选（C1）。
+fn wait_candidate_for(world: &mut World, actor: Entity) -> Option<Entity> {
+    let mut query = world.query_filtered::<(Entity, &ChildOf), With<Wait>>();
+    query
+        .iter(world)
+        .find(|(_, child_of)| child_of.parent() == actor)
+        .map(|(action, _)| action)
+}
+
+/// 只跑生成 + 等待仲裁，返回该 actor 的 `Wait` 行动实体。
+fn run_wait_candidate(world: &mut World, actor: Entity) -> Entity {
+    let _ = world.run_system_once(wait_generation_system);
+    let _ = world.run_system_once(action_arbitration_system);
+    wait_candidate_for(world, actor).expect("等待候选应当被生成并被仲裁选中")
 }
 
 /// 只跑生成 + 仲裁，返回该 actor 当前的 `ActiveAction`。
@@ -264,12 +297,15 @@ fn arbitration_skips_actor_that_already_has_an_active_action() {
 }
 
 /// 生成系统只 spawn 候选：不得改动 actor 的 `Idle`/`Active`/`Failure`。
+///
+/// 用「游荡能力」计数（等待是兜底行为，见 `wait_generation_*` 用例），
+/// 因此这里只跑游荡生成系统，避免把兜底候选算进来。
 #[test]
 fn generation_only_spawns_candidates() {
     let (mut world, _player) = poc_world();
     let actor = poc_actor(&mut world, (5, 5));
 
-    run_generation_systems(&mut world);
+    let _ = world.run_system_once(wander_generation_system);
 
     assert!(
         world.get::<Idle>(actor).is_some(),
@@ -332,7 +368,8 @@ fn low_health_actor_produces_flee_and_wander_candidates() {
     let actor = poc_actor(&mut world, (5, 5));
     *world.get_mut::<Health>(actor).unwrap() = Health::full(1.0, 100.0);
 
-    run_generation_systems(&mut world);
+    let _ = world.run_system_once(wander_generation_system);
+    let _ = world.run_system_once(flee_generation_system);
 
     let spawned = candidates(&mut world);
     assert_eq!(spawned.len(), 2, "应当同时产出 Flee 与 Wander 候选");
@@ -391,7 +428,88 @@ fn player_is_not_generated_by_ai_systems() {
     assert!(candidates(&mut world).is_empty(), "玩家不得产生候选");
 }
 
-/// 端到端对照：旧的玩家命令路径仍然工作（PoC 没接主循环）。
+/// C1 变体：`Wait` 与 `Wander` 并存时，`Wander`(50) 胜出、等待候选被清理。
+#[test]
+fn wait_loses_to_wander_and_candidate_is_cleaned_up() {
+    let (mut world, _player) = poc_world();
+    let actor = poc_actor(&mut world, (5, 5));
+
+    let _ = world.run_system_once(wait_generation_system);
+    let _ = world.run_system_once(wander_generation_system);
+    let wait = wait_candidate_for(&mut world, actor).expect("应当生成 Wait 候选");
+    let wander = {
+        let mut query = world.query_filtered::<Entity, With<Wander>>();
+        query
+            .iter(&world)
+            .find(|action| {
+                world
+                    .get::<ChildOf>(*action)
+                    .is_some_and(|child_of| child_of.parent() == actor)
+            })
+            .expect("应当生成 Wander 候选")
+    };
+
+    let _ = world.run_system_once(action_arbitration_system);
+
+    assert!(
+        world.get::<ActiveAction>(wander).is_some(),
+        "Wander(50) 必须胜过兜底 Wait(0)"
+    );
+    assert!(
+        world.get_entity(wait).is_err(),
+        "落败的等待候选必须被 despawn"
+    );
+}
+
+/// C1 迁移记录：`Wait` 与旧 `World` 版执行器语义一致（无条件成功 + 回 Idle）。
+///
+/// **Bevy 陷阱（本次踩到）**：`query_filtered` 对「从未注册过的组件类型」静默返回空
+/// 而不报错。所以「跑过旧执行器，实体没变」既可能是行为不同，也可能只是类型没注册。
+/// 这里用 `poc_world()`（Phase B 的 PoC 链路已经把 `Active`/`Wait`/`Ready` 注册齐）
+/// 来隔离这个变量。
+#[test]
+fn new_wait_semantics_match_legacy_wait() {
+    let (mut world, player) = poc_world();
+    let monster = poc_actor(&mut world, (5, 5));
+
+    // 旧实现：action 组件挂在 actor 上，`execute_wait_system(&mut World)` 对
+    // 命中实体无条件 `remove::<Wait>()` + `finish_action_success` → 回 `Idle`。
+    //
+    // 注意两点（都容易让这类「跑旧代码做对照」的测试假失败）：
+    // 1. Bevy 的 `query_filtered` 对**从未注册过的组件类型**静默返回空，且按
+    //    **archetype** 精确匹配——实体必须带上查询要求的所有组件（含 `Ready`）；
+    // 2. 因此这里显式给出 `Active + Wait + Ready`，只验证旧执行器的语义本身。
+    let legacy_actor = world
+        .spawn((Active, Wait, Ready, ActionTimer { remaining_av: 0.0 }))
+        .id();
+    crate::action::execution::execute_wait_system(&mut world);
+    assert!(
+        world.get::<Idle>(legacy_actor).is_some(),
+        "旧执行器必须把命中实体送回 Idle"
+    );
+    assert!(world.get::<Wait>(legacy_actor).is_none());
+    assert!(world.get::<Active>(legacy_actor).is_none());
+    assert!(
+        world.get::<Idle>(monster).is_some(),
+        "没有 Wait 组件的实体不得被误伤"
+    );
+    assert!(world.get::<Idle>(player).is_some());
+
+    // 新实现：同样「什么都不做 + 无条件成功」，由 completion 收回 action 实体。
+    let wait = run_wait_candidate(&mut world, monster);
+    let _ = world.run_system_once(tick_action_timers_system);
+    let _ = world.run_system_once(execute_wait_system);
+
+    assert!(
+        world.get::<Idle>(monster).is_none(),
+        "执行器只发事件，状态回转由 completion 负责"
+    );
+    world.run_schedule(ActionPocSchedule);
+    assert!(world.get::<Idle>(monster).is_some(), "完成后必须回 Idle");
+    assert!(world.get::<Active>(monster).is_none());
+    assert!(world.get_entity(wait).is_err(), "action 实体必须被回收");
+}
+
 #[test]
 fn legacy_player_path_still_works_alongside_poc() {
     let (mut world, player) = poc_world();
