@@ -467,35 +467,15 @@ fn wait_loses_to_wander_and_candidate_is_cleaned_up() {
 /// 而不报错。所以「跑过旧执行器，实体没变」既可能是行为不同，也可能只是类型没注册。
 /// 这里用 `poc_world()`（Phase B 的 PoC 链路已经把 `Active`/`Wait`/`Ready` 注册齐）
 /// 来隔离这个变量。
+/// C1（C8 更新）：`Wait` 语义——执行器只发事件，状态回转由 completion 负责。
+///
+/// 旧链路（actor 上的 `Wait` + `execute_wait_system(&mut World)`）已在 C8 删除，
+/// 因此本用例只验证新链路的语义：**什么都不做 + 无条件成功**，actor 回 `Idle`。
 #[test]
-fn new_wait_semantics_match_legacy_wait() {
+fn wait_action_succeeds_and_returns_actor_to_idle() {
     let (mut world, player) = poc_world();
     let monster = poc_actor(&mut world, (5, 5));
 
-    // 旧实现：action 组件挂在 actor 上，`execute_wait_system(&mut World)` 对
-    // 命中实体无条件 `remove::<Wait>()` + `finish_action_success` → 回 `Idle`。
-    //
-    // 注意两点（都容易让这类「跑旧代码做对照」的测试假失败）：
-    // 1. Bevy 的 `query_filtered` 对**从未注册过的组件类型**静默返回空，且按
-    //    **archetype** 精确匹配——实体必须带上查询要求的所有组件（含 `Ready`）；
-    // 2. 因此这里显式给出 `Active + Wait + Ready`，只验证旧执行器的语义本身。
-    let legacy_actor = world
-        .spawn((Active, Wait, Ready, ActionTimer { remaining_av: 0.0 }))
-        .id();
-    crate::action::execution::execute_wait_system(&mut world);
-    assert!(
-        world.get::<Idle>(legacy_actor).is_some(),
-        "旧执行器必须把命中实体送回 Idle"
-    );
-    assert!(world.get::<Wait>(legacy_actor).is_none());
-    assert!(world.get::<Active>(legacy_actor).is_none());
-    assert!(
-        world.get::<Idle>(monster).is_some(),
-        "没有 Wait 组件的实体不得被误伤"
-    );
-    assert!(world.get::<Idle>(player).is_some());
-
-    // 新实现：同样「什么都不做 + 无条件成功」，由 completion 收回 action 实体。
     let wait = run_wait_candidate(&mut world, monster);
     let _ = world.run_system_once(tick_action_timers_system);
     let _ = world.run_system_once(execute_wait_system);
@@ -504,9 +484,17 @@ fn new_wait_semantics_match_legacy_wait() {
         world.get::<Idle>(monster).is_none(),
         "执行器只发事件，状态回转由 completion 负责"
     );
+    assert!(
+        world.get::<Idle>(player).is_some(),
+        "没有对应 action 实体的实体不得被误伤"
+    );
     world.run_schedule(ActionPocSchedule);
     assert!(world.get::<Idle>(monster).is_some(), "完成后必须回 Idle");
     assert!(world.get::<Active>(monster).is_none());
+    assert!(
+        world.get::<Failure>(monster).is_none(),
+        "等待必须成功，不得落到 Failure"
+    );
     assert!(world.get_entity(wait).is_err(), "action 实体必须被回收");
 }
 
@@ -928,34 +916,20 @@ fn wander_parity_scene(seed: u64, pos: (usize, usize)) -> (World, Entity) {
     (world, actor)
 }
 
-/// C4：新参数化游荡执行器与旧 `&mut World` 版行为一致（落点 + RNG 步数）。
+/// C4（C8 更新）：游荡每步**恰好消耗一次**随机数，且落点只能是合法相邻格。
 ///
-/// 旧实现先抽方向、再判断能否移动；新实现必须保持同一顺序，否则随机序列漂移
-/// （`GameRng::steps` 是存档回放的基础）。用多个 seed 覆盖不同随机方向。
+/// 旧 `execute_wander_system` 已在 C8 删除；这里保留原本要钉住的契约：
+/// 「先抽方向、再判合法性」——顺序若变化，`GameRng::steps` 的消耗量会漂移，
+/// 而它是存档回放的基础。
 #[test]
-fn wander_action_matches_legacy_wander_step() {
+fn wander_action_consumes_exactly_one_random_step() {
     let pos = (30, 30);
 
     for seed in [1u64, 2, 3, 4, 5, 6, 7, 8] {
-        // 旧路径：action 组件挂在 actor 上。
-        let (mut legacy, legacy_actor) = wander_parity_scene(seed, pos);
-        legacy.entity_mut(legacy_actor).insert((
-            Active,
-            Ready,
-            Wander,
-            ActionTimer { remaining_av: 0.0 },
-        ));
-        let rng_before = legacy.resource::<GameRng>().steps;
-        crate::action::execution::execute_wander_system(&mut legacy);
-        let legacy_position = legacy.get::<Position>(legacy_actor).unwrap().to_tuple();
-        let legacy_steps = legacy.resource::<GameRng>().steps - rng_before;
-        assert_eq!(legacy_steps, 1, "一次游荡应当恰好抽一次方向");
-
-        // 新路径：action 实体。
-        let (mut modern, modern_actor) = wander_parity_scene(seed, pos);
-        let _action = modern
+        let (mut world, actor) = wander_parity_scene(seed, pos);
+        let _action = world
             .spawn((
-                ChildOf(modern_actor),
+                ChildOf(actor),
                 ActionPriority(PRIORITY_WANDER),
                 ActionSource::Ai,
                 ActionTimer { remaining_av: 0.0 },
@@ -964,22 +938,24 @@ fn wander_action_matches_legacy_wander_step() {
                 Ready,
             ))
             .id();
-        modern
-            .entity_mut(modern_actor)
-            .remove::<Idle>()
-            .insert(Active);
-        let modern_rng_before = modern.resource::<GameRng>().steps;
-        let _ = modern.run_system_once(execute_wander_system);
-        let modern_position = modern.get::<Position>(modern_actor).unwrap().to_tuple();
-        let modern_steps = modern.resource::<GameRng>().steps - modern_rng_before;
+        world.entity_mut(actor).remove::<Idle>().insert(Active);
+        let rng_before = world.resource::<GameRng>().steps;
 
+        let _ = world.run_system_once(execute_wander_system);
+
+        let after = world.get::<Position>(actor).unwrap().to_tuple();
         assert_eq!(
-            modern_position, legacy_position,
-            "seed={seed} 时新旧游荡落点必须一致"
+            world.resource::<GameRng>().steps - rng_before,
+            1,
+            "seed={seed} 时一次游荡应当恰好抽一次方向"
         );
-        assert_eq!(
-            modern_steps, legacy_steps,
-            "seed={seed} 时新旧游荡消耗的随机步数必须一致"
+        assert!(
+            pos.0.abs_diff(after.0) <= 1 && pos.1.abs_diff(after.1) <= 1,
+            "seed={seed} 时游荡只能走一步：{pos:?} → {after:?}"
+        );
+        assert!(
+            world.resource::<Map>().tiles[after.1][after.0].walkable(),
+            "seed={seed} 时落点必须可行走: {after:?}"
         );
     }
 }
@@ -1095,83 +1071,76 @@ fn mount_ready_chase(world: &mut World, monster: Entity) -> Entity {
     action
 }
 
-/// C5：追击执行器与旧 `&mut World` 版逐条对照（落点 / 记忆 / 攻击意图 / 结局）。
+/// C5（C8 更新）：追击执行器三情形的行为契约。
 ///
-/// **只比较「一次执行」的结果**：新路径跑完执行器就取快照，**不要再跑完整调度**
+/// 旧 `execute_chase_system` 已在 C8 删除，因此这里不再做「新旧对照」，
+/// 而是把当时对照出来的三条契约直接钉住：
+///
+/// | 情形 | 期望 |
+/// |---|---|
+/// | 可见、不相邻 | 朝玩家走一步（`astar`），写 `LastKnownPlayerPos`，无攻击意图 |
+/// | 不可见、有记忆 | 朝记忆点走一步 |
+/// | 不可见、无记忆 | 保活失败 → `Failure`，不移动 |
+///
+/// **只比较「一次执行」的结果**：跑完执行器就取快照，**不要再跑完整调度**
 /// ——completion 会立刻把 actor 放回 `Idle`，下一轮生成系统又会给它挂新的追击，
 /// 那样量到的是「两步」而不是「一步」（本用例第一版就踩了这个坑）。
 #[test]
-fn chase_action_matches_legacy_chase_step() {
+fn chase_action_three_outcome_contracts() {
     use crate::events::AttackIntentEvent;
     use bevy_ecs::event::Events;
 
     let player_tile = (40, 40);
     let monster_tile = (34, 40);
 
-    // 一次执行的观察结果：位置 / 记忆 / 攻击意图数 / **是否处于 Idle**。
-    //
-    // 第三个字段用「Idle 是否存在」而不是「Failure 是否存在」：旧模型里有能力的
-    // actor 平时就是 `Idle`，`spawn_test_monster` 也会给 `Idle`；统一用「Idle 还在不在」
-    // 表达「这一步是成功结束还是失败结束」，两种模型的语义一致。
-    type ChaseOutcome = (Option<(usize, usize)>, Option<(usize, usize)>, usize, bool);
-    fn outcome_of(world: &World, monster: Entity) -> ChaseOutcome {
-        (
-            world.get::<Position>(monster).map(Position::to_tuple),
-            world
-                .get::<LastKnownPlayerPos>(monster)
-                .and_then(|known| known.0),
-            world.resource::<Events<AttackIntentEvent>>().len(),
-            world.get::<Idle>(monster).is_some(),
-        )
-    }
-
-    let cases: [(&str, bool, Option<(usize, usize)>); 3] = [
+    for (name, sees, memory) in [
         ("可见走一步", true, None),
         ("不可见但有记忆", false, Some((35, 40))),
         ("不可见且无记忆", false, None),
-    ];
+    ] {
+        let (mut world, _player, monster) = chase_parity_scene(11, player_tile, monster_tile);
+        set_visibility(&mut world, monster, player_tile, sees);
+        world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = memory;
+        mount_ready_chase(&mut world, monster);
 
-    for (name, sees, memory) in cases {
-        // ---- 旧路径：action 组件挂在 actor 上 ----
-        let (mut legacy, _legacy_player, legacy_monster) =
-            chase_parity_scene(11, player_tile, monster_tile);
-        set_visibility(&mut legacy, legacy_monster, player_tile, sees);
-        legacy
-            .get_mut::<LastKnownPlayerPos>(legacy_monster)
-            .unwrap()
-            .0 = memory;
-        legacy.entity_mut(legacy_monster).insert((
-            Active,
-            Ready,
-            Chase,
-            ActionTimer { remaining_av: 0.0 },
-        ));
-        crate::action::execution::execute_chase_system(&mut legacy);
-        // 旧执行器自己完成状态回转；新执行器把回转交给 completion。
-        // 为了让两步比较处在同一生命周期阶段，这里给旧路径补跑一次 completion
-        // （它的查寻依赖 `ActiveAction`，对旧模型实体不匹配，因此是纯空跑）。
-        world_run_completion_only(&mut legacy);
-        let legacy_outcome = outcome_of(&legacy, legacy_monster);
+        let _ = world.run_system_once(execute_chase_system);
+        world_run_completion_only(&mut world);
 
-        // ---- 新路径：action 子实体（只跑一次执行器）----
-        let (mut modern, _modern_player, modern_monster) =
-            chase_parity_scene(11, player_tile, monster_tile);
-        set_visibility(&mut modern, modern_monster, player_tile, sees);
-        modern
-            .get_mut::<LastKnownPlayerPos>(modern_monster)
-            .unwrap()
-            .0 = memory;
-        mount_ready_chase(&mut modern, modern_monster);
-        let _ = modern.run_system_once(execute_chase_system);
-        // 执行器只发事件；把事件翻成 Idle/Failure 的是 completion，
-        // 所以这里单独跑一次 completion（不再跑生成/仲裁，避免多走一步）。
-        world_run_completion_only(&mut modern);
-        let modern_outcome = outcome_of(&modern, modern_monster);
+        let after = world.get::<Position>(monster).unwrap().to_tuple();
+        let memory_after = world
+            .get::<LastKnownPlayerPos>(monster)
+            .and_then(|known| known.0);
+        let intents = world.resource::<Events<AttackIntentEvent>>().len();
 
-        assert_eq!(
-            modern_outcome, legacy_outcome,
-            "情形「{name}」追击结果不一致（位置 / 记忆 / 攻击意图 / 结局）"
-        );
+        match (sees, memory) {
+            (true, _) => {
+                assert_eq!(
+                    memory_after,
+                    Some(player_tile),
+                    "情形「{name}」可见时必须把玩家位置写入记忆"
+                );
+                assert_eq!(intents, 0, "情形「{name}」不相邻时不得攻击");
+                assert_ne!(after, monster_tile, "情形「{name}」应当朝玩家走一步");
+                assert!(
+                    world.get::<Idle>(monster).is_some(),
+                    "情形「{name}」追击应当成功结束"
+                );
+            }
+            (false, Some(_)) => {
+                assert_ne!(after, monster_tile, "情形「{name}」应当朝记忆点走一步");
+                assert_eq!(intents, 0, "情形「{name}」不得攻击");
+                assert!(world.get::<Idle>(monster).is_some());
+            }
+            (false, None) => {
+                assert_eq!(after, monster_tile, "情形「{name}」保活失败时不得移动");
+                assert_eq!(intents, 0, "情形「{name}」保活失败时不得攻击");
+                assert!(
+                    world.get::<Failure>(monster).is_some(),
+                    "情形「{name}」保活失败必须落到 Failure"
+                );
+                assert!(world.get::<Idle>(monster).is_none());
+            }
+        }
     }
 }
 
@@ -1272,31 +1241,12 @@ fn chase_clears_memory_when_reaching_last_known_position() {
 
 /// I91 回归：`Idle` 与 `Failure` 必须互斥（成功清 Failure，失败清 Idle）。
 ///
-/// 旧 `finish_action_failure` 不清 `Idle`，会让 actor 同时持有两者；
-/// 新链路的 `action_completion_system` 一开始也照抄了这个疏漏，本用例钉住不变式。
+/// 旧 `finish_action_failure` 不清 `Idle`（C8 已随旧链路删除），新链路的
+/// `action_completion_system` 一开始也照抄了这个疏漏，本用例钉住不变式。
 #[test]
 fn idle_and_failure_are_mutually_exclusive() {
-    // 旧模型：finish_action_failure / finish_action_success。
-    let mut world = crate::test_util::test_world();
-    let actor = world
-        .spawn((Idle, Failure, Active, ActionTimer { remaining_av: 0.0 }))
-        .id();
-
-    crate::action::finish_action_failure(&mut world, actor);
-    assert!(world.get::<Failure>(actor).is_some());
-    assert!(
-        world.get::<Idle>(actor).is_none(),
-        "失败后不得残留 Idle（I91）"
-    );
-
-    crate::action::finish_action_success(&mut world, actor);
-    assert!(world.get::<Idle>(actor).is_some());
-    assert!(
-        world.get::<Failure>(actor).is_none(),
-        "成功后不得残留 Failure（I91）"
-    );
-
-    // 新模型：action_completion_system 走失败分支后同样只剩 Failure。
+    // 失败分支：actor 事先同时持有 Idle（spawn 时给的）与 Failure 的旧残留，
+    // completion 必须把 Idle 清掉。
     let (mut world, _player) = poc_world();
     let monster = poc_actor(&mut world, (5, 5));
     // 追击需要视野与记忆组件；这里给空的（既看不见也没记忆）。
@@ -1315,6 +1265,31 @@ fn idle_and_failure_are_mutually_exclusive() {
     assert!(
         world.get::<Idle>(monster).is_none(),
         "失败后不得残留 Idle（I91）"
+    );
+    assert!(world.get_entity(action).is_err());
+
+    // 成功分支：从 Failure 状态出发，completion 必须把 Failure 清掉。
+    let (mut world, _player) = poc_world();
+    let monster = poc_actor(&mut world, (5, 5));
+    world.entity_mut(monster).remove::<Idle>().insert(Failure);
+    let action = world
+        .spawn((
+            ChildOf(monster),
+            ActionPriority(PRIORITY_WAIT),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Wait,
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+
+    let _ = world.run_system_once(execute_wait_system);
+    world_run_completion_only(&mut world);
+    assert!(world.get::<Idle>(monster).is_some(), "成功后必须回 Idle");
+    assert!(
+        world.get::<Failure>(monster).is_none(),
+        "成功后不得残留 Failure（I91）"
     );
     assert!(world.get_entity(action).is_err());
 }
@@ -1389,8 +1364,10 @@ fn flee_parity_scene(
         .insert((CanFlee, Viewshed::new(10), LastKnownPlayerPos::default()));
     let hp = 100.0 * monster_hp_ratio;
     *world.get_mut::<Health>(monster).unwrap() = Health::full(hp, 100.0);
-    set_visibility(&mut world, monster, player_tile, sees_player);
     crate::system::run_settle_systems(&mut world);
+    // **必须在 settle 之后**设置视图：`fov_system` 会按真实位置重算 Viewshed，
+    // 先设的话会被覆盖（本用例第一版就踩了这个坑，导致「不可见」情形其实也可见）。
+    set_visibility(&mut world, monster, player_tile, sees_player);
     world.add_schedule(build_action_poc_schedule());
     (world, player, monster)
 }
@@ -1412,99 +1389,115 @@ fn mount_ready_flee(world: &mut World, monster: Entity) -> Entity {
     action
 }
 
-/// C6：逃跑执行器与旧 `&mut World` 版逐条对照（落点 / 攻击意图 / 结局）。
+/// C6（C8 更新）：逃跑执行器四情形的行为契约。
+///
+/// 旧 `execute_flee_system` 已在 C8 删除，这里把当时对照出来的契约直接钉住：
+///
+/// | 情形 | 期望 |
+/// |---|---|
+/// | 低血、有路 | 走到「合法且离玩家曼哈顿距离最远」的格，无攻击意图 |
+/// | 血量回到退出阈值以上 | 保活失败 → `Failure`，不移动 |
+/// | 相邻被堵、可见 | 无处可逃 → 原地声明攻击 |
+/// | 相邻被堵、不可见 | 无处可逃 → 原地不动，无攻击意图 |
 #[test]
-fn flee_action_matches_legacy_flee_step() {
+fn flee_action_four_outcome_contracts() {
     use crate::events::AttackIntentEvent;
     use bevy_ecs::event::Events;
 
     let player_tile = (40, 40);
     let monster_tile = (36, 40);
 
-    type FleeOutcome = (Option<(usize, usize)>, usize, bool);
-    fn outcome_of(world: &World, monster: Entity) -> FleeOutcome {
-        (
-            world.get::<Position>(monster).map(Position::to_tuple),
-            world.resource::<Events<AttackIntentEvent>>().len(),
-            world.get::<Idle>(monster).is_some(),
-        )
-    }
-
-    let cases: [(&str, f64, bool, (usize, usize)); 4] = [
-        ("低血滞回内逃跑", 0.10, true, monster_tile),
-        ("血量回到退出阈值以上", 0.50, true, monster_tile),
-        ("相邻被堵（可见）", 0.10, true, (39, 40)),
-        ("相邻被堵（不可见）", 0.10, false, (39, 40)),
-    ];
-
-    for (name, hp_ratio, sees, tile) in cases {
-        // ---- 旧路径 ----
-        let (mut legacy, _legacy_player, legacy_monster) =
-            flee_parity_scene(51, player_tile, tile, hp_ratio, sees);
-        legacy.entity_mut(legacy_monster).insert((
-            Active,
-            Ready,
-            Flee,
-            ActionTimer { remaining_av: 0.0 },
-        ));
-        crate::action::execution::execute_flee_system(&mut legacy);
-        world_run_completion_only(&mut legacy);
-        let legacy_outcome = outcome_of(&legacy, legacy_monster);
-
-        // ---- 新路径 ----
-        let (mut modern, _modern_player, modern_monster) =
-            flee_parity_scene(51, player_tile, tile, hp_ratio, sees);
-        mount_ready_flee(&mut modern, modern_monster);
-        let _ = modern.run_system_once(execute_flee_system);
-        world_run_completion_only(&mut modern);
-        let modern_outcome = outcome_of(&modern, modern_monster);
-
+    // 情形 1：低血、有路 → 远离玩家。
+    {
+        let (mut world, _player, monster) =
+            flee_parity_scene(51, player_tile, monster_tile, 0.10, true);
+        mount_ready_flee(&mut world, monster);
+        let _ = world.run_system_once(execute_flee_system);
+        let after = world.get::<Position>(monster).unwrap().to_tuple();
+        assert!(
+            Position::new(after.0, after.1).manhattan(Position::new(player_tile.0, player_tile.1))
+                > Position::new(monster_tile.0, monster_tile.1)
+                    .manhattan(Position::new(player_tile.0, player_tile.1)),
+            "逃跑必须增大与玩家的距离：{monster_tile:?} → {after:?}"
+        );
         assert_eq!(
-            modern_outcome, legacy_outcome,
-            "情形「{name}」逃跑结果不一致（位置 / 攻击意图 / 结局）"
+            world.resource::<Events<AttackIntentEvent>>().len(),
+            0,
+            "有路可逃时不得攻击"
         );
     }
-}
 
-/// C6：逃跑选向必须"合法且离玩家最远"（此处四面通路，只能远离）。
-#[test]
-fn flee_picks_the_farthest_legal_tile() {
-    let player_tile = (10, 10);
-    let monster_tile = (15, 10);
-    let (mut world, _player, monster) = flee_parity_scene(61, player_tile, monster_tile, 0.1, true);
-    mount_ready_flee(&mut world, monster);
+    // 情形 2：血量回到退出阈值以上 → 保活失败。
+    {
+        let (mut world, _player, monster) =
+            flee_parity_scene(51, player_tile, monster_tile, 0.50, true);
+        mount_ready_flee(&mut world, monster);
+        let _ = world.run_system_once(execute_flee_system);
+        world_run_completion_only(&mut world);
+        assert!(
+            world.get::<Failure>(monster).is_some(),
+            "回到退出阈值以上必须让逃跑行动失败"
+        );
+        assert!(world.get::<Idle>(monster).is_none(), "不得残留 Idle（I91）");
+        assert_eq!(
+            world.get::<Position>(monster).unwrap().to_tuple(),
+            monster_tile,
+            "保活失败时不得移动"
+        );
+    }
 
-    let _ = world.run_system_once(execute_flee_system);
+    // 情形 3 / 4：被堵在角落（可见 / 不可见）。
+    //
+    // 触发「反咬」需要玩家**相邻**（切比雪夫 =1）；同时玩家格本身也被封成墙，
+    // 否则那个格子就是合法逃跑位，怪物会走过去而不是「无处可逃」。
+    for (name, sees, expect_intent) in [("可见", true, 1usize), ("不可见", false, 0usize)] {
+        let monster_tile = (30, 30);
+        let player_tile = (31, 30);
+        let (mut world, _player, monster) =
+            flee_parity_scene(51, player_tile, monster_tile, 0.10, sees);
+        // 把怪物周围（含玩家所在的相邻格）全部封成墙。
+        for (dx, dy) in [
+            (0isize, -1isize),
+            (0, 1),
+            (-1, 0),
+            (1, 0),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+            (1, 1),
+        ] {
+            let (nx, ny) = Position::new(monster_tile.0, monster_tile.1).offset(dx, dy);
+            if nx < MAP_WIDTH && ny < MAP_HEIGHT {
+                world.resource_mut::<Map>().tiles[ny][nx] = Tile::Wall;
+            }
+        }
+        // 上一个情形可能留下未消费的意图事件；先清空再计数，
+        // 否则 `Events::len()` 会把残留算进本情形。
+        world.resource_mut::<Events<AttackIntentEvent>>().update();
+        mount_ready_flee(&mut world, monster);
+        let _ = world.run_system_once(execute_flee_system);
 
-    let after = world.get::<Position>(monster).unwrap().to_tuple();
-    assert!(
-        Position::new(after.0, after.1).manhattan(Position::new(player_tile.0, player_tile.1))
-            > Position::new(monster_tile.0, monster_tile.1)
-                .manhattan(Position::new(player_tile.0, player_tile.1)),
-        "逃跑必须增大与玩家的距离：{monster_tile:?} → {after:?}"
-    );
-}
+        // 可见性必须真的是本情形设定的那个：`set_visibility` 在场景构建里调用过，
+        // 但这里再断言一次，避免「两个情形其实跑成了同一个」这类静默错误。
+        assert_eq!(
+            world
+                .get::<Viewshed>(monster)
+                .is_some_and(|viewshed| viewshed.can_see(player_tile)),
+            sees,
+            "情形「被堵{name}」的可见性设置不符"
+        );
 
-/// C6：血量回到退出阈值以上 → 保活失败 → `Failure`。
-#[test]
-fn flee_fails_when_hp_recovers_above_exit_threshold() {
-    let (mut world, _player, monster) = flee_parity_scene(71, (40, 40), (36, 40), 0.50, true);
-    let action = mount_ready_flee(&mut world, monster);
-
-    let _ = world.run_system_once(execute_flee_system);
-    world_run_completion_only(&mut world);
-
-    assert!(
-        world.get::<Failure>(monster).is_some(),
-        "回到退出阈值以上必须让逃跑行动失败"
-    );
-    assert!(world.get::<Idle>(monster).is_none(), "不得残留 Idle（I91）");
-    assert!(world.get_entity(action).is_err(), "action 实体应被回收");
-    assert_eq!(
-        world.get::<Position>(monster).unwrap().to_tuple(),
-        (36, 40),
-        "保活失败时不得移动"
-    );
+        assert_eq!(
+            world.get::<Position>(monster).unwrap().to_tuple(),
+            monster_tile,
+            "情形「被堵{name}」时无处可逃，必须原地不动"
+        );
+        assert_eq!(
+            world.resource::<Events<AttackIntentEvent>>().len(),
+            expect_intent,
+            "情形「被堵{name}」的攻击意图数不符（相邻且可见才反咬）"
+        );
+    }
 }
 
 /// C6：逃跑候选的生成条件（低血才产生）。

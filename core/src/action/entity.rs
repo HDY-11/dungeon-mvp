@@ -1,4 +1,4 @@
-//! 行动实体 PoC（REFACTOR.md §11.3 Phase B；目标设计见 §3.6 / DESIGN Dsn27）。
+//! 行动实体链路（REFACTOR.md §3.6 / §11.3 Phase C；DESIGN Dsn27）。
 //!
 //! **一个行动 = 一个 actor 的瞬态子实体**，取代中央分派的 `ActionKind`：
 //!
@@ -14,19 +14,19 @@
 //! Completion（唯一 despawn action 实体 + 回转 actor `Idle` / `Failure` 的系统）
 //! ```
 //!
-//! # 本阶段范围（Phase B）
+//! # 现状
 //!
-//! - 只证明链路可行：`Wander`（AI 侧）+ `Move`（payload 侧）走完整链路；
-//! - **不接主循环**：[`build_action_poc_schedule`] 只在测试里使用；
-//!   `world/loop_.rs` 仍走旧的 `decide_monster_actions` + `mount_action`；
-//! - **不删旧系统**：`ActionKind` / `mount_action` / `choose_action` 留到 Phase C；
-//! - 死抽象清单（§10.8 / A43）在 Phase B 期间一律不动。
+//! - **已接主循环**（C7）：`world/loop_.rs` 每轮运行
+//!   [`build_action_poc_schedule`]，玩家命令先经 [`build_player_mount_schedule`]；
+//! - **旧模型已删除**（C8）：`ActionKind` / `mount_action` 中央 match / actor 上的
+//!   行动 ZST / 独占执行系统都不复存在；
+//! - 调度标签仍叫 `ActionPocSchedule`（Phase B 遗留名），为少改调用点保留。
 //!
 //! # 与 actor 组件模型的关系
 //!
 //! `Can*` 仍是 actor 上的 ZST 组件（回答“能不能做”）；action 实体只回答
 //! “正在考虑/执行什么”。actor 的 `Idle`/`Active`/`Failure` 仍是行动状态，
-//! 但**只有仲裁与 completion 可以写**：生成系统一律不碰。
+//! 但**只有仲裁与 completion 可以写**：生成系统一律不碰，且 `Idle`/`Failure` 互斥。
 //!
 //! # 不存档
 //!
@@ -648,13 +648,12 @@ pub fn execute_flee_system(
             }
             None => {
                 // 无路可逃：相邻且看得见玩家就反咬一口（与旧实现一致）。
-                let adjacent_visible = Position::new(self_position.0, self_position.1)
-                    .is_near(player_tile)
-                    && viewsheds
-                        .get(actor)
-                        .ok()
-                        .is_some_and(|viewshed| viewshed.can_see(player_position));
-                if adjacent_visible {
+                let near = Position::new(self_position.0, self_position.1).is_near(player_tile);
+                let sees = viewsheds
+                    .get(actor)
+                    .ok()
+                    .is_some_and(|viewshed| viewshed.can_see(player_position));
+                if near && sees {
                     intents.write(AttackIntentEvent {
                         attacker: actor,
                         target: player_entity,
@@ -934,9 +933,8 @@ pub fn action_completion_system(
 // 全链路都是**普通系统**：没有 exclusive `&mut World` 系统，因此这条调度可以被
 // 自由组合（见 `entity_tests.rs` 里把它追加进 `CoreSettleSchedule` 的共存测试）。
 //
-// **仍未接主循环**：`world/loop_.rs` 继续走旧的 `decide_monster_actions` +
-// `mount_action`；C7 才做接线切换。玩家路径的生成系统已经就位（C2），
-// 但主循环尚未把 `PlayerCommand` 写进 [`PlayerActionRequest`]。
+// **已接主循环**（C7）：`world/loop_.rs` 每轮运行它；玩家命令先经
+// [`build_player_mount_schedule`] 挂载，再进推进循环。
 pub fn build_action_poc_schedule() -> Schedule {
     let mut schedule = Schedule::new(ActionPocSchedule);
     schedule.add_systems(
