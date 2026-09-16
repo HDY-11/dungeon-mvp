@@ -252,8 +252,9 @@ pub fn tick_action_timers_system(world: &mut World) {
 
 /// 执行到期的 `Wander`：随机选一个 8 方向走一步；被挡/越界则原地不动。
 ///
-/// 与旧 `execution::execute_wander_system` 行为一致：选向是随机且**照常消耗随机数**
-/// （保证 RNG 步数与旧实现同序），但只有合法时才真的改 `Position`。
+/// 与旧 `execution::execute_wander_system` 行为一致：随机方向**照常消耗随机数**
+/// （保证 RNG 步数与旧实现同序），只有合法时才改 `Position`；被挡也算行动完成
+/// （游荡本来就是随机试探）。
 pub fn execute_wander_system(
     mut commands: Commands,
     mut rng: ResMut<GameRng>,
@@ -264,6 +265,8 @@ pub fn execute_wander_system(
     mut succeeded: EventWriter<ActionSucceededEvent>,
     mut failed: EventWriter<ActionFailedEvent>,
 ) {
+    use crate::action::execution::movement::moved_position;
+
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
         (0, 1),
@@ -287,52 +290,85 @@ pub fn execute_wander_system(
         let index =
             (rng.random_range(0, DIRECTIONS.len() as u64) as usize).min(DIRECTIONS.len() - 1);
         let (dx, dy) = DIRECTIONS[index];
-        let legal = crate::action::execution::movement::can_move_to(
-            &map, &occupancy, position.x, position.y, dx, dy,
-        );
-        if legal {
-            let (next_x, next_y) = position.offset(dx, dy);
-            commands.entity(actor).insert(Position::new(next_x, next_y));
-            log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) → ({next_x},{next_y})");
-        } else {
-            log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) 被挡，原地不动");
+
+        match moved_position(&map, &occupancy, *position, dx, dy) {
+            Some(next) => {
+                commands.entity(actor).insert(Position::new(next.x, next.y));
+                log::debug!(
+                    "PoC 游荡: actor={actor:?} 方向=({dx},{dy}) → ({},{})",
+                    next.x,
+                    next.y
+                );
+            }
+            None => {
+                log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) 被挡，原地不动");
+            }
         }
         succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
-/// 执行到期的 `Move { dx, dy }`：**必须**用 exclusive 系统。
+/// 执行到期的 `Move { dx, dy }`：**参数化普通系统**（不再独占 `&mut World`）。
 ///
-/// 移动规则 [`crate::action::execution::movement::execute_move`] 直接改 `World`，
-/// 多实体之间的读/写无法在普通 `Query` 里安全表达（action 实体 → actor 的位置）。
-/// Phase C 的选择是把移动改写成参数化系统，或保留 exclusive 执行器——
-/// 这里刻意保留这个样本，让 A41 的边界在 PoC 阶段就可见。
-pub fn execute_move_system(world: &mut World) {
-    use crate::action::execution::movement::execute_move;
+/// 为什么这样写是安全的（Phase B 时这里曾是 exclusive，属过度保守）：
+///
+/// - 驱动实体是 **action 实体**（`ActiveAction + Ready + Move` 都在它身上），
+///   `ChildOf` 只作**读**，用来拿 actor id；
+/// - 被写的是**另一个实体**的 `Position`，因此 `Query<&mut Position>` 的
+///   per-entity 唯一可变访问没有被违反；
+/// - 规则由纯函数 [`crate::action::execution::movement::moved_position`] 提供，
+///   不需要 `World` 句柄。
+///
+/// 之前必须 exclusive，唯一原因是复用了 `movement::execute_move(&mut World, ...)`
+/// ——那个签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用。
+/// 抽取纯规则后这个约束自动消失，A41 的边界随之收窄。
+pub fn execute_move_system(
+    mut commands: Commands,
+    mut actions: Query<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>,
+    mut actors: Query<&mut Position>,
+    map: Res<Map>,
+    occupancy: Res<OccupancyMap>,
+    mut succeeded: EventWriter<ActionSucceededEvent>,
+    mut failed: EventWriter<ActionFailedEvent>,
+) {
+    use crate::action::execution::movement::moved_position;
 
-    let ready_moves: Vec<(Entity, Entity, isize, isize)> = {
-        let mut query =
-            world.query_filtered::<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>();
-        query
-            .iter(world)
-            .map(|(action, child_of, action_move)| {
-                (action, child_of.parent(), action_move.dx, action_move.dy)
-            })
-            .collect()
-    };
+    for (action, child_of, action_move) in &mut actions {
+        let actor = child_of.parent();
+        let Ok(mut position) = actors.get_mut(actor) else {
+            // actor 已消失：清掉残留 action 实体并结束行动。
+            commands.entity(action).despawn();
+            failed.write(ActionFailedEvent { entity: actor });
+            continue;
+        };
 
-    for (action, actor, dx, dy) in ready_moves {
-        let moved = execute_move(world, actor, dx, dy);
-        world.entity_mut(action).remove::<Ready>();
-        log::debug!("PoC 移动: actor={actor:?} dir=({dx},{dy}) moved={moved}");
-        if moved {
-            world
-                .resource_mut::<bevy_ecs::event::Events<ActionSucceededEvent>>()
-                .send(ActionSucceededEvent { entity: actor });
+        let moved = moved_position(&map, &occupancy, *position, action_move.dx, action_move.dy);
+        match moved {
+            Some(next) => {
+                position.x = next.x;
+                position.y = next.y;
+                log::debug!(
+                    "PoC 移动: actor={actor:?} 方向=({},{}) → ({},{})",
+                    action_move.dx,
+                    action_move.dy,
+                    next.x,
+                    next.y
+                );
+            }
+            None => {
+                log::debug!(
+                    "PoC 移动: actor={actor:?} 方向=({},{}) 被挡，原地不动",
+                    action_move.dx,
+                    action_move.dy
+                );
+            }
+        }
+
+        commands.entity(action).remove::<Ready>();
+        if moved.is_some() {
+            succeeded.write(ActionSucceededEvent { entity: actor });
         } else {
-            world
-                .resource_mut::<bevy_ecs::event::Events<ActionFailedEvent>>()
-                .send(ActionFailedEvent { entity: actor });
+            failed.write(ActionFailedEvent { entity: actor });
         }
     }
 }
@@ -383,6 +419,9 @@ pub fn action_completion_system(
 // ── PoC 调度 ─────────────────────────────────────────
 
 /// Phase B 的完整 PoC 调度：生成 → 仲裁 → tick → 执行 → completion。
+///
+/// 全链路都是**普通系统**：没有 exclusive `&mut World` 系统，因此这条调度可以被
+/// 自由组合（见 `entity_tests.rs` 里把它追加进 `CoreSettleSchedule` 的共存测试）。
 ///
 /// **只给测试使用**（`world/loop_.rs` 仍走旧路径）；Phase C 才把它接进主循环并
 /// 用真正的 `CoreSettleSchedule` 前后置系统替换这里的顺序。

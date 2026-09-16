@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::action::generation::player::PlayerCommand;
-use crate::components::{CanBasicAttack, CanMove, CanWait};
+use crate::components::{CanBasicAttack, CanMove, CanWait, Viewshed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
 use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_test_monster};
 use crate::world_loop::apply_player_command;
@@ -429,4 +429,169 @@ fn legacy_player_path_still_works_alongside_poc() {
     );
     assert_eq!(player_pos(&world), (nx, ny));
     assert!(world.get::<Idle>(player).is_some());
+}
+
+// ── 参数化执行器与旧 `World` 执行器的 parity ─────────────
+
+/// 构造「actor + action 实体（Move，已 Ready）」，返回 `(world, actor, action, observer)`。
+///
+/// `observer` 是观察者的 Entity id：它占据某个格子，用来让「被占用」与「空闲」
+/// 两种情形落在同一个 actor 位置上。
+fn move_parity_scene(
+    actor_pos: (usize, usize),
+    observer_pos: Option<(usize, usize)>,
+    dx: isize,
+    dy: isize,
+) -> (World, Entity, Entity, Option<Entity>) {
+    let (mut world, _player) = single_tile_scene();
+    // 全平地：越界之外全是可走格，便于隔离「占用」这一个变量。
+    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+
+    let actor = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        actor_pos,
+        10.0,
+        4.0,
+        5.0,
+    );
+    let observer = observer_pos.map(|pos| {
+        spawn_test_monster(
+            &mut world,
+            crate::monster::MonsterKindId::Goblin,
+            pos,
+            10.0,
+            4.0,
+            5.0,
+        )
+    });
+    crate::system::run_settle_systems(&mut world);
+
+    let action = world
+        .spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_WANDER),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Move { dx, dy },
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(actor).remove::<Idle>().insert(Active);
+
+    (world, actor, action, observer)
+}
+
+/// 参数化执行器（`entity::execute_move_system`）与旧 `World` 执行器
+/// （`movement::execute_move`）在同样场景下必须给出同样的结果。
+///
+/// 覆盖三情形：合法移动、目标格被占用、越界。比较的是
+/// 「actor 最终位置 + 是否有 `ActionSucceeded` 事件 + 是否成功」。
+#[test]
+fn parameterized_move_matches_world_based_move() {
+    use crate::action::execution::movement::execute_move as world_based_move;
+    use crate::events::ActionSucceededEvent;
+    use bevy_ecs::event::Events;
+
+    let cases: [(&str, (usize, usize), Option<(usize, usize)>, (isize, isize)); 4] = [
+        ("合法", (10, 10), None, (1, 0)),
+        ("对角合法", (10, 10), None, (1, 1)),
+        ("目标被占用", (10, 10), Some((11, 10)), (1, 0)),
+        ("越界", (0, 0), None, (-1, 0)),
+    ];
+
+    for (name, actor_pos, observer_pos, (dx, dy)) in cases {
+        // A：旧的 &mut World 执行器。
+        let (mut world_a, actor_a, _action_a, _obs_a) =
+            move_parity_scene(actor_pos, observer_pos, dx, dy);
+        let moved_a = world_based_move(&mut world_a, actor_a, dx, dy);
+        let pos_a = world_a.get::<Position>(actor_a).unwrap().to_tuple();
+
+        // B：新的参数化执行器（只跑这一个系统）。
+        let (mut world_b, actor_b, action_b, _obs_b) =
+            move_parity_scene(actor_pos, observer_pos, dx, dy);
+        let _ = world_b.run_system_once(execute_move_system);
+        let pos_b = world_b.get::<Position>(actor_b).unwrap().to_tuple();
+        let succeeded_b = world_b.resource::<Events<ActionSucceededEvent>>().len() > 0;
+
+        assert_eq!(
+            pos_a, pos_b,
+            "情形「{name}」位置不一致：{pos_a:?} vs {pos_b:?}"
+        );
+        assert_eq!(
+            moved_a, succeeded_b,
+            "情形「{name}」成功判定不一致：World 版 {moved_a} vs 参数化版 {succeeded_b}"
+        );
+        assert_eq!(
+            world_b.get_entity(action_b).is_ok(),
+            true,
+            "参数化执行器不得回收 action 实体（那是 completion 的职责）"
+        );
+        assert!(
+            world_b.get::<Ready>(action_b).is_none(),
+            "参数化执行器必须清掉 Ready，避免同一行动被执行两次"
+        );
+    }
+}
+
+/// 参数化执行器不再是 exclusive：能与 `core` 既有结算系统挂在**同一条调度**里。
+///
+/// `Schedule::initialize`（首次运行时触发）会做组件访问冲突检查——如果执行器真的
+/// 与世界独占型访问冲突，这里会直接 panic。同时顺带验证两者都照常工作：
+/// 行动被消耗（位置改变），结算系统也跑过（FOV 重算）。
+#[test]
+fn parameterized_move_executor_coexists_with_settle_systems() {
+    use crate::schedule::CoreSettleSchedule;
+
+    let (mut world, actor) = {
+        let (mut world, _player) = single_tile_scene();
+        world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+        let actor = poc_actor(&mut world, (10, 10));
+        // 让 actor 带 Viewshed，以便观察结算系统确实跑过。
+        world.entity_mut(actor).insert(Viewshed::new(3));
+        (world, actor)
+    };
+
+    let action = world
+        .spawn((
+            ChildOf(actor),
+            ActionPriority(PRIORITY_WANDER),
+            ActionSource::Ai,
+            ActionTimer { remaining_av: 0.0 },
+            Move { dx: 1, dy: 0 },
+            ActiveAction,
+            Ready,
+        ))
+        .id();
+    world.entity_mut(actor).remove::<Idle>().insert(Active);
+
+    // 把参数化执行器**追加**到既有的 core 结算调度里（不新建、不替换调度）：
+    // 执行器必须能与 FOV / 占用图 / 事件更新等系统挂在一起而不冲突。
+    world
+        .resource_mut::<Schedules>()
+        .get_mut(CoreSettleSchedule)
+        .expect("core 结算调度已注册")
+        .add_systems((execute_move_system, ApplyDeferred, action_completion_system).chain());
+    world.run_schedule(CoreSettleSchedule);
+
+    assert_eq!(
+        world.get::<Position>(actor).unwrap().to_tuple(),
+        (11, 10),
+        "执行器应当把 actor 向右移动一格"
+    );
+    assert!(
+        world
+            .get::<Viewshed>(actor)
+            .is_some_and(|viewshed| !viewshed.visible_tiles.is_empty()),
+        "同一条调度里的既有结算系统（FOV）必须照常执行"
+    );
+    assert!(
+        world.get_entity(action).is_err(),
+        "同一条调度里的 completion 应当已经回收 action 实体"
+    );
+    assert!(
+        world.get::<Idle>(actor).is_some(),
+        "移动成功后 actor 必须回到 Idle"
+    );
 }

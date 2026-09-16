@@ -817,8 +817,8 @@ core ──> presentation ──> render-api <── tui / gpu
 **进展（Phase A/B）：**
 
 - Phase A：core 冒烟测试补齐（地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 / 快怪多动），`cargo test -p core` 从 4 → 18 个测试（ISSUES P9）。
-- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路，9 个测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。**PoC 刻意不接主循环、不删旧模型**；`ActionKind` / `mount_action` / `choose_action` 与 PoC 并存，删除属 Phase C。
-- 已知边界：`execute_move_system`（action 实体版）仍是 exclusive `&mut World` 系统——移动规则直接改 `World`，多实体读写在普通 `Query` 里无法安全表达。Phase C 需决定：参数化重写移动规则，或保留 exclusive 执行器（A41 的边界在 PoC 阶段就暴露出来）。
+- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路，测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。**PoC 刻意不接主循环、不删旧模型**；`ActionKind` / `mount_action` / `choose_action` 与 PoC 并存，删除属 Phase C。
+- 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：PoC 调度里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
 
 ---
 

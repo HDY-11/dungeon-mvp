@@ -2091,7 +2091,9 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** `core/src/action/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/generation/player.rs`、`core/src/world/loop_.rs`
 
-**状态：** 部分落地 — **Phase B（action 实体 PoC）已完成**：`core/src/action/entity.rs` 实现 `ActionPriority` / `ActionSource` / `Candidate` / `ActiveAction` / `ActionName` + 生成（Wander/Flee）/ 仲裁（全序 `(priority, to_bits())`）/ tick（`Ready` 门禁）/ 执行（`Move` exclusive + `Wander` 参数化）/ completion（消费 `ActionSucceeded/FailedEvent` 并回收 action 实体）全链路，9 个 PoC 测试通过；旧模型（`ActionKind` / `mount_action` / `choose_action`）**仍在使用且未删除**——PoC 未接主循环，删除留到 Phase C（逐行动迁移 Wait → Move → BasicAttack → Wander → Chase → Flee）。
+**状态：** 部分落地 — **Phase B（action 实体 PoC）已完成**：`core/src/action/entity.rs` 实现 `ActionPriority` / `ActionSource` / `Candidate` / `ActiveAction` / `ActionName` + 生成（Wander/Flee）/ 仲裁（全序 `(priority, to_bits())`）/ tick（`Ready` 门禁）/ 执行（`Move` 与 `Wander` 均为普通参数化系统）/ completion（消费 `ActionSucceeded/FailedEvent` 并回收 action 实体）全链路，11 个 PoC 测试通过；旧模型（`ActionKind` / `mount_action` / `choose_action`）**仍在使用且未删除**——PoC 未接主循环，删除留到 Phase C（逐行动迁移 Wait → Move → BasicAttack → Wander → Chase → Flee）。
+
+**A41 范围收窄（同批完成）：** 执行器不再需要 exclusive `&mut World`。原先「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」的判断，是「复用 `movement::execute_move(&mut World, ...)`」造成的返回值假象，不是 ECS 限制——`Query<&mut T>` 只保证 per-entity 唯一可变访问，驱动实体与被写实体不同即无冲突。落点计算抽成纯函数 `movement::moved_position` 后，`execute_move_system` 已是普通系统（parity 测试 + 与 `CoreSettleSchedule` 同调度共存测试佐证）。剩余 exclusive 代码全部位于旧模型，随 Phase C 删除。
 
 **关联：** D29、REFACTOR.md §3.6 / §11.3 Phase B。
 

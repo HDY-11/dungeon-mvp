@@ -812,18 +812,36 @@ A ──▶ F（并行）
 | B2 | 生成系统 | ✅ `wander_generation_system` + `flee_generation_system`（后者让仲裁真的需要比较优先级）；两者只 spawn 候选，不写 actor 状态 |
 | B3 | 仲裁系统 | ✅ 按 `ChildOf::parent()` 分组，赢家取 `(ActionPriority, action_entity.to_bits())` 最小者；先剔除“已有 `ActiveAction` 的 actor”的候选（`Without<ActiveAction>` 挡不住这种情况）；loser 一律 despawn |
 | B4 | Tick | ✅ 只推进 `With<ActiveAction>`；与旧 tick 同一「最小正 AV」口径；归零加 `Ready` |
-| B5 | 执行系统 | ✅ `execute_wander_system`（参数化系统，随机 8 方向 + 碰撞检查）与 `execute_move_system`（**exclusive `&mut World`**，见下）；只发 `ActionSucceeded/FailedEvent`，不回收实体 |
+| B5 | 执行系统 | ✅ `execute_wander_system` 与 `execute_move_system` **都是普通参数化系统**（见下）；只发 `ActionSucceeded/FailedEvent`，不回收实体 |
 | B6 | completion | ✅ 消费两个事件 → despawn 该 actor 的 action 实体 → actor 回 `Idle`/`Failure`；`ActionSucceeded/FailedEvent` 从死事件变成真实状态回转机制 |
-| B7 | PoC 测试 | ✅ 9 个（全链路 / 优先级 / 平局 / 忙碌 actor / 生成不写状态 / 不重复生成 / 低血双候选 / 低血仲裁到 Flee / 玩家不被 AI 生成）+ 1 个旧路径对照测试 |
+| B7 | PoC 测试 | ✅ 11 个（全链路 / 优先级 / 平局 / 忙碌 actor / 生成不写状态 / 不重复生成 / 低血双候选 / 低血仲裁到 Flee / 玩家不被 AI 生成 / 参数化-旧 `World` 版 parity / 与 `CoreSettleSchedule` 共存）+ 1 个旧路径对照测试 |
 
 **PoC 结论与遗留：**
 
 - 链路可行：生成 → 仲裁 → tick → 执行 → completion 全通，无残留 action 子实体、无 actor 卡在 `Active`。
-- **`execute_move_system` 仍是 exclusive `&mut World`**：`movement::execute_move` 直接改 `World`，
-  action 实体 → actor 位置的读写在普通 `Query` 里无法安全表达。Phase C 需二选一：
-  把移动规则改写成参数化系统（推荐，`can_move_to` 已是纯函数），或接受 exclusive 执行器并收窄 A41 的范围。
+- **执行器全部是普通系统（修正记录）**：Phase B 初版把 `execute_move_system` 写成 exclusive
+  `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。
+  这个理由是**错的**——它只是**复用 `movement::execute_move(&mut World, ...)` 的后果**：
+  那个签名把「读 `Position` + 读 `Map`/`OccupancyMap` + 写 `Position`」揉进一次 `&mut World` 调用。
+  Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问：驱动实体是 action 实体
+  （`ActiveAction + Ready + Move` 都在它身上），被写的是**另一个实体** actor 的 `Position`，
+  `ChildOf` 只作读——两处并无真冲突。
+  **修法（已完成）**：落点计算抽成纯函数
+  `movement::moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 不变），
+  执行器改为 `Query<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>` +
+  `Query<&mut Position>` + `Res<Map>` + `Res<OccupancyMap>`。
+  证据：`parameterized_move_matches_world_based_move`（与旧 `World` 版逐情形 parity）、
+  `parameterized_move_executor_coexists_with_settle_systems`（追加进 `CoreSettleSchedule` 同调度不冲突）。
+- **A41 范围因此收窄**：PoC 链路已无 exclusive 系统；剩余 exclusive 代码都在旧模型
+  （`execution/mod.rs` 的 `execute_*_system`/tick、`ai.rs::decide_monster_actions`、`world/loop_.rs` 的推进），
+  随 Phase C 删除旧链路一并消失。
 - `ActiveAction` 在 actor 行动的那一轮内就被执行并回收，所以“一个 actor 至多一个 `ActiveAction`”
   只能在**仲裁之后、执行之前**断言（测试已按相位拆开）。
+- `Move` 失败语义沿用旧实现：被挡/越界 → `ActionFailedEvent` → actor 进 `Failure`
+  （等价旧 `execute_move_system` 的 `finish_action_failure`）；`Wander` 被挡仍算成功
+  （等价旧 `execute_wander_system` 的无条件 `finish_action_success`）。Phase C parity 套件需保持这两个语义。
+- 纪律提醒：这次是**注释/文档先给出了过强结论**（「必须 exclusive」）再被测试推翻。今后写
+  「不可能 / 必须」类判断前，先写一个最小验证（一条 parity 测试就足够推翻它）。
 
 **约束复核：** PoC 未接主循环、未删旧系统、未触碰 §10.8/A43 死抽象清单。
 
