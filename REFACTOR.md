@@ -931,8 +931,8 @@ A ──▶ F（并行）
 |---|---|---|
 | F1 | I87：`sys` 的 `log` 依赖显式 `features = ["std"]` | `cargo test -p sys` 通过 |
 | F2 | I88：删除/归档旧根集成测试；重写为新 core + render-api headless 测试 | `cargo test -p dungeon-app` 通过（或明确不纳入） |
-| F3 | core clippy：`too_many_arguments`/`type_complexity`/`collapsible_if` 历史警告 | `cargo clippy -p core --all-targets -- -D warnings` 通过（可选） |
-| F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | 一条命令可跑 |
+| F3 | core clippy：`too_many_arguments`/`type_complexity`/`collapsible_if` 历史警告 | ✅ 21 → 0，`cargo clippy -p core --all-targets -- -D warnings` 通过（commit e751914） |
+| F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | ✅ `scripts/gate.ps1`（含 core clippy 共 4 步，全绿退出 0）；用法见 PROTOCOLS.md §五 |
 | F5 | `core` crate 改名评估（I86 长期） | 记录决策，不阻塞本轮 |
 
 #### Phase G — 回到 presentation + tui

@@ -102,3 +102,38 @@ A4  — 原始问题标题 ✅
 1. **替换表格** — 直接替换数值行，保持表格格式
 2. **删除标记** — 已移除的机制在行内标记 `~~已移除~~`
 3. **公式格式** — 用 Rust 表达式写入代码块：`hp = 20 + level * 5`
+
+---
+
+## 五、门禁（一条命令）
+
+REFACTOR 期间「新 core 方向」的验收统一走一个脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
+```
+
+依次执行（任一步失败即退出码 1，并在末尾列出失败项）：
+
+| 步骤 | 命令 |
+|---|---|
+| 1 | `cargo check --workspace` |
+| 2 | `cargo test -p render-api -p core -p utils -p tui -p sys` |
+| 3 | `cargo clippy -p render-api --all-targets -- -D warnings` |
+| 4 | `cargo clippy -p core --all-targets -- -D warnings` |
+
+选项：`-Online`（去掉 `--offline`，需要联网拉依赖时）、`-SkipClippy`（只跑 1–2）。
+
+### 为什么不覆盖全部
+
+- **旧 `dungeon-*` crate 与根 `dungeon-app` 的测试不在门禁内**：它们针对被取代的
+  旧架构，纳入只会长期红着（REFACTOR.md §10.4 / §10.6 第 4、5 项）。需要全量时
+  单独跑 `cargo test --workspace`，并自行判断失败项属于哪一类。
+- 每个 Phase 收尾仍按 [RULE.md](RULE.md) 的文档纪律更新对应文档；门禁只管代码。
+
+### 维护注意
+
+- `scripts/gate.ps1` **必须保存为 UTF-8 with BOM**。Windows PowerShell 5.1 在没有
+  BOM 时会按系统 ANSI 代码页（中文 Windows 是 GBK）解析 `.ps1`，中文注释会变成
+  语法错误。用只写 UTF-8 无 BOM 的编辑器/工具改过之后，要重新加回 BOM。
+
