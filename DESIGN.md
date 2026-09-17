@@ -812,7 +812,7 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** ①② 均已落地（Phase B/C 完成）；I89（AV 门禁）与 I90（事件生命周期）已修；§11.6 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。① 的后续只剩 Phase D 的 ②（速度组件）。
+**状态：** ①② 均已落地（Phase B/C/D 完成）；I89（AV 门禁）与 I90（事件生命周期）已修；§11.6 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。① 见下方 Phase B/C 进展，② 见下方 Phase D 进展。
 
 **进展（Phase A/B/C）：**
 
@@ -821,6 +821,16 @@ core ──> presentation ──> render-api <── tui / gpu
 - Phase C（全量迁移，C1–C9 完成）：六个行动逐行动迁移并各配 parity 场景；主循环切换到新链路（`world/loop_.rs` 改为「先挂载、再推进」两段式）；`ActionKind` / `mount_action` 中央 match / `finish_action_*` / `decide_monster_actions` / `choose_action` / `run_action_cycle` / 旧独占执行系统与 actor 上的行动 ZST 挂载路径**全部删除**，全库无 `ActionKind` 引用。
 - 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：行动链路里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
 - 迁移期约束（写测试时要注意）：`Ready` 的清理分两条路（`execute_move_system` 显式清，其余靠 completion despawn 实体）；`Idle`/`Failure` 必须互斥（I91）；「挂载玩家行动」与「推进世界」必须分两段调度，否则会把「本轮已执行完」误判成「命令被拒绝」。
+
+**进展（Phase D：速度组件，D1–D5 完成）：**
+
+- `Agility` / `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av` 全部删除；AV 只剩 `AV = base_duration / clamp(速度, 0.25, 4.0)` 一个口径（`core/src/balance.rs`）。
+- 行动类别 → 速度的映射收在 `SpeedRule`（`Move` / `Attack` / `Fixed`），由生成系统在挂载点决定；`ActorSpeeds` 是 AV 计算的纯输入，使公式可在无 ECS 的单测里逐条钉住。执行器完全不接触速度——AV 在挂载时就固化进 `ActionTimer`。
+- 怪物模板不再保留任何「敏捷」字段：`MonsterSpeeds { move_speed, attack_speed }` 直接写字面速度值。迁移来源（旧敏捷 → 旧耗时系数的倒数）记在 `MonsterSpeeds::MIGRATION_NOTE`，数值表在 GAME.md Gm1。
+- **迁移映射的选择理由**：新 AV 精确等于旧的「`duration` × 耗时系数」一项，丢掉的只有等量叠加的反应时常数项（已确认删除）。因此**角色之间的相对快慢与旧版完全一致**，这是「先按旧敏捷保行为」的可验证含义，由 `template_speeds_preserve_legacy_agility_ordering` 钉住。玩家初始速度 `1.25` 因此是迁移产物而非设计值，已在代码与 GAME.md 双处标注「重新校准时应改回 1.0 并重配平」。
+- 顺带确立的新不变式（旧口径做不到）：`AV × 速度 == base_duration` 恒成立、AV 与 `base_duration` 严格成正比。旧式因为有常数反应时项，「300ms 的攻击」实际要付 310 AV、而「500ms 的游荡」付 470 AV——短行动被惩罚得更狠。删除该项是 Phase D 唯一的**有意行为改动**，由 `dropping_reaction_time_*` 的量化结论记录。
+- **意外发现（值得记入教训）**：速度组件改变了各行动的执行轮次，于是怪物消耗随机数的时机随之改变，`system::tests::fov_memory_and_occupancy_update` 里「玩家选定的目标格在推进期间保持空闲」这条原本"碰巧成立"的假设立刻失效（怪物游荡到该格，命令被改判成攻击）。教训：**测试若依赖"没有别的实体碰巧走过来"，它就是在依赖执行顺序，而执行顺序正是本次要改的东西**——该类用例必须先清场再断言。
+- 元组 `Bundle` 的元数上限：bevy_ecs 0.16 的元组 `Bundle` 只实现到 **15 元**（`all_tuples!(tuple_impl, 0, 15, B)`），玩家基础束原本已 16 个元素，直接加两个速度组件会编译失败。解法是用 `#[derive(Bundle)] struct Speed` 打包这两个组件——**打包不是新增组件**，实体上仍是两个独立组件，查询不变。这是「实体组件数」与「元组元数」解耦的通用手法。
 
 ---
 

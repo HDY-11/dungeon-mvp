@@ -112,7 +112,7 @@ system + world
 - 细粒度组件让查询只读取需要的数据，是 ECS 缓存友好的前提。
 - `f64` 为未来更精确的数值规划留出空间；旧的 i32/u32 数值不作为行为基准。
 
-> **待迁移（见 §2.6）：** `Agility` 计划由 `MoveSpeed` / `AttackSpeed` 两个速度组件取代。
+> **已迁移（Phase D，见 §2.6）：** `Agility` 已删除，速度由 `MoveSpeed` / `AttackSpeed` 两个倍率组件表达。
 
 ### 2.4 能力组件
 
@@ -245,7 +245,7 @@ pub struct ActionIntent {
 
 ### 3.6 行动实体方案（当前采用，替代 `ActionKind`）
 
-> **状态：** 目标设计；尚未落地。实现顺序见 §10.6。
+> **状态：** ✅ 已落地（Phase B/C）。实现记录见 §11.3 Phase B/C 与 DESIGN Dsn27 ①。
 
 #### 3.6.1 核心决策
 
@@ -628,9 +628,9 @@ sys::spawn_key_source()
 | 范围 | 等级 | 稳定的是 | 会变的是 | 测试基线 |
 |---|---|---|---|---|
 | `render-api` | **S1（契约）** | `SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的只读契约方向；`CONTRACT_VERSION = 1`；34 个测试 | 首个消费者（presentation/tui）落地前字段可能调整；破坏性改动必须递增版本 | ✅ 34 |
-| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `Agility` 将被 `MoveSpeed/AttackSpeed` 取代；`ActionKind` 计划删除（见 §3.6）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ✅ 4 |
-| `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 已改持久 Schedule；事件生命周期已修（I90） | ✅ 4 |
-| 行动实体设计（§3.6） | **S3（目标设计，未落地）** | action 子实体、`ActionPriority`、`ActionTimer`、`Ready`、completion 的语义 | 命名/字段/池化策略在 PoC 后可能调整；`ActionKind` 将被删除 | ⚠️ 0 |
+| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `ActionKind` 与 `Agility` 已删除（§3.6 / §2.6 均已落地）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ✅ 71 |
+| `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 已改持久 Schedule；事件生命周期已修（I90） | ✅ 含在 core 71 内 |
+| 行动实体设计（§3.6） | **S1（已落地）** | action 子实体、`ActionPriority`、`ActionTimer`、`Ready`、completion 的语义 | 命名/字段已冻结；`Candidate`/`ActiveAction` 的池化策略未来可能调整 | ✅ parity 套件 |
 | `utils` | **S1** | 无业务依赖的通用工具 | 基本不变；缺测试 | ⚠️ 0 |
 | `sys` | **S2** | 终端/文件/日志的 OS 封装可用 | 输入 API 从 `Receiver<KeyCode>` 改为 `InputQueue`；终端生命周期可能移入 `TuiPlugin`；`log/std` 依赖需显式声明 | ❌ 独立编译失败 |
 | `tui` | **S3** | 当前能渲染最小闭环 | `scene.rs` 提取移到 `presentation`；`render.rs` 改为消费 `SceneFrame`；`state.rs` UI 状态移到 `presentation`；`render_game` / `extract_scene` 会删除 | ⚠️ 0 |
@@ -642,15 +642,15 @@ sys::spawn_key_source()
 
 | 模块 | 等级 | 说明 |
 |---|---|---|
-| `components.rs` | S1 | `Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/CritRate/CritDamage` 等细粒度组件；`Agility` 计划由 `MoveSpeed`/`AttackSpeed` 取代（§2.6）。数值 `f64`；新增字段必须追加并考虑 serde。 |
+| `components.rs` | S1 | `Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/MoveSpeed/AttackSpeed/CritRate/CritDamage` 等细粒度组件（`Agility` 已在 Phase D 删除）。数值 `f64`；新增字段必须追加并考虑 serde。`Speed` 是 derive(Bundle) 打包件，不是新组件。 |
 | `entity_cls.rs` | S1（待清理） | `Player/Monster/Stairs` 等查询用 ZST 稳定；`EntityClass` / `CreatureKind` 目前无实际读取方（§2.1），`Item/Buff` 是 S4 占位；身份 ZST `Rat/...` 与 `MonsterKindId` 重复（§2.2），待定去留。 |
 | `events.rs` | S2 | 事件生命周期已修（I90，每轮 `Events::update()`）；`DeathEvent`/`LevelUpEvent` 仍无消费者、`ActionSucceeded/Failed` 未接线，按 §3.6.8 补齐后再冻结。 |
 | `resources.rs` | S1 | `GameRng`（确定性 xorshift64* + steps，回放/存档语义）、`MapMemory`、`VisibleMemory`、`OccupancyMap`、`EventLog`、`TurnManager`、`MapSeed`、`FloorNumber`。`PendingExp` 可能在 `DeathEvent` 接上消费者后删除；`ThreatTable` 是 S4。 |
 | `map/` | S1（含 serde 兼容约束） | `Tile` 以 u8 0..10 序列化，**只能末尾追加**；`MapKind` 变体只能末尾追加；`Map/Room` 新字段用 `#[serde(default)]`。`Tile::glyph()` 属于显示数据，后续会移到 TUI catalog，不要当领域契约。 |
 | `spatial/` | S1 | FOV / LOS / A* 纯函数；行为稳定，但新 core 无专项测试。 |
-| `action/` | S2（重构中） | 生成/仲裁/执行三段式与 `Idle/Active/Failure` 状态机方向稳定；AV 门禁已修（I89，`Ready`）；目标设计见 §3.6：删除 `ActionKind`，行动改为 action 子实体；`Can*` 保留 actor 组件。 |
+| `action/` | S1（Phase B/C/D 已落地） | 生成/仲裁/执行三段式与 `Idle/Active/Failure` 状态机方向稳定；AV 门禁已修（I89，`Ready`）；`ActionKind` 已删除，行动改为 action 子实体（§3.6）；`Can*` 保留 actor 组件；速度经 `SpeedRule` 在挂载点解析（§2.6）。 |
 | `combat/` | S1 | 近战伤害/暴击公式稳定；`prepare_attack_event` / `resolve_melee` / `damage_entity` 是死代码/重复路径（§10.6），建议删除。 |
-| `monster/` | S1（serde 兼容约束） | `MonsterKindId` 变体只能末尾追加；`MonsterTemplate` 含 glyph/color（显示数据，后续移出）；数值公式可调但需 GAME.md 记录；身份 ZST 与 `MonsterKindId` 的重复见 §2.2 / §10.6。 |
+| `monster/` | S1（serde 兼容约束） | `MonsterKindId` 变体只能末尾追加；`MonsterTemplate` 含 glyph/color（显示数据，后续移出）；速度改为字面值 `MonsterSpeeds`（§2.6，无「敏捷」字段）；数值公式可调但需 GAME.md 记录；身份 ZST 与 `MonsterKindId` 的重复见 §2.2 / §10.6。 |
 | `system/` | S2 | 系统本身稳定；`build_core_schedule()` 已改为持久 Schedule（I90），插件化后由 App 管理；调用方继续用 `run_settle_systems` 包装。 |
 | `world/init.rs` | S2 | `run_initialization` 是应用入口；`build_init_schedule()` 已注册为持久 Schedule（I90）。 |
 | `world/loop_.rs` | S2 | 应用层入口 `new_game / apply_player_command / request_quit`；语义稳定（回合制、命令驱动），API 可能被 `CorePlugin` 包装。 |
@@ -679,7 +679,7 @@ sys::spawn_key_source()
 
 冻结（只允许追加/修 bug，不允许重命名/重排/改语义）：
 
-- `core` 组件/资源/事件的**名称与语义**：`Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/CritRate/CritDamage`；`Player/Monster/Stairs` marker；`Idle/Active/Failure`、`Can*`。`Agility` 计划删除；`ActionKind` 计划删除（§3.6）；行动 ZST 名称（`Wait/Move/BasicAttack/Chase/Flee/Wander`）冻结，但会从 actor 移到 action 子实体；`ActionTimer` 随之移动。
+- `core` 组件/资源/事件的**名称与语义**：`Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/MoveSpeed/AttackSpeed/CritRate/CritDamage`；`Player/Monster/Stairs` marker；`Idle/Active/Failure`、`Can*`。`Agility` 与 `ActionKind` 已删除（Phase D / Phase C）；行动 ZST 名称（`Wait/Move/BasicAttack/Chase/Flee/Wander`）冻结，已从 actor 移到 action 子实体；`ActionTimer` 随之移动。
 - `core` 资源：`Map/MapSeed/FloorNumber/GameRng/MapMemory/VisibleMemory/OccupancyMap/EventLog/TurnManager/PendingExp`。
 - `core` 事件：`AttackIntentEvent/AttackEvent/DeathEvent/LevelUpEvent`（消费者/生命周期按 §3.6.8 补齐）。
 - 行动实体新组件（`ActionPriority` / `ActionTimer` / `Candidate` / `ActiveAction` / `Ready` / `ChildOf` 归属）在 PoC 通过后再冻结；PoC 期间允许调整。
@@ -706,7 +706,7 @@ sys::spawn_key_source()
 5. **建立 CI/本地门禁**：至少 `cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui`（修复后）+ `cargo clippy -p render-api -- -D warnings`；旧 crate 测试单独标记，不计入新代码门禁。
 6. **`render-api` 消费验证**：presentation/tui 接上后，补 `SceneFrame` golden 测试 + `TestBackend` 渲染快照；确认 `VisualKey` payload 映射与 core 实际枚举一致。
 7. **行动实体 PoC（§3.6）**：先用一个 actor + `Wander` + `Move` 验证 generation → arbitration → tick(Ready) → execution → completion 全链路；通过后再迁移 Flee/Chase/Wait/BasicAttack，最后删除 `ActionKind` / `mount_action` 中央 match / `choose_action`。
-8. **速度组件迁移（§2.6）**：在 AV 门禁修复后，把 `Agility` 换成 `MoveSpeed`/`AttackSpeed`，同步 GAME.md/DESIGN.md/ISSUES.md。
+8. **速度组件迁移（§2.6）**：✅ 已完成（Phase D1–D5）——`Agility` 与旧 AV 公式已删除，改为 `MoveSpeed`/`AttackSpeed` 倍率；GAME.md/DESIGN.md/ISSUES.md 已同步。
 
 ### 10.7 兼容性与确定性规则
 
@@ -750,9 +750,9 @@ sys::spawn_key_source()
 
 ## 11. 实施计划（第 2 步起）
 
-> **状态：** 计划稿，执行前先确认 §11.6 的开放决策。
-> **基线：** I89（AV 门禁）/ I90（事件生命周期）/ I86（core doctest）已修；`cargo test -p core` 4 个测试通过。
-> **开放：** A41（exclusive `&mut World`）、A42（ActionKind → action 实体）、A43（死抽象清理）、G35（Agility → 速度组件）、I87（sys `log/std`）、I88（根集成测试）。
+> **状态：** A/B/C/D 已完成，F 部分完成（I87/I88）；执行中，下一步 Phase E/F3-F4。
+> **基线：** Phase D 完成时 `cargo test -p core` **71 passed**、`cargo test --workspace` 25 个目标全绿 **198 passed**、`cargo check --workspace` 通过。
+> **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、A43（死抽象清理，Phase E 逐项确认）、F3/F4（core clippy、一键门禁）。已关闭：A42（Phase C）、G35（Phase D）、I87/I88（Phase A 后）。
 
 ### 11.1 目标与范围
 
@@ -775,7 +775,7 @@ sys::spawn_key_source()
 | **A** | core 冒烟测试 | I89/I90 已修 | 地图确定性、移动/攻击、死亡/经验、FOV/记忆/占用图测试 | ✅ `cargo test -p core` 4 → 18 通过（commit 95449a9） |
 | **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | ✅ `core/src/action/entity.rs` + PoC 测试（commit ac6623f） |
 | **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | ✅ C1–C9 全部完成（commit 83700ff…a8e2175）：六行动 parity 通过、全库无 `ActionKind` 引用、主循环已切换 |
-| **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | 无 `Agility` 引用；AV 单调/clamp 测试通过 |
+| **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | ✅ D1–D5 全部完成（commit cff5940…）：`Agility`/旧公式零引用、AV 单调与 clamp 测试、怪物速度齐全、回合顺序场景通过 |
 | **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | 每个保留抽象有真实读取方/消费者 |
 | **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
 | **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | 见早前渲染方案 |
@@ -880,17 +880,34 @@ A ──▶ F（并行）
 - **挂载与推进必须分两段**：`apply_player_command` 先跑 `PlayerMountSchedule` 判定
   「命令是否被接受」，再进推进循环；合并成一次调度会把「已经做完了」误判成「命令被拒绝」。
 
-#### Phase D — `Agility` → `MoveSpeed` / `AttackSpeed`
+#### Phase D — `Agility` → `MoveSpeed` / `AttackSpeed`（✅ 已完成）
 
-| 编号 | 任务 | 验收 |
+> **落地记录（D1–D5）：** `core/src/balance.rs`（`action_av` / `clamp_speed` /
+> `MoveSpeed` / `AttackSpeed` 常量）、`core/src/components.rs`、`core/src/action/entity.rs`
+> （`SpeedRule` / `ActorSpeeds`）、`core/src/monster/mod.rs`（`MonsterSpeeds`）。
+> `cargo test -p core` 61 → 71。
+
+| 编号 | 任务 | 落地情况 |
 |---|---|---|
-| D1 | 新增 `MoveSpeed(f64)` / `AttackSpeed(f64)`；新增 `action_av_for(kind, move_speed, attack_speed)`；保留 `Agility` 作对照 | 新旧 AV 对比测试通过 |
-| D2 | 玩家/怪物模板与 spawn 迁移到速度组件；生成系统按行动类别取速度 | 无新代码读取 `Agility` |
-| D3 | 删除 `Agility`、`agility_to_reaction`、`agility_speed_factor`、旧 `action_av` | 全库无 `Agility` 引用 |
-| D4 | GAME.md 反应时/耗时章节、玩家/怪物数值表、武器速度章节同步；DESIGN/ISSUES 更新 | 文档与公式一致 |
-| D5 | 速度测试：单调性、clamp、怪物速度组件存在、回合顺序场景 | 测试通过 |
+| D1 | 新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 与倍率 AV；保留 `Agility` 作对照 | ✅ `SpeedRule::action_av(base_duration, ActorSpeeds)` 纯函数；5 个新旧 AV 对比用例（commit cff5940） |
+| D2 | 玩家/怪物模板与 spawn 迁移到速度组件；生成系统按行动类别取速度 | ✅ `MonsterSpeeds { move_speed, attack_speed }` 字面值取代模板的「敏捷」；生成系统只查自己那一个速度组件（commit 6a5453c） |
+| D3 | 删除 `Agility`、`agility_to_reaction`、`agility_speed_factor`、旧 `action_av` | ✅ 连迁移工具 `agility_to_speed` 一并删除；`core/` + `tests/` 无代码级引用（commit cf70f90） |
+| D4 | GAME.md 数值章节、DESIGN、ISSUES（G35）同步 | ✅ GAME.md Gm1/Gm4/Gm7/Gm8；DESIGN Dsn27 ②；ISSUES G35 移入 ✅ 已修复 |
+| D5 | 速度测试：单调性、clamp、怪物速度齐全、回合顺序场景 | ✅ 6 个新用例，见 §11.4 |
 
-**待确认语义：** 倍率 `AV = base_duration / speed`；是否保留 `BASE_REACTION`；`Wait` 固定 duration 还是用 `MoveSpeed`；旧敏捷→新速度映射表（见 §2.6/§11.6）。
+**已确认语义（§11.6）：** 倍率 `AV = base_duration / clamp(速度, 0.25, 4.0)`；
+**先删除反应时**（试玩需要再加统一常数）；`Wait` 固定 `WAIT_DURATION`；
+怪物速度 = 旧耗时系数的倒数（保排序，GAME.md 用 `[⃞试调]` 重调）。
+
+**落地时的两个实现细节（写代码前值得先读）：**
+
+1. **元组 `Bundle` 只到 15 元**：bevy_ecs 0.16 的 `all_tuples!(tuple_impl, 0, 15, B)`
+   意味着玩家基础束（原本 16 个元素）不能再往元组里塞组件。解法是
+   `#[derive(Bundle)] struct Speed { move_speed, attack_speed }` —— 打包件不是新组件，
+   实体上仍是两个独立组件，查询不变。
+2. **不要用「跑一轮生成 → 挑一个候选 → 再跑一轮生成」写测试**：第二轮时 actor 已是
+   `Active`，生成系统的 `Without<Active>` 会让它再也生成不出候选。
+   同理 `tick_action_timers_system` 只推进 `ActiveAction`，候选必须先过仲裁才会被 tick。
 
 #### Phase E — 死抽象/重复表示清理
 
@@ -940,8 +957,12 @@ A ──▶ F（并行）
 | `arbitration_priority_and_cleanup` | B/C | 优先级、loser despawn、无残留 |
 | `player_action_not_overridden_by_ai` | C | 玩家路径独立 |
 | `action_parity_wait/move/attack/chase/flee/wander` | C | 行为 parity |
-| `speed_av_monotonic_and_clamped` | D | 速度公式 |
-| `monster_speed_components_present` | D | 模板迁移完整 |
+| `av_is_inversely_proportional_to_speed_and_linear_in_duration` | D | 速度公式（`AV × speed == base_duration`、单调） |
+| `clamp_speed_bounds_both_ends_and_non_finite_inputs` | D | clamp 与 NaN/±inf 兜底 |
+| `every_monster_template_has_usable_speeds` / `stats_expose_template_speeds` | D | 怪物速度齐全且走到 `stats()` |
+| `template_speeds_preserve_legacy_agility_ordering` | D | 迁移保排序（旧敏捷的相对快慢） |
+| `generated_actions_read_their_category_speed` / `player_actions_read_their_category_speed` | D | 按行动类别取速度的接线 |
+| `faster_monster_gets_its_action_ready_first` | D | 回合顺序场景 |
 | `no_action_kind_references` / `no_agility_references` | C/D | 用 grep/脚本作为门禁 |
 | `cargo test -p sys` / `cargo test --workspace` | F | 构建门禁 |
 
@@ -968,7 +989,7 @@ A ──▶ F（并行）
 | 7 | I87/I88 | **Phase A 后立即修**，恢复 `cargo test` 门禁 |
 | 8 | `core` 改名 | **本轮不改**；独立决策 |
 
-**下一步：** 从 Phase A 开始执行。
+**下一步：** Phase E（死抽象清理，逐项确认）与 F3/F4（core clippy、一键门禁）。
 
 ### 11.7 风险与缓解
 
@@ -996,7 +1017,7 @@ A ──▶ F（并行）
 | F | 0.5–1 天 |
 | G | 1–2 天（TUI 解耦） |
 
-**下一步：** §11.6 已确认（按推荐）；从 Phase A 开始执行。建议先用 A1–A5 建立安全网，再进入 action 实体 PoC。
+**下一步：** Phase E 前逐项确认 §10.8 清单；F3/F4 补齐 clippy 与一键门禁。
 
 ---
 

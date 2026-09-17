@@ -8,9 +8,92 @@
 问题按维度分组：**设计 / 架构 / 实现 / 游戏逻辑**，组内按严重程度降序。
 优先级标记：🔴 高（影响正确性或游戏体验） / 🟡 中（维护性或功能缺口） / 🟢 低（整洁或边缘情况）
 
-> **编号状态** — D: D1~D28 | A: A1~A40（含 A4L/A4La 子条目）| I: I1~I85（含 I27L/I27La 子条目）| G: G1~G34（含 G4L/G4La 子条目）| P: P1~P9 | R: R1
+> **编号状态** — D: D1~D28 | A: A1~A40（含 A4L/A4La 子条目）| I: I1~I85（含 I27L/I27La 子条目）| G: G1~G35（含 G4L/G4La 子条目）| P: P1~P9 | R: R1
 
 ## ✅ 已修复
+
+### G35 — 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed` ✅已修复
+
+**修复前：** `Agility` 一个聚合数值同时承担「反应时」与「耗时修正」两件事：
+`AV = max(100 - 敏捷×3, 20) + 耗时 × max(1 - 敏捷×0.02, 0.5)`。装备/防具/Buff
+无法分别影响移动与攻击节奏；且 I89 修复前该公式对执行没有实际影响。
+
+**修复后：** 速度拆成两个独立倍率组件，AV 只剩一个口径：
+
+```
+AV = base_duration ÷ clamp(速度, MIN_SPEED=0.25, MAX_SPEED=4.0)
+```
+
+- 行动类别 → 速度的映射在**挂载点**决定（`SpeedRule`：`Move` / `Attack` / `Fixed`）：
+  移动/追击/逃跑/游荡读 `MoveSpeed`，近战攻击读 `AttackSpeed`，`Wait` 固定 800
+  且不受任何速度影响（§11.6 第 4 项）；
+- 已确认**删除反应时**（§11.6 第 3 项）；试玩若需要「出手前的固定延迟」，
+  再统一加回一个常数项；
+- 执行器完全不接触速度：AV 在生成时就固化进 `ActionTimer`，之后 tick/执行只看剩余值。
+- 架构上顺带解耦：AV 计算变成纯函数
+  （`SpeedRule::action_av(base_duration, ActorSpeeds)`，不需要 `World`），
+  因此公式本身可以在无 ECS 的单测里逐条钉住。
+
+**删除的符号：** `Agility`、`agility_to_reaction`、`agility_speed_factor`、
+旧 `action_av(duration, agility)`、以及仅作迁移工具的 `agility_to_speed`。
+`core/` + `tests/` 全量 grep 已无代码级 `Agility` 引用（仅 2 处测试名/注释中的
+历史说明）；旧 `dungeon-*` crate 不在本轮范围（§10.5「不再维护」，
+随 Phase G / R5 清理）。
+
+**怪物与玩家的迁移口径（§11.6 第 5 项「先按旧敏捷保行为」）：**
+速度 = **旧「耗时系数」的倒数**，因此新 AV 精确等于旧式的「`耗时 × 耗时系数`」
+一项，丢掉的只有等量叠加的反应时常数项。**各角色之间的相对快慢与旧版完全一致**，
+由 `template_speeds_preserve_legacy_agility_ordering` 钉住。
+
+| 角色 | 旧敏捷 | 旧耗时系数 | 新速度 | 移动/攻击 AV（旧 → 新） | 游荡 AV（旧 → 新） |
+|---|---|---|---|---|---|
+| 玩家 | 10 | 0.80 | 1.25 | 310 → 240 | 470 → 400 |
+| 老鼠 | 5 | 0.90 | 1.1111 | 355 → 270 | 535 → 450 |
+| 蝎子 / 蘑菇傀儡 | 4 | 0.92 | 1.0870 | 364 → 276 | 548 → 460 |
+| 哥布林 / 洞穴蟹 | 3 | 0.94 | 1.0638 | 373 → 282 | 561 → 470 |
+| 孢子怪 | 8 | 0.84 | 1.1905 | 340 → 252 | 508 → 420 |
+| 深鳗 | 10 | 0.80 | 1.25 | 310 → 240 | 470 → 400 |
+| 洞穴鱼 | 14 | 0.72 | 1.3889 | 274 → 216 | 418 → 360 |
+
+（旧 AV 已含各自的反应时：玩家 70 / 老鼠 85 / 蝎子 88 / 哥布林 91 /
+孢子怪 76 / 洞穴鱼 58。）
+
+**唯一的有意行为改动：** 删掉常数反应时后，AV 与 `base_duration` 变成严格成正比。
+旧口径里「300ms 的攻击」实际要付 310 AV、而「500ms 的游荡」付 470 AV——
+短行动被惩罚得更狠。这是设计取舍而非等价重构，已在 GAME.md 用 `[试调]`
+标注全部速度值，并在 Dsn27 ②记录。
+
+**新增测试（`cargo test -p core`：61 → 71）：**
+
+- `av_is_inversely_proportional_to_speed_and_linear_in_duration`：`AV × 速度 ==
+  base_duration` 恒成立、速度单调、AV 之比只由 base_duration 决定；
+- `clamp_speed_bounds_both_ends_and_non_finite_inputs`：两端夹紧，NaN/±inf 兜成
+  `MIN_SPEED`（防 AV 变 NaN 导致 `active_action_timer_delta` 的比较器 panic）；
+- `player_initial_speed_is_the_migration_value`：1.25 是迁移产物而非设计值；
+- `every_monster_template_has_usable_speeds` / `stats_expose_template_speeds`：
+  八种怪速度齐全、有限、在 clamp 区间内，且真的走到 `stats()` 输出；
+- `template_speeds_preserve_legacy_agility_ordering`：迁移保排序；
+- `generated_actions_read_their_category_speed`（移动 1.6 / 攻击 0.8 刻意不同）
+  与 `player_actions_read_their_category_speed`：接线正确，`Wait` 不受速度影响；
+- `faster_monster_gets_its_action_ready_first`：真实生成 + 仲裁 + tick 的回合顺序。
+
+**顺带修复的脆弱测试：** `system::tests::fov_memory_and_occupancy_update` 原先
+隐含依赖「玩家选定的目标格在推进期间保持空闲」，而 `apply_player_command` 会推进
+世界直到玩家行动做完，期间怪物可能游荡到该格、把命令改判成「走向怪物＝攻击」。
+速度组件改变执行轮次 → 怪物消耗随机数的时机改变 → 这条"碰巧成立"的假设立刻失效
+（实测怪物抢占了目标格）。改为先清场（`despawn_all::<Monster>/<Stairs>`）再断言。
+
+**位置：** `core/src/components.rs`（`MoveSpeed`/`AttackSpeed`/`Speed`）、
+`core/src/balance.rs`（`action_av`/`clamp_speed`/`MIN_SPEED`/`MAX_SPEED`/玩家初值）、
+`core/src/action/entity.rs`（`SpeedRule`/`ActorSpeeds`/生成系统）、
+`core/src/monster/mod.rs`（`MonsterSpeeds` 与八个模板）、
+`core/src/world/init.rs`（玩家与怪物 spawn）、`core/src/test_util.rs`（helper）。
+
+**关联：** D29、I89、REFACTOR.md §2.6 / §3.6.7 / §11.3 Phase D / §11.6；
+DESIGN Dsn27 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
+**教训见 LESSONS.md L50**（「测试若依赖『没有别的实体碰巧动过』，它依赖的其实是执行顺序」）。
+
+---
 
 ### P9 — 新 `core` 冒烟测试缺口：地图/移动/战斗/成长/视野/AI 无回归保障 ✅已修复
 
@@ -2217,25 +2300,6 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 **状态：** Won't Fix — MVP 范围决策。触发条件：怪物种类 ≥8 或武器类型 ≥3 时重新评估。
 
 **位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
-
-### 🟡 G35 — 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed`
-
-**问题：** 当前 `Agility` 同时承担“反应时”和“耗时修正”，公式为 `AV = max(100 - agility*3, 20) + duration * max(1 - agility*0.02, 0.5)`。它把速度绑在一个聚合数值上，装备/防具/Buff 无法分别影响移动与攻击节奏；且 I89 修复前该公式对执行没有实际影响。
-
-**决策（REFACTOR.md §2.6）：** 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）：
-
-- `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`；
-- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 duration（或后续 `WaitSpeed`，待定）；
-- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；
-- 玩家/怪物模板按旧敏捷映射初值，再用 GAME.md `[⃞试调]` 校准。
-
-**影响：** 🟡 中 — 平衡改动，不是等价重构；必须先修 I89（AV 门禁），否则速度不影响行为；需同步 GAME.md（反应时/耗时章节、玩家/怪物敏捷表、武器速度章节）、DESIGN.md、REFACTOR.md §2.6/§10。
-
-**位置：** `core/src/components.rs:171`、`core/src/balance.rs:21-48`、`core/src/world/init.rs:112`、`core/src/monster/mod.rs`（模板/`MonsterStats`）、`core/src/action/generation/player.rs:38/87`、`core/src/action/generation/ai.rs:78-87`
-
-**状态：** 待实现；§11.6 已确认：`MoveSpeed` / `AttackSpeed` 倍率、`AV = base_duration / speed`、先删反应时、`Wait` 固定、怪物速度先按旧敏捷保行为；Phase C 完成后执行（REFACTOR §11 Phase D）。
-
-**关联：** D29、I89、REFACTOR.md §2.6 / §3.6.7。
 
 ---
 
