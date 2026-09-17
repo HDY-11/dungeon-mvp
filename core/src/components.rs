@@ -170,6 +170,45 @@ pub struct MagicMastery(pub f64);
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Agility(pub f64);
 
+/// 移动速度倍率（Phase D / REFACTOR.md §2.6）：`1.0` 为基准，越高越快。
+///
+/// 作用于 `Move` / `Chase` / `Flee` / `Wander` 四类行动：
+/// `AV = base_duration / MoveSpeed`（clamp 见 [`crate::balance::MIN_SPEED`]）。
+/// 地形/负重/Buff 未来通过增删或改写这个组件影响移动节奏，
+/// 不需要再挤进一个聚合的“敏捷”数值。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct MoveSpeed(pub f64);
+
+/// 攻击速度倍率（Phase D / REFACTOR.md §2.6）：`1.0` 为基准，越高越快。
+///
+/// 作用于 `BasicAttack`：`AV = UNARMED_ATTACK_DURATION / AttackSpeed`。
+/// 武器攻速（I67）未来接到这里，不改生成/执行链路。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct AttackSpeed(pub f64);
+
+/// 两个速度组件的装配束：**只是打包，不是新组件**。
+///
+/// 玩家组件束已经到 16 个元素，而 bevy_ecs 0.16 的元组 `Bundle` 只实现到
+/// **15** 元（`bevy_ecs/src/bundle.rs` 的 `all_tuples!(tuple_impl, 0, 15, B)`），
+/// 再加两个组件直接编译失败。用 derive 出来的具名 Bundle 打包，可以把
+/// 「一个实体上的组件数」和「元组元数上限」解耦——实体上仍然挂着两个
+/// 独立组件（`MoveSpeed` / `AttackSpeed`），查询照旧。
+#[derive(Bundle, Debug, Clone, Copy)]
+pub struct Speed {
+    pub move_speed: MoveSpeed,
+    pub attack_speed: AttackSpeed,
+}
+
+impl Speed {
+    /// 移动与攻击同速（基准 `1.0`）。
+    pub const fn uniform(speed: f64) -> Self {
+        Self {
+            move_speed: MoveSpeed(speed),
+            attack_speed: AttackSpeed(speed),
+        }
+    }
+}
+
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct CritRate(pub f64);
 

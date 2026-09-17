@@ -2,6 +2,7 @@
 //!
 //! 本轮不迁移掉落表（物品未迁移）。
 
+use crate::balance::agility_to_speed;
 use crate::components::*;
 use crate::entity_cls::CreatureKind;
 use crate::map::MapKind;
@@ -57,7 +58,8 @@ pub struct MonsterStats {
     pub attack: Attack,
     pub defense: Defense,
     pub magic_mastery: MagicMastery,
-    pub agility: Agility,
+    pub move_speed: MoveSpeed,
+    pub attack_speed: AttackSpeed,
     pub crit_rate: CritRate,
     pub crit_damage: CritDamage,
 }
@@ -70,6 +72,9 @@ impl MonsterTemplate {
         let hp = self.hp_base + s * self.hp_per_floor;
         let attack = (self.attack_base + s * self.attack_per_floor).min(self.attack_max);
         let exp = (self.exp_base + s * self.exp_per_floor).round().max(0.0);
+        // Phase D 迁移映射：怪物先按旧敏捷反解出速度倍率以保行为
+        // （§11.6 第 5 项），后续由 GAME.md `[试调]` 分别重调移动/攻击节奏。
+        let speed = agility_to_speed(self.agility);
 
         MonsterStats {
             level,
@@ -79,7 +84,8 @@ impl MonsterTemplate {
             attack: Attack(attack),
             defense: Defense(self.defense),
             magic_mastery: MagicMastery(self.magic_mastery),
-            agility: Agility(self.agility),
+            move_speed: MoveSpeed(speed),
+            attack_speed: AttackSpeed(speed),
             crit_rate: CritRate(self.crit_rate),
             crit_damage: CritDamage(self.crit_damage),
         }

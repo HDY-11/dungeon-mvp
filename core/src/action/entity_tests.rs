@@ -24,14 +24,7 @@ fn poc_world() -> (World, Entity) {
 
 /// spawn 一个已授予全部行动能力的怪物。
 fn poc_actor(world: &mut World, pos: (usize, usize)) -> Entity {
-    let actor = spawn_test_monster(
-        world,
-        crate::monster::MonsterKindId::Rat,
-        pos,
-        10.0,
-        4.0,
-        5.0,
-    );
+    let actor = spawn_test_monster(world, crate::monster::MonsterKindId::Rat, pos, 10.0, 4.0);
     world
         .entity_mut(actor)
         .insert((CanWander, CanFlee, CanMove, CanWait, CanBasicAttack));
@@ -666,7 +659,6 @@ fn player_move_into_monster_declares_attack() {
         (11, 10),
         10.0,
         4.0,
-        5.0,
     );
     crate::system::run_settle_systems(&mut world);
     assert!(
@@ -708,7 +700,6 @@ fn attack_action_emits_intent_and_damage_resolves_once() {
         (11, 10),
         30.0,
         4.0,
-        5.0,
     );
     crate::system::run_settle_systems(&mut world);
     let monster_hp_before = world.get::<Health>(monster).unwrap().current;
@@ -759,7 +750,6 @@ fn attack_action_fails_when_target_is_far() {
         (11, 10),
         30.0,
         4.0,
-        5.0,
     );
     crate::system::run_settle_systems(&mut world);
 
@@ -910,7 +900,6 @@ fn wander_parity_scene(seed: u64, pos: (usize, usize)) -> (World, Entity) {
         pos,
         10.0,
         4.0,
-        5.0,
     );
     world.entity_mut(actor).insert((CanWander,));
     crate::system::run_settle_systems(&mut world);
@@ -973,7 +962,6 @@ fn wander_blocked_still_succeeds() {
         (30, 30),
         10.0,
         4.0,
-        5.0,
     );
     let action = world
         .spawn((
@@ -1038,7 +1026,6 @@ fn chase_parity_scene(
         monster_tile,
         10.0,
         4.0,
-        5.0,
     );
     world
         .entity_mut(monster)
@@ -1358,7 +1345,6 @@ fn flee_parity_scene(
         monster_tile,
         100.0,
         4.0,
-        5.0,
     );
     world
         .entity_mut(monster)
@@ -1621,7 +1607,6 @@ fn parity_basic_attack_scenario() {
         (11, 10),
         6.0,
         1.0,
-        1.0,
     );
     world.entity_mut(monster).insert(ExperienceReward(10.0));
     crate::system::run_settle_systems(&mut world);
@@ -1777,7 +1762,6 @@ fn parity_all_actions_leave_no_residue() {
             (11, 10),
             30.0,
             1.0,
-            1.0,
         );
         crate::system::run_settle_systems(&mut world);
         world.resource_mut::<Events<AttackIntentEvent>>().update();
@@ -1914,7 +1898,6 @@ fn move_parity_scene(
         actor_pos,
         10.0,
         4.0,
-        5.0,
     );
     let observer = observer_pos.map(|pos| {
         spawn_test_monster(
@@ -1923,7 +1906,6 @@ fn move_parity_scene(
             pos,
             10.0,
             4.0,
-            5.0,
         )
     });
     crate::system::run_settle_systems(&mut world);

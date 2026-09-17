@@ -324,7 +324,7 @@ fn player_death_ends_the_game() {
         health.current = 1.0;
         health.max = 1.0;
     }
-    world.entity_mut(player).insert(core::Agility(0.0));
+    world.entity_mut(player).insert(core::MoveSpeed(0.25));
 
     let monster = {
         let mut query = world
@@ -339,7 +339,10 @@ fn player_death_ends_the_game() {
         pos.y = py;
     }
     world.resource_mut::<Map>().tiles[py][px + 1] = Tile::Floor;
-    world.entity_mut(monster).insert(core::Agility(0.0));
+    // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
+    // 速度改成**下限** `MIN_SPEED`：玩家的 AV 被拉到最长（800ms 等待 ×4），
+    // 怪物一定先手，用最少的轮数钉住「怪物先动手」这一前提。
+    world.entity_mut(monster).insert(core::MoveSpeed(core::MIN_SPEED));
     // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
     core::system::run_settle_systems(&mut world);
 

@@ -328,9 +328,23 @@ mod tests {
 
     /// 测试用攻击者：高攻、无暴击（伤害确定 = max(attack - defense, 1)）。
     fn spawn_test_attacker(world: &mut World, attack: f64) -> Entity {
-        let entity = spawn_test_actor(world, (0, 0), 100.0, attack, 10.0);
+        let entity = spawn_test_actor(world, (0, 0), 100.0, attack, 1.0, 1.0);
         world.entity_mut(entity).insert(Idle);
         entity
+    }
+
+    /// 清掉所有带 `T` 的实体。
+    ///
+    /// 用例要验的不是世界演化时（占位、FOV、移动落点），先把会自己走动的实体
+    /// 移走，避免「怪物恰好走到目标格」这类与断言无关的偶发失败。
+    fn despawn_all<T: Component>(world: &mut World) {
+        let entities: Vec<Entity> = {
+            let mut query = world.query_filtered::<Entity, With<T>>();
+            query.iter(world).collect()
+        };
+        for entity in entities {
+            world.despawn(entity);
+        }
     }
 
     #[test]
@@ -412,7 +426,7 @@ mod tests {
         fill_map(&mut world, Tile::Wall);
 
         let player = spawn_test_player(&mut world, (0, 0));
-        let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (1, 0), 10.0, 4.0, 5.0);
+        let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (1, 0), 10.0, 4.0);
         world.entity_mut(monster).insert(ExperienceReward(50.0));
 
         // 升到 2 级需要 100 点：先给 99 点，再用一次击杀跨过阈值。
@@ -516,6 +530,18 @@ mod tests {
         );
 
         // 移动到相邻可走格：占用图旧格清空、新格写入。
+        //
+        // **先清场**：`apply_player_command` 会推进世界直到玩家行动做完，期间怪物
+        // 可能游荡到玩家选定的目标格上，于是命令被改判成「走向怪物＝攻击」，
+        // 位置断言就会随机失败。本用例要验的是 FOV/记忆/占用图，不是怪物交互，
+        // 所以把怪物与楼梯移走，让目标格在整段推进期间保持空闲。
+        //
+        // 这个依赖在 Phase D 才暴露：速度组件改变了各行动的执行轮次，
+        // 怪物消耗随机数的时机随之改变，原本"碰巧没人走过来"的假设随即失效。
+        despawn_all::<crate::entity_cls::Monster>(&mut world);
+        despawn_all::<crate::entity_cls::Stairs>(&mut world);
+        run_settle_systems(&mut world);
+
         let mut moved = None;
         for (dx, dy) in [(0isize, 1isize), (1, 0), (0, -1), (-1, 0)] {
             let (nx, ny) = Position::new(start.0, start.1).offset(dx, dy);

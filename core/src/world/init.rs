@@ -6,7 +6,9 @@
 //!
 //! 本轮只做首次初始化；下楼（descend）留待后续。
 
-use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
+use crate::balance::{
+    PLAYER_ATTACK_SPEED, PLAYER_MOVE_SPEED, exp_to_next_level, max_hp_for, max_mp_for,
+};
 use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
@@ -99,7 +101,12 @@ pub fn generate_map_system(mut map: ResMut<Map>, map_seed: Res<MapSeed>, floor: 
 
 // ── 玩家出生 ─────────────────────────────────────────
 
-/// 玩家初始组件束。拆成 16 组件基础束 + 后续插入，避免 Bundle 上限问题。
+/// 玩家初始组件束。
+///
+/// **注意元组元数上限**：bevy_ecs 0.16 的元组 `Bundle` 只实现到 15 元
+/// （`all_tuples!(tuple_impl, 0, 15, B)`），所以基础束必须留在 15 个元素以内；
+/// 需要更多组件时不能往元组里加，要先打包成具名 Bundle
+/// （见 [`crate::components::Speed`]）或拆成两次 `insert`。
 fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
     let max_hp = max_hp_for(1, 4.0);
     let max_mp = max_mp_for(1, 8.0);
@@ -115,7 +122,10 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
         Attack(8.0),
         Defense(4.0),
         MagicMastery(8.0),
-        Agility(10.0),
+        Speed {
+            move_speed: MoveSpeed(PLAYER_MOVE_SPEED),
+            attack_speed: AttackSpeed(PLAYER_ATTACK_SPEED),
+        },
         CritRate(0.05),
         CritDamage(0.50),
         EntityName("冒险者".into()),
@@ -322,7 +332,10 @@ fn monster_base_bundle(
         stats.attack,
         stats.defense,
         stats.magic_mastery,
-        stats.agility,
+        Speed {
+            move_speed: stats.move_speed,
+            attack_speed: stats.attack_speed,
+        },
         stats.crit_rate,
         stats.crit_damage,
     )

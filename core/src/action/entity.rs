@@ -39,8 +39,9 @@ use crate::balance::{
     WAIT_DURATION, WANDER_DURATION, action_av,
 };
 use crate::components::{
-    ActionTimer, Active, Agility, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
-    Failure, Flee, Health, Idle, LastKnownPlayerPos, Move, Position, Ready, Viewshed, Wait, Wander,
+    ActionTimer, Active, AttackSpeed, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
+    Failure, Flee, Health, Idle, LastKnownPlayerPos, Move, MoveSpeed, Position, Ready, Viewshed,
+    Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
@@ -90,6 +91,84 @@ pub struct ActiveAction;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionName(pub &'static str);
 
+// ── 行动类别 → 速度组件（Phase D / REFACTOR.md §2.6） ──
+//
+// 「哪一类行动受哪个速度影响」是**生成期的口径**，所以映射放在这里，
+// 而不是散在各生成系统里。执行器完全不关心速度：AV 在挂载时就固化进
+// `ActionTimer`，之后 tick 与执行只看剩余值。
+
+/// 行动类别：决定用哪个速度组件把 `base_duration` 换算成 AV。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeedCategory {
+    /// 用 `MoveSpeed`：`Move` / `Chase` / `Flee` / `Wander`。
+    Move,
+    /// 用 `AttackSpeed`：`BasicAttack`。
+    Attack,
+    /// 固定耗时、不受任何速度影响：`Wait`（REFACTOR.md §11.6 第 4 项）。
+    Fixed,
+}
+
+impl SpeedCategory {
+    /// 计算该类别行动的 AV。
+    ///
+    /// 缺失速度组件时回退到 `1.0` 基准并告警——见 [`action_av_of`] 的说明。
+    pub fn action_av(self, base_duration: f64, move_speed: f64, attack_speed: f64) -> f64 {
+        match self {
+            SpeedCategory::Move => action_av(base_duration, move_speed),
+            SpeedCategory::Attack => action_av(base_duration, attack_speed),
+            SpeedCategory::Fixed => base_duration,
+        }
+    }
+}
+
+/// 速度组件缺失时的回退值（= 基准 1.0）。
+///
+/// 生成系统用 `Option<&MoveSpeed>` 查询而不是必需组件：**Bevy 的查询遇到
+/// 不匹配的 archetype 会静默返回空**（LESSONS.md L49）。若写成必需组件，
+/// 一个漏挂速度组件的 actor 会直接从 AI 里消失、既不行动也不报错；
+/// 回退到基准 + 告警则让这种漏挂可见且不至于卡死行为。
+const FALLBACK_SPEED: f64 = 1.0;
+
+/// 计算某个 actor 的某类行动 AV，速度组件缺失时回退到 [`FALLBACK_SPEED`]。
+///
+/// 速度组件缺失**不应**被静默忽略（LESSONS.md L49 的同类问题：查询不匹配就是
+/// 静静地什么都不做）。调用方用 [`speed_or_warn`] 解析组件，回退前先告警，
+/// 让「漏挂速度组件」在日志里可见。
+fn action_av_of(
+    category: SpeedCategory,
+    base_duration: f64,
+    move_speed: f64,
+    attack_speed: f64,
+) -> f64 {
+    category.action_av(base_duration, move_speed, attack_speed)
+}
+
+/// 解析速度组件；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
+///
+/// `name` 只用于日志。用 `Option<&MoveSpeed>` 而不是必需组件查询，是因为
+/// **Bevy 的查询遇到不匹配的 archetype 会静默返回空**（LESSONS.md L49）：
+/// 写成必需组件的话，一个漏挂速度组件的 actor 会直接从 AI 里消失。
+fn speed_or_warn(speed: Option<&MoveSpeed>, actor: Entity) -> f64 {
+    speed.map_or_else(
+        || {
+            log::warn!("actor={actor:?} 缺少 MoveSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
+            FALLBACK_SPEED
+        },
+        |speed| speed.0,
+    )
+}
+
+/// [`speed_or_warn`] 的 `AttackSpeed` 版本。
+fn attack_speed_or_warn(speed: Option<&AttackSpeed>, actor: Entity) -> f64 {
+    speed.map_or_else(
+        || {
+            log::warn!("actor={actor:?} 缺少 AttackSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
+            FALLBACK_SPEED
+        },
+        |speed| speed.0,
+    )
+}
+
 // ── 生成系统 ─────────────────────────────────────────
 //
 // 生成系统只 spawn 候选：不写 actor 的 `Idle/Active/Failure`，不写计时器。
@@ -98,7 +177,7 @@ pub struct ActionName(pub &'static str);
 pub fn wander_generation_system(
     mut commands: Commands,
     actors: Query<
-        (Entity, &Agility),
+        (Entity, Option<&MoveSpeed>),
         (
             With<Monster>,
             With<CanWander>,
@@ -107,14 +186,19 @@ pub fn wander_generation_system(
         ),
     >,
 ) {
-    for (actor, agility) in &actors {
+    for (actor, move_speed) in &actors {
         commands.spawn((
             ChildOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionName("Wander"),
             ActionTimer {
-                remaining_av: action_av(WANDER_DURATION, agility.0),
+                remaining_av: action_av_of(
+                    SpeedCategory::Move,
+                    WANDER_DURATION,
+                    speed_or_warn(move_speed, actor),
+                    FALLBACK_SPEED,
+                ),
             },
             Wander,
             Candidate,
@@ -129,7 +213,7 @@ pub fn wander_generation_system(
 pub fn flee_generation_system(
     mut commands: Commands,
     actors: Query<
-        (Entity, &Agility, &Health),
+        (Entity, Option<&MoveSpeed>, &Health),
         (
             With<Monster>,
             With<CanFlee>,
@@ -138,7 +222,7 @@ pub fn flee_generation_system(
         ),
     >,
 ) {
-    for (actor, agility, health) in &actors {
+    for (actor, move_speed, health) in &actors {
         if health.ratio() >= FLEE_HP_RATIO {
             continue;
         }
@@ -148,7 +232,12 @@ pub fn flee_generation_system(
             ActionSource::Ai,
             ActionName("Flee"),
             ActionTimer {
-                remaining_av: action_av(FLEE_DURATION, agility.0),
+                remaining_av: action_av_of(
+                    SpeedCategory::Move,
+                    FLEE_DURATION,
+                    speed_or_warn(move_speed, actor),
+                    FALLBACK_SPEED,
+                ),
             },
             Flee,
             Candidate,
@@ -163,7 +252,7 @@ pub fn flee_generation_system(
 pub fn wait_generation_system(
     mut commands: Commands,
     actors: Query<
-        (Entity, &Agility),
+        Entity,
         (
             With<Monster>,
             With<CanWait>,
@@ -172,14 +261,19 @@ pub fn wait_generation_system(
         ),
     >,
 ) {
-    for (actor, agility) in &actors {
+    for actor in &actors {
         commands.spawn((
             ChildOf(actor),
             ActionPriority(PRIORITY_WAIT),
             ActionSource::Ai,
             ActionName("Wait"),
+            // 固定耗时：等待不受任何速度倍率影响（REFACTOR.md §11.6 第 4 项）。
             ActionTimer {
-                remaining_av: action_av(WAIT_DURATION, agility.0),
+                remaining_av: SpeedCategory::Fixed.action_av(
+                    WAIT_DURATION,
+                    FALLBACK_SPEED,
+                    FALLBACK_SPEED,
+                ),
             },
             Wait,
             Candidate,
@@ -194,7 +288,7 @@ pub fn wait_generation_system(
 pub fn chase_generation_system(
     mut commands: Commands,
     actors: Query<
-        (Entity, &Agility),
+        (Entity, Option<&MoveSpeed>),
         (
             With<Monster>,
             With<CanChase>,
@@ -211,7 +305,7 @@ pub fn chase_generation_system(
     };
     let player_position = player_position.to_tuple();
 
-    for (actor, agility) in &actors {
+    for (actor, move_speed) in &actors {
         let can_see = viewsheds
             .get(actor)
             .ok()
@@ -229,7 +323,12 @@ pub fn chase_generation_system(
             ActionSource::Ai,
             ActionName("Chase"),
             ActionTimer {
-                remaining_av: action_av(CHASE_DURATION, agility.0),
+                remaining_av: action_av_of(
+                    SpeedCategory::Move,
+                    CHASE_DURATION,
+                    speed_or_warn(move_speed, actor),
+                    FALLBACK_SPEED,
+                ),
             },
             Chase,
             Candidate,
@@ -288,7 +387,10 @@ enum PlayerAction {
 pub fn player_action_generation_system(
     mut commands: Commands,
     mut request: ResMut<PlayerActionRequest>,
-    players: Query<(Entity, &Position, &Agility), (With<Player>, Without<Active>)>,
+    players: Query<
+        (Entity, &Position, Option<&MoveSpeed>, Option<&AttackSpeed>),
+        (With<Player>, Without<Active>),
+    >,
     monsters: Query<(), With<Monster>>,
     map: Res<Map>,
     occupancy: Res<OccupancyMap>,
@@ -297,13 +399,13 @@ pub fn player_action_generation_system(
         return;
     };
 
-    let Ok((player, position, agility)) = players.single() else {
+    let Ok((player, position, move_speed, attack_speed)) = players.single() else {
         log::warn!("玩家请求无法处理（玩家不存在或已有行动）: {command:?}");
         return;
     };
 
-    let (action, duration) = match command {
-        PlayerCommand::Wait => (PlayerAction::Wait, WAIT_DURATION),
+    let (action, category, duration) = match command {
+        PlayerCommand::Wait => (PlayerAction::Wait, SpeedCategory::Fixed, WAIT_DURATION),
         PlayerCommand::Move { dx, dy } => {
             let (nx, ny) = position.offset(dx, dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {
@@ -313,7 +415,11 @@ pub fn player_action_generation_system(
             if let Some(occupant) = occupancy.entity_at(nx, ny) {
                 if monsters.get(occupant).is_ok() {
                     // 走向怪物 = 声明攻击（与旧实现一致）。
-                    (PlayerAction::BasicAttack(occupant), UNARMED_ATTACK_DURATION)
+                    (
+                        PlayerAction::BasicAttack(occupant),
+                        SpeedCategory::Attack,
+                        UNARMED_ATTACK_DURATION,
+                    )
                 } else {
                     log::debug!("玩家移动目标被非怪物占用，拒绝请求: ({nx},{ny})");
                     return;
@@ -326,18 +432,27 @@ pub fn player_action_generation_system(
                 log::debug!("玩家移动非法，拒绝请求: ({dx},{dy})");
                 return;
             } else {
-                (PlayerAction::Move(Move { dx, dy }), UNARMED_ATTACK_DURATION)
+                (
+                    PlayerAction::Move(Move { dx, dy }),
+                    SpeedCategory::Move,
+                    UNARMED_ATTACK_DURATION,
+                )
             }
         }
     };
+
+    let remaining_av = action_av_of(
+        category,
+        duration,
+        speed_or_warn(move_speed, player),
+        attack_speed_or_warn(attack_speed, player),
+    );
 
     let mut action_cmd = commands.spawn((
         ChildOf(player),
         ActionPriority(PRIORITY_PLAYER),
         ActionSource::Player,
-        ActionTimer {
-            remaining_av: action_av(duration, agility.0),
-        },
+        ActionTimer { remaining_av },
         ActiveAction,
     ));
     match action {
@@ -968,5 +1083,171 @@ pub fn build_action_poc_schedule() -> Schedule {
 // ── 测试 ─────────────────────────────────────────────
 
 #[cfg(test)]
+mod tests {
+    //! 行动实体链路的测试。两种放法：
+    //!
+    //! - `entity_tests.rs`：链路级用例（生成/仲裁/tick/执行/completion/parity）；
+    //! - 本文件内联：**纯函数**（AV 公式、速度映射）的用例，不需要 World。
+    //!
+    //! 两者都写在同一个 `mod tests` 下，测试名统一是
+    //! `action::entity::tests::<name>`（历史用例名不变）。
+
+    use super::*;
+
+    /// 浮点比较容差。
+    ///
+    /// 不能用 `assert_eq!`：新式是 `duration / speed`、旧式是
+    /// `reaction + duration * factor`，两者结合律不同，最后几位必然不同
+    /// （实测相对误差 ~1e-13），这是浮点运算顺序的差异，不是口径差异。
+    const EPS: f64 = 1e-9;
+
+    /// 相对误差比较（`expected` 为 0 时退化成绝对误差）。
+    fn approx_eq(actual: f64, expected: f64, what: &str) {
+        let tolerance = EPS * expected.abs().max(1.0);
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{what}: actual={actual} expected={expected} diff={}",
+            (actual - expected).abs()
+        );
+    }
+
+    // ── Phase D1：新旧 AV 对比（`Agility` 仍保留作对照） ──
+
+    /// 旧口径的「耗时系数」`max(1 - agility*0.02, 0.5)`。
+    fn old_factor(agility: f64) -> f64 {
+        (1.0 - agility * 0.02).max(0.5)
+    }
+
+    /// D1 核心等价：迁移映射下，新 AV **恰好**等于旧 AV 里的耗时项
+    /// `duration × 耗时系数`，丢掉的是等量叠加的反应时。
+    ///
+    /// 这就是「按旧敏捷保行为」的精确含义，也是 D4 里 GAME.md 数值表的来源。
+    #[test]
+    fn speed_mapping_reproduces_legacy_duration_term() {
+        let cases = [
+            (3.0, "哥布林"),
+            (4.0, "蝎子/蘑菇傀儡"),
+            (5.0, "老鼠"),
+            (8.0, "孢子怪"),
+            (10.0, "玩家/深鳗"),
+            (14.0, "洞穴鱼"),
+        ];
+        for (agility, name) in cases {
+            let speed = crate::balance::agility_to_speed(agility);
+            assert_eq!(
+                speed,
+                1.0 / old_factor(agility),
+                "{name}: 速度必须是旧耗时系数的倒数"
+            );
+
+            for duration in [UNARMED_ATTACK_DURATION, CHASE_DURATION, WANDER_DURATION] {
+                let legacy = crate::balance::legacy_action_av(duration, agility);
+                let reaction = crate::balance::agility_to_reaction(agility);
+                let new = action_av(duration, speed);
+                approx_eq(
+                    new,
+                    legacy - reaction,
+                    &format!("{name} duration={duration}: 新 AV 应等于旧 AV 减去反应时"),
+                );
+            }
+        }
+    }
+
+    /// 新 AV 去掉的是**常数项**，所以旧口径里「反应时占比随耗时缩短而升高」的
+    /// 挤压效应消失：`BasicAttack` 不再被反应时拖累得最狠。
+    ///
+    /// 注意「新/旧」之比**不是**常数——旧式是 `reaction + duration × factor`，
+    /// 新式是 `duration × factor`（因为 `duration / speed` 在迁移映射下正好等于
+    /// 旧式的耗时项），所以
+    ///
+    /// ```text
+    /// 新/旧 = duration × factor / (reaction + duration × factor)
+    /// ```
+    ///
+    /// 随 `duration` 增大而增大（反应时被摊薄），恒 `< 1`。不变的是
+    /// `新 AV` 恒等于 `duration × 耗时系数`，这正是上面第一条测试钉住的性质。
+    ///
+    /// 这是 Phase D 唯一有意为之的行为改动（§11.6 第 3 项：先删反应时）。
+    #[test]
+    fn dropping_reaction_time_removes_the_flat_penalty() {
+        let agility = 10.0;
+        let speed = crate::balance::agility_to_speed(agility);
+        let reaction = crate::balance::agility_to_reaction(agility);
+        let factor = old_factor(agility);
+
+        for duration in [UNARMED_ATTACK_DURATION, CHASE_DURATION, WANDER_DURATION] {
+            let legacy = crate::balance::legacy_action_av(duration, agility);
+            let new = action_av(duration, speed);
+            let expected_ratio = duration * factor / (reaction + duration * factor);
+
+            approx_eq(
+                new / legacy,
+                expected_ratio,
+                &format!("duration={duration}: 新/旧之比"),
+            );
+            assert!(new < legacy, "去掉反应时后 AV 只会变短");
+        }
+
+        // 反应时是常数项：行动越短，被它拖累得越狠。
+        let short = UNARMED_ATTACK_DURATION;
+        let long = WANDER_DURATION;
+        let short_ratio = action_av(short, speed) / crate::balance::legacy_action_av(short, agility);
+        let long_ratio = action_av(long, speed) / crate::balance::legacy_action_av(long, agility);
+        assert!(
+            short_ratio < long_ratio,
+            "短行动的新/旧之比必须更小（被常数反应时拖累更多）：{short_ratio} < {long_ratio}"
+        );
+
+        // 新口径下 AV 之比只由 base_duration 决定，与速度无关。
+        let new_ratio = action_av(long, speed) / action_av(short, speed);
+        approx_eq(new_ratio, long / short, "新口径下 长/短 行动 AV 之比");
+        let legacy_ratio =
+            crate::balance::legacy_action_av(long, agility) / crate::balance::legacy_action_av(short, agility);
+        assert!(
+            new_ratio > legacy_ratio,
+            "去掉常数反应时后，长/短行动的比值应回升（{new_ratio} > {legacy_ratio}）"
+        );
+    }
+
+    /// 玩家初始速度的两个来源必须一致：常量的字面值 vs 旧敏捷 10 的映射。
+    ///
+    /// 写成断言而不是注释，是因为「迁移映射的产物被当成设计值」正是最容易
+    /// 悄悄漂移的一类错误（GAME.md 里重新校准时两边必须一起改）。
+    #[test]
+    fn player_initial_speed_matches_agility_ten_mapping() {
+        let mapped = crate::balance::agility_to_speed(10.0);
+        assert_eq!(crate::balance::PLAYER_MOVE_SPEED, mapped);
+        assert_eq!(crate::balance::PLAYER_ATTACK_SPEED, mapped);
+        assert_eq!(mapped, 1.25, "旧敏捷 10 → 耗时系数 0.80 → 速度 1.25");
+    }
+
+    /// 行动类别 → 速度组件的映射（`Move` 用移动速度、`Attack` 用攻击速度）。
+    ///
+    /// 玩家移动耗时沿用 `UNARMED_ATTACK_DURATION`（旧口径就是这样，共享同一个
+    /// 基础耗时），所以这里用 `WANDER_DURATION` 区分两类速度更直白。
+    #[test]
+    fn speed_category_selects_the_matching_component() {
+        let (move_speed, attack_speed) = (0.5, 2.0);
+
+        assert_eq!(
+            SpeedCategory::Move.action_av(WANDER_DURATION, move_speed, attack_speed),
+            WANDER_DURATION / move_speed,
+            "移动类行动必须读 MoveSpeed"
+        );
+        assert_eq!(
+            SpeedCategory::Attack.action_av(UNARMED_ATTACK_DURATION, move_speed, attack_speed),
+            UNARMED_ATTACK_DURATION / attack_speed,
+            "攻击类行动必须读 AttackSpeed"
+        );
+        assert_eq!(
+            SpeedCategory::Fixed.action_av(WAIT_DURATION, move_speed, attack_speed),
+            WAIT_DURATION,
+            "Wait 固定耗时，不受任何速度影响"
+        );
+    }
+}
+
+// 链路级用例：独立的 `#[cfg(test)]` 兄弟模块（历史路径 `entity::tests::entity_tests::*`）。
+#[cfg(test)]
 #[path = "entity_tests.rs"]
-mod tests;
+mod entity_tests;

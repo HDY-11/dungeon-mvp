@@ -9,6 +9,9 @@
 //!   [`crate::world_loop::new_game`]。
 //! - [`spawn_test_actor`] 只给最小组件束，能力组件不默认插入——测试按需
 //!   `world.entity_mut(e).insert(CanWander)`，避免“悄悄授予能力”掩盖断言。
+//! - 速度按 Phase D 的 `MoveSpeed` / `AttackSpeed` 显式传入（基准 `1.0`），
+//!   不再经由旧敏捷换算——测试要断言的是「速度 → AV」本身，
+//!   中间隔一层已删除的敏捷公式只会让断言失去意义。
 //! - [`world_snapshot`] 给确定性测试用全量快照，比较用 `assert_eq!` 即可。
 
 use crate::components::*;
@@ -128,13 +131,12 @@ pub fn single_tile_scene() -> (World, Entity) {
         (MAP_WIDTH - 1, MAP_HEIGHT - 1),
         10.0,
         4.0,
-        5.0,
     );
     crate::system::run_settle_systems(&mut world);
     (world, player)
 }
 
-/// 最小行动者组件束：位置 / 生命 / 攻防 / 敏捷 / 暴击 / 命名。
+/// 最小行动者组件束：位置 / 生命 / 攻防 / 速度 / 暴击 / 命名。
 ///
 /// 不插入 `Idle`、不插入任何 `Can*`：行动状态与能力由测试自己给。
 pub fn spawn_test_actor(
@@ -142,7 +144,8 @@ pub fn spawn_test_actor(
     pos: (usize, usize),
     hp: f64,
     attack: f64,
-    agility: f64,
+    move_speed: f64,
+    attack_speed: f64,
 ) -> Entity {
     world
         .spawn((
@@ -150,7 +153,8 @@ pub fn spawn_test_actor(
             Health::new(hp),
             Attack(attack),
             Defense(0.0),
-            Agility(agility),
+            MoveSpeed(move_speed),
+            AttackSpeed(attack_speed),
             CritRate(0.0),
             CritDamage(0.0),
             EntityName("测试目标".into()),
@@ -163,7 +167,7 @@ pub fn spawn_test_actor(
 /// 特意带齐 `Defense` / `MagicMastery`：`apply_exp_system` 升级时会用它们重算
 /// HP/MP 上限，缺组件会让测试静默跳过升级。
 pub fn spawn_test_player(world: &mut World, pos: (usize, usize)) -> Entity {
-    let entity = spawn_test_actor(world, pos, 100.0, 10.0, 10.0);
+    let entity = spawn_test_actor(world, pos, 100.0, 10.0, 1.0, 1.0);
     world.entity_mut(entity).insert((
         Player,
         Defense(4.0),
@@ -177,15 +181,17 @@ pub fn spawn_test_player(world: &mut World, pos: (usize, usize)) -> Entity {
 }
 
 /// 最小怪物组件束：`spawn_test_actor` + `Monster` + 怪物种类身份。
+///
+/// 速度固定为基准 `1.0`（移动/攻击同速）：绝大多数用例不关心节奏，
+/// 需要特定速度的用例自己 `insert(MoveSpeed(..))` 覆盖。
 pub fn spawn_test_monster(
     world: &mut World,
     kind: MonsterKindId,
     pos: (usize, usize),
     hp: f64,
     attack: f64,
-    agility: f64,
 ) -> Entity {
-    let entity = spawn_test_actor(world, pos, hp, attack, agility);
+    let entity = spawn_test_actor(world, pos, hp, attack, 1.0, 1.0);
     world.entity_mut(entity).insert((Monster, kind, Idle));
     entity
 }
@@ -225,7 +231,8 @@ pub struct MonsterSnapshot {
     pub pos: (usize, usize),
     pub hp: (f64, f64),
     pub attack: f64,
-    pub agility: f64,
+    pub move_speed: f64,
+    pub attack_speed: f64,
     pub level: u64,
     pub exp_reward: f64,
 }
@@ -276,7 +283,8 @@ fn collect_monster_snapshots(world: &World) -> Vec<MonsterSnapshot> {
             &Position,
             &Health,
             &Attack,
-            &Agility,
+            &MoveSpeed,
+            &AttackSpeed,
             Option<&Level>,
             Option<&ExperienceReward>,
         )>()
@@ -285,12 +293,13 @@ fn collect_monster_snapshots(world: &World) -> Vec<MonsterSnapshot> {
     let mut monsters: Vec<MonsterSnapshot> = query
         .iter(world)
         .map(
-            |(kind, pos, health, attack, agility, level, reward)| MonsterSnapshot {
+            |(kind, pos, health, attack, move_speed, attack_speed, level, reward)| MonsterSnapshot {
                 kind: *kind,
                 pos: pos.to_tuple(),
                 hp: (health.current, health.max),
                 attack: attack.0,
-                agility: agility.0,
+                move_speed: move_speed.0,
+                attack_speed: attack_speed.0,
                 level: level.map(|l| l.0).unwrap_or(0),
                 exp_reward: reward.map(|r| r.0).unwrap_or(0.0),
             },
