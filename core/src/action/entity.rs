@@ -1073,18 +1073,20 @@ mod tests {
     //! 行动实体链路的测试。两种放法：
     //!
     //! - `entity_tests.rs`：链路级用例（生成/仲裁/tick/执行/completion/parity）；
-    //! - 本文件内联：**纯函数**（AV 公式、速度映射）的用例，不需要 World。
+    //! - 本文件内联：**纯函数**（AV 公式、速度规则）的用例，不需要 World。
     //!
-    //! 两者都写在同一个 `mod tests` 下，测试名统一是
-    //! `action::entity::tests::<name>`（历史用例名不变）。
+    //! 两者都在同一个 `mod tests` 下；链路级用例的历史路径是
+    //! `action::entity::entity_tests::<name>`（D1 引入嵌套模块前是
+    //! `action::entity::tests::<name>`，只影响 `--exact` 过滤）。
 
     use super::*;
+    use crate::balance::{MAX_SPEED, MIN_SPEED, clamp_speed};
 
     /// 浮点比较容差。
     ///
-    /// 不能用 `assert_eq!`：新式是 `duration / speed`、旧式是
-    /// `reaction + duration * factor`，两者结合律不同，最后几位必然不同
-    /// （实测相对误差 ~1e-13），这是浮点运算顺序的差异，不是口径差异。
+    /// 纯函数用例里尽量用 `assert_eq!`（这些比值的浮点结果恰好精确）；
+    /// 需要跨运算顺序比较时才用它——`duration / speed` 与 `duration * factor`
+    /// 的结合律不同，末几位会有 ~1e-13 的相对差异，那是浮点顺序而非口径差异。
     const EPS: f64 = 1e-9;
 
     /// 相对误差比较（`expected` 为 0 时退化成绝对误差）。
@@ -1097,116 +1099,106 @@ mod tests {
         );
     }
 
-    // ── Phase D1：新旧 AV 对比（`Agility` 仍保留作对照） ──
+    // ── Phase D：AV 公式不变式（旧 `Agility` 口径已在 D3 删除） ──
 
-    /// 旧口径的「耗时系数」`max(1 - agility*0.02, 0.5)`。
-    fn old_factor(agility: f64) -> f64 {
-        (1.0 - agility * 0.02).max(0.5)
-    }
-
-    /// D1 核心等价：迁移映射下，新 AV **恰好**等于旧 AV 里的耗时项
-    /// `duration × 耗时系数`，丢掉的是等量叠加的反应时。
+    /// AV 与速度严格成反比、与基础耗时严格成正比。
     ///
-    /// 这就是「按旧敏捷保行为」的精确含义，也是 D4 里 GAME.md 数值表的来源。
+    /// 旧口径 `AV = 反应时 + duration × 敏捷系数` 两项都破坏了「AV 与 duration
+    /// 成正比」：反应时是常数项，行动越短被它拖累得越狠。D3 之后这条不变式
+    /// 成立，也是 GAME.md 能用「耗时 ÷ 速度」一句话写清数值的原因。
     #[test]
-    fn speed_mapping_reproduces_legacy_duration_term() {
-        let cases = [
-            (3.0, "哥布林"),
-            (4.0, "蝎子/蘑菇傀儡"),
-            (5.0, "老鼠"),
-            (8.0, "孢子怪"),
-            (10.0, "玩家/深鳗"),
-            (14.0, "洞穴鱼"),
-        ];
-        for (agility, name) in cases {
-            let speed = crate::balance::agility_to_speed(agility);
-            assert_eq!(
-                speed,
-                1.0 / old_factor(agility),
-                "{name}: 速度必须是旧耗时系数的倒数"
-            );
-
-            for duration in [UNARMED_ATTACK_DURATION, CHASE_DURATION, WANDER_DURATION] {
-                let legacy = crate::balance::legacy_action_av(duration, agility);
-                let reaction = crate::balance::agility_to_reaction(agility);
-                let new = action_av(duration, speed);
-                approx_eq(
-                    new,
-                    legacy - reaction,
-                    &format!("{name} duration={duration}: 新 AV 应等于旧 AV 减去反应时"),
-                );
-            }
-        }
-    }
-
-    /// 新 AV 去掉的是**常数项**，所以旧口径里「反应时占比随耗时缩短而升高」的
-    /// 挤压效应消失：`BasicAttack` 不再被反应时拖累得最狠。
-    ///
-    /// 注意「新/旧」之比**不是**常数——旧式是 `reaction + duration × factor`，
-    /// 新式是 `duration × factor`（因为 `duration / speed` 在迁移映射下正好等于
-    /// 旧式的耗时项），所以
-    ///
-    /// ```text
-    /// 新/旧 = duration × factor / (reaction + duration × factor)
-    /// ```
-    ///
-    /// 随 `duration` 增大而增大（反应时被摊薄），恒 `< 1`。不变的是
-    /// `新 AV` 恒等于 `duration × 耗时系数`，这正是上面第一条测试钉住的性质。
-    ///
-    /// 这是 Phase D 唯一有意为之的行为改动（§11.6 第 3 项：先删反应时）。
-    #[test]
-    fn dropping_reaction_time_removes_the_flat_penalty() {
-        let agility = 10.0;
-        let speed = crate::balance::agility_to_speed(agility);
-        let reaction = crate::balance::agility_to_reaction(agility);
-        let factor = old_factor(agility);
-
-        for duration in [UNARMED_ATTACK_DURATION, CHASE_DURATION, WANDER_DURATION] {
-            let legacy = crate::balance::legacy_action_av(duration, agility);
-            let new = action_av(duration, speed);
-            let expected_ratio = duration * factor / (reaction + duration * factor);
-
+    fn av_is_inversely_proportional_to_speed_and_linear_in_duration() {
+        // 与速度成反比：AV(speed) × speed 恒定。
+        for speed in [0.5, 1.0, 1.25, 2.0, 3.0] {
             approx_eq(
-                new / legacy,
-                expected_ratio,
-                &format!("duration={duration}: 新/旧之比"),
+                action_av(WANDER_DURATION, speed) * speed,
+                WANDER_DURATION,
+                &format!("speed={speed}: AV × speed 必须等于 base_duration"),
             );
-            assert!(new < legacy, "去掉反应时后 AV 只会变短");
         }
 
-        // 反应时是常数项：行动越短，被它拖累得越狠。
-        let short = UNARMED_ATTACK_DURATION;
-        let long = WANDER_DURATION;
-        let short_ratio = action_av(short, speed) / crate::balance::legacy_action_av(short, agility);
-        let long_ratio = action_av(long, speed) / crate::balance::legacy_action_av(long, agility);
-        assert!(
-            short_ratio < long_ratio,
-            "短行动的新/旧之比必须更小（被常数反应时拖累更多）：{short_ratio} < {long_ratio}"
-        );
+        // 单调：速度越高 AV 越短。
+        let mut previous = f64::INFINITY;
+        for speed in [0.25, 0.5, 1.0, 1.5, 2.0, 4.0] {
+            let av = action_av(WANDER_DURATION, speed);
+            assert!(av < previous, "speed={speed} 的 AV 必须严格更短");
+            previous = av;
+        }
 
-        // 新口径下 AV 之比只由 base_duration 决定，与速度无关。
-        let new_ratio = action_av(long, speed) / action_av(short, speed);
-        approx_eq(new_ratio, long / short, "新口径下 长/短 行动 AV 之比");
-        let legacy_ratio =
-            crate::balance::legacy_action_av(long, agility) / crate::balance::legacy_action_av(short, agility);
-        assert!(
-            new_ratio > legacy_ratio,
-            "去掉常数反应时后，长/短行动的比值应回升（{new_ratio} > {legacy_ratio}）"
-        );
+        // 与基础耗时成正比：AV 之比只由 base_duration 决定，与速度无关。
+        for speed in [0.25, 1.0, 4.0] {
+            approx_eq(
+                action_av(WANDER_DURATION, speed) / action_av(UNARMED_ATTACK_DURATION, speed),
+                WANDER_DURATION / UNARMED_ATTACK_DURATION,
+                &format!("speed={speed}: AV 之比必须等于 base_duration 之比"),
+            );
+        }
     }
 
-    /// 玩家初始速度的两个来源必须一致：常量的字面值 vs 旧敏捷 10 的映射。
+    /// `clamp_speed` 必须夹住两端，并把非有限值兜成下限。
     ///
-    /// 写成断言而不是注释，是因为「迁移映射的产物被当成设计值」正是最容易
-    /// 悄悄漂移的一类错误（GAME.md 里重新校准时两边必须一起改）。
+    /// 最后一条防的是「AV 变 NaN → `ActionTimer` 的 `partial_cmp().expect()` panic」
+    /// 这条实测过的崩溃路径（`active_action_timer_delta` 里那个 expect）。
     #[test]
-    fn player_initial_speed_matches_agility_ten_mapping() {
-        let mapped = crate::balance::agility_to_speed(10.0);
-        assert_eq!(crate::balance::PLAYER_MOVE_SPEED, mapped);
-        assert_eq!(crate::balance::PLAYER_ATTACK_SPEED, mapped);
-        assert_eq!(mapped, 1.25, "旧敏捷 10 → 耗时系数 0.80 → 速度 1.25");
+    fn clamp_speed_bounds_both_ends_and_non_finite_inputs() {
+        assert_eq!(clamp_speed(1.0), 1.0, "区间内原样返回");
+        assert_eq!(clamp_speed(MIN_SPEED), MIN_SPEED);
+        assert_eq!(clamp_speed(MAX_SPEED), MAX_SPEED);
+
+        assert_eq!(clamp_speed(0.0), MIN_SPEED, "0 速度必须夹到下限");
+        assert_eq!(clamp_speed(-3.0), MIN_SPEED, "负速度必须夹到下限");
+        assert_eq!(clamp_speed(1e9), MAX_SPEED, "过大速度必须夹到上限");
+
+        assert_eq!(clamp_speed(f64::NAN), MIN_SPEED, "NaN 必须兜成下限");
+        assert_eq!(clamp_speed(f64::INFINITY), MIN_SPEED, "inf 必须兜成下限");
+        assert_eq!(
+            clamp_speed(f64::NEG_INFINITY),
+            MIN_SPEED,
+            "-inf 必须兜成下限"
+        );
+
+        // 兜底的结果本身必须能算出有限 AV（否则只是把 NaN 推后一步）。
+        for raw in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            assert!(
+                action_av(WANDER_DURATION, raw).is_finite(),
+                "raw={raw} 的 AV 必须有限"
+            );
+        }
     }
 
+    /// 玩家初始速度是 1.25 —— 迁移映射的产物，不是设计值。
+    ///
+    /// 写成断言而不是注释，是因为「迁移来的数被当成设计基准」正是最容易悄悄
+    /// 漂移的一类错误。GAME.md 里做 `[试调]` 重新校准（把玩家基准调回 1.0 并
+    /// 重新配平怪物）时，这条断言必须一起改——那就是一次有意的决策。
+    #[test]
+    fn player_initial_speed_is_the_migration_value() {
+        assert_eq!(crate::balance::PLAYER_MOVE_SPEED, 1.25);
+        assert_eq!(crate::balance::PLAYER_ATTACK_SPEED, 1.25);
+        assert_eq!(
+            crate::balance::PLAYER_MOVE_SPEED,
+            crate::balance::PLAYER_ATTACK_SPEED,
+            "玩家移动与攻击同速（与怪物模板的 uniform() 一致）"
+        );
+        assert_eq!(
+            action_av(UNARMED_ATTACK_DURATION, crate::balance::PLAYER_MOVE_SPEED),
+            240.0,
+            "玩家一次移动/攻击 = 300/1.25 = 240 AV"
+        );
+        // `action_av` 是通用公式，它**不**知道行动类别；「Wait 不吃速度」是
+        // `SpeedRule::Fixed` 的语义，必须经由规则求值才成立。
+        assert_eq!(
+            SpeedRule::Fixed.action_av(
+                WAIT_DURATION,
+                ActorSpeeds {
+                    move_speed: crate::balance::PLAYER_MOVE_SPEED,
+                    attack_speed: crate::balance::PLAYER_ATTACK_SPEED,
+                },
+            ),
+            WAIT_DURATION,
+            "Wait 必须固定耗时，即使玩家速度是 1.25"
+        );
+    }
     /// 速度规则 → 速度组件的映射（`Move` 用移动速度、`Attack` 用攻击速度）。
     ///
     /// 玩家移动耗时沿用 `UNARMED_ATTACK_DURATION`（旧口径就是这样，共享同一个

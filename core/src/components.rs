@@ -167,9 +167,6 @@ pub struct Defense(pub f64);
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MagicMastery(pub f64);
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Agility(pub f64);
-
 /// 移动速度倍率（Phase D / REFACTOR.md §2.6）：`1.0` 为基准，越高越快。
 ///
 /// 作用于 `Move` / `Chase` / `Flee` / `Wander` 四类行动：
