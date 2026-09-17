@@ -2,13 +2,48 @@
 //!
 //! 本轮不迁移掉落表（物品未迁移）。
 
-use crate::balance::agility_to_speed;
 use crate::components::*;
 use crate::entity_cls::CreatureKind;
 use crate::map::MapKind;
 use bevy_ecs::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+
+/// 怪物速度静态定义（Phase D / REFACTOR.md §2.6）。`1.0` 为基准，越高越快。
+///
+/// 模板里**直接写速度数值**，不再保留可推导出速度的旧"敏捷"字段：
+/// 旧敏捷同时承担反应时与耗时修正两件事，留着它就会有人继续拿它算 AV，
+/// 迁移映射（见 [`MonsterSpeeds::MIGRATION_NOTE`]）只作为数值来源记录在文档里。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonsterSpeeds {
+    pub move_speed: f64,
+    pub attack_speed: f64,
+}
+
+impl MonsterSpeeds {
+    /// 移动与攻击同速。当前八种怪物都用这个（迁移映射的产物），
+    /// 后续要做出「偏移动」或「偏攻击」的怪，就分开写两个数。
+    pub const fn uniform(speed: f64) -> Self {
+        Self {
+            move_speed: speed,
+            attack_speed: speed,
+        }
+    }
+
+    /// 迁移来源备忘：`速度 = 1 / max(1 - 旧敏捷 × 0.02, 0.5)`，即旧耗时系数的倒数。
+    ///
+    /// | 怪物 | 旧敏捷 | 速度 |
+    /// |---|---|---|
+    /// | 老鼠 | 5 | 1.1111 |
+    /// | 蝎子 / 蘑菇傀儡 | 4 | 1.0870 |
+    /// | 哥布林 / 洞穴蟹 | 3 | 1.0638 |
+    /// | 孢子怪 | 8 | 1.1905 |
+    /// | 深鳗 | 10 | 1.2500 |
+    /// | 洞穴鱼 | 14 | 1.3889 |
+    ///
+    /// GAME.md `[试调]` 重新校准时改这里，不要再回头引用旧敏捷。
+    pub const MIGRATION_NOTE: &'static str = "速度 = 1 / 旧耗时系数（Phase D 迁移映射）";
+}
 
 /// 怪物数据键。派生 `Ord` 只为排序/快照比较，不表示强度序。
 #[derive(
@@ -40,7 +75,7 @@ pub struct MonsterTemplate {
     pub attack_per_floor: f64,
     pub attack_max: f64,
     pub defense: f64,
-    pub agility: f64,
+    pub speeds: MonsterSpeeds,
     pub magic_mastery: f64,
     pub crit_rate: f64,
     pub crit_damage: f64,
@@ -72,9 +107,6 @@ impl MonsterTemplate {
         let hp = self.hp_base + s * self.hp_per_floor;
         let attack = (self.attack_base + s * self.attack_per_floor).min(self.attack_max);
         let exp = (self.exp_base + s * self.exp_per_floor).round().max(0.0);
-        // Phase D 迁移映射：怪物先按旧敏捷反解出速度倍率以保行为
-        // （§11.6 第 5 项），后续由 GAME.md `[试调]` 分别重调移动/攻击节奏。
-        let speed = agility_to_speed(self.agility);
 
         MonsterStats {
             level,
@@ -84,8 +116,8 @@ impl MonsterTemplate {
             attack: Attack(attack),
             defense: Defense(self.defense),
             magic_mastery: MagicMastery(self.magic_mastery),
-            move_speed: MoveSpeed(speed),
-            attack_speed: AttackSpeed(speed),
+            move_speed: MoveSpeed(self.speeds.move_speed),
+            attack_speed: AttackSpeed(self.speeds.attack_speed),
             crit_rate: CritRate(self.crit_rate),
             crit_damage: CritDamage(self.crit_damage),
         }
@@ -105,7 +137,7 @@ const RAT: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.0,
     attack_max: 18.0,
     defense: 2.0,
-    agility: 5.0,
+    speeds: MonsterSpeeds::uniform(1.1111111111111112),
     magic_mastery: 1.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -126,7 +158,7 @@ const SCORPION: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.5,
     attack_max: 20.0,
     defense: 3.0,
-    agility: 4.0,
+    speeds: MonsterSpeeds::uniform(1.0869565217391304),
     magic_mastery: 1.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -147,7 +179,7 @@ const GOBLIN: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 2.0,
     attack_max: 25.0,
     defense: 4.0,
-    agility: 3.0,
+    speeds: MonsterSpeeds::uniform(1.0638297872340425),
     magic_mastery: 3.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -168,7 +200,7 @@ const SPORELING: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.0,
     attack_max: 16.0,
     defense: 0.0,
-    agility: 8.0,
+    speeds: MonsterSpeeds::uniform(1.1904761904761905),
     magic_mastery: 2.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -189,7 +221,7 @@ const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.5,
     attack_max: 24.0,
     defense: 2.0,
-    agility: 4.0,
+    speeds: MonsterSpeeds::uniform(1.0869565217391304),
     magic_mastery: 4.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -210,7 +242,7 @@ const CAVE_FISH: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.0,
     attack_max: 15.0,
     defense: 0.0,
-    agility: 14.0,
+    speeds: MonsterSpeeds::uniform(1.3888888888888888),
     magic_mastery: 1.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -231,7 +263,7 @@ const CAVE_CRAB: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.2,
     attack_max: 20.0,
     defense: 4.0,
-    agility: 3.0,
+    speeds: MonsterSpeeds::uniform(1.0638297872340425),
     magic_mastery: 1.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -252,7 +284,7 @@ const DEEP_EEL: MonsterTemplate = MonsterTemplate {
     attack_per_floor: 1.5,
     attack_max: 22.0,
     defense: 1.0,
-    agility: 10.0,
+    speeds: MonsterSpeeds::uniform(1.25),
     magic_mastery: 2.0,
     crit_rate: 0.05,
     crit_damage: 0.50,
@@ -349,4 +381,98 @@ pub fn roll_one_kind(map_kind: MapKind, floor: u32, rng: &mut impl Rng) -> Monst
         }
     }
     kinds[0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::balance::{MAX_SPEED, MIN_SPEED};
+
+    /// 全部怪物种类（与 [`monster_template`] 的 match 一一对应）。
+    const ALL_KINDS: [MonsterKindId; 8] = [
+        MonsterKindId::Rat,
+        MonsterKindId::Scorpion,
+        MonsterKindId::Goblin,
+        MonsterKindId::Sporeling,
+        MonsterKindId::MushroomGolem,
+        MonsterKindId::CaveFish,
+        MonsterKindId::CaveCrab,
+        MonsterKindId::DeepEel,
+    ];
+
+    /// D5：每个模板都必须给出可用的速度，且落在 clamp 区间内。
+    ///
+    /// 这条测试的防的是「速度漏填/填成 0」：`0.0` 会让 AV 变成 `inf`
+    /// （`clamp_speed` 会兜住，但那是兜底不是设计），漏填则会让怪物
+    /// 直接从 AI 查询里消失（LESSONS.md L49 那一类静默失败）。
+    #[test]
+    fn every_monster_template_has_usable_speeds() {
+        for kind in ALL_KINDS {
+            let speeds = monster_template(kind).speeds;
+            for (name, speed) in [
+                ("move_speed", speeds.move_speed),
+                ("attack_speed", speeds.attack_speed),
+            ] {
+                assert!(
+                    speed.is_finite(),
+                    "{kind:?}.{name} 必须是有限值，实际 {speed}"
+                );
+                assert!(
+                    (MIN_SPEED..=MAX_SPEED).contains(&speed),
+                    "{kind:?}.{name}={speed} 必须落在 [{MIN_SPEED}, {MAX_SPEED}]"
+                );
+            }
+        }
+    }
+
+    /// D5：迁移映射保住了旧敏捷的**排序**——怪与怪之间的快慢关系不变。
+    ///
+    /// 这是「先按旧敏捷保行为」的可验证含义：新速度的排序必须与 GAME.md
+    /// 里旧敏捷的排序一致（洞穴鱼 14 > 深鳗 10 > 孢子怪 8 > 老鼠 5 >
+    /// 蝎子/蘑菇傀儡 4 > 哥布林/洞穴蟹 3）。
+    #[test]
+    fn template_speeds_preserve_legacy_agility_ordering() {
+        let speed_of = |kind: MonsterKindId| monster_template(kind).speeds.move_speed;
+
+        let fast = speed_of(MonsterKindId::CaveFish);
+        let mid = speed_of(MonsterKindId::DeepEel);
+        let slow = speed_of(MonsterKindId::Goblin);
+
+        assert!(
+            fast > mid && mid > slow,
+            "旧敏捷 14 > 10 > 3 的排序必须保住：{fast} > {mid} > {slow}"
+        );
+        // 同旧敏捷的怪必须仍然同速。
+        assert_eq!(
+            speed_of(MonsterKindId::Scorpion),
+            speed_of(MonsterKindId::MushroomGolem),
+            "旧敏捷同为 4 的两种怪必须同速"
+        );
+        assert_eq!(
+            speed_of(MonsterKindId::Goblin),
+            speed_of(MonsterKindId::CaveCrab),
+            "旧敏捷同为 3 的两种怪必须同速"
+        );
+        // 玩家（1.25）应当比老鼠(5)/蝎子(4)/哥布林(3) 快，仅慢于洞穴鱼，
+        // 与旧设计意图「玩家比所有怪物快…除洞穴鱼」一致（旧敏捷 14 的洞穴鱼
+        // 在旧口径下反应时更短，本来就略快于玩家）。
+        let player = crate::balance::PLAYER_MOVE_SPEED;
+        assert!(player > speed_of(MonsterKindId::Rat));
+        assert!(player > speed_of(MonsterKindId::Goblin));
+        assert!(player < fast, "洞穴鱼在旧口径下也比玩家快，迁移后应保持");
+    }
+
+    /// D5：模板数值与 `stats()` 输出一致（防止有人改了模板却忘了走 stats）。
+    #[test]
+    fn stats_expose_template_speeds() {
+        for kind in ALL_KINDS {
+            let template = monster_template(kind);
+            let stats = template.stats(3);
+            assert_eq!(stats.move_speed.0, template.speeds.move_speed, "{kind:?}");
+            assert_eq!(
+                stats.attack_speed.0, template.speeds.attack_speed,
+                "{kind:?}"
+            );
+        }
+    }
 }

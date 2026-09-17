@@ -2038,3 +2038,181 @@ fn parameterized_move_executor_coexists_with_settle_systems() {
         "移动成功后 actor 必须回到 Idle"
     );
 }
+
+// ── Phase D5：速度 → AV → 回合顺序 ────────────────────
+
+/// 行动实体当前的剩余 AV。
+fn timer_of(world: &World, action: Entity) -> f64 {
+    world
+        .get::<ActionTimer>(action)
+        .expect("action 实体必须有 ActionTimer")
+        .remaining_av
+}
+
+/// 跑三个 AI 生成系统，返回本轮的**全部**候选 action 实体。
+///
+/// 一次性收齐再挑，不要「跑一轮生成 → 挑一个 → 再跑一轮生成」：
+/// 第二轮时 actor 已经是 `Active`，`Without<Active>` 的过滤会让它再也
+/// 生成不出候选（本用例第一版就踩了这个坑）。
+fn run_generation_and_collect(world: &mut World) -> Vec<Entity> {
+    run_generation_systems(world);
+    candidates(world)
+}
+
+/// 属于 `actor` 的、带 `T` 的 action 实体（通常是候选或 active action）。
+fn actions_of<T: Component>(world: &mut World, actor: Entity) -> Vec<Entity> {
+    let mut query = world.query_filtered::<(Entity, &ChildOf), With<T>>();
+    query
+        .iter(world)
+        .filter(|(_, child_of)| child_of.parent() == actor)
+        .map(|(action, _)| action)
+        .collect()
+}
+
+/// D5：真实生成/挂载出的行动，其 AV 必须等于「基础耗时 ÷ 该行动类别对应速度」。
+///
+/// 公式本身已由 `entity.rs` 里的纯函数用例钉住；这条钉的是**接线**：
+/// 生成系统真的读了 `MoveSpeed` / `AttackSpeed`，而 `Wait` 真的没读任何速度。
+///
+/// 移动速度与攻击速度刻意取不同值（1.6 / 0.8）：若生成系统读错组件，
+/// 断言会立刻失败，而不是"碰巧数值相等"地通过。
+#[test]
+fn generated_actions_read_their_category_speed() {
+    let (mut world, _player) = poc_world();
+    let monster = poc_actor(&mut world, (5, 5));
+    world
+        .entity_mut(monster)
+        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+
+    // 一轮生成同时拿到 Wander（Move 类）与 Wait（Fixed 类）。
+    let generated = run_generation_and_collect(&mut world);
+    let wander = generated
+        .iter()
+        .copied()
+        .find(|action| {
+            world.get::<Wander>(*action).is_some()
+                && world
+                    .get::<ChildOf>(*action)
+                    .is_some_and(|child_of| child_of.parent() == monster)
+        })
+        .expect("游荡候选应当被生成");
+    let wait = generated
+        .iter()
+        .copied()
+        .find(|action| {
+            world.get::<Wait>(*action).is_some()
+                && world
+                    .get::<ChildOf>(*action)
+                    .is_some_and(|child_of| child_of.parent() == monster)
+        })
+        .expect("等待候选应当被生成");
+
+    assert_eq!(
+        timer_of(&world, wander),
+        WANDER_DURATION / 1.6,
+        "Wander 必须读 MoveSpeed"
+    );
+    assert_eq!(
+        timer_of(&world, wait),
+        WAIT_DURATION,
+        "Wait 必须固定耗时，不受任何速度影响"
+    );
+}
+
+/// D5：玩家路径同样按类别取速度——同一个 actor、同一套速度，
+/// 换的只是行动类别，AV 就应当从 `MoveSpeed` 切到 `AttackSpeed`。
+#[test]
+fn player_actions_read_their_category_speed() {
+    // 平地向右走一步：Move 类。
+    let (mut world, player) = player_move_scene((10, 10));
+    world
+        .entity_mut(player)
+        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let move_action = action_entities_of(&mut world, player)[0];
+    assert!(world.get::<Move>(move_action).is_some());
+    assert_eq!(
+        timer_of(&world, move_action),
+        UNARMED_ATTACK_DURATION / 1.6,
+        "玩家移动读 MoveSpeed"
+    );
+
+    // 目标格被怪物占据：同一输入改判为攻击，AV 必须改用 AttackSpeed。
+    let (mut world, player) = player_move_scene((10, 10));
+    spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (11, 10),
+        10.0,
+        1.0,
+    );
+    crate::system::run_settle_systems(&mut world);
+    world
+        .entity_mut(player)
+        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Move { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+    let attack_action = action_entities_of(&mut world, player)[0];
+    assert!(
+        world.get::<BasicAttack>(attack_action).is_some(),
+        "走向怪物必须声明攻击"
+    );
+    assert_eq!(
+        timer_of(&world, attack_action),
+        UNARMED_ATTACK_DURATION / 0.8,
+        "攻击读 AttackSpeed，而不是 MoveSpeed"
+    );
+}
+
+/// D5：回合顺序场景——快怪的 AV 更短，会在慢怪之前被 tick 到 `Ready`。
+///
+/// 用真实的生成系统 + `tick_action_timers_system`（不是手搓计时器），
+/// 走的就是主循环的路径。
+#[test]
+fn faster_monster_gets_its_action_ready_first() {
+    let (mut world, _player) = poc_world();
+    let fast = poc_actor(&mut world, (5, 5));
+    let slow = poc_actor(&mut world, (20, 20));
+    world.entity_mut(fast).insert(MoveSpeed(2.0));
+    world.entity_mut(slow).insert(MoveSpeed(0.5));
+
+    // 只跑**游荡**生成 + 仲裁。不跑 `run_generation_systems`（它还会生成 Wait，
+    // 让本用例要观察的对象多一个变量），也不跑执行——`tick_action_timers_system`
+    // 只推进 `ActiveAction`，所以必须先让候选过仲裁拿到 `Ready` 资格。
+    let _ = world.run_system_once(wander_generation_system);
+    let _ = world.run_system_once(action_arbitration_system);
+    let fast_wanders = actions_of::<Wander>(&mut world, fast);
+    let slow_wanders = actions_of::<Wander>(&mut world, slow);
+    assert_eq!(
+        (fast_wanders.len(), slow_wanders.len()),
+        (1, 1),
+        "两个 actor 各应当恰好留下一个游荡行动"
+    );
+    let fast_wander = fast_wanders[0];
+    let slow_wander = slow_wanders[0];
+
+    // 前提：AV 与速度成反比（`AV = base / speed`）。
+    assert_eq!(timer_of(&world, fast_wander), WANDER_DURATION / 2.0);
+    assert_eq!(timer_of(&world, slow_wander), WANDER_DURATION / 0.5);
+    assert!(
+        timer_of(&world, fast_wander) < timer_of(&world, slow_wander),
+        "快怪的 AV 必须更短：{} < {}",
+        timer_of(&world, fast_wander),
+        timer_of(&world, slow_wander)
+    );
+
+    // 推进：最小正 AV 被扣掉，快怪这一步就归零拿 `Ready`，慢怪还差得远。
+    let _ = world.run_system_once(tick_action_timers_system);
+    assert!(
+        world.get::<Ready>(fast_wander).is_some(),
+        "快怪应当 AV 归零并拿到 Ready"
+    );
+    assert!(
+        world.get::<Ready>(slow_wander).is_none(),
+        "慢怪不应同时归零"
+    );
+    assert!(timer_of(&world, slow_wander) > 0.0);
+}

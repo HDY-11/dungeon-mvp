@@ -97,26 +97,40 @@ pub struct ActionName(pub &'static str);
 // 而不是散在各生成系统里。执行器完全不关心速度：AV 在挂载时就固化进
 // `ActionTimer`，之后 tick 与执行只看剩余值。
 
-/// 行动类别：决定用哪个速度组件把 `base_duration` 换算成 AV。
+/// 行动的速度规则：哪些行动吃哪个速度，以及哪些行动固定耗时。
+///
+/// 规则**由生成系统在编译期写死**，actor 侧只提供两个速度数值——这样生成系统
+/// 不必再判断行动种类，也不会出现两个生成系统对同一行动给出不同口径。
+///
+/// 枚举而不是常量集合，是为了让非法组合无法表达：`Fixed` 没有速度字段，
+/// 也就不存在「固定耗时却读了某个速度」的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpeedCategory {
-    /// 用 `MoveSpeed`：`Move` / `Chase` / `Flee` / `Wander`。
+pub enum SpeedRule {
+    /// 读 `MoveSpeed`：`Move` / `Chase` / `Flee` / `Wander`。
     Move,
-    /// 用 `AttackSpeed`：`BasicAttack`。
+    /// 读 `AttackSpeed`：`BasicAttack`。
     Attack,
     /// 固定耗时、不受任何速度影响：`Wait`（REFACTOR.md §11.6 第 4 项）。
     Fixed,
 }
 
-impl SpeedCategory {
-    /// 计算该类别行动的 AV。
-    ///
-    /// 缺失速度组件时回退到 `1.0` 基准并告警——见 [`action_av_of`] 的说明。
-    pub fn action_av(self, base_duration: f64, move_speed: f64, attack_speed: f64) -> f64 {
+/// actor 的两个速度（缺失组件时已经是回退值）。
+///
+/// 与 [`SpeedRule`] 一起构成 AV 计算的**纯输入**：`action_av` 不需要
+/// `World`/查询，因此口径可以在无 ECS 的单测里逐条钉住。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActorSpeeds {
+    move_speed: f64,
+    attack_speed: f64,
+}
+
+impl SpeedRule {
+    /// 计算该规则下行动的 AV。
+    pub fn action_av(self, base_duration: f64, speeds: ActorSpeeds) -> f64 {
         match self {
-            SpeedCategory::Move => action_av(base_duration, move_speed),
-            SpeedCategory::Attack => action_av(base_duration, attack_speed),
-            SpeedCategory::Fixed => base_duration,
+            SpeedRule::Move => action_av(base_duration, speeds.move_speed),
+            SpeedRule::Attack => action_av(base_duration, speeds.attack_speed),
+            SpeedRule::Fixed => base_duration,
         }
     }
 }
@@ -129,44 +143,31 @@ impl SpeedCategory {
 /// 回退到基准 + 告警则让这种漏挂可见且不至于卡死行为。
 const FALLBACK_SPEED: f64 = 1.0;
 
-/// 计算某个 actor 的某类行动 AV，速度组件缺失时回退到 [`FALLBACK_SPEED`]。
+/// 解析 actor 的速度组件；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
 ///
-/// 速度组件缺失**不应**被静默忽略（LESSONS.md L49 的同类问题：查询不匹配就是
-/// 静静地什么都不做）。调用方用 [`speed_or_warn`] 解析组件，回退前先告警，
-/// 让「漏挂速度组件」在日志里可见。
-fn action_av_of(
-    category: SpeedCategory,
-    base_duration: f64,
-    move_speed: f64,
-    attack_speed: f64,
-) -> f64 {
-    category.action_av(base_duration, move_speed, attack_speed)
-}
-
-/// 解析速度组件；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
-///
-/// `name` 只用于日志。用 `Option<&MoveSpeed>` 而不是必需组件查询，是因为
-/// **Bevy 的查询遇到不匹配的 archetype 会静默返回空**（LESSONS.md L49）：
-/// 写成必需组件的话，一个漏挂速度组件的 actor 会直接从 AI 里消失。
-fn speed_or_warn(speed: Option<&MoveSpeed>, actor: Entity) -> f64 {
-    speed.map_or_else(
-        || {
-            log::warn!("actor={actor:?} 缺少 MoveSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
-            FALLBACK_SPEED
-        },
-        |speed| speed.0,
-    )
-}
-
-/// [`speed_or_warn`] 的 `AttackSpeed` 版本。
-fn attack_speed_or_warn(speed: Option<&AttackSpeed>, actor: Entity) -> f64 {
-    speed.map_or_else(
-        || {
-            log::warn!("actor={actor:?} 缺少 AttackSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
-            FALLBACK_SPEED
-        },
-        |speed| speed.0,
-    )
+/// 缺失**不应**被静默忽略（LESSONS.md L49 的同类问题：查询不匹配就是静静地
+/// 什么都不做），所以回退前先告警，让「漏挂速度组件」在日志里可见。
+fn actor_speeds(
+    actor: Entity,
+    move_speed: Option<&MoveSpeed>,
+    attack_speed: Option<&AttackSpeed>,
+) -> ActorSpeeds {
+    ActorSpeeds {
+        move_speed: move_speed.map_or_else(
+            || {
+                log::warn!("actor={actor:?} 缺少 MoveSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
+                FALLBACK_SPEED
+            },
+            |speed| speed.0,
+        ),
+        attack_speed: attack_speed.map_or_else(
+            || {
+                log::warn!("actor={actor:?} 缺少 AttackSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
+                FALLBACK_SPEED
+            },
+            |speed| speed.0,
+        ),
+    }
 }
 
 // ── 生成系统 ─────────────────────────────────────────
@@ -193,11 +194,9 @@ pub fn wander_generation_system(
             ActionSource::Ai,
             ActionName("Wander"),
             ActionTimer {
-                remaining_av: action_av_of(
-                    SpeedCategory::Move,
+                remaining_av: SpeedRule::Move.action_av(
                     WANDER_DURATION,
-                    speed_or_warn(move_speed, actor),
-                    FALLBACK_SPEED,
+                    actor_speeds(actor, move_speed, None),
                 ),
             },
             Wander,
@@ -232,11 +231,9 @@ pub fn flee_generation_system(
             ActionSource::Ai,
             ActionName("Flee"),
             ActionTimer {
-                remaining_av: action_av_of(
-                    SpeedCategory::Move,
+                remaining_av: SpeedRule::Move.action_av(
                     FLEE_DURATION,
-                    speed_or_warn(move_speed, actor),
-                    FALLBACK_SPEED,
+                    actor_speeds(actor, move_speed, None),
                 ),
             },
             Flee,
@@ -269,11 +266,7 @@ pub fn wait_generation_system(
             ActionName("Wait"),
             // 固定耗时：等待不受任何速度倍率影响（REFACTOR.md §11.6 第 4 项）。
             ActionTimer {
-                remaining_av: SpeedCategory::Fixed.action_av(
-                    WAIT_DURATION,
-                    FALLBACK_SPEED,
-                    FALLBACK_SPEED,
-                ),
+                remaining_av: SpeedRule::Fixed.action_av(WAIT_DURATION, actor_speeds(actor, None, None)),
             },
             Wait,
             Candidate,
@@ -323,11 +316,9 @@ pub fn chase_generation_system(
             ActionSource::Ai,
             ActionName("Chase"),
             ActionTimer {
-                remaining_av: action_av_of(
-                    SpeedCategory::Move,
+                remaining_av: SpeedRule::Move.action_av(
                     CHASE_DURATION,
-                    speed_or_warn(move_speed, actor),
-                    FALLBACK_SPEED,
+                    actor_speeds(actor, move_speed, None),
                 ),
             },
             Chase,
@@ -404,8 +395,8 @@ pub fn player_action_generation_system(
         return;
     };
 
-    let (action, category, duration) = match command {
-        PlayerCommand::Wait => (PlayerAction::Wait, SpeedCategory::Fixed, WAIT_DURATION),
+    let (action, rule, duration) = match command {
+        PlayerCommand::Wait => (PlayerAction::Wait, SpeedRule::Fixed, WAIT_DURATION),
         PlayerCommand::Move { dx, dy } => {
             let (nx, ny) = position.offset(dx, dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {
@@ -417,7 +408,7 @@ pub fn player_action_generation_system(
                     // 走向怪物 = 声明攻击（与旧实现一致）。
                     (
                         PlayerAction::BasicAttack(occupant),
-                        SpeedCategory::Attack,
+                        SpeedRule::Attack,
                         UNARMED_ATTACK_DURATION,
                     )
                 } else {
@@ -434,19 +425,14 @@ pub fn player_action_generation_system(
             } else {
                 (
                     PlayerAction::Move(Move { dx, dy }),
-                    SpeedCategory::Move,
+                    SpeedRule::Move,
                     UNARMED_ATTACK_DURATION,
                 )
             }
         }
     };
 
-    let remaining_av = action_av_of(
-        category,
-        duration,
-        speed_or_warn(move_speed, player),
-        attack_speed_or_warn(attack_speed, player),
-    );
+    let remaining_av = rule.action_av(duration, actor_speeds(player, move_speed, attack_speed));
 
     let mut action_cmd = commands.spawn((
         ChildOf(player),
@@ -1221,26 +1207,29 @@ mod tests {
         assert_eq!(mapped, 1.25, "旧敏捷 10 → 耗时系数 0.80 → 速度 1.25");
     }
 
-    /// 行动类别 → 速度组件的映射（`Move` 用移动速度、`Attack` 用攻击速度）。
+    /// 速度规则 → 速度组件的映射（`Move` 用移动速度、`Attack` 用攻击速度）。
     ///
     /// 玩家移动耗时沿用 `UNARMED_ATTACK_DURATION`（旧口径就是这样，共享同一个
     /// 基础耗时），所以这里用 `WANDER_DURATION` 区分两类速度更直白。
     #[test]
-    fn speed_category_selects_the_matching_component() {
-        let (move_speed, attack_speed) = (0.5, 2.0);
+    fn speed_rule_selects_the_matching_component() {
+        let speeds = ActorSpeeds {
+            move_speed: 0.5,
+            attack_speed: 2.0,
+        };
 
         assert_eq!(
-            SpeedCategory::Move.action_av(WANDER_DURATION, move_speed, attack_speed),
-            WANDER_DURATION / move_speed,
+            SpeedRule::Move.action_av(WANDER_DURATION, speeds),
+            WANDER_DURATION / speeds.move_speed,
             "移动类行动必须读 MoveSpeed"
         );
         assert_eq!(
-            SpeedCategory::Attack.action_av(UNARMED_ATTACK_DURATION, move_speed, attack_speed),
-            UNARMED_ATTACK_DURATION / attack_speed,
+            SpeedRule::Attack.action_av(UNARMED_ATTACK_DURATION, speeds),
+            UNARMED_ATTACK_DURATION / speeds.attack_speed,
             "攻击类行动必须读 AttackSpeed"
         );
         assert_eq!(
-            SpeedCategory::Fixed.action_av(WAIT_DURATION, move_speed, attack_speed),
+            SpeedRule::Fixed.action_av(WAIT_DURATION, speeds),
             WAIT_DURATION,
             "Wait 固定耗时，不受任何速度影响"
         );
