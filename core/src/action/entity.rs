@@ -50,7 +50,78 @@ use crate::resources::{GameRng, OccupancyMap};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
+use bevy_ecs::system::SystemParam;
 use std::collections::{HashMap, HashSet};
+
+// ── 查询与参数别名 ───────────────────────────────────
+//
+// 行动链路里同一段「actor 过滤条件」被五个生成系统重复，同一段
+// 「到期行动过滤条件」被六个执行器重复，同一批「行动事件写入器」被三个执行器
+// 重复。写成别名/`SystemParam` 之后，口径只有一份：改一次过滤条件不会漏改某个
+// 生成系统或执行器。
+//
+// 顺带解决 `clippy::type_complexity` 与 `clippy::too_many_arguments`：
+// 别名本身也是给读代码的人减少噪音，不只是为了让 lint 闭嘴。
+
+/// AI 生成系统共同的 actor 过滤：是怪物、有对应能力、当前空闲或上次失败。
+///
+/// `Without<Active>` 挡的是「自己已经有行动」，注意它**挡不住**
+/// 「actor 名下有 `ActiveAction` 子实体」——仲裁系统另有一道显式检查（§3.4）。
+type AiActor<C> = (
+    With<Monster>,
+    With<C>,
+    Without<Active>,
+    Or<(With<Idle>, With<Failure>)>,
+);
+
+/// 玩家路径的 actor 数据：实体 id + 位置 + 两个速度。
+type PlayerActorData = (
+    Entity,
+    &'static Position,
+    Option<&'static MoveSpeed>,
+    Option<&'static AttackSpeed>,
+);
+
+/// 一个 AI actor 的数据：实体 id + 移动速度。
+///
+/// 用 `Option<&MoveSpeed>` 而不是必需组件——理由见 [`actor_speeds`]：
+/// 必需组件会让漏挂速度的 actor 直接从查询里消失（LESSONS.md L49）。
+///
+/// `With<C>` / `Without<Active>` / `Or<..>` 是 **filter**，不能写进数据元组，
+/// 所以必须与 [`AiActor`] 一起作为 `Query` 的两个泛型参数给出去。
+type AiActorData = (Entity, Option<&'static MoveSpeed>);
+
+/// 仲裁的输入：尚未激活的候选（优先级 + 归属）。
+type CandidateAction = (Entity, &'static ActionPriority, &'static ChildOf);
+
+/// 已到期（`Ready`）的行动实体，按具体行动类型 `A` 过滤。
+///
+/// 只能在「filter 恰好就是 `(With<ActiveAction>, With<Ready>)`」时直接当
+/// `Query` 的 filter 用；需要再叠一个 filter 时用 [`ReadyActionWith`]。
+type ReadyAction<A> = (With<ActiveAction>, With<Ready>, With<A>);
+
+/// 到期行动的数据：实体 id + 归属。
+type ReadyActionEntity = (Entity, &'static ChildOf);
+
+/// 带 payload 的到期行动（`Move` / `BasicAttack`）。
+type ReadyActionPayload<A> = (Entity, &'static ChildOf, &'static A);
+
+/// 行动状态事件：执行器只发，completion 只读。
+///
+/// 打包成一个 `SystemParam` 而不是每个执行器各收三个 `EventWriter`：
+/// 三个执行器的参数个数因此各减 2，也不再可能漏接其中一个。
+#[derive(SystemParam)]
+pub struct ActionEvents<'w> {
+    pub succeeded: EventWriter<'w, ActionSucceededEvent>,
+    pub failed: EventWriter<'w, ActionFailedEvent>,
+}
+
+/// 移动类执行器共同的只读世界信息。
+#[derive(SystemParam)]
+pub struct MovementContext<'w> {
+    pub map: Res<'w, Map>,
+    pub occupancy: Res<'w, OccupancyMap>,
+}
 
 // ── 优先级表（REFACTOR.md §3.5） ──────────────────────
 //
@@ -177,15 +248,7 @@ fn actor_speeds(
 /// 游荡候选：空闲/失败且具 `CanWander` 的怪物各产出一个 `Wander` 候选。
 pub fn wander_generation_system(
     mut commands: Commands,
-    actors: Query<
-        (Entity, Option<&MoveSpeed>),
-        (
-            With<Monster>,
-            With<CanWander>,
-            Without<Active>,
-            Or<(With<Idle>, With<Failure>)>,
-        ),
-    >,
+    actors: Query<AiActorData, AiActor<CanWander>>,
 ) {
     for (actor, move_speed) in &actors {
         commands.spawn((
@@ -211,15 +274,7 @@ pub fn wander_generation_system(
 /// 以及给 §3.6.4「每个行为一个生成系统」提供第二个样本。
 pub fn flee_generation_system(
     mut commands: Commands,
-    actors: Query<
-        (Entity, Option<&MoveSpeed>, &Health),
-        (
-            With<Monster>,
-            With<CanFlee>,
-            Without<Active>,
-            Or<(With<Idle>, With<Failure>)>,
-        ),
-    >,
+    actors: Query<(Entity, Option<&MoveSpeed>, &Health), AiActor<CanFlee>>,
 ) {
     for (actor, move_speed, health) in &actors {
         if health.ratio() >= FLEE_HP_RATIO {
@@ -248,15 +303,7 @@ pub fn flee_generation_system(
 /// 有能力的 actor 不会出现「没有任何行动」的空转（§3.3 的兜底语义）。
 pub fn wait_generation_system(
     mut commands: Commands,
-    actors: Query<
-        Entity,
-        (
-            With<Monster>,
-            With<CanWait>,
-            Without<Active>,
-            Or<(With<Idle>, With<Failure>)>,
-        ),
-    >,
+    actors: Query<Entity, AiActor<CanWait>>,
 ) {
     for actor in &actors {
         commands.spawn((
@@ -280,15 +327,7 @@ pub fn wait_generation_system(
 /// `player_visible_to(actor) || LastKnownPlayerPos.0.is_some()`。
 pub fn chase_generation_system(
     mut commands: Commands,
-    actors: Query<
-        (Entity, Option<&MoveSpeed>),
-        (
-            With<Monster>,
-            With<CanChase>,
-            Without<Active>,
-            Or<(With<Idle>, With<Failure>)>,
-        ),
-    >,
+    actors: Query<AiActorData, AiActor<CanChase>>,
     viewsheds: Query<&Viewshed>,
     last_known: Query<&LastKnownPlayerPos>,
     player: Query<&Position, With<Player>>,
@@ -378,13 +417,9 @@ enum PlayerAction {
 pub fn player_action_generation_system(
     mut commands: Commands,
     mut request: ResMut<PlayerActionRequest>,
-    players: Query<
-        (Entity, &Position, Option<&MoveSpeed>, Option<&AttackSpeed>),
-        (With<Player>, Without<Active>),
-    >,
+    players: Query<PlayerActorData, (With<Player>, Without<Active>)>,
     monsters: Query<(), With<Monster>>,
-    map: Res<Map>,
-    occupancy: Res<OccupancyMap>,
+    movement: MovementContext,
 ) {
     let Some(command) = request.command.take() else {
         return;
@@ -403,7 +438,7 @@ pub fn player_action_generation_system(
                 log::debug!("玩家移动越界，拒绝请求: ({dx},{dy})");
                 return;
             }
-            if let Some(occupant) = occupancy.entity_at(nx, ny) {
+            if let Some(occupant) = movement.occupancy.entity_at(nx, ny) {
                 if monsters.get(occupant).is_ok() {
                     // 走向怪物 = 声明攻击（与旧实现一致）。
                     (
@@ -416,7 +451,7 @@ pub fn player_action_generation_system(
                     return;
                 }
             } else if crate::action::execution::movement::moved_position(
-                &map, &occupancy, *position, dx, dy,
+                &movement.map, &movement.occupancy, *position, dx, dy,
             )
             .is_none()
             {
@@ -490,10 +525,7 @@ pub fn build_player_mount_schedule() -> Schedule {
 /// 同优先级时 entity bits 小者胜出，保证结果可复现（REFACTOR.md §3.4）。
 pub fn action_arbitration_system(
     mut commands: Commands,
-    candidates: Query<
-        (Entity, &ActionPriority, &ChildOf),
-        (With<Candidate>, Without<ActiveAction>),
-    >,
+    candidates: Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>,
     active_actions: Query<&ChildOf, With<ActiveAction>>,
 ) {
     // 已经持有 `ActiveAction` 的 actor：本轮不得再被授予行动。
@@ -592,12 +624,10 @@ pub fn tick_action_timers_system(world: &mut World) {
 pub fn execute_wander_system(
     mut commands: Commands,
     mut rng: ResMut<GameRng>,
-    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Wander>)>,
+    actions: Query<ReadyActionEntity, ReadyAction<Wander>>,
     actors: Query<&Position>,
-    map: Res<Map>,
-    occupancy: Res<OccupancyMap>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
-    mut failed: EventWriter<ActionFailedEvent>,
+    movement: MovementContext,
+    mut events: ActionEvents,
 ) {
     use crate::action::execution::movement::moved_position;
 
@@ -617,7 +647,7 @@ pub fn execute_wander_system(
         let Ok(position) = actors.get(actor) else {
             // actor 已消失：清掉残留 action 实体并结束行动。
             commands.entity(action).despawn();
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
 
@@ -625,7 +655,7 @@ pub fn execute_wander_system(
             (rng.random_range(0, DIRECTIONS.len() as u64) as usize).min(DIRECTIONS.len() - 1);
         let (dx, dy) = DIRECTIONS[index];
 
-        match moved_position(&map, &occupancy, *position, dx, dy) {
+        match moved_position(&movement.map, &movement.occupancy, *position, dx, dy) {
             Some(next) => {
                 commands.entity(actor).insert(Position::new(next.x, next.y));
                 log::debug!(
@@ -638,7 +668,7 @@ pub fn execute_wander_system(
                 log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) 被挡，原地不动");
             }
         }
-        succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
@@ -651,13 +681,13 @@ pub fn execute_wander_system(
 /// 它上面的 `Ready` 随之消失；而「执行器不得回收实体」这条分层约束
 /// （见 [`execute_move_system`]）在 `Wait` 上同样成立。
 pub fn execute_wait_system(
-    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Wait>)>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
+    actions: Query<ReadyActionEntity, ReadyAction<Wait>>,
+    mut events: ActionEvents,
 ) {
     for (action, child_of) in &actions {
         let actor = child_of.parent();
         log::debug!("PoC 等待: actor={actor:?}（action={action:?}）");
-        succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
@@ -670,17 +700,21 @@ pub fn execute_wait_system(
 /// 3. 有可逃方向 → 走过去；全被堵住时，若**相邻且可见**则改为声明攻击
 ///    （顶到墙角也要反咬一口），否则原地不动；
 /// 4. 逃跑总是以成功结束。
+///
+/// 参数偏多（8 个）是 ECS 系统的固有形状：每个 `Query`/`Res`/`EventWriter` 都是
+/// 一个**类型不同**的入参，无法折成 DTO 而不丢查询语义（对比 `execute_chase_system`
+/// 用 `MovementContext` + `ActionEvents` 把 12 个压到 7 个——压缩到这里就压不动了：
+/// `positions`/`healths`/`viewsheds` 都是 `Query`，语义各异且都是可变访问点）。
+#[allow(clippy::too_many_arguments)]
 pub fn execute_flee_system(
-    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Flee>)>,
+    actions: Query<ReadyActionEntity, ReadyAction<Flee>>,
     mut positions: Query<&mut Position>,
     healths: Query<&Health>,
     viewsheds: Query<&Viewshed>,
     player: Query<Entity, With<Player>>,
-    map: Res<Map>,
-    occupancy: Res<OccupancyMap>,
+    movement: MovementContext,
     mut intents: EventWriter<AttackIntentEvent>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
-    mut failed: EventWriter<ActionFailedEvent>,
+    mut events: ActionEvents,
 ) {
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
@@ -701,20 +735,20 @@ pub fn execute_flee_system(
             .get(actor)
             .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
         {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         }
 
         let Ok(player_entity) = player.single() else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
         let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
         let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
         let player_tile = Position::new(player_position.0, player_position.1);
@@ -723,8 +757,8 @@ pub fn execute_flee_system(
         let mut best_distance = 0usize;
         for (dx, dy) in DIRECTIONS {
             if crate::action::execution::movement::can_move_to(
-                &map,
-                &occupancy,
+                &movement.map,
+                &movement.occupancy,
                 self_position.0,
                 self_position.1,
                 dx,
@@ -764,7 +798,7 @@ pub fn execute_flee_system(
         }
 
         log::debug!("PoC 逃跑: actor={actor:?} action={action:?}");
-        succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
@@ -785,12 +819,10 @@ pub fn execute_chase_system(
     viewsheds: Query<&Viewshed>,
     mut last_known: Query<&mut LastKnownPlayerPos>,
     player: Query<Entity, With<Player>>,
-    map: Res<Map>,
-    occupancy: Res<OccupancyMap>,
-    actions: Query<(Entity, &ChildOf), (With<ActiveAction>, With<Ready>, With<Chase>)>,
+    movement: MovementContext,
+    actions: Query<ReadyActionEntity, ReadyAction<Chase>>,
     mut intents: EventWriter<AttackIntentEvent>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
-    mut failed: EventWriter<ActionFailedEvent>,
+    mut events: ActionEvents,
 ) {
     use crate::spatial::pathfinding::astar;
 
@@ -798,15 +830,15 @@ pub fn execute_chase_system(
         let actor = child_of.parent();
 
         let Ok(player_entity) = player.single() else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
         let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
         let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
 
@@ -817,7 +849,7 @@ pub fn execute_chase_system(
         let memory = last_known.get(actor).ok().and_then(|known| known.0);
         // 保活：既看不见又没有记忆 → 行动失败。
         if !can_see && memory.is_none() {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         }
 
@@ -840,7 +872,7 @@ pub fn execute_chase_system(
                     target: player_entity,
                 });
             } else if let Some((nx, ny)) =
-                astar(self_position, (tx, ty), &map.tiles, Some(&occupancy))
+                astar(self_position, (tx, ty), &movement.map.tiles, Some(&movement.occupancy))
                     .and_then(|path| path.first().copied())
                 && let Ok(mut position) = positions.get_mut(actor)
             {
@@ -860,7 +892,7 @@ pub fn execute_chase_system(
         }
 
         log::debug!("PoC 追击: actor={actor:?} action={action:?} can_see={can_see}");
-        succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
@@ -875,12 +907,11 @@ pub fn execute_chase_system(
 ///
 /// 因此攻击的「只结算一次」保证（I90）不受迁移影响：执行器依旧只发一次意图。
 pub fn execute_basic_attack_system(
-    actions: Query<(Entity, &ChildOf, &BasicAttack), (With<ActiveAction>, With<Ready>)>,
+    actions: Query<ReadyActionPayload<BasicAttack>, (With<ActiveAction>, With<Ready>)>,
     positions: Query<&Position>,
     healths: Query<&Health>,
     mut intents: EventWriter<AttackIntentEvent>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
-    mut failed: EventWriter<ActionFailedEvent>,
+    mut events: ActionEvents,
 ) {
     for (action, child_of, attack) in &actions {
         let actor = child_of.parent();
@@ -903,7 +934,7 @@ pub fn execute_basic_attack_system(
             "PoC 攻击保活检查: attacker={actor:?} target={target:?} ok={ok} action={action:?}"
         );
         if !ok {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         }
 
@@ -911,7 +942,7 @@ pub fn execute_basic_attack_system(
             attacker: actor,
             target,
         });
-        succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeeded.write(ActionSucceededEvent { entity: actor });
     }
 }
 
@@ -931,12 +962,10 @@ pub fn execute_basic_attack_system(
 /// 抽取纯规则后这个约束自动消失，A41 的边界随之收窄。
 pub fn execute_move_system(
     mut commands: Commands,
-    mut actions: Query<(Entity, &ChildOf, &Move), (With<ActiveAction>, With<Ready>)>,
+    mut actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
     mut actors: Query<&mut Position>,
-    map: Res<Map>,
-    occupancy: Res<OccupancyMap>,
-    mut succeeded: EventWriter<ActionSucceededEvent>,
-    mut failed: EventWriter<ActionFailedEvent>,
+    movement: MovementContext,
+    mut events: ActionEvents,
 ) {
     use crate::action::execution::movement::moved_position;
 
@@ -945,11 +974,11 @@ pub fn execute_move_system(
         let Ok(mut position) = actors.get_mut(actor) else {
             // actor 已消失：清掉残留 action 实体并结束行动。
             commands.entity(action).despawn();
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
             continue;
         };
 
-        let moved = moved_position(&map, &occupancy, *position, action_move.dx, action_move.dy);
+        let moved = moved_position(&movement.map, &movement.occupancy, *position, action_move.dx, action_move.dy);
         match moved {
             Some(next) => {
                 position.x = next.x;
@@ -973,9 +1002,9 @@ pub fn execute_move_system(
 
         commands.entity(action).remove::<Ready>();
         if moved.is_some() {
-            succeeded.write(ActionSucceededEvent { entity: actor });
+            events.succeeded.write(ActionSucceededEvent { entity: actor });
         } else {
-            failed.write(ActionFailedEvent { entity: actor });
+            events.failed.write(ActionFailedEvent { entity: actor });
         }
     }
 }

@@ -1937,7 +1937,10 @@ fn parameterized_move_matches_world_based_move() {
     use crate::events::ActionSucceededEvent;
     use bevy_ecs::event::Events;
 
-    let cases: [(&str, (usize, usize), Option<(usize, usize)>, (isize, isize)); 4] = [
+    /// 一个对照情形：名字 + actor 起点 + 可选的占位实体位置 + 移动方向。
+    type MoveCase = (&'static str, (usize, usize), Option<(usize, usize)>, (isize, isize));
+
+    let cases: [MoveCase; 4] = [
         ("合法", (10, 10), None, (1, 0)),
         ("对角合法", (10, 10), None, (1, 1)),
         ("目标被占用", (10, 10), Some((11, 10)), (1, 0)),
@@ -1956,7 +1959,9 @@ fn parameterized_move_matches_world_based_move() {
             move_parity_scene(actor_pos, observer_pos, dx, dy);
         let _ = world_b.run_system_once(execute_move_system);
         let pos_b = world_b.get::<Position>(actor_b).unwrap().to_tuple();
-        let succeeded_b = world_b.resource::<Events<ActionSucceededEvent>>().len() > 0;
+        let succeeded_b = !world_b
+            .resource::<Events<ActionSucceededEvent>>()
+            .is_empty();
 
         assert_eq!(
             pos_a, pos_b,
@@ -1966,9 +1971,8 @@ fn parameterized_move_matches_world_based_move() {
             moved_a, succeeded_b,
             "情形「{name}」成功判定不一致：World 版 {moved_a} vs 参数化版 {succeeded_b}"
         );
-        assert_eq!(
+        assert!(
             world_b.get_entity(action_b).is_ok(),
-            true,
             "参数化执行器不得回收 action 实体（那是 completion 的职责）"
         );
         assert!(

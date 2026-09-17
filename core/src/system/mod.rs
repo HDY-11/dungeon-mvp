@@ -22,11 +22,48 @@ use crate::schedule::CoreSettleSchedule;
 use bevy_ecs::prelude::*;
 use std::collections::HashSet;
 
+// ── 查询别名 ─────────────────────────────────────────
+//
+// 结算链路里有三个「宽查询」：死亡候选、受击记录目标、升级玩家。字段多但语义
+// 明确（都是按 entity 读一批组件），写成别名比每次内联更易核对字段有没有漏。
+
+/// 受击记录目标：实体 + 可选的既有记录。
+type RecordTarget = (Entity, Option<&'static BeAttacked>);
+
+/// 死亡候选：实体 + 生命 + （玩家？经验奖励？名字？）。
+type DeathCandidate = (
+    Entity,
+    &'static Health,
+    Option<&'static Player>,
+    Option<&'static ExperienceReward>,
+    Option<&'static EntityName>,
+);
+
+/// 升级玩家：经验/等级/生命/法力 + 重算上限所需的防御与法术精通。
+type ExpPlayer = (
+    Entity,
+    &'static mut Experience,
+    &'static mut Level,
+    &'static mut Health,
+    &'static mut Magic,
+    &'static Defense,
+    &'static MagicMastery,
+);
 // ── 行动执行与伤害 ───────────────────────────────────
 // 攻击执行系统位于 `action::execution::execute_basic_attack_system`。
 // 这里只保留伤害结算与应用系统。
 
 /// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
+///
+/// 参数偏多（8 个）是 ECS 系统的固有形状——`EventReader` / `Query` / `ResMut`
+/// 每类都是一个独立入参，折成 DTO 会丢掉 Bevy 的参数校验（「可变访问是否冲突」
+/// 这类错误会从编译期推迟到运行期）。这里保留显式签名。
+///
+/// 顺带记录一条实测结论：把这四个查询抽成 `type CombatQueries = (Query<..>, ..)`
+/// **不行**——`Query<'w, 's, D, F>` 的 `'w`/`'s` 必须由系统参数推导，而 `type`
+/// 别名里没有 `'w`/`'s` 可写（`Query<&'static Attack>` 会把 `'w`/`'s` 固定死，
+/// 报 `not a valid SystemParam`）。要抽就只能抽成 `#[derive(SystemParam)]` 结构体。
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_system(
     mut attack_intents: EventReader<AttackIntentEvent>,
     attacks: Query<&Attack>,
@@ -90,7 +127,7 @@ pub fn apply_damage_system(
 pub fn record_be_attacked_system(
     mut commands: Commands,
     mut attack_events: EventReader<AttackEvent>,
-    targets: Query<(Entity, Option<&BeAttacked>), (With<Health>, With<NeedRecordBeAttacked>)>,
+    targets: Query<RecordTarget, (With<Health>, With<NeedRecordBeAttacked>)>,
 ) {
     for event in attack_events.read() {
         if let Ok((target, existing)) = targets.get(event.target) {
@@ -107,13 +144,7 @@ pub fn record_be_attacked_system(
 /// 必须最后执行：把死亡实体转为 `DeathEvent`，并处理玩家失败/怪物经验。
 pub fn check_death_system(
     mut commands: Commands,
-    query: Query<(
-        Entity,
-        &Health,
-        Option<&Player>,
-        Option<&ExperienceReward>,
-        Option<&EntityName>,
-    )>,
+    query: Query<DeathCandidate>,
     mut death_events: EventWriter<DeathEvent>,
     mut pending_exp: ResMut<PendingExp>,
     mut turn_manager: ResMut<TurnManager>,
@@ -147,15 +178,7 @@ pub fn check_death_system(
 // ── 经验与升级 ───────────────────────────────────────
 
 pub fn apply_exp_system(
-    mut players: Query<(
-        Entity,
-        &mut Experience,
-        &mut Level,
-        &mut Health,
-        &mut Magic,
-        &Defense,
-        &MagicMastery,
-    ), With<Player>>,
+    mut players: Query<ExpPlayer, With<Player>>,
     mut pending_exp: ResMut<PendingExp>,
     mut event_log: ResMut<EventLog>,
     mut level_events: EventWriter<LevelUpEvent>,
