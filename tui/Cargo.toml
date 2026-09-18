@@ -5,6 +5,6 @@ edition = "2024"
 
 [dependencies]
 bevy_ecs = { workspace = true }
-core = { path = "../core" }
+ecs_core = { path = "../ecs_core" }
 ratatui = "0.30.2"
 utils = { path = "../utils" }

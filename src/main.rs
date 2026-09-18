@@ -1,14 +1,14 @@
-//! dungeon-app：最小可运行的新 core 装配层。
+//! dungeon-app：最小可运行的 ecs_core 装配层。
 //!
-//! 输入来自 sys，规则运行在 core，画面渲染在 tui。
+//! 输入来自 sys，规则运行在 ecs_core，画面渲染在 tui。
 
 use std::io::{self, stdout};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::prelude::World;
 use crossterm::event::KeyCode;
-use core::world_loop::{apply_player_command, new_game, request_quit};
-use core::PlayerCommand;
+use ecs_core::world_loop::{apply_player_command, new_game, request_quit};
+use ecs_core::PlayerCommand;
 use ratatui::Terminal;
 use sys::{self, try_recv_key};
 use tui::{DevLogBuffer, render_game};
@@ -56,7 +56,7 @@ fn main() -> io::Result<()> {
 
         terminal.draw(|frame| render_game(frame, &mut world))?;
 
-        if world.resource::<core::TurnManager>().wants_quit {
+        if world.resource::<ecs_core::TurnManager>().wants_quit {
             break;
         }
 

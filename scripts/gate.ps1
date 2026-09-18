@@ -32,13 +32,13 @@ Push-Location $repoRoot
 # 每个步骤：名字 + cargo 参数。
 $steps = @(
     @{ Name = 'cargo check --workspace';   Args = @('check', '--workspace') + $offlineArgs }
-    @{ Name = 'cargo test (新 core 方向)'; Args = @('test', '-p', 'render-api', '-p', 'core', '-p', 'utils', '-p', 'tui', '-p', 'sys') + $offlineArgs }
+    @{ Name = 'cargo test (新 core 方向)'; Args = @('test', '-p', 'render-api', '-p', 'ecs_core', '-p', 'utils', '-p', 'tui', '-p', 'sys') + $offlineArgs }
 )
 if (-not $SkipClippy) {
     # 注意 --offline 必须放在 -- **之前**：`--` 之后的参数是给 rustc 的，
     # `--offline` 会被 rustc 当成未知选项（本脚本第一版就踩了这个坑）。
     $steps += @{ Name = 'cargo clippy -p render-api'; Args = @('clippy', '-p', 'render-api', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
-    $steps += @{ Name = 'cargo clippy -p core';       Args = @('clippy', '-p', 'core', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
+    $steps += @{ Name = 'cargo clippy -p ecs_core';       Args = @('clippy', '-p', 'ecs_core', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
 }
 
 # 直接调用 cargo，但把「原生命令的非零退出」交给 $LASTEXITCODE 判定：

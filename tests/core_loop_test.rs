@@ -1,26 +1,26 @@
-//! 端到端 headless 集成测试：只用新 `core` 的公共 API 跑完整闭环。
+//! 端到端 headless 集成测试：只用新 `ecs_core` 的公共 API 跑完整闭环。
 //!
 //! 这是 I88 的替代品——旧 `tests/scenario_test.rs` / `tests/throw_test.rs` 针对
 //! 已作废的 `dungeon-*` 架构（`dungeon_tui` / `setup_world` 等），已归档到
 //! `archive/legacy-tests/`。
 //!
-//! 与 `core` 内部单元测试的区别：这里不碰任何 `pub(crate)` 细节，也不依赖
+//! 与 `ecs_core` 内部单元测试的区别：这里不碰任何 `pub(crate)` 细节，也不依赖
 //! `#[cfg(test)]` helper，验证的是**应用层真正能用的那组 API**：
 //! `new_game` / `apply_player_command` / `player_alive` / `request_quit`。
 //!
 //! 渲染不在本轮范围：`render-api` 的消费验证属于 REFACTOR §11 Phase G（presentation/tui）。
 
 use bevy_ecs::prelude::{Component, Entity, With, World};
-use core::components::{Health, Position};
-use core::entity_cls::{Monster, Player, Stairs};
-use core::map::{Map, Tile, MAP_HEIGHT, MAP_WIDTH};
-use core::world_loop::{apply_player_command, new_game, player_alive, request_quit};
-use core::{PlayerCommand, TurnManager};
+use ecs_core::components::{Health, Position};
+use ecs_core::entity_cls::{Monster, Player, Stairs};
+use ecs_core::map::{Map, Tile, MAP_HEIGHT, MAP_WIDTH};
+use ecs_core::world_loop::{apply_player_command, new_game, player_alive, request_quit};
+use ecs_core::{PlayerCommand, TurnManager};
 
 /// 找一个“相邻、在界内、可走、且没被占用”的方向。
 fn find_walkable_step(world: &World, pos: (usize, usize)) -> Option<(isize, isize)> {
     let map = world.resource::<Map>();
-    let occupancy = world.resource::<core::OccupancyMap>();
+    let occupancy = world.resource::<ecs_core::OccupancyMap>();
     let dirs: [(isize, isize); 8] = [
         (0, -1),
         (0, 1),
@@ -69,7 +69,7 @@ fn despawn_all<E: Component>(world: &mut World) {
 fn clear_actors(world: &mut World) {
     despawn_all::<Monster>(world);
     despawn_all::<Stairs>(world);
-    core::system::run_settle_systems(world);
+    ecs_core::system::run_settle_systems(world);
 }
 
 #[test]
@@ -185,10 +185,10 @@ fn player_defeats_an_adjacent_monster() {
         pos.y = py;
     }
     world.resource_mut::<Map>().tiles[py][px + 1] = Tile::Floor;
-    world.entity_mut(target).insert((Health::new(6.0), core::Defense(0.0)));
+    world.entity_mut(target).insert((Health::new(6.0), ecs_core::Defense(0.0)));
     // 关键：玩家行动生成读的是占用图，手工搬动实体后必须重建，
     // 否则“走向怪物格”不会被识别为攻击声明（只是失败的移动）。
-    core::system::run_settle_systems(&mut world);
+    ecs_core::system::run_settle_systems(&mut world);
 
     assert!(
         apply_player_command(&mut world, PlayerCommand::Move { dx: 1, dy: 0 }),
@@ -278,7 +278,7 @@ fn long_random_walk_keeps_world_consistent() {
         );
 
         // 不变量 3：玩家空闲时不得残留 action 子实体。
-        if world.get::<core::Idle>(player).is_some() {
+        if world.get::<ecs_core::Idle>(player).is_some() {
             let leftovers = {
                 let mut query =
                     world.query_filtered::<Entity, With<bevy_ecs::hierarchy::ChildOf>>();
@@ -324,7 +324,7 @@ fn player_death_ends_the_game() {
         health.current = 1.0;
         health.max = 1.0;
     }
-    world.entity_mut(player).insert(core::MoveSpeed(0.25));
+    world.entity_mut(player).insert(ecs_core::MoveSpeed(0.25));
 
     let monster = {
         let mut query = world
@@ -342,9 +342,9 @@ fn player_death_ends_the_game() {
     // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
     // 速度改成**下限** `MIN_SPEED`：玩家的 AV 被拉到最长（800ms 等待 ×4），
     // 怪物一定先手，用最少的轮数钉住「怪物先动手」这一前提。
-    world.entity_mut(monster).insert(core::MoveSpeed(core::MIN_SPEED));
+    world.entity_mut(monster).insert(ecs_core::MoveSpeed(ecs_core::MIN_SPEED));
     // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
-    core::system::run_settle_systems(&mut world);
+    ecs_core::system::run_settle_systems(&mut world);
 
     apply_player_command(&mut world, PlayerCommand::Wait);
 

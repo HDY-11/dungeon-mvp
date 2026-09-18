@@ -1,7 +1,7 @@
 //! 从新 core 提取一帧渲染快照。
 
 use bevy_ecs::prelude::*;
-use core::{
+use ecs_core::{
     EventLog, FloorNumber, Health, Level, Map, MapKind, MapMemory, MonsterKindId, Player,
     Position, Stairs, Tile, TurnManager, Viewshed, monster_template,
 };
@@ -28,8 +28,8 @@ pub struct Scene {
     pub game_over: bool,
     pub player: Option<EntityView>,
     pub visible: HashSet<(usize, usize)>,
-    pub tiles: [[Tile; core::MAP_WIDTH]; core::MAP_HEIGHT],
-    pub explored: [[bool; core::MAP_WIDTH]; core::MAP_HEIGHT],
+    pub tiles: [[Tile; ecs_core::MAP_WIDTH]; ecs_core::MAP_HEIGHT],
+    pub explored: [[bool; ecs_core::MAP_WIDTH]; ecs_core::MAP_HEIGHT],
     pub entities: Vec<EntityView>,
     pub log: Vec<String>,
     pub map_kind: MapKind,
@@ -43,8 +43,8 @@ pub fn extract_scene(world: &mut World) -> Scene {
     let tiles = map.tiles;
 
     let map_kind = {
-        let seed = world.resource::<core::MapSeed>().0;
-        core::map_kind_for(seed, floor)
+        let seed = world.resource::<ecs_core::MapSeed>().0;
+        ecs_core::map_kind_for(seed, floor)
     };
 
     let visible: HashSet<(usize, usize)> = {
@@ -56,7 +56,7 @@ pub fn extract_scene(world: &mut World) -> Scene {
     };
 
     let player = {
-        let mut q = world.query::<(&Player, &Position, &Health, &Level, &core::Experience)>();
+        let mut q = world.query::<(&Player, &Position, &Health, &Level, &ecs_core::Experience)>();
         q.iter(world).next().map(|(_, p, hp, level, _exp)| EntityView {
             x: p.x,
             y: p.y,

@@ -4,22 +4,33 @@ Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 
 ## 当前状态（refactor）
 
-本分支正在向 **业务领域只存在于 `core`** 的方向重构。
+本分支正在向 **业务领域只存在于 `ecs_core`** 的方向重构。
 
-- `core/` 是新的唯一业务/领域层，完全采用 ECS 范式。
+- `ecs_core/` 是新的唯一业务/领域层，完全采用 ECS 范式。
+  crate 名为 `ecs_core`（原 `core`，见 [DESIGN.md Dsn29](DESIGN.md)），
+  目录名与包名一致：`use ecs_core::…` / `cargo test -p ecs_core`。
 - 旧代码（`dungeon-core/`、`dungeon-action/`、`dungeon-world/`、`dungeon-render/`、`src/`）视为历史/过渡实现，参考价值有限。
 - 旧组件体系（`Stats`、`ActionKindV3`、`ActionQueue` 等）不再作为新功能基础。
 
 ## 架构（目标形态）
 
 ```
-core/                     ← 唯一业务/领域层，完全 ECS
-  components.rs           ← 领域组件：Position、Health、Magic、Level、Experience、Attack、Defense、…
-  entity_cls.rs           ← 实体类型 marker：Player、Rat、…
-  events.rs               ← 领域事件：AttackEvent、…
-  resources.rs            ← 领域资源（规划中）
-  system.rs               ← 领域系统：死亡、受击记录、普攻执行、…
-  map_gen.rs              ← 地图生成（规划中）
+ecs_core/                 ← 唯一业务/领域层，完全 ECS（crate: ecs_core）
+  lib.rs                  ← 模块声明与公共面
+  components.rs           ← 领域组件：Position、Health、Magic、Level、Experience、Attack、Defense、MoveSpeed、AttackSpeed、…
+  entity_cls.rs           ← 实体类型 marker：Player、Monster、Stairs、…
+  events.rs               ← 领域事件：AttackEvent、AttackIntentEvent、DeathEvent、…
+  resources.rs            ← 领域资源：Map、GameRng、MapMemory、OccupancyMap、EventLog、TurnManager、…
+  balance.rs              ← 数值公式与平衡常量（AV 公式、经验曲线、阈值）
+  schedule.rs             ← 持久 Schedule 标签（CoreInit / CoreSettle / ActionPoc / PlayerMount）
+  test_util.rs            ← #[cfg(test)] 测试辅助（搭 World / spawn 实体 / 快照）
+  action/                 ← 行动链路：action 实体、生成、仲裁、tick、执行、completion
+  combat/                 ← 近战伤害与暴击纯函数
+  map/                    ← 地图数据与生成
+  monster/                ← 怪物模板与生成权重
+  spatial/                ← FOV / LOS / A*
+  system/                 ← 结算系统：伤害、死亡、经验、视野、记忆、占用图
+  world/                  ← 初始化、应用入口（new_game / apply_player_command）、查询辅助
 ```
 
 旧 crate 在迁移完成前暂时保留：
@@ -43,11 +54,11 @@ render-api/               ← 后端无关的只读数据契约
   input.rs                ← InputEvent / InputQueue / SurfaceInfo：后端无关输入与表面尺寸
 ```
 
-- `tui` / 未来的 `gpu` 只依赖 `render-api`，不依赖 `core`；
-- `presentation`（下一步）负责把 `core` 提取成 `SceneFrame`；
+- `tui` / 未来的 `gpu` 只依赖 `render-api`，不依赖 `ecs_core`；
+- `presentation`（下一步）负责把 `ecs_core` 提取成 `SceneFrame`；
 - 完整渲染后端插件化方案（presentation / TuiPlugin / bevy_app / GPU 切换）见 [DESIGN.md Dsn28](DESIGN.md) 与 [REFACTOR.md §12](REFACTOR.md)。
 
-## 行动模型（core 方向）
+## 行动模型（ecs_core 方向）
 
 采用 **ECS 原生组件模型**，不再使用全局 `ActionQueue`：
 

@@ -127,7 +127,7 @@ DESIGN Dsn27 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 ---
 
-### I86 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复
+### I86 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复（根因已消除：F5 改名 `ecs_core`）
 
 
 
@@ -143,7 +143,7 @@ DESIGN Dsn27 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 
 
-**状态：** ✅已修复（crate 改名仍待长期评估）。
+**状态：** ✅已修复。**改名已落地（F5）**：crate 名由 `core` 改为 `ecs_core`（目录同名），与标准库 `core` 的遮蔽从根上消除，`core::convert::Infallible` 这类必须绕行/特意写成 `std::` 的写法不再必要。决策见 DESIGN Dsn29。
 
 
 

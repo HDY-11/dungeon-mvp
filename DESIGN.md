@@ -921,3 +921,60 @@ Last        : TUI draw / GPU sync
 **关联：** DESIGN Dsn1 / Dsn20 / Dsn21 / Dsn26；REFACTOR §12；ISSUES I87/I88；README 渲染契约章节。
 
 **状态：** 草案；R0 已落地；R1 起待 core Phase A–F 完成后启动（REFACTOR §11 Phase G）。
+
+---
+
+### Dsn29 `core` crate 改名 `ecs_core`（措辞与路径对齐）
+
+**决策**
+
+- 新领域层的 crate 名由 `core` 改为 **`ecs_core`**，目录名同步由 `core/` 改为
+  `ecs_core/`，使**包名与目录名一致**（`cargo test -p ecs_core`、`use ecs_core::…`）。
+- 依赖方同步：根 `Cargo.toml`、`tui/Cargo.toml`、`src/main.rs`、
+  `tests/core_loop_test.rs`、`tui/src/{render,scene}.rs`、`scripts/gate.ps1`。
+- 旧 `dungeon-core` 不改名、不动其内部的 `dungeon_core::` 引用——它属于待清理的
+  历史层（Dsn25 / REFACTOR §12 R5）。
+
+**背景**
+
+`core` 与 Rust 标准库的 `core` crate 同名，代价是具体的、已经被踩到的：
+
+1. `#[derive]` 展开与手写代码里的 `core::fmt` / `core::hash` / `core::convert`
+   会被本地 crate 遮蔽——本项目修 I86 时就不得不用手写 `ScheduleLabel::impl`
+   绕开 derive 展开，`resources.rs` 里的 `core::convert::Infallible` 也要特意
+   写成 `std::convert::Infallible` 才不会被解析到本地 crate。
+2. doctest 一律不可用（crate 名 `core` 下，doctest 的 `core::` 指向本地 crate），
+   等于永久放弃一种测试形态。
+3. 大小写与语义混淆：文档里说「`core` 不依赖 ratatui」时，读者无法区分是
+   「本地领域层」还是「Rust 的 core」。`ecs_core` 让 crate 名自带领域含义
+   （「用 ECS 写的领域内核」），与 `render-api` / `dungeon-app` 并排也更整齐。
+
+**为什么现在改**
+
+改名的成本与**引用面**成正比，而引用面只在收敛期变小：Phase D 前 `core` 的公共面
+是 `pub use *` 全暴露、旧链路还在调用；现在行动/速度两条链路都已收敛，全库对它的
+引用只剩 7 个文件、不到 30 处。再往后 `presentation`（Phase G）会成为第二个依赖方，
+那时改名要同时动两个集成层。
+
+**代价**
+
+- 与历史文档/commit 里的 `core` 字样不再字面一致；已在 REFACTOR §10.5 的冻结清单
+  与本节记录映射关系，检索时注意 `core`（旧名）与 `ecs_core`（现名）。
+- `cargo -p core` 这类命令要改成 `-p ecs_core`；已同步 `scripts/gate.ps1`。
+- 目录名 `ecs_core/` 与包名一致，避免了「目录 `core`／包名 `ecs_core`」这种
+  一眼看不出的不一致。
+
+**被否的方案**
+
+- ~~保留 `core` 只在文档里说明~~：不解决遮蔽问题，I86 那类绕行还会被后来者重新踩。
+- ~~改名 `game-core` / `domain`~~：`game-core` 与旧 `dungeon-core` 命名风格重复，
+  看不出技术形态；`domain` 丢掉了「这是 ECS」这一关键信息，且与 DDD 的
+  domain 语义（业务规则层，不含 ECS 机制）不完全吻合。
+- ~~目录留 `core/`、只改包名~~：排除，包名与目录名不一致会让 `cargo -p` 与
+  路径引用长期对不上（本次一并改掉）。
+
+**关联：** REFACTOR §10.5 冻结清单 / §10.6 第 1 项 / §11.3 Phase F5 / §11.6 第 8 项；
+ISSUES I86；DESIGN Dsn25 / Dsn28。
+
+**状态：** 已落地（Phase F5）。`cargo check --workspace`、`cargo test --workspace`
+（25 目标 / 198 passed）、`scripts/gate.ps1`（4 步）在改名后全绿。

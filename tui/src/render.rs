@@ -5,7 +5,7 @@ use crate::scene::{
     EntityView, Scene, VIEW_HEIGHT, VIEW_WIDTH, extract_scene, tile_bg, tile_color, tile_glyph,
 };
 use bevy_ecs::prelude::World;
-use core::{MAP_HEIGHT, MAP_WIDTH};
+use ecs_core::{MAP_HEIGHT, MAP_WIDTH};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},

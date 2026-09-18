@@ -30,7 +30,7 @@
 | crate | 职责 | 禁止 |
 |---|---|---|
 | `utils` | 无状态、无业务的通用工具与数据结构 | 依赖 bevy / ratatui / crossterm / 业务 crate |
-| `core` | 唯一业务/领域层，ECS 组件、系统、地图、AI、战斗、初始化 | UI、OS 交互、纯工具函数 |
+| `ecs_core`（原 `core`） | 唯一业务/领域层，ECS 组件、系统、地图、AI、战斗、初始化 | UI、OS 交互、纯工具函数 |
 | `sys` | OS 交互：终端状态、输入线程、文件字节读写、文件日志 | 业务规则、ECS 组件、渲染 |
 | `tui` | 渲染与 UI 状态：颜色转换、布局工具、Canvas、页面渲染 | 终端事件读取、文件 IO、业务规则 |
 | `dungeon-app` | 根 crate / 应用装配：主循环、输入到 core、core 到 tui | 具体业务实现 |
@@ -628,7 +628,7 @@ sys::spawn_key_source()
 | 范围 | 等级 | 稳定的是 | 会变的是 | 测试基线 |
 |---|---|---|---|---|
 | `render-api` | **S1（契约）** | `SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的只读契约方向；`CONTRACT_VERSION = 1`；34 个测试 | 首个消费者（presentation/tui）落地前字段可能调整；破坏性改动必须递增版本 | ✅ 34 |
-| `core` 领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `ActionKind` 与 `Agility` 已删除（§3.6 / §2.6 均已落地）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ✅ 71 |
+| `ecs_core`（原 `core`）领域模型 | **S1（语义）/ S2（API）** | 细粒度组件、`Can*`、`Idle/Active/Failure`、生成/仲裁/执行、事件链、`(seed, floor)` 地图确定性 | `ActionKind` 与 `Agility` 已删除（§3.6 / §2.6 均已落地）；公共 API 目前 `pub use *` 全暴露；物品/技能等会追加 | ✅ 71 |
 | `core::world` 应用入口 | **S2** | `new_game` / `apply_player_command` / `request_quit` 的“命令驱动回合”语义 | 可能被 `CorePlugin` 包装；`build_init_schedule` / `build_core_schedule` 已改持久 Schedule；事件生命周期已修（I90） | ✅ 含在 core 71 内 |
 | 行动实体设计（§3.6） | **S1（已落地）** | action 子实体、`ActionPriority`、`ActionTimer`、`Ready`、completion 的语义 | 命名/字段已冻结；`Candidate`/`ActiveAction` 的池化策略未来可能调整 | ✅ parity 套件 |
 | `utils` | **S1** | 无业务依赖的通用工具 | 基本不变；缺测试 | ⚠️ 0 |
@@ -638,7 +638,7 @@ sys::spawn_key_source()
 | 旧 `dungeon-*` / `src/pages` | **S4** | 仅历史参考 | 不再扩展；迁移完成后删除/归档 | 旧测试不属于新代码 |
 | `terrain-forge` | **S1（外部）** | 地图生成引擎接口 | 上游变更可能影响地图确定性；由 `(seed, floor)` 锁定行为 | 新 core 无专项测试 |
 
-### 10.3 `core` 细分
+### 10.3 `ecs_core` 细分
 
 | 模块 | 等级 | 说明 |
 |---|---|---|
@@ -686,7 +686,7 @@ sys::spawn_key_source()
 - serde 兼容：`Tile` u8 0..10、`MonsterKindId` 变体、`MapKind` 变体只能末尾追加；新字段 `#[serde(default)]`。
 - `core::world_loop::{new_game, apply_player_command, request_quit}` 的调用语义（名字可保留兼容包装）。
 - `render-api` v1 契约：`SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 的字段可以追加；破坏性改动递增 `CONTRACT_VERSION`。
-- 架构边界：`core` 不依赖 `bevy_app` / ratatui / wgpu / `render-api` / `presentation`；`tui` / `gpu` 不依赖 `core`。
+- 架构边界：`ecs_core` 不依赖 `bevy_app` / ratatui / wgpu / `render-api` / `presentation`；`tui` / `gpu` 不依赖 `ecs_core`。
 
 允许/预期变更（不要在新代码里深度依赖）：
 
@@ -699,7 +699,7 @@ sys::spawn_key_source()
 
 ### 10.6 进入下半前建议处理（按优先级）
 
-1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl；`cargo test -p core` 通过（4 单测 + doctest）。长期仍建议评估 crate 改名（`game-core` / `domain`），避免与标准库 `core` 同名。
+1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl。**crate 改名已落地（F5）**：`core` → `ecs_core`（目录同名），遮蔽问题从根上消除，见 DESIGN Dsn29。
 2. **给 `core` 加冒烟回归**：进行中 — 已补 AV 门禁（快怪多动/慢怪等待）与事件只结算一次（I89/I90，共 4 个测试）；地图生成确定性、玩家移动/攻击、死亡→经验→升级、FOV/记忆/占用图仍待补。
 3. **修复 `sys` 独立构建**：给 `sys` 的 `log` 依赖显式加 `features = ["std"]`（或 workspace `log` 统一声明），确保 `cargo test -p sys` 不依赖 feature 合并偶然通过；补输入/日志测试。
 4. **处理失效的根集成测试**：`tests/scenario_test.rs` / `tests/throw_test.rs` 针对旧 crate；要么删除/归档，要么重写为新 `core` + `render-api` 的 headless 测试。不要让 `cargo test --workspace` 长期失败。
@@ -799,7 +799,7 @@ A ──▶ F（并行）
 | A6 | 快怪多动：两个 actor 不同 AV，连续 `run_action_cycle`，AV 小的执行次数更多 | `core/src/action/execution/mod.rs` 测试 | 执行计数符合 AV |
 | A7 | 测试辅助：统一的 `test_world()`/`spawn_test_actor()` helper，避免每个测试重复搭 World | `core/src/test_util.rs`（`#[cfg(test)]`） | helper 编译且被复用 |
 
-**注意：** `core` crate 名与标准库 `core` 同名；新增测试优先用单元测试（`#[cfg(test)]`），不新增依赖 `core::` 的 doctest。
+**注意：** crate 已改名 `ecs_core`（F5 / DESIGN Dsn29），不再与标准库 `core` 同名；新增测试仍优先用单元测试（`#[cfg(test)]`），doctest 现在可用但不是主要形态。
 
 #### Phase B — action 实体 PoC（✅ 已完成）
 
@@ -933,7 +933,7 @@ A ──▶ F（并行）
 | F2 | I88：删除/归档旧根集成测试；重写为新 core + render-api headless 测试 | `cargo test -p dungeon-app` 通过（或明确不纳入） |
 | F3 | core clippy：`too_many_arguments`/`type_complexity`/`collapsible_if` 历史警告 | ✅ 21 → 0，`cargo clippy -p core --all-targets -- -D warnings` 通过（commit e751914） |
 | F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | ✅ `scripts/gate.ps1`（含 core clippy 共 4 步，全绿退出 0）；用法见 PROTOCOLS.md §五 |
-| F5 | `core` crate 改名评估（I86 长期） | 记录决策，不阻塞本轮 |
+| F5 | `core` crate 改名评估（I86 长期） | ✅ 改名为 `ecs_core`（目录同名，7 个文件引用全部同步）；决策记录见 DESIGN Dsn29。`scripts/gate.ps1` 的 `-p core` 已同步为 `-p ecs_core` |
 
 #### Phase G — 回到 presentation + tui
 
@@ -987,7 +987,7 @@ A ──▶ F（并行）
 | 5 | 怪物速度映射 | **先按旧敏捷保行为映射**，再在 GAME.md 用 `[⃞试调]` 重调 |
 | 6 | Phase E 死抽象 | **先记录，不删除**；Phase E 前逐项确认是否删除/接线（见 §10.8 / A43） |
 | 7 | I87/I88 | **Phase A 后立即修**，恢复 `cargo test` 门禁 |
-| 8 | `core` 改名 | **本轮不改**；独立决策 |
+| 8 | `core` 改名 | **已执行（F5）**：改名 `ecs_core`，消除与标准库 `core` 的遮蔽；见 DESIGN Dsn29 |
 
 **下一步：** Phase E（死抽象清理，逐项确认）与 F3/F4（core clippy、一键门禁）。
 
