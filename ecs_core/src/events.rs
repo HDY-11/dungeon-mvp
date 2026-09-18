@@ -24,10 +24,17 @@ pub struct AttackEvent {
 
 /// 实体死亡。
 ///
-/// 死亡系统应消费该事件执行清理；清理逻辑不放在伤害系统中。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+/// **携带经验奖励**是刻意的：奖励数值只有死亡那一刻能拿到——`check_death_system`
+/// 发完事件就 `despawn` 实体。若不带，经验系统就只能反过来在一张"旁路表"里
+/// 找奖励（旧实现的 `PendingExp` 资源），于是同一件事同时存在事件与旁路两条路
+/// （REFACTOR.md §10.8：`PendingExp` 是绕过 `DeathEvent` 的旁路，已删除）。
+///
+/// 消费者：`system::experience::apply_exp_system`（只把奖励给玩家）。
+#[derive(Event, Debug, Clone, Copy, PartialEq)]
 pub struct DeathEvent {
     pub entity: Entity,
+    /// 该实体死亡时应给玩家的经验；无奖励的实体（例如玩家自己）为 0。
+    pub reward: f64,
 }
 
 /// 行动执行成功。
@@ -42,28 +49,9 @@ pub struct ActionFailedEvent {
     pub entity: Entity,
 }
 
-/// 玩家升级。
+/// 玩家升级（可能一轮多次）。
 #[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LevelUpEvent {
     pub entity: Entity,
     pub new_level: u64,
-}
-
-/// 仇恨事件。本轮只预留接口，暂不接入完整仇恨算法。
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
-pub struct ThreatEvent {
-    pub source: Entity,
-    pub target: Entity,
-    pub amount: f64,
-    pub reason: ThreatReason,
-}
-
-/// 仇恨来源类型。后续仇恨系统按此加权。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThreatReason {
-    Damage,
-    Sight,
-    Noise,
-    Heal,
-    Proximity,
 }

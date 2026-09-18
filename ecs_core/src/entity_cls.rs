@@ -1,40 +1,17 @@
-//! 实体范畴与身份标记。
+//! 实体类别标记。
 //!
-//! 设计约定：
-//! - 范畴（enum）回答“这类实体使用哪套公式/生命周期”。
-//! - 身份（ZST 组件）回答“这个实体是谁”，用于查询过滤和决定挂载哪些组件。
-//! - 一个实体可以没有身份标记，但应至少有一个范畴组件。
+//! 只有**查询用 ZST**：`Player` / `Monster` / `Stairs` 回答“这个实体是什么”，
+//! 用于过滤与归属判断。物种级数据（数值、名字、字形、生成权重）一律查
+//! [`crate::monster::monster_template`]，不再用一层身份 ZST 重复表达
+//! （REFACTOR.md §10.8：`Rat`/`Scorpion`/… 与 `MonsterKindId` 重复，已删除）。
+//!
+//! 已删除的“范畴”枚举（`EntityClass` / `CreatureKind`）：两者都只有写入方、
+//! 没有读取方——`EntityClass::Item` 的唯一判断在 `rebuild_occupancy_system`，
+//! 而全库从未插入过 `Item`，该判断恒为假。等真需要「按范畴分派公式」时再加，
+//! 那时会有具体的读取方（REFACTOR.md §10.8 / A43 的判据：每个保留的抽象必须有
+//! 真实读取方）。
 
 use bevy_ecs::prelude::*;
-
-/// 顶层实体范畴：决定实体参与哪类系统。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityClass {
-    /// 生物/行动者。
-    Actor,
-    /// 物品（背包、装备、地面物品）。本轮暂不迁移物品规则，仅预留范畴。
-    Item,
-    /// Buff/状态效果子实体。本轮暂不迁移，仅预留范畴。
-    Buff,
-    /// 投射物。
-    Projectile,
-    /// 区域/地面效果。
-    Field,
-}
-
-/// 生物范畴：用于同类生物共享的公式与行为。
-///
-/// 注意：物种级差异（如老鼠与蝎子的成长曲线）仍由 `monster::MonsterKindId`
-/// 或具体身份 marker 参与分派；本枚举只表达高层公式族。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreatureKind {
-    Humanoid,
-    Beast,
-    Plant,
-    MagicCreature,
-    Construct,
-    Aquatic,
-}
 
 /// 玩家标记。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,32 +22,7 @@ pub struct Player;
 pub struct Monster;
 
 /// 楼梯标记。
+///
+/// 楼梯占格但**不参与占用图**（可以站上去），见 `system/occupancy.rs`。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stairs;
-
-// ── 身份标记（ZST） ──────────────────────────────────
-// 身份标记用于“它是谁”；不承载数值。需要物种数据时查 `monster::MonsterTemplate`。
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Rat;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Scorpion;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Goblin;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Sporeling;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct MushroomGolem;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CaveFish;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CaveCrab;
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DeepEel;

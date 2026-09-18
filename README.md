@@ -18,19 +18,29 @@ Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 ecs_core/                 ← 唯一业务/领域层，完全 ECS（crate: ecs_core）
   lib.rs                  ← 模块声明与公共面
   components.rs           ← 领域组件：Position、Health、Magic、Level、Experience、Attack、Defense、MoveSpeed、AttackSpeed、…
-  entity_cls.rs           ← 实体类型 marker：Player、Monster、Stairs、…
-  events.rs               ← 领域事件：AttackEvent、AttackIntentEvent、DeathEvent、…
-  resources.rs            ← 领域资源：Map、GameRng、MapMemory、OccupancyMap、EventLog、TurnManager、…
-  balance.rs              ← 数值公式与平衡常量（AV 公式、经验曲线、阈值）
+  entity_cls.rs           ← 实体类别标记：Player、Monster、Stairs
+  events.rs               ← 领域事件：AttackIntentEvent、AttackEvent、DeathEvent、ActionSucceeded/FailedEvent、LevelUpEvent
+  resources.rs            ← 领域资源：Map、GameRng、MapMemory、VisibleMemory、OccupancyMap、EventLog、TurnManager、MapSeed、FloorNumber
+  balance.rs              ← 数值公式与平衡常量（AV 公式、经验曲线、阈值、速度区间）
   schedule.rs             ← 持久 Schedule 标签（CoreInit / CoreSettle / ActionPoc / PlayerMount）
-  test_util.rs            ← #[cfg(test)] 测试辅助（搭 World / spawn 实体 / 快照）
-  action/                 ← 行动链路：action 实体、生成、仲裁、tick、执行、completion
-  combat/                 ← 近战伤害与暴击纯函数
-  map/                    ← 地图数据与生成
-  monster/                ← 怪物模板与生成权重
+  test_util.rs            ← #[cfg(test)] 测试辅助（搭 World / spawn 实体 / 世界快照）
+  action/                 ← 行动链路：action 实体（生成 → 仲裁 → tick → 执行 → completion）
+    entity.rs             ← 链路全部系统 + ActionEvents/MovementContext
+    entity_tests.rs       ← 链路级测试
+    execution/            ← movement：落点规则纯函数
+    generation/           ← ai / player：生成条件与输入边界类型
+  combat/mod.rs           ← 近战纯规则：相邻判定与伤害/暴击计算
+  map/                    ← 地图数据（mod.rs）与生成算法（map_gen.rs）
+  monster/                ← 怪物：template.rs 物种数值 / spawn.rs 出现概率与种类池
   spatial/                ← FOV / LOS / A*
-  system/                 ← 结算系统：伤害、死亡、经验、视野、记忆、占用图
-  world/                  ← 初始化、应用入口（new_game / apply_player_command）、查询辅助
+  system/                 ← 结算链路，一模块一条链路
+    combat.rs             ← 伤害结算与扣血
+    death.rs              ← 死亡判定 + DeathEvent 生产
+    experience.rs         ← 消费 DeathEvent 发经验、升级
+    perception.rs         ← FOV / 地图记忆 / 可见记忆
+    occupancy.rs          ← 占用图重建
+    system_tests.rs       ← 结算链路测试
+  world/                  ← init.rs 初始化 / loop_.rs 应用入口 / query.rs 查询辅助
 ```
 
 旧 crate 在迁移完成前暂时保留：

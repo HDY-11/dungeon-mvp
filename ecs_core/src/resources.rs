@@ -157,14 +157,6 @@ impl Default for OccupancyMap {
     }
 }
 
-// ── 经验 ─────────────────────────────────────────────
-
-/// 等待结算给玩家的经验。
-#[derive(Resource, Default)]
-pub struct PendingExp {
-    pub amount: f64,
-}
-
 // ── 日志 ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,44 +242,3 @@ pub struct FloorNumber(pub u32);
 
 #[derive(Resource, Clone, Copy)]
 pub struct MapSeed(pub u64);
-
-// ── 仇恨接口（本轮只留数据结构，不实现完整算法） ─────
-
-/// 实体间的仇恨表。
-///
-/// 完整仇恨系统尚未迁移：目前只提供累加、查询、清理接口，
-/// 未来由 `ThreatEvent` 驱动更新。
-#[derive(Resource, Default)]
-pub struct ThreatTable {
-    /// `entity -> (target -> threat)`。
-    pub entries: HashMap<Entity, HashMap<Entity, f64>>,
-}
-
-impl ThreatTable {
-    pub fn add_threat(&mut self, entity: Entity, target: Entity, amount: f64) {
-        if amount <= 0.0 || entity == target {
-            return;
-        }
-        *self
-            .entries
-            .entry(entity)
-            .or_default()
-            .entry(target)
-            .or_insert(0.0) += amount;
-    }
-
-    pub fn threat_toward(&self, entity: Entity, target: Entity) -> f64 {
-        self.entries
-            .get(&entity)
-            .and_then(|t| t.get(&target))
-            .copied()
-            .unwrap_or(0.0)
-    }
-
-    pub fn clear_entity(&mut self, entity: Entity) {
-        self.entries.remove(&entity);
-        for targets in self.entries.values_mut() {
-            targets.remove(&entity);
-        }
-    }
-}

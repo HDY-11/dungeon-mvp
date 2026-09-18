@@ -2194,7 +2194,7 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 ---
 
-### 🟡 A43 — 同类死抽象/重复表示清理
+### 🟡 A43 — 同类死抽象/重复表示清理 ✅已修复
 
 **问题：** 与 `ActionKind` 同类的中央 token / 提前抽象 / 重复表示：
 
@@ -2209,7 +2209,27 @@ if thread_flag.load(Ordering::Relaxed) { ... }  // 无代码写入该变量
 
 **位置：** 见 REFACTOR.md §10.8 逐项清单。
 
-**状态：** 清单已记录（REFACTOR.md §10.8）。用户决定**先记录，不执行删除**；Phase A/B/C 期间不阻塞，Phase E 开始前逐项确认是否删除/接线。原则是“每个保留的抽象必须有真实读取方/消费者”。
+**状态：** ✅已修复（Phase E 全量清理完成）。原则是「每个保留的抽象必须有真实读取方/消费者」，逐项**实测**后处置如下（两处与当初预判不同，已标注）：
+
+| 项 | 实测 | 处置 |
+|---|---|---|
+| 身份 ZST `Rat/…/DeepEel` | 零 insert、零 query（比预判更死：连插入方都已随 Phase C 消失） | 删除 8 个 |
+| `CreatureKind` | 只写不读 | 删除（含模板字段与 9 处赋值） |
+| `EntityClass` | `EntityClass::Item` 判断恒假（全库从未插入过 `Item`） | 删除枚举；楼梯跳过改靠 `Stairs` 标记 |
+| `DeathEvent` | 只写不读 | **接线**：事件携带 `reward`，由 `experience` 模块消费 |
+| `LevelUpEvent` | 只写不读 | 保留：经验结算链路的 `EventLog` 是真实消费者，事件留给未来 UI/成就 |
+| `PendingExp` | 绕过 `DeathEvent` 的旁路 | 删除资源；奖励改由事件携带 |
+| `ThreatEvent` / `ThreatReason` / `ThreatTable` | 无生产者、无消费者，`ThreatTable` 三个方法也零调用 | 全部删除（S4 仇恨系统落地时重建） |
+| `BeAttacked` / `NeedRecordBeAttacked` | 只写不读 | 删除组件与整条 `record_be_attacked_system`（从结算 Schedule 摘除） |
+| `MeleeResult` | **是活的**：`compute_melee_damage` 返回它 | **保留**（与预判不同） |
+| `prepare_attack_event` / `resolve_melee` / `damage_entity` / `can_attack` / `adjacent_8` | 零调用（整条链只被彼此调用） | 删除 5 个死函数 |
+| `MonsterStats` / `WorldInitConfig` | 有真实调用方 | 保留 |
+| `Idle/Active/Failure` | I91 已修 + 互斥测试在守 | 保留 ZST |
+
+**顺带完成的结构对齐：** `system/mod.rs`（654 行）拆为
+`mod.rs`(104) + `combat` + `perception` + `death` + `experience` + `occupancy` + `system_tests`；
+`monster/mod.rs`（455 行）拆为 `mod.rs`(15) + `template`(物种数值) + `spawn`(出现概率) + `monster_tests`。
+`mod.rs` 只留模块声明与重导出，与 `map/`・`spatial/`・`action/` 的形式一致。
 
 **确认记录：** 2026-09 对话；§11.6 第 6 项。
 

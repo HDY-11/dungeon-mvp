@@ -722,24 +722,26 @@ sys::spawn_key_source()
 与 `ActionKind` 同类的问题：**中央 token / 提前抽象 / 重复表示**。以下为清查结果，去留由用户判断：
 
 > **用户决定（2026-09）：** 本清单先记录，Phase A/B/C 期间不执行删除；Phase E 开始前逐项确认是否删除/接线。对应 ISSUES A43。
+>
+> **状态（2026-09，Phase E 执行后）：** ✅ 已逐项实测并处置完毕。两处与当初预判不同——`MeleeResult` 其实是活的（被 `compute_melee_damage` 使用），身份 ZST 比预判更死（连插入方都没有）。下表的「判断/建议」列已更新为**实测处置**，逐项理由见 §11.3 Phase E。
 
 | 项 | 证据 | 判断/建议 |
 |---|---|---|
-| `ActionKind` | `action/mod.rs`；`mount_action` 中央 match；`ai.rs` / `player.rs` / `world/loop_.rs` 引用 | 按 §3.6 删除 |
-| 身份 ZST `Rat/Scorpion/...` | `entity_cls.rs` 定义；`world/init.rs:363-386` 由 `MonsterKindId` match 后插入；无读取方 | 与 `MonsterKindId` 重复；建议保留 `MonsterKindId` 作为数据键，删 ZST，等需要 `With<Rat>` 时再加 |
-| `EntityClass` | `system/mod.rs` 唯一读取是未迁移的 `Item` 判断 | 占位；建议改为 ZST 标记或删除 |
-| `CreatureKind` | `monster/mod.rs` 模板字段 + spawn 插入；无读取方 | 占位；等有公式分支时再引入 |
+| `ActionKind` | `action/mod.rs`；`mount_action` 中央 match；`ai.rs` / `player.rs` / `world/loop_.rs` 引用 | ✅ Phase C 删除 |
+| 身份 ZST `Rat/Scorpion/...` | `entity_cls.rs` 定义；无插入方、无读取方 | ✅ Phase E 删除；`MonsterKindId` 作为唯一数据键 |
+| `EntityClass` | `system/mod.rs` 唯一读取是 `Item` 判断，而全库从未插入 `Item` → 恒假 | ✅ Phase E 删除 |
+| `CreatureKind` | `monster/mod.rs` 模板字段 + spawn 插入；无读取方 | ✅ Phase E 删除 |
 | `PlayerCommand` | `src/main.rs` 输入映射；`player.rs` 映射到 `ActionKind` | 保留为输入边界类型；去掉 `ActionKind` 后直接映射到 action 实体/Bundle |
 | `AttackIntentEvent` | 唯一生产者 `execute_basic_attack_system`，唯一消费者 `resolve_attack_system` | 可合并进 `attack_system`；若保留作为技能/投射物扩展点，必须有未来消费者 |
 | `ActionSucceededEvent` / `ActionFailedEvent` | 注册但无人发/读 | 按 §3.6.6 接 completion 系统，变成真实状态回转事件 |
-| `DeathEvent` / `LevelUpEvent` | 写入但无消费者 | 接经验/掉落/UI 消费者，或删除 |
-| `ThreatEvent` / `ThreatReason` / `ThreatTable` | 注册/定义但无发送/读取 | S4 占位；未接线前明确标注或删除 |
-| `BeAttacked` / `NeedRecordBeAttacked` | `record_be_attacked_system` 写入，无读取 | 接威胁/AI 或删除 |
-| `PendingExp` | 死亡系统写、经验系统读的旁路 | `DeathEvent` 接消费者后删除 |
-| `MeleeResult` + `prepare_attack_event` / `resolve_melee` / `damage_entity` | `combat/mod.rs`；后两者无调用方 | 死代码/重复路径；删除，保留纯函数 |
-| `MonsterStats` | 仅 `monster_base_bundle` 使用的中间 DTO | 可选：折成 `MonsterTemplate::spawn_bundle(floor)`；保留也可 |
-| `WorldInitConfig` | 单字段 `map_seed` | 可内联为 `u64`；低优先级 |
-| `Idle/Active/Failure` | 三个 ZST 表示一个状态机 | 查询友好，但互斥靠手动维护；可考虑单一 `ActionState`，或保留 ZST + debug 断言 |
+| `DeathEvent` / `LevelUpEvent` | `DeathEvent` 原本只写不读 | ✅ Phase E：`DeathEvent` 携带 `reward` 并被 `experience` 消费；`LevelUpEvent` 保留待 UI 消费 |
+| `ThreatEvent` / `ThreatReason` / `ThreatTable` | 注册/定义但无发送/读取 | ✅ Phase E 删除 |
+| `BeAttacked` / `NeedRecordBeAttacked` | `record_be_attacked_system` 写入，无读取 | ✅ Phase E 删除组件与整条系统 |
+| `PendingExp` | 死亡系统写、经验系统读的旁路 | ✅ Phase E 删除（奖励改由 `DeathEvent` 携带） |
+| `MeleeResult` + `prepare_attack_event` / `resolve_melee` / `damage_entity` | `compute_melee_damage` 在用 `MeleeResult`；后两者无调用方 | ✅ Phase E：删三个死函数与 `can_attack`/`adjacent_8`，保留 `MeleeResult`（是活的） |
+| `MonsterStats` | 仅 `monster_base_bundle` 使用的中间 DTO | 保留（有真实调用方；低优先级） |
+| `WorldInitConfig` | 单字段 `map_seed` | 保留（有真实调用方；低优先级） |
+| `Idle/Active/Failure` | 三个 ZST 表示一个状态机 | 保留 ZST + 互斥测试（I91；不做单一 `ActionState`） |
 | `Can*` | 六个能力 ZST | 保留；这是 ECS 原生能力表达，不要子实体化 |
 | `MonsterKindId` | 数据键 + 多处 match 表 | 保留 enum；可将 match 表改为 `&'static [MonsterTemplate]` 索引，减少样板 |
 | `Tile` / `MapKind` / `RoomShape` | 领域/算法数据 enum | 保留；不是行为分派 token |
@@ -776,7 +778,7 @@ sys::spawn_key_source()
 | **B** | action 实体 PoC | A | actor + Wander + Move 全链路测试模块 | ✅ `core/src/action/entity.rs` + PoC 测试（commit ac6623f） |
 | **C** | 全量行动迁移 | B | 生成/仲裁/Tick/执行/完成系统；删除 `ActionKind` | ✅ C1–C9 全部完成（commit 83700ff…a8e2175）：六行动 parity 通过、全库无 `ActionKind` 引用、主循环已切换 |
 | **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | ✅ D1–D5 全部完成（commit cff5940…）：`Agility`/旧公式零引用、AV 单调与 clamp 测试、怪物速度齐全、回合顺序场景通过 |
-| **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | 每个保留抽象有真实读取方/消费者 |
+| **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | ✅ 全部完成：删除 6 类死抽象 + `DeathEvent` 接线（`PendingExp` 旁路随之消失）；`cargo clippy -p ecs_core -- -D warnings` 干净，71 测试通过 |
 | **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
 | **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | 见早前渲染方案 |
 
@@ -909,21 +911,40 @@ A ──▶ F（并行）
    `Active`，生成系统的 `Without<Active>` 会让它再也生成不出候选。
    同理 `tick_action_timers_system` 只推进 `ActiveAction`，候选必须先过仲裁才会被 tick。
 
-#### Phase E — 死抽象/重复表示清理
+#### Phase E — 死抽象/重复表示清理（✅ 已完成）
 
-按 §10.8 清单逐项处理，每项先确认“读取方/消费者”：
+> **落地记录：** 逐项先查「读取方/消费者」再动手，实测结论与 §10.8 的预判有两处
+> 出入（见下表），因此下面以**实测**为准。删除项均已确认零引用；
+> 保留项写明理由。`cargo clippy -p ecs_core --all-targets -- -D warnings` 干净，
+> `cargo test -p ecs_core` 71 passed。
 
-| 项 | 建议 | 验证 |
+| 项 | 实测状态 | 处置 |
 |---|---|---|
-| 身份 ZST `Rat/...` | 保留 `MonsterKindId` 作为数据键，删除无读取方 ZST；需要 `With<Rat>` 时再加 | 编译通过，怪物功能不变 |
-| `EntityClass` / `CreatureKind` | 无读者则删除；需要时改为 ZST 标记 + 专用 query | 无未使用范畴 |
-| `DeathEvent` / `LevelUpEvent` | 接线到经验/掉落/UI，或删除 | 每个事件有 reader |
-| `ThreatEvent` / `ThreatTable` | 保留为 S4 占位或删除；不允许“注册但永不用” | 明确状态 |
-| `BeAttacked` / `NeedRecordBeAttacked` | 接威胁/AI 或删除 | 无 write-only 组件 |
-| `PendingExp` | `DeathEvent` 接消费者后删除 | 经验链路仍通过 |
-| `MeleeResult` + dead combat helpers | 删除，保留纯函数 | 无零调用方函数 |
-| `MonsterStats` / `WorldInitConfig` | 可选折叠/内联；低优先级 | 无多余 DTO |
-| `Idle/Active/Failure` | 保留 ZST + debug 断言，或评估单一 `ActionState` | 状态互斥测试 |
+| 身份 ZST `Rat/.../DeepEel` | **零 insert、零 query**（比 §10.8 说的「由 `MonsterKindId` match 后插入」更死——插入点已随 Phase C 消失） | ✅ 删除 8 个 ZST（`entity_cls.rs`） |
+| `CreatureKind` | 只写不读（8 个模板 + 玩家都插入） | ✅ 删除（含 `MonsterTemplate.creature_kind` 字段与 9 处赋值） |
+| `EntityClass` | `rebuild_occupancy_system` 检查 `EntityClass::Item`，但**全库从未插入过 `Item`** → 判断恒假；范畴本身也无读取者 | ✅ 删除枚举；楼梯跳过保留（靠 `Stairs` 标记） |
+| `DeathEvent` | 只写不读（仅 `update_events_system` 刷缓冲） | ✅ **接线**：事件携带 `reward`，`experience` 模块消费；见下条 |
+| `LevelUpEvent` | 同上 | ✅ 保留（经验结算链路里 `EventLog` 是真实消费者；事件留给未来的 UI/成就读，不再有「注册了永不用」的占位） |
+| `PendingExp` | 死亡系统写、经验系统读的旁路 | ✅ 删除资源与 `insert_resource`；奖励改由 `DeathEvent` 携带——**实体在死亡系统里就被 despawn，奖励只有那一刻能拿到**，这正是旁路存在的原因，把奖励放进事件即可去掉两条路 |
+| `ThreatEvent` / `ThreatReason` / `ThreatTable` | 无生产者、无消费者（`ThreatTable` 三个方法也零调用） | ✅ 全部删除；S4 仇恨系统落地时重建 |
+| `BeAttacked` / `NeedRecordBeAttacked` | 只写不读（`record_be_attacked_system` 是唯一写入方） | ✅ 删除组件与整条系统（从结算 Schedule 摘除） |
+| `MeleeResult` | **是活的**：`compute_melee_damage` 返回它，结算链路在用 | ✅ 保留（与 §10.8 预判不同） |
+| `prepare_attack_event` / `resolve_melee` / `damage_entity` | `resolve_melee`/`damage_entity` 零调用；`prepare_attack_event` 只被 `resolve_melee` 调用 | ✅ 删除三个死函数 |
+| `can_attack` / `adjacent_8` | 只被 `prepare_attack_event` 用 | ✅ 删除；`can_attack_positions` + `compute_melee_damage` 保留（前者是执行器在用的纯规则） |
+| `MonsterStats` / `WorldInitConfig` | 有真实调用方，低优先级 | ✅ 保留 |
+| `Idle/Active/Failure` | I91 已修 + `idle_and_failure_are_mutually_exclusive` 在守 | ✅ 保留 ZST（不做单一 `ActionState`） |
+
+**顺带完成的结构对齐（用户要求「文件结构向 ecs_core 的质量看齐」）：**
+`ecs_core` 里 `map/`、`spatial/`、`action/` 早已是「目录 + 子模块」，只剩
+`system/mod.rs`（654 行）与 `monster/mod.rs`（455 行）还是「单文件 + mod.rs」。
+本轮把它们拆成同样的形式，`mod.rs` 只留模块声明/重导出：
+
+| 原文件 | 拆分后 |
+|---|---|
+| `system/mod.rs` 654 行 | `system/mod.rs` 104（声明 + 重导出 + Schedule）・`combat.rs` 81・`perception.rs` 60・`death.rs` 62・`experience.rs` 69・`occupancy.rs` 25・`system_tests.rs` 344 |
+| `monster/mod.rs` 455 行 | `monster/mod.rs` 15・`template.rs` 295（物种数值）・`spawn.rs` 88（出现概率）・`monster_tests.rs` 94 |
+
+测试沿用 `action/` 已有的「生产与测试分文件」形式（`#[path = "..._tests.rs"] mod tests;`）。
 
 #### Phase F — 构建/测试门禁
 

@@ -13,7 +13,7 @@ use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent, ThreatEvent,
+    LevelUpEvent,
 };
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
@@ -61,10 +61,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(MapMemory::new());
     world.insert_resource(VisibleMemory::default());
     world.insert_resource(OccupancyMap::new());
-    world.insert_resource(PendingExp::default());
     world.insert_resource(EventLog::new());
     world.insert_resource(TurnManager::new());
-    world.insert_resource(ThreatTable::default());
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
     // 玩家行动请求：action 实体链路的输入口（C2 起）。旧链路的同名资源
@@ -77,7 +75,6 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<ThreatEvent>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());
@@ -112,8 +109,6 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
     let max_mp = max_mp_for(1, 8.0);
     (
         Player,
-        EntityClass::Actor,
-        CreatureKind::Humanoid,
         Position::new(pos.0, pos.1),
         Health::new(max_hp),
         Magic::new(max_mp),
@@ -211,7 +206,6 @@ pub fn spawn_stairs_system(
 
     commands.spawn((
         Stairs,
-        EntityClass::Field,
         Position::new(pos.0, pos.1),
         EntityName("楼梯".into()),
     ));
@@ -321,8 +315,6 @@ fn monster_base_bundle(
     let stats = template.stats(floor);
     (
         Monster,
-        EntityClass::Actor,
-        template.creature_kind,
         template.kind,
         Position::new(pos.0, pos.1),
         stats.health,
@@ -370,32 +362,9 @@ pub fn spawn_monsters_system(
             .insert(CanWait)
             .insert(Idle);
 
-        match monster_kind {
-            MonsterKindId::Rat => {
-                cmd.insert(Rat);
-            }
-            MonsterKindId::Scorpion => {
-                cmd.insert(Scorpion);
-            }
-            MonsterKindId::Goblin => {
-                cmd.insert(Goblin);
-            }
-            MonsterKindId::Sporeling => {
-                cmd.insert(Sporeling);
-            }
-            MonsterKindId::MushroomGolem => {
-                cmd.insert(MushroomGolem);
-            }
-            MonsterKindId::CaveFish => {
-                cmd.insert(CaveFish);
-            }
-            MonsterKindId::CaveCrab => {
-                cmd.insert(CaveCrab);
-            }
-            MonsterKindId::DeepEel => {
-                cmd.insert(DeepEel);
-            }
-        }
+        // 物种身份由 `monster_base_bundle` 里的 `MonsterKindId` 表达，
+        // 不再额外插入一层身份 ZST（`Rat`/`Scorpion`/… 已删除，见 entity_cls.rs）。
+        let _ = monster_kind;
     }
 }
 

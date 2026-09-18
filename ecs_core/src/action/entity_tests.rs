@@ -7,7 +7,6 @@ use super::*;
 use crate::action::generation::player::PlayerCommand;
 use crate::components::{CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Viewshed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
-use crate::resources::PendingExp;
 use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_test_monster};
 use crate::world_loop::apply_player_command;
 use bevy_ecs::system::RunSystemOnce;
@@ -1642,14 +1641,11 @@ fn parity_basic_attack_scenario() {
         world.get_entity(monster).is_err(),
         "6 血 1 防的怪应当被一击打死并 despawn"
     );
-    assert_eq!(
-        world.resource::<PendingExp>().amount,
-        0.0,
-        "经验应当被 apply_exp_system 消费"
-    );
+    // 经验由 `DeathEvent` 携带奖励送达（旧 `PendingExp` 旁路已在 Phase E 删除），
+    // 所以这里直接断言业务结果：玩家确实拿到了经验。
     assert!(
         world.get::<Experience>(player).unwrap().exp > 0.0,
-        "玩家应当得到经验"
+        "玩家应当通过 DeathEvent 拿到经验"
     );
 }
 

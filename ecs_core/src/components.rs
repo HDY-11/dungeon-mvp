@@ -317,25 +317,3 @@ pub struct Flee;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wander;
-
-// ── 受击记录（供威胁/AI 反应使用） ─────────────────────
-
-/// 标记“该实体需要记录受击来源”。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct NeedRecordBeAttacked;
-
-/// 最近一次受击记录。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct BeAttacked {
-    pub by: Entity,
-    pub av_since_hit: f64,
-}
-
-impl BeAttacked {
-    pub const fn new(by: Entity) -> Self {
-        Self {
-            by,
-            av_since_hit: 0.0,
-        }
-    }
-}
