@@ -1,0 +1,297 @@
+> **⚠️ 修改前必须阅读或回忆 [RULE.md](../RULE.md)——它定义了本文档的维护规则和更新时机。**
+>
+> 每条记载一个设计取舍，含两个小节：
+> - **决策**：当前选的方向和理由（罗盘）
+> - **背景**：舍弃的方案和演化过程（护卫）
+>
+> 数值和游戏规则见 [GAME.md](../GAME.md)。
+
+# 设计决策记录 —— ecs_core
+
+**归属范围：** 领域规则引擎的决策：ECS 模型、行动/速度、地图、怪物、结算链路。
+
+**编号：** `DsnE1`、`DsnE2`… 每个 crate 独立编号。
+判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
+
+---
+
+### DsnE1 并行怪物决策（Schedule）
+
+**决策**
+
+三种怪物行为（追击、逃跑、游荡）的检查条件**没有数据竞争**，通过 bevy Schedule 并行执行：
+
+```
+chase_decision_system  ─┐
+flee_decision_system   ─┤ 并发 → arbitration_system → ActionQueue
+wander_decision_system ─┘
+```
+
+适当的并行度是 3（三种行为）+ 1（仲裁）。太少浪费 CPU，太多调度开销超过收益。
+
+**意图缓冲区模式**：三个决策 system 各自写入独立的 `ChaseIntents`/`FleeIntents`/`WanderIntents` 资源，仲裁 system 串行合并。生产者-消费者模式无并发写冲突，数据流显式可追踪。
+
+**背景**
+
+旧设计 `run_monster_decision()` 串行遍历所有怪物，每个怪物检查条件→仲裁→入队，O(n) 且无法并行。保留串行兼容入口供调试——"可调试性比代码整洁更重要"。
+
+---
+
+**原编号：** `DsnE1`（迁移前）
+
+### DsnE2 碰撞图（Occupancy Map）独立于 Map
+
+**决策**
+
+两个关注点变化频率不同，分离为独立结构：
+- `Map`：存 Tile 地形（`Wall`/`Floor`）——楼层生成后基本不变
+- `OccupancyMap`：存每个格子被哪个实体占据——每次移动/攻击/死亡后都变化
+
+合并到一个结构意味着每次更新都要复制地形数据。
+
+**背景**
+
+每次行动后全量重建 `rebuild_occupancy()` O(n) ≈ 800 格（40×20），开销 <1μs。增量更新容易漏边界条件（实体死亡、下楼、传送），维护正确性的心智负担远高于全量重建的成本。
+
+---
+
+**原编号：** `DsnE2`（迁移前）
+
+### DsnE3 视野记忆双结构（MapMemory + VisibleMemory）
+
+**决策**
+
+两个独立的记忆结构，因为它们的数据类型、更新频率、生命周期不同：
+- **MapMemory**：记录哪些格子曾经被看到过（boolean 数组）——渲染已探索区域的灰色墙壁/地板。只增不减（探索过的格子不会"遗忘"）
+- **VisibleMemory**：记录最后看到的实体（glyph/color/位置）——渲染视野外但已知的实体。需清理已死亡实体（否则显示幽灵）
+
+**背景**
+
+如果合并为一个结构，cleanup 逻辑需要区分"地图记忆（不清除）"和"实体记忆（需清除）"，增加复杂性。视野外的实体在已探索区域以灰色显示。死亡实体自动清理。
+
+---
+
+## 二、核心机制
+
+**原编号：** `DsnE3`（迁移前）
+
+### DsnE4 行动系统设计哲学
+
+行动系统是项目中最核心的设计，其演化经历了多轮思考（见提交历史中的多次 revert 和 fix）。
+
+#### 决策
+
+**组件式行动授权：** 行动能力由组件赋予。`CanMove`、`CanChase`、`CanFlee`、`CanWander`、`CanWait` 等组件表达了"这个实体具有这种行动的权利"。系统只需遍历并检查哪种行动的条件满足。加新行为=加新组件+加新 system，不修改决策流程。
+
+**AV = 反应时 + 耗时：** 两者相加为单一值入队倒计时。没有独立的冷却系统。
+
+```
+反应时 = max(100 - 敏捷 × 3, 20)
+耗时修正系数 = max(1.0 - 敏捷 × 0.02, 0.5)
+AV = 反应时 + 耗时 × 修正系数
+```
+
+**事件驱动推进：** `next_event_distance()` 查询最小剩余 AV，所有条目同步推进该距离，然后批量执行。固定 tick 在事件密集时浪费计算、稀疏时空转。事件驱动只在真正有事件时推进，天然零空转。
+
+**无前摇、无后摇：** 后摇在回合制 Roguelike 中无实际用途——玩家在怪物行动前就已经想好了要干什么。前摇已被反应时覆盖。复杂动作（如施法）应通过组合多个行动实现，而非前后摇。
+
+**保活检查：** 执行前调用 `check_condition()` 验证条件是否仍满足（类比网络 keep-alive）。条件不满足→移出队列，不执行。入队时已检查过一次，但其他实体的行动可能在队列推进中改变世界状态。
+
+**优先级仲裁：** 每个行动组件自带 priority（数值越高越优先）：Flee=200 > Chase=100 > Wander=50 > Wait=0。静态优先级在当前阶段合理——行为种类少，优先级关系固定。未来如需动态优先级，可通过 `PriorityModifier` 组件扩展。
+
+**无预测轴 / 无锁定轴：** 所有显示在行动轴上的条目都是已锁定、必然要执行的（除非保活检查失败）。预测需要模拟未来世界状态，在 ECS 中非常复杂（需克隆 World 或维护回滚日志），收益有限。
+
+**行动队列的本质是查询系统：** 核心不是"谁先执行"的顺序器，而是查询"哪个实体已准备好行动"。重点在于：选择什么行动（决策）、何时做（AV 倒计时）、耗时多久（AV 组成）。
+
+#### 背景
+
+**冷却系统为何被移除：** 旧设计有"冷却计时器"和"队列推进"两个独立的时间维度，需要保持同步（提交记录中有多次"冷却空转"fix）。AV 合一后冷却作为独立概念消失——需要冷却的效果通过调整行动耗时来实现。
+
+**不选行为树（脑链）的理由：** 脑链一次只执行一条链，顺序判断。组件式条件是并行的——系统可以批量检查所有同种条件，完全只读、可并行。
+
+**不选独立决策组件的理由：** 分散在各 Action 组件中的决策权被收回一个中心，降低可扩展性。
+
+**不选状态机的理由：** 状态把"状态"和"行动"耦合，"进入追击模式→执行 CanChase"，决策权从组件抢到了状态机系统手中。
+
+**预测轴/锁定轴为何被移除：** 与组件式决策不兼容。系统只能知道"此刻哪些条件满足"，无法准确知道"下一帧是否仍满足"。
+
+---
+
+**原编号：** `DsnE4`（迁移前）
+
+### DsnE5 线程局部 RNG → GameRng 统一
+
+**决策**
+
+`GameRng` 成为唯一随机源。所有随机操作（仲裁、暴击、游荡、掉落、地图生成）统一走 `GameRng` 或基于 `MapSeed` 的派生 RNG。
+
+**背景**
+
+曾经有一个线程局部的 `RefCell<SmallRng>` 与 `GameRng` 并存，用于仲裁 system 中的随机选择——因为当时仲裁 system 无法访问 `GameRng` 资源。已由 ISSUES D1 解决。
+
+---
+
+## 四、输入与渲染
+
+**原编号：** `DsnE5`（迁移前）
+
+### DsnE6 MonsterTemplate 结构体统一 — 设计中，实验方向
+
+**决策（暂缓执行）**
+
+将 `monster_def.rs` 中 7 个分散的 match 函数（`monster_glyph`、`monster_color`、`monster_name`、`monster_attack_name`、`monster_stats`、`monster_loot`、`monster_spawn_weight`）合并为一个 `MonsterTemplate` 结构体 + 一个查表函数。
+
+```rust
+pub struct MonsterTemplate {
+    glyph: char,
+    color: (u8, u8, u8),
+    name: &'static str,
+    attack_name: &'static str,
+    // 系数——不存最终值，存公式参数
+    hp_base: i32, hp_per_floor: i32,
+    atk_base: u32, atk_per_floor: f64, atk_max: u32,
+    def: u32, agi: u32, magic_mastery: u32,
+    exp_base: f64, exp_per_floor: f64,
+    loot: &'static [LootEntry],
+    spawn_weight_base: f32, spawn_weight_per_floor: f32,
+    spawn_weight_min: f32, spawn_weight_max: f32,
+}
+
+impl MonsterTemplate {
+    pub fn stats(&self, floor: u32) -> Stats { /* 统一公式 */ }
+    pub fn spawn_weight(&self, floor: u32) -> f32 { /* 统一公式 */ }
+    // glyph/color/name 等退化为字段直接访问
+}
+```
+
+收益：
+- 加新怪物从改 7 个 match 变为加 1 行数据
+- 对外的 `monster_glyph(kind)` 等函数退化为 `template(kind).glyph` 等字段访问
+- 未来切换到 JSON 配置驱动只需改 `fn template()` 的加载源，调用方不变
+
+**当前状态：** 暂缓。当前 `monster_stats` 等函数中的公式是直接赋值（裸数值），尚未抽象为统一的系数+公式体系。GAME.md 的数值标注体系（`[⃞计算]/[⃞直觉]/[⃞试调]`）也未完成。在公式体系设计就绪前，硬套系数反而引入硬编码的假灵活性。先记录方向，等 GAME.md 完成后再实施。
+
+**关联：** GAME.md Gm8（怪物设计）、LESSONS.md（无直接关联）
+
+---
+
+**原编号：** `DsnE6`（迁移前）
+
+### DsnE7 多类型地图：繁茂洞穴 + 地海（已定案并落地）
+
+**决策**
+
+解决"地图只有一种、楼层无视觉/生态区分"的问题。多分支楼梯暂缓（类型系统稳定后再规划类型分配，见 ISSUES 讨论）。
+
+**地图类型与派生**
+
+- `MapKind`：`Cavern`（标准洞穴）/ `LushCavern`（繁茂洞穴）/ `Undersea`（地海）
+- 骨架统一为 room_accretion 洞穴，环境修饰差异化（不引入新算法）
+- 类型派生：`map_kind_for(seed, floor)`——F1 固定 Cavern（新手层），之后按 `seed×黄金常数 + floor×31` 哈希取模三分均分 [⃞试调]
+- 类型与地图均由 `(MapSeed, floor)` 确定性重建——**存档零改动**，读档后当前层与下楼结果一致
+
+**环境参数表（MapEnvParams）**
+
+| 参数 | Cavern | LushCavern | Undersea |
+|------|--------|-----------|----------|
+| 深水种子率 ‰ | 2 | 0 | 20 [⃞试调: 8‰ 在真实地图期望种子仅 3，方差大易 0 水域] |
+| 深水种子最小房间距离 | 3 | 3 | 1（水域贴近活动区） |
+| 深水扩散加成 | 0 | -0.02 | +0.08 |
+| 浅水扩散 % | 10 | 2 | 18 |
+| 障碍密度 % | 7（钟乳石） | 10（垂藤） | 3（珊瑚礁） |
+| 装饰 % | 0 | 25（菌丝）+15（蘑菇丛） | 15（沙岸）+10（海草） |
+
+**新方块（6 种，serde tag 5-10 追加）**
+
+| Tile | 地形 | 可走 | 挡视线 | 生态角色 |
+|------|------|------|--------|---------|
+| Mycelium 菌丝 | 繁茂 | ✓ | | 真菌地面 |
+| FungalPatch 蘑菇丛 | 繁茂 | ✓ | | 真菌点缀（菌丝上 15%） |
+| HangingVine 垂藤 | 繁茂 | ✗ | ✓ | 替代钟乳石的障碍 |
+| Sand 沙岸 | 地海 | ✓ | | 水域边缘（8 邻域 15%） |
+| Seagrass 海草 | 地海 | ✓ | | 浅水点缀（10%） |
+| CoralReef 珊瑚礁 | 地海 | ✗ | ✓ | 替代钟乳石的障碍 |
+
+**水域保留关键修复**：`carve_expand` 只挖 Wall（原逻辑挖所有不可走格，会把地海水挖成 Floor）；所有通道挖掘（ensure_connectivity/ensure_connection_between/ensure_spawn_accessible）统一走 `carve_channel`——DeepWater 变为 ShallowWater（涉水通道），保留水域且保证 4 方向连通（G22）。
+
+**生态对应（新怪 5 种，MonsterKindId 变体追加 3-7）**
+
+| 怪物 | 地形 | 定位 | 掉落 | 经验定位 |
+|------|------|------|------|---------|
+| Sporeling 孢子怪 m | 繁茂 | 弱（HP12 攻4） | 蘑菇 60%、苔藓 40% | ≈老鼠 |
+| MushroomGolem 蘑菇傀儡 M | 繁茂 | 中（HP22 攻7） | 苔藓 80%、孢子囊 30%、蘑菇 30% | ≈蝎子 |
+| CaveFish 洞穴鱼 f | 地海 | 弱快速（HP10 敏14） | 鱼骨 60%、海藻 30% | ≈老鼠 |
+| CaveCrab 洞穴蟹 c | 地海 | 中高防（HP18 防4） | 贝壳 80%、珍珠 10% | ≈蝎子 |
+| DeepEel 深鳗 e | 地海 | 中（HP15 攻6） | 鳗皮 60%、海藻 40% | ≈蝎子 |
+
+- 生成权重按 `MapKind` 分派（`monster_spawn_weight(map_kind, kind, floor)`）：繁茂以真菌为主+少量原生物；地海以水生为主+少量蝎子；洞穴保持原状
+- 新掉落物 8 种（ID 25-32）：蘑菇/海藻为地形消耗品（r 键使用：+6 HP / +4 MP，上限钳制 [⃞试调]），其余为材料（DsnX12 Phase 2 合成储备）
+
+**关联：** ISSUES G23/I70 | GAME.md Gm7/Gm10 | 生态对应原则（回复对称：繁茂回 HP ↔ 地海回 MP）
+
+**状态：** 已落地。分支楼梯（多楼梯/树状分支）待类型系统稳定后单独规划。
+
+---
+
+**原编号：** `DsnE7`（迁移前）
+
+### DsnE8 行动即实体 + 速度组件：AV 系统的 ECS 化（草案，待 PoC）
+
+**决策**
+
+两条相关决策，合并为一次行动系统重构：
+
+**① 行动即实体（替代 `ActionKind`）**
+
+- 一个行动 = 一个 actor 的子实体（action entity），不再用中央 `ActionKind` enum 分派。
+- Action 实体组件：`ChildOf(actor)`、`ActionPriority(u32)`、`ActionTimer`、`ActionSource`、生命周期标记 `Candidate` / `ActiveAction` / `Ready`，以及具体行动 ZST/payload（`Wait` / `Move { dx, dy }` / `BasicAttack { target }` / `Chase` / `Flee` / `Wander`）。
+- `Can*` **保持 actor 上的 ZST 组件**，不子实体化：能力回答“能不能做”，action 实体回答“正在考虑/执行什么”。
+- 保留生成/仲裁分离，不因当前规模合并为单函数（用户确认；OCP 扩展点）。
+- 普通怪 = 新模板 / Bundle（不同 `Can*`）；新增普通怪不需要修改 AI / 生成 / 执行代码。
+- 系统流程：生成系统只 spawn 候选 → 仲裁系统唯一写入 actor 行动状态（按 `ActionPriority` + `action_entity.to_bits()` 全序）→ Tick 推进 AV 并加 `Ready` → 执行系统按行动类型专用 query（零中央 match）→ completion 系统消费 `ActionSucceeded/FailedEvent` 并回收 action 实体。
+- 玩家行动直接生成 active action，不进入 AI 仲裁。
+
+**② 速度组件（替代 `Agility`）**
+
+- 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）。
+- `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`。
+- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 `WAIT_DURATION`（已确认；后续再评估 `WaitSpeed`）。
+- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；先不保留 `BASE_REACTION`（已确认；试玩需要时再加统一常数）。
+- 迁移顺序：逐行动（Wait → Move → BasicAttack → Wander → Chase → Flee）；怪物速度先按旧敏捷保行为映射，再在 GAME.md 用 `[⃞试调]` 重调。
+- 未来武器速度 → `AttackSpeed`，重甲/地形 → `MoveSpeed`，Buff/装备可动态增删组件。
+
+**背景**
+
+当前 `ActionKind` 中央 enum + `mount_action` match 让新增行动要改多处；`Can*` + ZST + 专用 query 的执行方式其实可以完全去掉 `ActionKind`。同时当前 `ActionTimer` 从未参与执行门禁（I89）、事件也因 Schedule 重建 + 缺少 `Events::update()` 被重复读取（I90）；这两项已在第 1 步修复，否则速度组件不会真正影响行为。
+
+**代价**
+
+- action 实体带来每轮候选 spawn/despawn 的 churn；当前规模可接受，未来可改持久 `ActionSlot` 或行为实体池化。
+- 仲裁需要 `ChildOf` 分组；Bevy 0.16 `Children` 是 `linked_spawn`，父实体 despawn 会联动 despawn 子实体。
+- 事件必须有真实消费者；`ActionSucceeded/Failed` 正好由 completion 消费，`DeathEvent`/`LevelUpEvent` 要么接线要么删除。
+
+**关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
+
+**状态：** ①② 均已落地（Phase B/C/D 完成）；I89（AV 门禁）与 I90（事件生命周期）已修；§11.6 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。① 见下方 Phase B/C 进展，② 见下方 Phase D 进展。
+
+**进展（Phase A/B/C）：**
+
+- Phase A：core 冒烟测试补齐（地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 / 快怪多动），`cargo test -p core` 从 4 → 18 个测试（ISSUES P9）。
+- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路；测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。
+- Phase C（全量迁移，C1–C9 完成）：六个行动逐行动迁移并各配 parity 场景；主循环切换到新链路（`world/loop_.rs` 改为「先挂载、再推进」两段式）；`ActionKind` / `mount_action` 中央 match / `finish_action_*` / `decide_monster_actions` / `choose_action` / `run_action_cycle` / 旧独占执行系统与 actor 上的行动 ZST 挂载路径**全部删除**，全库无 `ActionKind` 引用。
+- 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：行动链路里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
+- 迁移期约束（写测试时要注意）：`Ready` 的清理分两条路（`execute_move_system` 显式清，其余靠 completion despawn 实体）；`Idle`/`Failure` 必须互斥（I91）；「挂载玩家行动」与「推进世界」必须分两段调度，否则会把「本轮已执行完」误判成「命令被拒绝」。
+
+**进展（Phase D：速度组件，D1–D5 完成）：**
+
+- `Agility` / `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av` 全部删除；AV 只剩 `AV = base_duration / clamp(速度, 0.25, 4.0)` 一个口径（`core/src/balance.rs`）。
+- 行动类别 → 速度的映射收在 `SpeedRule`（`Move` / `Attack` / `Fixed`），由生成系统在挂载点决定；`ActorSpeeds` 是 AV 计算的纯输入，使公式可在无 ECS 的单测里逐条钉住。执行器完全不接触速度——AV 在挂载时就固化进 `ActionTimer`。
+- 怪物模板不再保留任何「敏捷」字段：`MonsterSpeeds { move_speed, attack_speed }` 直接写字面速度值。迁移来源（旧敏捷 → 旧耗时系数的倒数）记在 `MonsterSpeeds::MIGRATION_NOTE`，数值表在 GAME.md Gm1。
+- **迁移映射的选择理由**：新 AV 精确等于旧的「`duration` × 耗时系数」一项，丢掉的只有等量叠加的反应时常数项（已确认删除）。因此**角色之间的相对快慢与旧版完全一致**，这是「先按旧敏捷保行为」的可验证含义，由 `template_speeds_preserve_legacy_agility_ordering` 钉住。玩家初始速度 `1.25` 因此是迁移产物而非设计值，已在代码与 GAME.md 双处标注「重新校准时应改回 1.0 并重配平」。
+- 顺带确立的新不变式（旧口径做不到）：`AV × 速度 == base_duration` 恒成立、AV 与 `base_duration` 严格成正比。旧式因为有常数反应时项，「300ms 的攻击」实际要付 310 AV、而「500ms 的游荡」付 470 AV——短行动被惩罚得更狠。删除该项是 Phase D 唯一的**有意行为改动**，由 `dropping_reaction_time_*` 的量化结论记录。
+- **意外发现（值得记入教训）**：速度组件改变了各行动的执行轮次，于是怪物消耗随机数的时机随之改变，`system::tests::fov_memory_and_occupancy_update` 里「玩家选定的目标格在推进期间保持空闲」这条原本"碰巧成立"的假设立刻失效（怪物游荡到该格，命令被改判成攻击）。教训：**测试若依赖"没有别的实体碰巧走过来"，它就是在依赖执行顺序，而执行顺序正是本次要改的东西**——该类用例必须先清场再断言。
+- 元组 `Bundle` 的元数上限：bevy_ecs 0.16 的元组 `Bundle` 只实现到 **15 元**（`all_tuples!(tuple_impl, 0, 15, B)`），玩家基础束原本已 16 个元素，直接加两个速度组件会编译失败。解法是用 `#[derive(Bundle)] struct Speed` 打包这两个组件——**打包不是新增组件**，实体上仍是两个独立组件，查询不变。这是「实体组件数」与「元组元数」解耦的通用手法。
+
+---
+
+**原编号：** `DsnE8`（迁移前）

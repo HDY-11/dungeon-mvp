@@ -5,7 +5,7 @@
 //! 「哪个键做哪件事」是**游戏与 UI 的契约**，不是终端细节。TUI 只负责把
 //! `crossterm::event::KeyCode` 翻译成 [`render_api::Key`]；`presentation` 负责
 //! 决定 `Key::Char('h')` 意味着"向左走"。GPU 后端因此不用重写一遍按键表，
-//! 也不会出现"两个后端键位不一样"（Dsn28：「平台事件 → `InputEvent` 的翻译在
+//! 也不会出现"两个后端键位不一样"（DsnX14：「平台事件 → `InputEvent` 的翻译在
 //! 各自后端，页栈路由与 tap-tap 只在 `presentation` 实现一次」）。
 //!
 //! # 键位表（与迁移前的 `src/main.rs::key_to_command` 等价）

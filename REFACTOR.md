@@ -245,7 +245,7 @@ pub struct ActionIntent {
 
 ### 3.6 行动实体方案（当前采用，替代 `ActionKind`）
 
-> **状态：** ✅ 已落地（Phase B/C）。实现记录见 §11.3 Phase B/C 与 DESIGN Dsn27 ①。
+> **状态：** ✅ 已落地（Phase B/C）。实现记录见 §11.3 Phase B/C 与 DESIGN DsnE8 ①。
 
 #### 3.6.1 核心决策
 
@@ -699,7 +699,7 @@ sys::spawn_key_source()
 
 ### 10.6 进入下半前建议处理（按优先级）
 
-1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl。**crate 改名已落地（F5）**：`core` → `ecs_core`（目录同名），遮蔽问题从根上消除，见 DESIGN Dsn29。
+1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl。**crate 改名已落地（F5）**：`core` → `ecs_core`（目录同名），遮蔽问题从根上消除，见 DESIGN DsnX15。
 2. **给 `core` 加冒烟回归**：进行中 — 已补 AV 门禁（快怪多动/慢怪等待）与事件只结算一次（I89/I90，共 4 个测试）；地图生成确定性、玩家移动/攻击、死亡→经验→升级、FOV/记忆/占用图仍待补。
 3. **修复 `sys` 独立构建**：给 `sys` 的 `log` 依赖显式加 `features = ["std"]`（或 workspace `log` 统一声明），确保 `cargo test -p sys` 不依赖 feature 合并偶然通过；补输入/日志测试。
 4. **处理失效的根集成测试**：`tests/scenario_test.rs` / `tests/throw_test.rs` 针对旧 crate；要么删除/归档，要么重写为新 `core` + `render-api` 的 headless 测试。不要让 `cargo test --workspace` 长期失败。
@@ -801,7 +801,7 @@ A ──▶ F（并行）
 | A6 | 快怪多动：两个 actor 不同 AV，连续 `run_action_cycle`，AV 小的执行次数更多 | `core/src/action/execution/mod.rs` 测试 | 执行计数符合 AV |
 | A7 | 测试辅助：统一的 `test_world()`/`spawn_test_actor()` helper，避免每个测试重复搭 World | `core/src/test_util.rs`（`#[cfg(test)]`） | helper 编译且被复用 |
 
-**注意：** crate 已改名 `ecs_core`（F5 / DESIGN Dsn29），不再与标准库 `core` 同名；新增测试仍优先用单元测试（`#[cfg(test)]`），doctest 现在可用但不是主要形态。
+**注意：** crate 已改名 `ecs_core`（F5 / DESIGN DsnX15），不再与标准库 `core` 同名；新增测试仍优先用单元测试（`#[cfg(test)]`），doctest 现在可用但不是主要形态。
 
 #### Phase B — action 实体 PoC（✅ 已完成）
 
@@ -894,7 +894,7 @@ A ──▶ F（并行）
 | D1 | 新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 与倍率 AV；保留 `Agility` 作对照 | ✅ `SpeedRule::action_av(base_duration, ActorSpeeds)` 纯函数；5 个新旧 AV 对比用例（commit cff5940） |
 | D2 | 玩家/怪物模板与 spawn 迁移到速度组件；生成系统按行动类别取速度 | ✅ `MonsterSpeeds { move_speed, attack_speed }` 字面值取代模板的「敏捷」；生成系统只查自己那一个速度组件（commit 6a5453c） |
 | D3 | 删除 `Agility`、`agility_to_reaction`、`agility_speed_factor`、旧 `action_av` | ✅ 连迁移工具 `agility_to_speed` 一并删除；`core/` + `tests/` 无代码级引用（commit cf70f90） |
-| D4 | GAME.md 数值章节、DESIGN、ISSUES（G35）同步 | ✅ GAME.md Gm1/Gm4/Gm7/Gm8；DESIGN Dsn27 ②；ISSUES G35 移入 ✅ 已修复 |
+| D4 | GAME.md 数值章节、DESIGN、ISSUES（G35）同步 | ✅ GAME.md Gm1/Gm4/Gm7/Gm8；DESIGN DsnE8 ②；ISSUES G35 移入 ✅ 已修复 |
 | D5 | 速度测试：单调性、clamp、怪物速度齐全、回合顺序场景 | ✅ 6 个新用例，见 §11.4 |
 
 **已确认语义（§11.6）：** 倍率 `AV = base_duration / clamp(速度, 0.25, 4.0)`；
@@ -954,11 +954,11 @@ A ──▶ F（并行）
 | F2 | I88：删除/归档旧根集成测试；重写为新 core + render-api headless 测试 | `cargo test -p dungeon-app` 通过（或明确不纳入） |
 | F3 | core clippy：`too_many_arguments`/`type_complexity`/`collapsible_if` 历史警告 | ✅ 21 → 0，`cargo clippy -p core --all-targets -- -D warnings` 通过（commit e751914） |
 | F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | ✅ `scripts/gate.ps1`（含 core clippy 共 4 步，全绿退出 0）；用法见 PROTOCOLS.md §五 |
-| F5 | `core` crate 改名评估（I86 长期） | ✅ 改名为 `ecs_core`（目录同名，7 个文件引用全部同步）；决策记录见 DESIGN Dsn29。`scripts/gate.ps1` 的 `-p core` 已同步为 `-p ecs_core` |
+| F5 | `core` crate 改名评估（I86 长期） | ✅ 改名为 `ecs_core`（目录同名，7 个文件引用全部同步）；决策记录见 DESIGN DsnX15。`scripts/gate.ps1` 的 `-p core` 已同步为 `-p ecs_core` |
 
 #### Phase G — 回到 presentation + tui（R1 ✅ 完成）
 
-按早前的渲染方案执行（Dsn28 的 R1–R5）：
+按早前的渲染方案执行（DsnX14 的 R1–R5）：
 
 - ✅ **R1-a 新建 `presentation`**：`ecs_core` → `SceneFrame` 提取、`VisualKey` 映射、
   相机、页栈、输入映射，共五个模块（57 测试）；
@@ -971,7 +971,7 @@ A ──▶ F（并行）
   → 世界推进 → `SceneFrame` → **真实 ratatui 绘制**整条链路串起来断言；门禁新增
   「端到端 / 单元 / bin 构建」三步。详见下方「MVP 跑通的验证记录」；
 - ⏳ **R2** 页栈 UI：`Look`/`Dialog` 已落地；`Inventory`/`Throw` 需要物品与投掷规则
-  迁移（Dsn25 S4），当前给占位页；
+  迁移（DsnX13 S4），当前给占位页；
 - ⏳ **R3** `bevy_app` 宿主 + `ScheduleRunner`：**本轮未做**——工作区里没有
   `bevy_app`，且环境无外网。`TuiPlugin` 已按"插件"形状收敛，补 `impl Plugin`
   时调用点不变（`tui/src/plugin.rs` 顶部有说明）；
@@ -1022,7 +1022,7 @@ A ──▶ F（并行）
 而地图只占其中一部分（右侧侧栏 + 下方调试面板）。于是相机以为"视口比世界的一半还宽"，
 放弃夹取，玩家一走出中心就滚出画面。修法是把布局收成一个函数
 （`tui::frame_areas`）**只算一次**，相机视口 = 地图区去边框（`tui::map_viewport`），
-并加两条回归断言（自洽 + 不可嵌套）。教训见 **LESSONS.md L51**。
+并加两条回归断言（自洽 + 不可嵌套）。教训见 **LESSONS.md LTUI4**。
 
 **装配层也因此重构：** `App` 从 `main.rs` 移进 `src/lib.rs`（bin 目标无法被测试导入，
 放在 `main.rs` 里等于"主循环接线"永远没人测），`translate_key` 移进
@@ -1072,7 +1072,7 @@ A ──▶ F（并行）
 | 5 | 怪物速度映射 | **先按旧敏捷保行为映射**，再在 GAME.md 用 `[⃞试调]` 重调 |
 | 6 | Phase E 死抽象 | **先记录，不删除**；Phase E 前逐项确认是否删除/接线（见 §10.8 / A43） |
 | 7 | I87/I88 | **Phase A 后立即修**，恢复 `cargo test` 门禁 |
-| 8 | `core` 改名 | **已执行（F5）**：改名 `ecs_core`，消除与标准库 `core` 的遮蔽；见 DESIGN Dsn29 |
+| 8 | `core` 改名 | **已执行（F5）**：改名 `ecs_core`，消除与标准库 `core` 的遮蔽；见 DESIGN DsnX15 |
 
 **下一步：** Phase E（死抽象清理，逐项确认）与 F3/F4（core clippy、一键门禁）。
 
@@ -1106,9 +1106,9 @@ A ──▶ F（并行）
 
 ---
 
-## 12. 渲染后端插件化（摘要，详见 DESIGN Dsn28）
+## 12. 渲染后端插件化（摘要，详见 DESIGN DsnX14）
 
-> **状态：** 草案；`render-api` v1 已落地。正式内容见 **DESIGN.md Dsn28**；本节只保留分支内摘要。
+> **状态：** 草案；`render-api` v1 已落地。正式内容见 **DESIGN.md DsnX14**；本节只保留分支内摘要。
 
 **依赖方向**
 
@@ -1158,3 +1158,65 @@ core ──> presentation ──> render-api <── tui / gpu
 **执行时机：** ✅ R1 已落地（Phase G）；R2–R5 待续。详见 §11.3 Phase G。
 
 > 原则：**每个保留的抽象必须有真实读取方/消费者；否则就是下一个 `ActionKind`。**
+---
+
+## 13. 文档体系：按 crate 拆分（编号公约）
+
+`ISSUES.md` / `LESSONS.md` / `DESIGN.md` 三份文档**每个 crate 各一份**，根目录保留一份
+记协同内容（见 [RULE.md](RULE.md) §六）。
+
+### 13.1 为什么拆
+
+三份文档原本是单文件，随项目增长变成"全局大杂烩"：查一个 crate 的问题要先在 2300 行里
+找，而**改 A crate 的人被迫读 B/C/D crate 的历史**。拆开之后：
+
+- 每个 crate 的三份文档**就是它自己的维护清单**，与代码同目录，改代码时顺手看得到；
+- 旧架构（`dungeon-*` / `src/pages`）的大批历史条目随重构被清理，不再稀释有效信息；
+- 编号自带来源：看到 `ECS7` 就知道去 `ecs_core/ISSUES.md` 找。
+
+### 13.2 编号公约
+
+**每个 crate 的每份文档独立编号，前缀是该 crate 的三字母缩写**：
+
+| 位置 | 缩写 | 示例 |
+|---|---|---|
+| 根目录（协同） | `SYN` / `LSYN` / `DsnX` | `SYN1`（协同问题）、`LSYN1`（通用教训）、`DsnX1`（跨 crate 决策） |
+| `ecs_core/` | `ECS` / `LECS` / `DsnE` | `ECS7`、`LECS21`、`DsnE8` |
+| `presentation/` | `PRE` / `LPRE` / `DsnP` | `PRE1`、`LPRE1`、`DsnP1` |
+| `render-api/` | `API` / `LAPI` / `DsnA` | `API1`、`LAPI1`、`DsnA1` |
+| `tui/` | `TUI` / `LTUI` / `DsnT` | `TUI1`、`LTUI4`、`DsnT1` |
+| `sys/` | `SYS` / `LSYS` / `DsnS` | `SYS1`、`LSYS2`、`DsnS1` |
+| `utils/` | `UTL` / `LUTL` / `DsnU` | `UTL1`、`LUTL4`、`DsnU1` |
+
+规则：
+
+- **序号只增不改**；条目被删除后其编号**不回收**（避免历史 commit / 对话里的引用指错）。
+- 跨文件引用要**带前缀**（`见 LECS21`），不要写裸 `L21`——后者在另一个 crate 里可能是别的意思。
+- 每份文档里保留一条 `**原编号：**`（迁移前的全局编号），供追溯历史 commit 与旧对话。
+
+### 13.3 归属判据
+
+| 文档 | 判据 |
+|---|---|
+| `ISSUES.md` | 问题**发生在哪个 crate 的代码里**。跨 crate 协同、工具链/流程问题、**迁移动因**留根目录。 |
+| `LESSONS.md` | 教训的读者是 AI：**在任何 crate 都适用**的原则（语言、工具链、流程、测试方法论、通用 ECS 用法）留根目录；只在某个 crate 的代码里有落点的归该 crate。 |
+| `DESIGN.md` | 决策的**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/迁移路线决策留根目录。 |
+
+### 13.4 迁移记录
+
+拆分于 Phase G 之后一次性完成（commit 见 `git log --grep="文档按 crate 拆分"`）：
+
+| 文档 | 迁移前 | 迁移后 |
+|---|---|---|
+| `ISSUES.md` | 226 条（A/D/G/I/P/R 六前缀混编） | 44 条保留（`SYN` 13 + `ECS` 26 + `TUI` 2 + `SYS` 3），**168 条删除**（旧 `dungeon-*` / `src/pages` 专属，代码将随 R5 移除，问题不会重现） |
+| `LESSONS.md` | 51 条（L1–L51） | 51 条全部保留（`LSYN` 20 + `LECS` 21 + `LTUI` 4 + `LSYS` 2 + `LUTL` 4） |
+| `DESIGN.md` | 29 条（Dsn1–Dsn29） | 29 条全部保留（`DsnX` 15 + `DsnE` 8 + `DsnP` 2 + `DsnS` 2 + `DsnA` 1 + `DsnT` 1） |
+
+**删除的判据（ISSUES）：** 条目描述的代码已不存在、且**不会重新出现**——旧 UI 页
+（`src/pages/*`、`dungeon-render` 的渲染/投掷/背包链路）、旧领域模型（`Stats` / `ActionKindV3` /
+`ActionQueue` / `ModalKind` / `Reaction` / `InputBuffer` / `ActiveCooldowns` / `SavedStats` 等）。
+它们的问题在重构后由新架构的对应条目覆盖（例如「存档静默丢字段」类 → `SYN9` 与 `DsnX10` 的兼容性规则）。
+
+**教训的归属调整：** 少数教训的归属与直觉不同，值得说明——
+`LTUI4`（布局函数不幂等）虽然是一般性教训，但落点在 `tui::frame_areas`，所以归 `tui`；
+`LSYN1`（`query` vs `try_query`）虽是 Bevy 用法，但它约束的是**领域层**的查询写法，归 `ecs_core`。

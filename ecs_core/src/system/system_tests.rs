@@ -33,7 +33,7 @@ fn spawn_test_attacker(world: &mut World, attack: f64) -> Entity {
 /// 清掉所有带 `T` 的实体。
 ///
 /// 用例要验的不是世界演化时（占位、FOV、移动落点），先把会自己走动的实体
-/// 移走，避免「怪物恰好走到目标格」这类与断言无关的偶发失败（LESSONS.md L50）。
+/// 移走，避免「怪物恰好走到目标格」这类与断言无关的偶发失败（LESSONS.md LSYN20）。
 fn despawn_all<T: Component>(world: &mut World) {
     let entities: Vec<Entity> = {
         let mut query = world.query_filtered::<Entity, With<T>>();

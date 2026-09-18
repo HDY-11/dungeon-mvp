@@ -8,7 +8,7 @@
 //! ecs_core ──> presentation ──> render-api <── tui / gpu
 //! ```
 //!
-//! # 依赖边界（DESIGN Dsn28）
+//! # 依赖边界（DESIGN DsnX14）
 //!
 //! | 允许依赖 | 禁止依赖 |
 //! |---|---|

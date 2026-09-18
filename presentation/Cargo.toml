@@ -3,7 +3,7 @@ name = "presentation"
 version = "0.1.0"
 edition = "2024"
 
-# 依赖边界（DESIGN Dsn28）：只允许认识 `ecs_core` 与 `render-api`。
+# 依赖边界（DESIGN DsnX14）：只允许认识 `ecs_core` 与 `render-api`。
 # **不得**加入 ratatui / crossterm / wgpu / bevy_app —— 那条边界靠这张表强制。
 [dependencies]
 bevy_ecs = { workspace = true }

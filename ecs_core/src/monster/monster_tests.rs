@@ -20,7 +20,7 @@ const ALL_KINDS: [MonsterKindId; 8] = [
 ///
 /// 这条测试的防的是「速度漏填/填成 0」：`0.0` 会让 AV 变成 `inf`
 /// （`clamp_speed` 会兜住，但那是兜底不是设计），漏填则会让怪物
-/// 直接从 AI 查询里消失（LESSONS.md L49 那一类静默失败）。
+/// 直接从 AI 查询里消失（LESSONS.md LECS21 那一类静默失败）。
 #[test]
 fn every_monster_template_has_usable_speeds() {
     for kind in ALL_KINDS {

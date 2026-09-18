@@ -2,7 +2,7 @@
 //!
 //! 只做「[`render_api::SceneFrame`] → 终端」的绘制，**不认识 `ecs_core`**：
 //! 这条边界写在 `Cargo.toml` 的依赖表里，因此"顺手查一个 core 组件"在编译期
-//! 就不可能（Dsn28 的可替换性保证）。
+//! 就不可能（DsnX14 的可替换性保证）。
 //!
 //! ```text
 //! ecs_core ──> presentation ──> render-api <── tui

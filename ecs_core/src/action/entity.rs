@@ -1,4 +1,4 @@
-//! 行动实体链路（REFACTOR.md §3.6 / §11.3 Phase C；DESIGN Dsn27）。
+//! 行动实体链路（REFACTOR.md §3.6 / §11.3 Phase C；DESIGN DsnE8）。
 //!
 //! **一个行动 = 一个 actor 的瞬态子实体**，取代中央分派的 `ActionKind`：
 //!
@@ -85,7 +85,7 @@ type PlayerActorData = (
 /// 一个 AI actor 的数据：实体 id + 移动速度。
 ///
 /// 用 `Option<&MoveSpeed>` 而不是必需组件——理由见 [`actor_speeds`]：
-/// 必需组件会让漏挂速度的 actor 直接从查询里消失（LESSONS.md L49）。
+/// 必需组件会让漏挂速度的 actor 直接从查询里消失（LESSONS.md LECS21）。
 ///
 /// `With<C>` / `Without<Active>` / `Or<..>` 是 **filter**，不能写进数据元组，
 /// 所以必须与 [`AiActor`] 一起作为 `Query` 的两个泛型参数给出去。
@@ -209,14 +209,14 @@ impl SpeedRule {
 /// 速度组件缺失时的回退值（= 基准 1.0）。
 ///
 /// 生成系统用 `Option<&MoveSpeed>` 查询而不是必需组件：**Bevy 的查询遇到
-/// 不匹配的 archetype 会静默返回空**（LESSONS.md L49）。若写成必需组件，
+/// 不匹配的 archetype 会静默返回空**（LESSONS.md LECS21）。若写成必需组件，
 /// 一个漏挂速度组件的 actor 会直接从 AI 里消失、既不行动也不报错；
 /// 回退到基准 + 告警则让这种漏挂可见且不至于卡死行为。
 const FALLBACK_SPEED: f64 = 1.0;
 
 /// 解析 actor 的速度组件；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
 ///
-/// 缺失**不应**被静默忽略（LESSONS.md L49 的同类问题：查询不匹配就是静静地
+/// 缺失**不应**被静默忽略（LESSONS.md LECS21 的同类问题：查询不匹配就是静静地
 /// 什么都不做），所以回退前先告警，让「漏挂速度组件」在日志里可见。
 fn actor_speeds(
     actor: Entity,

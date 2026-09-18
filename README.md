@@ -7,7 +7,7 @@ Rust 终端 Roguelike，基于 `ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 本分支正在向 **业务领域只存在于 `ecs_core`** 的方向重构。
 
 - `ecs_core/` 是新的唯一业务/领域层，完全采用 ECS 范式。
-  crate 名为 `ecs_core`（原 `core`，见 [DESIGN.md Dsn29](DESIGN.md)），
+  crate 名为 `ecs_core`（原 `core`，见 [DESIGN.md DsnX15](DESIGN.md)），
   目录名与包名一致：`use ecs_core::…` / `cargo test -p ecs_core`。
 - 旧代码（`dungeon-core/`、`dungeon-action/`、`dungeon-world/`、`dungeon-render/`、`src/`）视为历史/过渡实现，参考价值有限。
 - 旧组件体系（`Stats`、`ActionKindV3`、`ActionQueue` 等）不再作为新功能基础。
@@ -54,7 +54,7 @@ src/                      ← 旧应用层（历史参考）
 terrain-forge/            ← 地图生成子模块（按需保留）
 ```
 
-渲染契约（新增，见 [DESIGN.md Dsn26](DESIGN.md) / [Dsn28](DESIGN.md)）：
+渲染契约（新增，见 [DESIGN.md DsnA1](DESIGN.md) / [DsnX14](DESIGN.md)）：
 
 ```
 ecs_core ──> presentation ──> render-api <── tui / gpu
@@ -183,7 +183,7 @@ tui/                      ← TUI 后端（不认识 ecs_core、不认识 presen
 80 × 60（4800 格）的洞穴地图由 **terrain-forge** 引擎按管线生成。
 
 - **算法**：`room_accretion` — Brogue 风格有机洞穴，滑动房间直到贴合已有结构
-- **多类型（Dsn24）**：`MapKind` 三类型（标准洞穴/繁茂洞穴/地海），由 `map_kind_for(seed, floor)` 确定性派生（F1 固定标准洞穴）；环境修饰差异化（水域规模、障碍种类、装饰方块）
+- **多类型（DsnE7）**：`MapKind` 三类型（标准洞穴/繁茂洞穴/地海），由 `map_kind_for(seed, floor)` 确定性派生（F1 固定标准洞穴）；环境修饰差异化（水域规模、障碍种类、装饰方块）
 - **生成管线**：terrain-forge → detect_cave_regions → generate_water → carve_expand → generate_obstacles → generate_terrain_decor → ensure_connectivity
 - **Tile 种类**：`Wall` `Floor` `ShallowWater`(可行走) `DeepWater`(不可行走) `Stalactite`(#黄) + 繁茂（`Mycelium` `FungalPatch` `HangingVine`）+ 地海（`Sand` `Seagrass` `CoralReef`）
 - **水体生成**：种子率按类型（洞穴 2‰ / 地海 20‰）→ 深水扩散 → 浅水扩散

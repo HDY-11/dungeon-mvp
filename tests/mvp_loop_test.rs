@@ -42,7 +42,7 @@ fn viewport() -> (u16, u16) {
 /// **为什么必须清场**：`apply_player_command` 会推进世界直到玩家行动做完，
 /// 期间怪物也在行动（游荡每步消耗一次随机数）。若不清场，"玩家是否移动到
 /// 目标格"就取决于怪物有没有恰好走进那一格——那是**执行顺序**决定的，不是
-/// 本测试要验的东西（LESSONS.md L50 记的就是这个坑）。
+/// 本测试要验的东西（LESSONS.md LSYN20 记的就是这个坑）。
 fn quiet_app(seed: u64) -> App {
     let mut app = App::new(seed, viewport());
     clear_monsters_and_stairs(&mut app);

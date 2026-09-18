@@ -3,7 +3,7 @@ name = "tui"
 version = "0.1.0"
 edition = "2024"
 
-# 依赖边界（DESIGN Dsn28）：**不得**依赖 `ecs_core` 或 `presentation`。
+# 依赖边界（DESIGN DsnX14）：**不得**依赖 `ecs_core` 或 `presentation`。
 # 后端只消费 `render-api` 的只读契约（`SceneFrame`），所以这张表里没有
 # `ecs_core` —— 那条边界是编译期强制的，不是靠约定。
 [dependencies]

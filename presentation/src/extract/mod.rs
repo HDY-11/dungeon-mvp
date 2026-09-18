@@ -9,7 +9,7 @@
 //!    `World::query` 需要 `&mut`），全程不写任何组件/资源。
 //! 2. **每帧全量重建**：不增量、不缓存差分。80×60 的地图每帧约 4800 个 key，
 //!    在 30fps 下完全可接受；真需要优化时再加 chunk/dirty，不要提前做
-//!    （Dsn28「提取成本」）。
+//!    （DsnX14「提取成本」）。
 //! 3. **不持久化**：快照是派生产物；存档仍然是 `ecs_core` 的职责。
 //! 4. **不带外观**：这里只产出 [`VisualKey`]（“这是什么”），glyph/颜色由后端的
 //!    catalog 决定。
@@ -146,7 +146,7 @@ pub fn extract_scene_frame(
 
 /// 帧号自增器：装配层持有它，保证 `revision` 单调递增。
 ///
-/// 后端可以用 `revision` 跳过未变化的帧（Dsn28「后端不得反向修改」的配套：
+/// 后端可以用 `revision` 跳过未变化的帧（DsnX14「后端不得反向修改」的配套：
 /// 后端只读 revision，不写）。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SceneFrameSource {

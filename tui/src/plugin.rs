@@ -28,7 +28,7 @@ use crate::state::DevLogBuffer;
 ///
 /// 之所以是"每帧 `draw` 一次"而不是持有终端：终端生命周期（raw mode、
 /// alternate screen、panic-safe guard）属于装配层与 `sys`，后端不该管
-/// （Dsn28：「终端生命周期」是 `TuiPlugin` 的职责之一，但 `Terminal` 实例
+/// （DsnX14：「终端生命周期」是 `TuiPlugin` 的职责之一，但 `Terminal` 实例
 /// 由 `sys` 的 `TerminalSession` 提供）。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TuiPlugin;
