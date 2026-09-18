@@ -1,0 +1,16 @@
+[package]
+name = "presentation"
+version = "0.1.0"
+edition = "2024"
+
+# 依赖边界（DESIGN Dsn28）：只允许认识 `ecs_core` 与 `render-api`。
+# **不得**加入 ratatui / crossterm / wgpu / bevy_app —— 那条边界靠这张表强制。
+[dependencies]
+bevy_ecs = { workspace = true }
+ecs_core = { path = "../ecs_core" }
+render-api = { workspace = true }
+
+[dev-dependencies]
+# catalog.rs 的测试要核对 `Tile` 的 serde 判别值与契约编号一致（那是存档格式
+# 的一部分），因此测试期需要序列化器。**不是**运行时依赖。
+serde_json = "1"

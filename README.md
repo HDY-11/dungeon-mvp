@@ -54,19 +54,35 @@ src/                      ← 旧应用层（历史参考）
 terrain-forge/            ← 地图生成子模块（按需保留）
 ```
 
-渲染契约（新增，见 [DESIGN.md Dsn26](DESIGN.md)）：
+渲染契约（新增，见 [DESIGN.md Dsn26](DESIGN.md) / [Dsn28](DESIGN.md)）：
 
 ```
-render-api/               ← 后端无关的只读数据契约
-  scene.rs                ← SceneFrame：每帧从 ECS 提取的场景快照
+ecs_core ──> presentation ──> render-api <── tui / gpu
+                                  ▲
+                           dungeon-app（装配 + runner 选择）
+
+presentation/             ← 唯一认识 ecs_core 的集成层
+  extract/                ← 世界 → SceneFrame（mod.rs + tests.rs）
+  catalog.rs              ← core 枚举/ID → VisualKey（只给语义，不给外观）
+  camera.rs               ← 视口 + 跟随目标 → Camera2D（世界边界夹取只此一处）
+  ui/                     ← 页栈状态机 → UiView（mod.rs + tests.rs）
+  input/                  ← InputEvent → 页栈意图 / PlayerCommand（键位表唯一处）
+
+render-api/               ← 后端无关的只读数据契约（不认识 ecs_core）
+  scene.rs                ← SceneFrame / Camera2D / MapView / EntityView / HudView
   visual.rs               ← VisualKey / VisualLayer：语义外观键与渲染层级
   ui.rs                   ← UiView：页面级视图模型
-  input.rs                ← InputEvent / InputQueue / SurfaceInfo：后端无关输入与表面尺寸
+  input.rs                ← InputEvent / InputQueue / SurfaceInfo
+
+tui/                      ← TUI 后端（不认识 ecs_core、不认识 presentation）
+  catalog.rs              ← VisualKey → glyph / 颜色（外观唯一定义处）
+  render/                 ← SceneFrame → ratatui 绘制（mod.rs + tests.rs）
+  plugin.rs               ← TuiPlugin：后端接缝（换 GPU 时整体替换）
+  state.rs                ← 后端自己的 UI 资源（开发者日志缓冲）
 ```
 
-- `tui` / 未来的 `gpu` 只依赖 `render-api`，不依赖 `ecs_core`；
-- `presentation`（下一步）负责把 `ecs_core` 提取成 `SceneFrame`；
-- 完整渲染后端插件化方案（presentation / TuiPlugin / bevy_app / GPU 切换）见 [DESIGN.md Dsn28](DESIGN.md) 与 [REFACTOR.md §12](REFACTOR.md)。
+- `tui` / 未来的 `gpu` 只依赖 `render-api`，**不依赖 `ecs_core`**；
+- 这三条边界由 `scripts/gate.ps1` 用 `cargo tree` 强制检查（违反即门禁 FAIL）。
 
 ## 行动模型（ecs_core 方向）
 

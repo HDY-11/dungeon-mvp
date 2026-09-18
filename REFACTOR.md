@@ -780,7 +780,7 @@ sys::spawn_key_source()
 | **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | ✅ D1–D5 全部完成（commit cff5940…）：`Agility`/旧公式零引用、AV 单调与 clamp 测试、怪物速度齐全、回合顺序场景通过 |
 | **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | ✅ 全部完成：删除 6 类死抽象 + `DeathEvent` 接线（`PendingExp` 旁路随之消失）；`cargo clippy -p ecs_core -- -D warnings` 干净，71 测试通过 |
 | **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
-| **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | 见早前渲染方案 |
+| **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | ⏳ R1 完成：新建 `presentation`（57 测试）；`tui` 去 `ecs_core` 依赖、改消费 `SceneFrame`（24 测试）；边界由 `scripts/gate.ps1` 的 `cargo tree` 步骤强制 |
 
 ```text
 A ──▶ B ──▶ C ──▶ D ──▶ E ──▶ G
@@ -956,13 +956,45 @@ A ──▶ F（并行）
 | F4 | CI/本地门禁：`cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui -p sys` + `cargo clippy -p render-api -- -D warnings` | ✅ `scripts/gate.ps1`（含 core clippy 共 4 步，全绿退出 0）；用法见 PROTOCOLS.md §五 |
 | F5 | `core` crate 改名评估（I86 长期） | ✅ 改名为 `ecs_core`（目录同名，7 个文件引用全部同步）；决策记录见 DESIGN Dsn29。`scripts/gate.ps1` 的 `-p core` 已同步为 `-p ecs_core` |
 
-#### Phase G — 回到 presentation + tui
+#### Phase G — 回到 presentation + tui（R1 ✅ 完成）
 
-按早前的渲染方案执行：
+按早前的渲染方案执行（Dsn28 的 R1–R5）：
 
-- 新建 `presentation`：`core` → `SceneFrame` 提取 + `VisualKey` 映射 + UI 状态/页栈 + 输入映射；
-- `tui` 去掉 `core` 依赖，改为 `TuiPlugin` + `SceneFrame` 消费 + `TestBackend` 测试；
-- 然后才是 `bevy_app` 插件宿主与未来 GPU 后端。
+- ✅ **R1-a 新建 `presentation`**：`ecs_core` → `SceneFrame` 提取、`VisualKey` 映射、
+  相机、页栈、输入映射，共五个模块（57 测试）；
+- ✅ **R1-b `tui` 去 `ecs_core` 依赖**：删掉 `tui/src/scene.rs`（那是"后端自己查 core"
+  的最后一块），改为消费 `SceneFrame`；新增 `TuiCatalog`（glyph/颜色）与
+  `TuiPlugin`；24 个测试含 `TestBackend` 全帧断言；
+- ✅ **R1-c 边界门禁**：`scripts/gate.ps1` 新增 5 条 `cargo tree` 规则，
+  违反即 FAIL（已用注入违规依赖的方式验证过会失败）；
+- ⏳ **R2** 页栈 UI：`Look`/`Dialog` 已落地；`Inventory`/`Throw` 需要物品与投掷规则
+  迁移（Dsn25 S4），当前给占位页；
+- ⏳ **R3** `bevy_app` 宿主 + `ScheduleRunner`：**本轮未做**——工作区里没有
+  `bevy_app`，且环境无外网。`TuiPlugin` 已按"插件"形状收敛，补 `impl Plugin`
+  时调用点不变（`tui/src/plugin.rs` 顶部有说明）；
+- ⏳ **R4/R5** GPU 后端与旧 crate 清理。
+
+**R1 的落地要点（写代码时的实际结论）：**
+
+- **`presentation` 的依赖表就是它的边界**：`ecs_core` + `render-api` + `bevy_ecs`，
+  没有终端库，所以"把终端细节漏进集成层"在编译期不可能。
+- **相机夹取只能做一次**：世界 80×60、视口随终端变化。若让后端各自处理
+  "视口比世界大 / 贴边越界"，两个后端必然裁得不一样。`camera::center_on_player`
+  统一夹好：`view >= world` 时直接取世界中心，否则把中心夹进
+  `[view/2, world - view/2]`，并把目标点取**格子中心**（`+0.5`）。
+- **地形三态用并列位图，不用三种 tile 变体**：`MapView.tiles` 全量填地形，
+  `visible`/`explored` 是两个并列 `Vec<bool>`。后端自己决定"可见 > 已探索 >
+  未知"的画法（TUI 用 `Rgb::dim` 压暗）。
+- **同格实体的绘制优先级不能靠遍历顺序**：`entities` 的顺序是 `presentation` 给的
+  **稳定顺序**（按 layer/位置/id 排序，便于 golden 测试），不是绘制优先级。
+  后端必须显式按 `VisualLayer` 取最大层，再让玩家压过同层——
+  `tui/src/render` 里为此写了两条测试（Terrain 层的楼梯 vs Actor 层的怪物）。
+- **`SceneFrame` 派生了 `PartialEq`**：golden 测试需要整帧比较（render-api 改动，
+  字段都是普通数据，无语义风险）。
+- **黄金融通的坑（写测试时踩到）**：`TestBackend` 的缓冲**不能拍平成一个字符串**
+  再 `contains("中文")`——CJK/宽字符占多格，拍平后中文会被拆散；而且
+  `Paragraph` 的 `Wrap { trim: true }` 会在 CJK 之间插空格。正确做法是逐行拼、
+  断言前去空白。这条已写进 `tui/src/render/tests.rs` 的注释。
 
 ### 11.4 测试矩阵
 
@@ -1091,6 +1123,6 @@ core ──> presentation ──> render-api <── tui / gpu
 - 编译期 feature vs 运行时后端选择；
 - crate 命名。
 
-**执行时机：** core Phase A–F 完成后，作为 §11 Phase G 启动。
+**执行时机：** ✅ R1 已落地（Phase G）；R2–R5 待续。详见 §11.3 Phase G。
 
 > 原则：**每个保留的抽象必须有真实读取方/消费者；否则就是下一个 `ActionKind`。**

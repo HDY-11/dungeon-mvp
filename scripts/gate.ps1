@@ -10,8 +10,8 @@
 # 会按系统 ANSI 代码页（中文 Windows 是 GBK）解析 .ps1，中文注释会直接变成语法错误。
 #
 # 覆盖范围与**不覆盖**范围：
-#   覆盖  —— workspace 构建检查、新 core 方向的测试（render-api / core / utils / tui / sys）、
-#            render-api 与 core 的 clippy（-D warnings）。
+#   覆盖  —— workspace 构建检查、新方向的测试（render-api / ecs_core / presentation /
+#            utils / tui / sys）、render-api / presentation / ecs_core 的 clippy（-D warnings）。
 #   不覆盖 —— 旧 `dungeon-*` crate 与根 `dungeon-app` 的测试：它们针对被取代的旧架构，
 #            不纳入新代码门禁（REFACTOR.md §10.4）。`cargo test --workspace` 也不在此脚本里，
 #            因为它会带上那些旧测试目标；需要全量时请单独运行。
@@ -32,12 +32,13 @@ Push-Location $repoRoot
 # 每个步骤：名字 + cargo 参数。
 $steps = @(
     @{ Name = 'cargo check --workspace';   Args = @('check', '--workspace') + $offlineArgs }
-    @{ Name = 'cargo test (新 core 方向)'; Args = @('test', '-p', 'render-api', '-p', 'ecs_core', '-p', 'utils', '-p', 'tui', '-p', 'sys') + $offlineArgs }
+    @{ Name = 'cargo test (新 core 方向)'; Args = @('test', '-p', 'render-api', '-p', 'ecs_core', '-p', 'presentation', '-p', 'utils', '-p', 'tui', '-p', 'sys') + $offlineArgs }
 )
 if (-not $SkipClippy) {
     # 注意 --offline 必须放在 -- **之前**：`--` 之后的参数是给 rustc 的，
     # `--offline` 会被 rustc 当成未知选项（本脚本第一版就踩了这个坑）。
     $steps += @{ Name = 'cargo clippy -p render-api'; Args = @('clippy', '-p', 'render-api', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
+    $steps += @{ Name = 'cargo clippy -p presentation'; Args = @('clippy', '-p', 'presentation', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
     $steps += @{ Name = 'cargo clippy -p ecs_core';       Args = @('clippy', '-p', 'ecs_core', '--all-targets') + $offlineArgs + @('--', '-D', 'warnings') }
 }
 
@@ -55,6 +56,35 @@ foreach ($step in $steps) {
     $ErrorActionPreference = 'Stop'
     $results += [pscustomobject]@{ Step = $step.Name; ExitCode = $exitCode }
 }
+
+# ── 依赖边界（DESIGN Dsn28）────────────────────────────
+#
+# 这三条边界是「渲染后端可替换」的全部保证，而它们**只能靠依赖图验证**：
+# 代码里看起来没用到 `ecs_core` 不代表依赖表里没有（那样早晚会有人"顺手"用一下）。
+# 用 `cargo tree` 当门禁，比代码评审可靠。
+Write-Host ''
+Write-Host '=== 依赖边界检查 ===' -ForegroundColor Cyan
+$forbidden = @(
+    @{ Pkg = 'tui';          Banned = 'ecs_core';   Why = 'tui 不得依赖 ecs_core（只消费 render-api）' }
+    @{ Pkg = 'tui';          Banned = 'presentation'; Why = 'tui 不得依赖 presentation（只消费 render-api）' }
+    @{ Pkg = 'presentation'; Banned = 'ratatui';    Why = 'presentation 不得依赖 ratatui' }
+    @{ Pkg = 'presentation'; Banned = 'crossterm';  Why = 'presentation 不得依赖 crossterm' }
+    @{ Pkg = 'render-api';   Banned = 'ecs_core';   Why = 'render-api 不得依赖 ecs_core' }
+)
+$boundaryOk = $true
+foreach ($rule in $forbidden) {
+    $ErrorActionPreference = 'Continue'
+    $tree = & cargo tree -p $rule.Pkg --offline 2>&1 | Out-String
+    $ErrorActionPreference = 'Stop'
+    # 只匹配"依赖边"，避免把包名出现在注释/说明里的情况算进去。
+    if ($tree -match "(?m)^[│├└─\s]*[│├└─\s]$([regex]::Escape($rule.Banned))\s") {
+        Write-Host ("  FAIL  {0} 依赖了 {1}：{2}" -f $rule.Pkg, $rule.Banned, $rule.Why) -ForegroundColor Red
+        $boundaryOk = $false
+    } else {
+        Write-Host ("  PASS  {0} 不依赖 {1}" -f $rule.Pkg, $rule.Banned) -ForegroundColor Green
+    }
+}
+$results += [pscustomobject]@{ Step = '依赖边界（Dsn28）'; ExitCode = $(if ($boundaryOk) { 0 } else { 1 }) }
 
 Write-Host ''
 Write-Host '=== 门禁结果 ===' -ForegroundColor Cyan

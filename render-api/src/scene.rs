@@ -410,7 +410,10 @@ impl LogLine {
 ///
 /// `presentation` 每帧重建并写入 ECS；TUI / GPU 后端只读此资源。
 /// `revision` 每次提取递增，后端可以用它跳过未变化的帧。
-#[derive(Resource, Clone, Debug, Default)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+///
+/// 派生了 PartialEq 是为了让后端/集成层能做 golden 对比（Dsn28「SceneFrame
+/// golden 测试」）；字段全是普通数据，没有需要手写比较的语义。
 pub struct SceneFrame {
     pub revision: u64,
     pub camera: Camera2D,

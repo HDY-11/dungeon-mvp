@@ -632,7 +632,9 @@ dependencies = [
  "dungeon-world",
  "ecs_core",
  "log",
+ "presentation",
  "ratatui",
+ "render-api",
  "sys",
  "tui",
  "utils",
@@ -1437,6 +1439,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "presentation"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "ecs_core",
+ "render-api",
+ "serde_json",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2092,8 +2104,8 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
- "ecs_core",
  "ratatui",
+ "render-api",
  "utils",
 ]
 

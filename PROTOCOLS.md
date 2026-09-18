@@ -107,7 +107,7 @@ A4  — 原始问题标题 ✅
 
 ## 五、门禁（一条命令）
 
-REFACTOR 期间「新 core 方向」的验收统一走一个脚本：
+REFACTOR 期间「新方向」的验收统一走一个脚本：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
@@ -118,9 +118,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
 | 步骤 | 命令 |
 |---|---|
 | 1 | `cargo check --workspace` |
-| 2 | `cargo test -p render-api -p core -p utils -p tui -p sys` |
+| 2 | `cargo test -p render-api -p ecs_core -p presentation -p utils -p tui -p sys` |
 | 3 | `cargo clippy -p render-api --all-targets -- -D warnings` |
-| 4 | `cargo clippy -p core --all-targets -- -D warnings` |
+| 4 | `cargo clippy -p presentation --all-targets -- -D warnings` |
+| 5 | `cargo clippy -p ecs_core --all-targets -- -D warnings` |
+| 6 | **依赖边界**（`cargo tree`）：`tui` ↛ `ecs_core`/`presentation`、`presentation` ↛ ratatui/crossterm、`render-api` ↛ `ecs_core` |
+
+第 6 步是 DESIGN Dsn28「渲染后端可替换」的唯一机械保证：代码里"看起来没用到"
+不代表依赖表里没有，而依赖表是这条边界**唯一**可靠的表达。违反时门禁直接 FAIL
+（已用「给 `tui` 注入 `ecs_core` 依赖」验证过确实会失败）。
 
 选项：`-Online`（去掉 `--offline`，需要联网拉依赖时）、`-SkipClippy`（只跑 1–2）。
 

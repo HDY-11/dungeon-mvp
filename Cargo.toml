@@ -7,11 +7,19 @@ edition = "2024"
 bevy_ecs = "0.16"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+# ⚠️ 旧 `dungeon-*` crate 只被**遗留代码**需要：`src/lib.rs` 仍声明
+# `pub mod keymap` / `pub mod throw`，而这两个模块用的是旧领域模型。
+# `main.rs`（新装配层）不用它们，但 `cargo test -p dungeon-app` 会编译 `lib.rs`，
+# 所以现在还不能从这张表里删——删了连 lib 测试目标都编不过。
+# **触发条件：** R5 清理 `src/lib.rs` 的 keymap/throw 与 `src/pages/` 孤儿目录后，
+# 这四行与本包脱离，那时一并删除。
 dungeon-core = { path = "dungeon-core" }
 dungeon-action = { path = "dungeon-action" }
 dungeon-world = { path = "dungeon-world" }
 dungeon-render = { path = "dungeon-render" }
 ecs_core = { path = "ecs_core" }
+presentation = { path = "presentation" }
+render-api = { workspace = true }
 utils = { path = "utils" }
 sys = { path = "sys" }
 tui = { path = "tui" }
@@ -31,6 +39,7 @@ members = [
     "dungeon-render",
     "terrain-forge",
     "ecs_core",
+    "presentation",
     "render-api",
     "utils",
     "sys",

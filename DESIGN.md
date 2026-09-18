@@ -920,7 +920,36 @@ Last        : TUI draw / GPU sync
 
 **关联：** DESIGN Dsn1 / Dsn20 / Dsn21 / Dsn26；REFACTOR §12；ISSUES I87/I88；README 渲染契约章节。
 
-**状态：** 草案；R0 已落地；R1 起待 core Phase A–F 完成后启动（REFACTOR §11 Phase G）。
+**状态：** R0/R1 已落地（REFACTOR §11 Phase G）。
+
+- **R0**（`render-api` v1，34 测试）已完成；
+- **R1** 已完成：新建 `presentation`（`extract` / `catalog` / `camera` / `ui` / `input`，
+  57 测试）；`tui` 去掉 `ecs_core` 依赖、改消费 `SceneFrame`（`TuiCatalog` +
+  `TuiPlugin`，24 测试，含 `TestBackend` 全帧断言）。
+  三条边界（`tui` ↛ `ecs_core`/`presentation`、`presentation` ↛ ratatui/crossterm、
+  `render-api` ↛ `ecs_core`）已由 `scripts/gate.ps1` 的 `cargo tree` 步骤强制；
+- **R2** 部分：页栈的 `Look` / `Dialog` 已落地（`ui::PageStack` → `UiView`，
+  输入路由与 tap-tap 口径在 `input`）；`Inventory` / `ThrowSelect` / `ThrowAim`
+  需要物品与投掷规则迁移（Dsn25 S4），后端当前给占位页；
+- **R3**：工作区里没有 `bevy_app` 且环境无外网，本轮未引入。`TuiPlugin` 已按
+  插件形状收敛（`tui/src/plugin.rs`），补 `impl Plugin` 时调用点不变；
+- **R4/R5**：GPU 后端与旧 crate 清理待续。
+
+**R1 的实现结论（与草案的差异，均已在代码注释就位）：**
+
+1. **相机夹取放在 `presentation`，只做一次**。世界 80×60、视口随终端变化；
+   若让各后端自己处理"视口比世界大 / 贴边越界"，两个后端必然裁得不一样
+   （草案只说了"camera 计算在 `presentation`"，这里补上"为什么"）。
+2. **地形用并列位图而不是三种 tile 变体**：`MapView.tiles` 全量填地形，
+   `visible` / `explored` 是两个并列 `Vec<bool>`；"可见 > 已探索 > 未知"的
+   画法留给后端（TUI 用 `Rgb::dim` 压暗），GPU 可以用自己的调色方式。
+3. **同格实体的绘制优先级是后端职责，但不能靠遍历顺序**：`entities` 的顺序是
+   `presentation` 给的**稳定顺序**（便于 golden 测试），后端必须显式按
+   `VisualLayer` 取最大层、再让玩家压过同层。
+4. **`SceneFrame` 增加 `PartialEq`**：golden 测试要整帧比较。字段全是普通数据，
+   不构成语义风险，故未递增 `CONTRACT_VERSION`（契约字段未增删改）。
+5. **`TuiPlugin` 不是 `bevy_app::Plugin`**：R3 之前它是"结构约定"——
+   把后端需要的东西收成一个类型，让装配层"选后端"只有一个接缝。
 
 ---
 
