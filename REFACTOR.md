@@ -967,6 +967,9 @@ A ──▶ F（并行）
   `TuiPlugin`；24 个测试含 `TestBackend` 全帧断言；
 - ✅ **R1-c 边界门禁**：`scripts/gate.ps1` 新增 5 条 `cargo tree` 规则，
   违反即 FAIL（已用注入违规依赖的方式验证过会失败）；
+- ✅ **R1-d 端到端可玩性验证**：`tests/mvp_loop_test.rs`（9 条）把 `crossterm::KeyCode`
+  → 世界推进 → `SceneFrame` → **真实 ratatui 绘制**整条链路串起来断言；门禁新增
+  「端到端 / 单元 / bin 构建」三步。详见下方「MVP 跑通的验证记录」；
 - ⏳ **R2** 页栈 UI：`Look`/`Dialog` 已落地；`Inventory`/`Throw` 需要物品与投掷规则
   迁移（Dsn25 S4），当前给占位页；
 - ⏳ **R3** `bevy_app` 宿主 + `ScheduleRunner`：**本轮未做**——工作区里没有
@@ -991,10 +994,39 @@ A ──▶ F（并行）
   `tui/src/render` 里为此写了两条测试（Terrain 层的楼梯 vs Actor 层的怪物）。
 - **`SceneFrame` 派生了 `PartialEq`**：golden 测试需要整帧比较（render-api 改动，
   字段都是普通数据，无语义风险）。
-- **黄金融通的坑（写测试时踩到）**：`TestBackend` 的缓冲**不能拍平成一个字符串**
+- **跨层测试的坑（写测试时踩到）**：`TestBackend` 的缓冲**不能拍平成一个字符串**
   再 `contains("中文")`——CJK/宽字符占多格，拍平后中文会被拆散；而且
   `Paragraph` 的 `Wrap { trim: true }` 会在 CJK 之间插空格。正确做法是逐行拼、
   断言前去空白。这条已写进 `tui/src/render/tests.rs` 的注释。
+
+**MVP 跑通的验证记录（R1-d）：**
+
+`tests/mvp_loop_test.rs` 用真实代码（不 mock）驱动整条链路：
+`crossterm::KeyCode` → `dungeon_app::translate_key` → `App::handle` →
+`ecs_core::apply_player_command` → 世界推进 → `App::refresh` →
+`presentation::extract_scene_frame` → `TuiPlugin::draw` → `ratatui::TestBackend`。
+
+| 用例 | 断言 |
+|---|---|
+| `mvp_starts_and_produces_a_renderable_frame` | 开局即有可渲染帧；画面上有玩家与标题 |
+| `mvp_move_command_advances_the_world_and_the_frame` | 移动命令改变世界位置、帧同步、相机跟住玩家 |
+| `mvp_rejected_command_does_not_advance_the_world` | 撞墙命令被拒且玩家仍 `Idle` |
+| `mvp_wait_command_works` | 等待可用 |
+| `mvp_quit_requires_confirmation` | `q` 只弹框、`Enter` 才退、`Esc` 能取消 |
+| `mvp_overlay_swallows_movement_keys` | 覆盖页吃掉移动键，关闭后恢复 |
+| `mvp_plays_a_lot_of_turns_without_panicking_or_leaking` | 连续 200 步不 panic、不卡死 |
+| `mvp_terminal_keycode_drives_the_world_end_to_end` | 从 `KeyCode` 一路到世界状态与退出流程 |
+| `mvp_viewport_resize_is_safe` | 视口从 1×1 到 200×60 都不 panic |
+
+**这一步抓到一个真实设计缺陷（不是测试写错）：** 相机视口此前用的是**终端整体尺寸**，
+而地图只占其中一部分（右侧侧栏 + 下方调试面板）。于是相机以为"视口比世界的一半还宽"，
+放弃夹取，玩家一走出中心就滚出画面。修法是把布局收成一个函数
+（`tui::frame_areas`）**只算一次**，相机视口 = 地图区去边框（`tui::map_viewport`），
+并加两条回归断言（自洽 + 不可嵌套）。教训见 **LESSONS.md L51**。
+
+**装配层也因此重构：** `App` 从 `main.rs` 移进 `src/lib.rs`（bin 目标无法被测试导入，
+放在 `main.rs` 里等于"主循环接线"永远没人测），`translate_key` 移进
+`src/keys.rs`。`main.rs` 现在只剩终端生命周期与主循环，没有一条规则。
 
 ### 11.4 测试矩阵
 

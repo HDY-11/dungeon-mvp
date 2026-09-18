@@ -84,7 +84,12 @@ pub struct DevLogLine {
     pub message: String,
 }
 
-#[derive(Resource, Default)]
+/// 后端自己的调试日志缓冲（由装配层从 `sys` 的日志通道灌入）。
+///
+/// 派生 `Clone` 是为了让装配层每帧交给后端**一份快照**而不是借用：
+/// `App::refresh(&mut self)` 与取日志的 `&self` 借用无法共存，而这点数据
+/// （最多几十行字符串）的拷贝代价远小于为此拆分状态。
+#[derive(Resource, Default, Clone)]
 pub struct DevLogBuffer {
     pub lines: std::collections::VecDeque<DevLogLine>,
     pub max: usize,

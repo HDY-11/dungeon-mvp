@@ -246,6 +246,43 @@ fn out_of_world_cells_are_blank() {
     );
 }
 
+/// **回归测试**：布局只能算一次。
+///
+/// 曾经 `render_map` 收的是"地图区"，却又调了一次 `map_viewport`（它内部会再算一次
+/// `frame_areas`）——于是调试面板的高度被减了两次，地图区从 48×22 缩水成 22×14，
+/// 而相机仍按 46×20 夹取，玩家一走出中心就被裁到画面外（`mvp_loop_test` 抓到了它）。
+///
+/// 这条测试钉住两个不变量：
+///
+/// 1. **自洽**：`map_viewport(整帧)` 必须等于 `frame_areas(整帧).map` 去掉边框后的
+///    尺寸——相机以为的格数 = 实际画的格数；
+/// 2. **不可嵌套**：把地图区当输入再算一次布局会得到**不同**的结果，说明"拿子区域
+///    当输入"是明确的错误用法，而不是碰巧能用。
+#[test]
+fn layout_is_computed_once_and_viewport_matches_the_drawn_area() {
+    for terminal in [
+        ratatui::layout::Rect::new(0, 0, 80, 30),
+        ratatui::layout::Rect::new(0, 0, 120, 40),
+        ratatui::layout::Rect::new(0, 0, 60, 24),
+    ] {
+        let areas = frame_areas(terminal);
+        let inner_w = areas.map.width.saturating_sub(2);
+        let inner_h = areas.map.height.saturating_sub(2);
+
+        assert_eq!(
+            map_viewport(terminal),
+            (inner_w, inner_h),
+            "整帧 {terminal:?}: 相机视口必须等于实际绘制的地图区尺寸"
+        );
+
+        assert_ne!(
+            frame_areas(areas.map).map,
+            areas.map,
+            "对子区域再算布局应当得到不同结果（所以它必须只算一次）"
+        );
+    }
+}
+
 /// 需求外的实体（Unknown key）画成 `?`，而不是静默当空气。
 #[test]
 fn unknown_visual_keys_render_as_question_mark() {

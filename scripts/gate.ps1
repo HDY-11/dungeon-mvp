@@ -33,6 +33,11 @@ Push-Location $repoRoot
 $steps = @(
     @{ Name = 'cargo check --workspace';   Args = @('check', '--workspace') + $offlineArgs }
     @{ Name = 'cargo test (新 core 方向)'; Args = @('test', '-p', 'render-api', '-p', 'ecs_core', '-p', 'presentation', '-p', 'utils', '-p', 'tui', '-p', 'sys') + $offlineArgs }
+    # 端到端：装配层 + 整条链路（喂输入 → 世界推进 → 提取帧 → 真实绘制）。
+    # 它覆盖了 bin 之外的全部代码，所以能回答"装起来还能不能跑"。
+    @{ Name = 'cargo test -p dungeon-app (端到端)'; Args = @('test', '-p', 'dungeon-app', '--test', 'mvp_loop_test') + $offlineArgs }
+    @{ Name = 'cargo test -p dungeon-app (单元)';   Args = @('test', '-p', 'dungeon-app', '--lib') + $offlineArgs }
+    @{ Name = 'cargo build -p dungeon-app (bin)';   Args = @('build', '-p', 'dungeon-app') + $offlineArgs }
 )
 if (-not $SkipClippy) {
     # 注意 --offline 必须放在 -- **之前**：`--` 之后的参数是给 rustc 的，

@@ -119,14 +119,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
 |---|---|
 | 1 | `cargo check --workspace` |
 | 2 | `cargo test -p render-api -p ecs_core -p presentation -p utils -p tui -p sys` |
-| 3 | `cargo clippy -p render-api --all-targets -- -D warnings` |
-| 4 | `cargo clippy -p presentation --all-targets -- -D warnings` |
-| 5 | `cargo clippy -p ecs_core --all-targets -- -D warnings` |
-| 6 | **依赖边界**（`cargo tree`）：`tui` ↛ `ecs_core`/`presentation`、`presentation` ↛ ratatui/crossterm、`render-api` ↛ `ecs_core` |
+| 3 | `cargo test -p dungeon-app --test mvp_loop_test`（端到端：喂按键 → 世界推进 → 真实绘制） |
+| 4 | `cargo test -p dungeon-app --lib`（装配层单元） |
+| 5 | `cargo build -p dungeon-app`（bin 能编出来） |
+| 6 | `cargo clippy -p render-api --all-targets -- -D warnings` |
+| 7 | `cargo clippy -p presentation --all-targets -- -D warnings` |
+| 8 | `cargo clippy -p ecs_core --all-targets -- -D warnings` |
+| 9 | **依赖边界**（`cargo tree`）：`tui` ↛ `ecs_core`/`presentation`、`presentation` ↛ ratatui/crossterm、`render-api` ↛ `ecs_core` |
 
-第 6 步是 DESIGN Dsn28「渲染后端可替换」的唯一机械保证：代码里"看起来没用到"
+第 9 步是 DESIGN Dsn28「渲染后端可替换」的唯一机械保证：代码里"看起来没用到"
 不代表依赖表里没有，而依赖表是这条边界**唯一**可靠的表达。违反时门禁直接 FAIL
 （已用「给 `tui` 注入 `ecs_core` 依赖」验证过确实会失败）。
+
+第 3–5 步回答的是另一个问题：**各层单测都绿，不代表装起来还能跑**。
+`mvp_loop_test` 从 `crossterm::KeyCode` 一路断言到真实 ratatui 绘制，
+把"主循环接线"从"人工玩一遍"变成可回归的检查。
 
 选项：`-Online`（去掉 `--offline`，需要联网拉依赖时）、`-SkipClippy`（只跑 1–2）。
 

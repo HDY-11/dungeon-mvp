@@ -35,6 +35,6 @@ pub use catalog::{TuiCatalog, log_color};
 pub use color::*;
 pub use layout::*;
 pub use plugin::{TuiPlugin, draw_scene};
-pub use render::{build_map_lines, render_frame};
+pub use render::{FrameAreas, build_map_lines, frame_areas, map_viewport, render_frame};
 pub use state::*;
 pub use title::*;

@@ -47,6 +47,14 @@ impl TuiPlugin {
         render_frame(frame, scene, dev_log);
     }
 
+    /// 给定终端区域，返回相机该用的视口尺寸。
+    ///
+    /// 装配层必须用**这个**而不是终端整体尺寸：地图只占终端的一部分，
+    /// 相机拿到过大的视口就不会夹取，玩家走出中心即滚出画面。
+    pub fn viewport(&self, area: ratatui::layout::Rect) -> (u16, u16) {
+        crate::render::map_viewport(area)
+    }
+
     /// 从世界取开发者日志缓冲（没有就返回 `None`，不 panic）。
     pub fn dev_log<'w>(&self, world: &'w World) -> Option<&'w DevLogBuffer> {
         world.get_resource::<DevLogBuffer>()

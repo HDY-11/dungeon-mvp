@@ -29,37 +29,77 @@ const DEBUG_PANEL_HEIGHT: u16 = 8;
 /// 侧栏最小宽度。
 const SIDE_PANEL_MIN_WIDTH: u16 = 26;
 
+/// 一整帧的区块划分。
+///
+/// **抽成独立类型是因为相机需要它**：地图只占终端的一部分，`presentation`
+/// 必须知道**地图区**多大才能正确夹取相机（`Camera2D.viewport` 要的是后端表面
+/// 上留给世界的尺寸，不是整个终端）。曾经把整个终端尺寸传给相机，结果是
+/// 视口被当成 80 宽、大于世界的一半，夹取失效，玩家一走出中心就滚出画面。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameAreas {
+    /// 全部可用区域。
+    pub full: Rect,
+    /// 游戏主区（地图 + 侧栏）。
+    pub main: Rect,
+    /// 地图区（含边框）。
+    pub map: Rect,
+    /// 侧栏（含边框）。
+    pub side: Rect,
+    /// 调试面板。
+    pub debug: Rect,
+}
+
+/// 计算区块划分。**这是布局的唯一权威**——渲染与相机都从这里取。
+pub fn frame_areas(area: Rect) -> FrameAreas {
+    let [main, debug] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(DEBUG_PANEL_HEIGHT)]).areas(area);
+    let [map, side] = Layout::horizontal([
+        Constraint::Percentage(60),
+        Constraint::Min(SIDE_PANEL_MIN_WIDTH),
+    ])
+    .areas(main);
+    FrameAreas {
+        full: area,
+        main,
+        map,
+        side,
+        debug,
+    }
+}
+
+/// 地图区里**可画世界格**的尺寸（去掉边框）。
+///
+/// 这就是 [`Camera2D`] 该收到的视口。返回 `(0, 0)` 表示"太小/未知"，
+/// 相机会退回世界中心而不是 panic。
+///
+/// [`Camera2D`]: render_api::Camera2D
+pub fn map_viewport(area: Rect) -> (u16, u16) {
+    let map = frame_areas(area).map;
+    (map.width.saturating_sub(2), map.height.saturating_sub(2))
+}
+
 /// 画一整帧。
 pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Option<&DevLogBuffer>) {
-    let area = terminal_frame.area();
-
-    let [main_area, debug_area] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(DEBUG_PANEL_HEIGHT)]).areas(area);
+    let areas = frame_areas(terminal_frame.area());
 
     match &scene.ui {
         // 背包页是全屏页（Dsn21），其余页面叠加在游戏画面上。
         UiView::Inventory(_) => render_placeholder(
             terminal_frame,
-            area,
+            areas.full,
             "背包",
             "物品系统尚未迁移到 ecs_core（Dsn25 S4），此页为占位。",
         ),
         ui => {
-            let [map_area, side_area] = Layout::horizontal([
-                Constraint::Percentage(60),
-                Constraint::Min(SIDE_PANEL_MIN_WIDTH),
-            ])
-            .areas(main_area);
-
-            render_map(terminal_frame, map_area, scene);
-            render_side(terminal_frame, side_area, scene);
+            render_map(terminal_frame, areas.full, scene);
+            render_side(terminal_frame, areas.full, scene);
 
             match ui {
-                UiView::Look(look) => render_look_overlay(terminal_frame, map_area, look),
-                UiView::Dialog(dialog) => render_dialog_overlay(terminal_frame, area, dialog),
+                UiView::Look(look) => render_look_overlay(terminal_frame, areas.full, look),
+                UiView::Dialog(dialog) => render_dialog_overlay(terminal_frame, areas.full, dialog),
                 UiView::ThrowSelect(_) | UiView::ThrowAim(_) => render_placeholder(
                     terminal_frame,
-                    area,
+                    areas.full,
                     "投掷",
                     "投掷系统尚未迁移到 ecs_core（Dsn25 S4），此页为占位。",
                 ),
@@ -68,12 +108,18 @@ pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Opt
         }
     }
 
-    render_debug_panel(terminal_frame, debug_area, dev_log);
+    render_debug_panel(terminal_frame, areas.debug, dev_log);
 }
 
-fn render_map(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
-    let viewport_w = area.width.saturating_sub(2) as usize;
-    let viewport_h = area.height.saturating_sub(2) as usize;
+/// 画地图。
+///
+/// 收的是**整帧区域**而不是地图区：布局必须由 [`frame_areas`] 算**一次**。
+/// 曾经这里收地图区、又调一次 `map_viewport`（它内部再算一次 `frame_areas`），
+/// 于是调试面板的高度被减了两次，地图区缩水成 22×14，玩家被裁到画面外。
+fn render_map(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
+    let area = frame_areas(full).map;
+    let (viewport_w, viewport_h) = map_viewport(full);
+    let (viewport_w, viewport_h) = (viewport_w as usize, viewport_h as usize);
 
     let lines = build_map_lines(scene, viewport_w, viewport_h);
 
@@ -186,7 +232,8 @@ fn visible_entity_at(scene: &SceneFrame, x: i32, y: i32) -> Option<&EntityView> 
         .max_by_key(|entity| entity.layer)
 }
 
-fn render_side(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
+    let area = frame_areas(full).side;
     let mut lines = Vec::new();
 
     lines.push(Line::from(format!("楼层：{}", scene.hud.floor)));
@@ -269,7 +316,8 @@ fn render_side(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     );
 }
 
-fn render_look_overlay(frame: &mut Frame, area: Rect, look: &render_api::LookView) {
+fn render_look_overlay(frame: &mut Frame, full: Rect, look: &render_api::LookView) {
+    let area = frame_areas(full).map;
     // 光标位置换算到终端格：相机已经把世界原点定好了，这里只做平移。
     // 换算失败的唯一原因是视口尺寸为 0（终端太小），此时不画光标。
     let mut lines = Vec::new();
