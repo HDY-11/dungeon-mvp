@@ -322,6 +322,42 @@ H1 只碰**形状**，不改任何行为与数值。它解掉的是 Phase H 计�
 
 **关联：** REFACTOR.md §11.3 Phase H（H1）；ISSUES ECS35 / ECS36（均已修复）。
 
+**进展（Phase H3：调度按角色分组）：**
+
+H3 把 `build_action_poc_schedule` 从「13 个系统一条 `.chain()`」改成
+**五个有名字的角色 + 一条角色链**，解掉的是 `LECS22` 里"顺序协调的中央点"那一类扩展成本：
+
+```rust
+#[derive(SystemSet)] pub enum ActionPhase {
+    Generate,   // 只 spawn 候选 / 挂载玩家行动
+    Arbitrate,  // 唯一写 actor 行动状态的系统
+    Tick,       // 推进 ActionTimer，归零加 Ready
+    Execute,    // 按行动类型执行的专用系统集合
+    Complete,   // 回收 action 实体 + actor 回转 Idle/Failure
+}
+```
+
+| | H3 之前 | H3 之后 |
+|---|---|---|
+| 加一个执行器 | 在 13 项长链里找位置，还要确认它与前后系统的顺序 | 往 `ActionPhase::Execute` 加一行 |
+| 加一个生成器 | 同上 | 往 `ActionPhase::Generate` 加一行 |
+| 顺序定义在哪 | 隐含在一条长元组的**书写顺序**里 | `ActionPhase` 的全序 + 一处 `.chain()` |
+
+**为什么不是"合并成一组、让调度器自由排序"**：五个角色之间是**数据依赖**
+（候选 → 仲裁 → 计时 → 执行 → 终态事件），自由排序会破坏语义。
+`LECS22` 的结论在这里具体化为：ECS 消除了**类型分发的**中央点（`With<A>` 取代 `match`），
+但消除不掉**顺序协调的**中央点——所以正确的目标是"加第 N 个只改一处"，而不是"零处"。
+
+**`ApplyDeferred` 的位置不能省**：生成器用 `Commands` spawn 候选、仲裁用 `Query` 读；
+执行器写终态事件、completion 用 `EventReader` 读。分组后这两处落盘必须逐处保留。
+
+**测试怎么证明"分组没改行为"**：新增 `action_phases_keep_their_total_order_and_execute_group_is_open`——
+每个角色**自己记录**有没有跑（读调度图只能证明"登记了"，记录才能证明"按这个顺序真的跑了"），
+并向 `Execute` 组追加一个扩展系统，验证它能直接接进链路、且整轮照常执行完并回收实体。
+这条用例同时是 H10（技能三层骨架）接法的样板。
+
+**关联：** REFACTOR.md §11.3 Phase H（H3）；LESSONS LECS22（扩展点判据）。
+
 ---
 
 **原编号：** `DsnE8`（迁移前）

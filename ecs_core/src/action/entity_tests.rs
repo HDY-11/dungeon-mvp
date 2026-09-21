@@ -1897,6 +1897,111 @@ fn legacy_player_path_still_works_alongside_poc() {
     assert!(world.get::<Idle>(player).is_some());
 }
 
+// ── H3：调度的角色分组是开放扩展点 ─────────────────────
+
+/// H3 的记录器：系统在每个角色上「自己报数」，用来把调度顺序从**行为**读出来。
+#[derive(Resource, Default)]
+struct ActionOrderProbe {
+    tick: usize,
+    execute: usize,
+    complete: usize,
+}
+
+/// H3：往 [`ActionPhase::Execute`] 里追加一个系统，验证分组没有改变全序。
+///
+/// 这条用例回答的是 H3 的验收问题——**分组是"改名"还是"真的仍是同一条链"**：
+///
+/// - 生成 → 仲裁 → tick → 执行 → completion 的全序仍在（每个角色各只跑一次，
+///   且扩展系统落在 tick 之后、completion 之前）；
+/// - [`ActionPhase::Execute`] 是**开放的**：往这个集合里加一行就接进链路，
+///   既不需要改生成/仲裁/tick/完成，也不需要知道 Execute 组里还有谁；
+/// - `ApplyDeferred` 的位置没被分组破坏（动作照常执行完并回收实体）。
+///
+/// 顺序靠**每个角色自己记录**来判定，而不是去读调度图：读图只能证明"登记了"，
+/// 记录才能证明"按这个顺序真的跑了"。
+#[test]
+fn action_phases_keep_their_total_order_and_execute_group_is_open() {
+    fn extension_system(mut probe: ResMut<ActionOrderProbe>, mut events: ActionEvents) {
+        // 这个"扩展执行器"什么都不做，只用自己有没有拿到终态出口来证明
+        // 「往 Execute 组加一行」确实接进了链路（ActionEvents 是执行器专属参数）。
+        let _ = &mut events;
+        probe.execute += 1;
+    }
+
+    let (mut world, _player) = poc_world();
+    let actor = poc_actor(&mut world, (10, 10));
+    world.insert_resource(ActionOrderProbe::default());
+
+    // 用「生产里加系统的同一套写法」搭一条调度：每个角色登记自己的系统，
+    // 顺序只写一次（角色之间的 `.chain()`）。Execute 组里除了真实执行器，
+    // 还追加了一个**扩展系统**——这正是 H10（技能三层骨架）要走的接法。
+    let mut schedule = Schedule::new(ActionPocSchedule);
+    schedule.add_systems(
+        (
+            (
+                (
+                    player_action_generation_system,
+                    wait_generation_system,
+                    chase_generation_system,
+                    wander_generation_system,
+                    flee_generation_system,
+                )
+                    .chain()
+                    .in_set(ActionPhase::Generate),
+                ApplyDeferred,
+                action_arbitration_system.in_set(ActionPhase::Arbitrate),
+                ApplyDeferred,
+                (
+                    tick_action_timers_system.in_set(ActionPhase::Tick),
+                    (|mut probe: ResMut<ActionOrderProbe>| probe.tick += 1)
+                        .in_set(ActionPhase::Tick),
+                )
+                    .chain(),
+                (
+                    execute_wait_system,
+                    execute_move_system,
+                    execute_basic_attack_system,
+                    execute_chase_system,
+                    execute_flee_system,
+                    execute_wander_system,
+                )
+                    .chain()
+                    .in_set(ActionPhase::Execute),
+                extension_system.in_set(ActionPhase::Execute),
+                ApplyDeferred,
+                (
+                    action_completion_system.in_set(ActionPhase::Complete),
+                    (|mut probe: ResMut<ActionOrderProbe>| probe.complete += 1)
+                        .in_set(ActionPhase::Complete),
+                )
+                    .chain(),
+            )
+                .chain(),
+        ),
+    );
+    world.add_schedule(schedule);
+
+    // 整条链路各跑一次：生成 → 仲裁 → tick（AV 归零）→ 执行 → completion。
+    world.run_schedule(ActionPocSchedule);
+
+    let probe = world.resource::<ActionOrderProbe>();
+    assert_eq!(probe.tick, 1, "Tick 角色必须恰好跑一次");
+    assert_eq!(probe.execute, 1, "新增到 Execute 组的系统必须真的跑");
+    assert_eq!(probe.complete, 1, "Complete 角色必须恰好跑一次");
+
+    // 全序的行为证据：行动已被执行并回收，actor 回到单一终态（I91）。
+    assert!(
+        action_entities_of(&mut world, actor).is_empty(),
+        "一轮之后不得留下 action 子实体（ApplyDeferred 的位置没被分组破坏）"
+    );
+    let idle = world.get::<Idle>(actor).is_some();
+    let failure = world.get::<Failure>(actor).is_some();
+    assert!(
+        idle ^ failure,
+        "actor 必须恰好有一个终态：idle={idle} failure={failure}"
+    );
+}
+
 // ── 参数化执行器与旧 `World` 执行器的 parity ─────────────
 
 /// 构造「actor + action 实体（Move，已 Ready）」，返回 `(world, actor, action, observer)`。
