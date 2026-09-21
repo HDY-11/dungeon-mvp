@@ -755,8 +755,8 @@ sys::spawn_key_source()
 
 ## 11. 实施计划（第 2 步起）
 
-> **状态：** A–F 全部完成；G 完成 R1（`presentation` 57 / `tui` 25）与 **R5（旧 crate 归档）**，R2 部分（`Look`/`Dialog` 已落地），R3/R4 待续（R3 的原阻塞"环境无外网"**已消失**）；**H 设计输入已落地（commit `55d8086`），代码待开工**。
-> **基线（本轮实测）：** `cargo test -p ecs_core` **71 passed**；`cargo test --workspace` **28 个测试目标全绿 / 0 failed**（含旧 `dungeon-*` 与 `terrain-forge`）；`scripts/gate.ps1` 9 步全绿（含 5 条 `cargo tree` 依赖边界）；`cargo check --workspace` 通过。
+> **状态：** A–F 全部完成；G 完成 R1（`presentation` 57 / `tui` 25）与 **R5（旧 crate 归档）**，R2 部分（`Look`/`Dialog` 已落地），R3/R4 待续（R3 的原阻塞"环境无外网"**已消失**）；**H 已开工：H1 / H3 / H4 落地**（解 ECS31 / ECS35 / ECS36），其余 H 项待做。
+> **基线（本轮实测）：** `cargo test -p ecs_core` **76 passed**；`cargo test --workspace` **28 个测试目标全绿 / 300 passed / 0 failed**；`scripts/gate.ps1` 9 步全绿（含 5 条 `cargo tree` 依赖边界）；`cargo check --workspace` 通过。
 > **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、R2–R4、Phase H（H1–H14）。已关闭：A42（Phase C）、G35（Phase D）、A43（Phase E 逐项处置完毕）、F3/F4（core clippy、一键门禁）、I87/I88（Phase A 后）、SYN3（子模块配置）、R5（旧 crate 归档，本轮）。
 > **不在门禁内：** 旧 `dungeon-*` / 根 `dungeon-app` 的历史集成测试——它们**能跑通但不代表新方向**（见 `PROTOCOLS.md` §五「为什么不覆盖全部」）。
 
