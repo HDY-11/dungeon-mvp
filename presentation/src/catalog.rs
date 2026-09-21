@@ -30,21 +30,12 @@ pub fn map_tile(tile: ecs_core::Tile) -> VisualKey {
 
 /// 地形的稳定编号（见 [`TileCatalog`] 的说明）。
 pub fn tile_id(tile: ecs_core::Tile) -> u16 {
-    // `Tile` 的判别值定义在 `ecs_core/src/map/mod.rs` 的手写 `Serialize` 里；
-    // 这里用一次穷尽 match 固化下来，避免依赖「枚举声明顺序恰好等于 serde 顺序」。
-    match tile {
-        ecs_core::Tile::Wall => 0,
-        ecs_core::Tile::Floor => 1,
-        ecs_core::Tile::ShallowWater => 2,
-        ecs_core::Tile::DeepWater => 3,
-        ecs_core::Tile::Stalactite => 4,
-        ecs_core::Tile::Mycelium => 5,
-        ecs_core::Tile::FungalPatch => 6,
-        ecs_core::Tile::HangingVine => 7,
-        ecs_core::Tile::Sand => 8,
-        ecs_core::Tile::Seagrass => 9,
-        ecs_core::Tile::CoralReef => 10,
-    }
+    // H4 之后判别值的唯一定义处是 `ecs_core` 的 `TILE_PROPS`（`Tile::id()`），
+    // 这里**不再自己穷尽 match**：那会让「加一个地形」在本 crate 里变成第二处必改点。
+    // 「判别值就是 0..=10 那组数」由 `ecs_core/src/map/tile.rs` 的
+    // `ids_match_the_pre_h4_serde_mapping` 钉住，本 crate 的
+    // `tile_ids_match_serde_discriminants` 继续钉住「契约编号 = serde 编号」。
+    u16::from(tile.id())
 }
 
 /// 把怪物种类映射成语义 key。

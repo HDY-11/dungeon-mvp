@@ -5,8 +5,12 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 pub mod map_gen;
+pub mod tile;
 
 pub use map_gen::*;
+// `Tile` / `TileProps` / `TILE_PROPS` 从 `tile` 子模块转出，公共路径 `map::Tile`
+// 与拆分前完全一致（`map/mod.rs` 只留地图相关的类型与 `Map` 本身）。
+pub use tile::{TILE_PROPS, Tile, TileProps};
 
 pub const MAP_WIDTH: usize = 80;
 pub const MAP_HEIGHT: usize = 60;
@@ -73,102 +77,6 @@ pub fn map_kind_for(seed: u64, floor: u32) -> MapKind {
         0 => MapKind::Cavern,
         1 => MapKind::LushCavern,
         _ => MapKind::Undersea,
-    }
-}
-
-/// Tile 使用自定义 Serde 以 u8 序列化。
-/// 数值映射：Wall=0, Floor=1, ShallowWater=2, DeepWater=3, Stalactite=4,
-/// Mycelium=5, FungalPatch=6, HangingVine=7, Sand=8, Seagrass=9, CoralReef=10。
-/// 新变体只能在末尾追加，不能插入或重排已有项。
-/// 派生 `Ord` 只为测试快照排序，判别值以自定义 serde 映射为准。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Tile {
-    Wall,
-    Floor,
-    ShallowWater,
-    DeepWater,
-    Stalactite,
-    Mycelium,
-    FungalPatch,
-    HangingVine,
-    Sand,
-    Seagrass,
-    CoralReef,
-}
-
-impl serde::Serialize for Tile {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u8(match self {
-            Tile::Wall => 0,
-            Tile::Floor => 1,
-            Tile::ShallowWater => 2,
-            Tile::DeepWater => 3,
-            Tile::Stalactite => 4,
-            Tile::Mycelium => 5,
-            Tile::FungalPatch => 6,
-            Tile::HangingVine => 7,
-            Tile::Sand => 8,
-            Tile::Seagrass => 9,
-            Tile::CoralReef => 10,
-        })
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Tile {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let v = u8::deserialize(deserializer)?;
-        match v {
-            0 => Ok(Tile::Wall),
-            1 => Ok(Tile::Floor),
-            2 => Ok(Tile::ShallowWater),
-            3 => Ok(Tile::DeepWater),
-            4 => Ok(Tile::Stalactite),
-            5 => Ok(Tile::Mycelium),
-            6 => Ok(Tile::FungalPatch),
-            7 => Ok(Tile::HangingVine),
-            8 => Ok(Tile::Sand),
-            9 => Ok(Tile::Seagrass),
-            10 => Ok(Tile::CoralReef),
-            _ => Err(serde::de::Error::custom(format!(
-                "invalid Tile discriminant: {v}"
-            ))),
-        }
-    }
-}
-
-impl Tile {
-    pub const fn glyph(self) -> char {
-        match self {
-            Tile::Wall | Tile::Stalactite => '#',
-            Tile::Floor => '.',
-            Tile::ShallowWater => '~',
-            Tile::DeepWater => '≈',
-            Tile::Mycelium => ';',
-            Tile::FungalPatch => '♣',
-            Tile::HangingVine => '░',
-            Tile::Sand => ':',
-            Tile::Seagrass => ',',
-            Tile::CoralReef => '%',
-        }
-    }
-
-    pub const fn walkable(self) -> bool {
-        matches!(
-            self,
-            Tile::Floor
-                | Tile::ShallowWater
-                | Tile::Mycelium
-                | Tile::FungalPatch
-                | Tile::Sand
-                | Tile::Seagrass
-        )
-    }
-
-    pub const fn blocks_vision(self) -> bool {
-        matches!(
-            self,
-            Tile::Wall | Tile::Stalactite | Tile::HangingVine | Tile::CoralReef
-        )
     }
 }
 

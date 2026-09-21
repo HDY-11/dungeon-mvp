@@ -358,6 +358,34 @@ H3 把 `build_action_poc_schedule` 从「13 个系统一条 `.chain()`」改成
 
 **关联：** REFACTOR.md §11.3 Phase H（H3）；LESSONS LECS22（扩展点判据）。
 
+**进展（Phase H4：`TileProps` 静态属性表）：**
+
+地形的种类与属性收进 `map/tile.rs` 的一张表（`TILE_PROPS: &[TileProps]`），
+`glyph` / `walkable` / `blocks_vision` / `Serialize` / `Deserialize` **全部读表**，
+判别值改由 `#[repr(u8)]` 决定——**没有一处 `match` 在描述地形**。
+
+| | H4 之前 | H4 之后 |
+|---|---|---|
+| 加一个地形要改 | `glyph` / `walkable` / `blocking` / `From<u8>` / `Into<u8>` /（以及 `presentation::tile_id`）**六处** | `Tile` 末尾 + `TILE_PROPS` 末尾，**两处**（枚举无法自动派生） |
+| 新属性（移动代价）的落点 | 没有，只能继续往 5 个 match 里加 | `TileProps` 加一列 |
+| 漏加一项的报错时机 | 编译期（穷尽 match） | **运行期** → 由穷举测试补回 |
+
+**换表的代价必须用测试补回来**（`LECS22` 的配套纪律）：`table_covers_every_variant_and_round_trips`
+逐行枚举全表并断言"表行 = 枚举顺序 = 判别值 = 序列化往返"，另加
+`ids_match_the_pre_h4_serde_mapping` / `properties_match_the_pre_h4_values`
+逐值钉住搬迁前的口径（防止抄错一格）。
+
+**`move_cost` 是 H8 的预留位**：本轮只加列、恒为 1.0、**不接线**——
+移动 AV 仍只由 `MoveSpeed` 决定。`move_cost_is_still_a_reserved_slot` 守住这一点，
+防止"顺手填值"绕过 GAME.md（数值口径待定，见 DESIGN DsnX16）。
+
+**变异验证：** 交换 `Tile::Wall` 与 `Tile::Floor` 的声明顺序 → 20+ 个用例失败
+（地图/移动/视野都读地形身份）。这既是"判别值受保护"的证据，也说明
+**枚举声明顺序是领域事实**，不是可以随手整理的排版。
+
+**关联：** REFACTOR.md §11.3 Phase H（H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）；
+DESIGN DsnE13。
+
 ---
 
 **原编号：** `DsnE8`（迁移前）

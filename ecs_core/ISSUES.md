@@ -128,6 +128,40 @@
 
 ## ✅ 已修复
 
+### ECS31 — `Tile` 的 5 处中央 match：加一个地形变体要改 5 个地方 ✅已修复
+
+**修复前：** 加一个 `Tile` 变体需要在 `glyph()` / `walkable()` / `blocking()` / `From<u8>` / `Into<u8>` **五处**同步修改，属中央分派债（与已删除的 `ActionKind` 同类）。且地形属性（如移动代价）没有存放位置，只能继续往这 5 处加。
+
+**修复后（Phase H4）：** 新增 `ecs_core/src/map/tile.rs`，把种类与属性收进一张
+`TILE_PROPS: &[TileProps]`（列：`tile` / `id` / `glyph` / `walkable` / `blocks_vision` /
+`move_cost`）。五个读取点**全部读表**，没有一处 `match`：
+
+| 读取点 | 修复前 | 修复后 |
+|---|---|---|
+| `glyph()` | `match self { Wall \| Stalactite => '#', .. }` | `self.props().glyph` |
+| `walkable()` | `matches!(self, Floor \| ShallowWater \| ..)` | `self.props().walkable` |
+| `blocks_vision()` | `matches!(self, Wall \| Stalactite \| ..)` | `self.props().blocks_vision` |
+| `Serialize` | `match self { Wall => 0, .. }` | `serializer.serialize_u8(self.id())`，判别值取 `#[repr(u8)]` |
+| `Deserialize` | `match v { 0 => Ok(Wall), .. }` | `Tile::from_id(v)`（`const fn` 查表） |
+
+**加一个地形现在只需两处**：`Tile` 末尾加变体 + `TILE_PROPS` 末尾加一行。
+（枚举本身无法自动派生——语言限制——`From<u8>` 已不再是其中之一。）
+
+**配套纪律（LESSONS `LECS22`）：** 换表的代价是"漏加一项"从**编译期穷举检查**退化成
+**运行期静默**，所以配了 4 条测试：`table_covers_every_variant_and_round_trips`（逐行枚举
+全表 + 序列化往返 + 判别值唯一 + 越界不 panic）、`ids_match_the_pre_h4_serde_mapping`、
+`properties_match_the_pre_h4_values`、`move_cost_is_still_a_reserved_slot`。
+
+**顺带去掉了第二处必改点：** `presentation::catalog::tile_id` 原本自带一份 11 项穷尽
+`match`（加地形要改的第六处），现在改为 `u16::from(tile.id())`；它原有的
+`tile_ids_match_serde_discriminants` 用例保留，继续钉住"契约编号 = 存档判别值"。
+
+**位置：** `ecs_core/src/map/tile.rs`（新）、`ecs_core/src/map/mod.rs`（改为转出）、
+`presentation/src/catalog.rs`（`tile_id`）
+
+**关联：** ECS27（地形代价维度——`move_cost` 列即该问题的预留位）、ECS28、DsnE13；
+REFACTOR §11.3 Phase H（H4）。
+
 ### ECS35 — 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 ✅已修复
 
 **修复前：** 每个执行器手写 `events.succeeded.write(...)` / `events.failed.write(...)`。若新增执行器漏写，**actor 会永久停在 `Active`**（生成系统被 `Without<Active>` 挡住，不再为它产出候选），且 action 子实体无终态事件可消费，永久泄漏。**编译器不会报错**，链路也没有兜底。
@@ -662,18 +696,6 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 **位置：** `ecs_core/src/action/entity.rs:95`（类型别名）、`:528`（`action_arbitration_system` 候选查询）
 
 **备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE12：持久效果**不用关系型归属**，用组件 + 类型化 `Query` 发现。
-
----
-
-### ECS31 — `Tile` 的 5 处中央 match：加一个地形变体要改 5 个地方 🟡
-
-**问题：** 加一个 `Tile` 变体需要在 `glyph()` / `walkable()` / `blocking()` / `From<u8>` / `Into<u8>` **五处**同步修改，属中央分派债（与已删除的 `ActionKind` 同类）。且地形属性（如移动代价）没有存放位置，只能继续往这 5 处加。
-
-**影响：** 🟡 中 — 每次扩展地形种类都要改 5 处且容易漏改。
-
-**位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法与 serde 转换）
-
-**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE13：属性收敛到静态属性表，`Tile` 保留为种类键。
 
 ---
 
