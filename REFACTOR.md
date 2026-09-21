@@ -755,9 +755,9 @@ sys::spawn_key_source()
 
 ## 11. 实施计划（第 2 步起）
 
-> **状态：** A–F 全部完成；G 完成 R1（`presentation` 57 / `tui` 25），R2 部分（`Look`/`Dialog` 已落地），R3–R5 待续；**H 设计输入已落地（commit `55d8086`），代码待开工**。
+> **状态：** A–F 全部完成；G 完成 R1（`presentation` 57 / `tui` 25）与 **R5（旧 crate 归档）**，R2 部分（`Look`/`Dialog` 已落地），R3/R4 待续（R3 的原阻塞"环境无外网"**已消失**）；**H 设计输入已落地（commit `55d8086`），代码待开工**。
 > **基线（本轮实测）：** `cargo test -p ecs_core` **71 passed**；`cargo test --workspace` **28 个测试目标全绿 / 0 failed**（含旧 `dungeon-*` 与 `terrain-forge`）；`scripts/gate.ps1` 9 步全绿（含 5 条 `cargo tree` 依赖边界）；`cargo check --workspace` 通过。
-> **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、R2–R5、Phase H（H1–H14）。已关闭：A42（Phase C）、G35（Phase D）、A43（Phase E 逐项处置完毕）、F3/F4（core clippy、一键门禁）、I87/I88（Phase A 后）、SYN3（子模块配置）。
+> **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、R2–R4、Phase H（H1–H14）。已关闭：A42（Phase C）、G35（Phase D）、A43（Phase E 逐项处置完毕）、F3/F4（core clippy、一键门禁）、I87/I88（Phase A 后）、SYN3（子模块配置）、R5（旧 crate 归档，本轮）。
 > **不在门禁内：** 旧 `dungeon-*` / 根 `dungeon-app` 的历史集成测试——它们**能跑通但不代表新方向**（见 `PROTOCOLS.md` §五「为什么不覆盖全部」）。
 
 ### 11.1 目标与范围
@@ -980,9 +980,17 @@ A ──▶ F（并行）
 - ⏳ **R2** 页栈 UI：`Look`/`Dialog` 已落地；`Inventory`/`Throw` 需要物品与投掷规则
   迁移（DsnX13 S4），当前给占位页；
 - ⏳ **R3** `bevy_app` 宿主 + `ScheduleRunner`：**本轮未做**——工作区里没有
-  `bevy_app`，且环境无外网。`TuiPlugin` 已按"插件"形状收敛，补 `impl Plugin`
-  时调用点不变（`tui/src/plugin.rs` 顶部有说明）；
-- ⏳ **R4/R5** GPU 后端与旧 crate 清理。
+  `bevy_app`，且当时环境无外网。`TuiPlugin` 已按"插件"形状收敛，补 `impl Plugin`
+  时调用点不变（`tui/src/plugin.rs` 顶部有说明）。
+  > **阻塞已消失（后续实测）：** 网络已可用（crates.io / rsproxy 可达），
+  > `bevy_app` 可直接引入；R3 因此改为"独立一轮"的计划项，排在 Phase H 的
+  > H1–H4 之后（见 §11.9）。
+- ⏳ **R4** GPU 后端：消费同一 `SceneFrame`，`ecs_core` 零改动；依赖 R3 的插件宿主。
+- ✅ **R5** 旧 crate 清理：已归档 4 个旧 crate 与旧架构集成测试到 `archive/`
+  （**仍保留为 workspace members 且仍可编译/可测**，理由与修补见 `archive/README.md`）；
+  孤儿文件 `src/keymap.rs`、`src/throw.rs`、`src/pages/*`（不在模块树内、不参与编译）
+  已删除；根 `Cargo.toml` 去掉 4 行旧依赖，`Cargo.lock` 相应减 50 行。
+  `src/` 现在只有 `lib.rs` / `main.rs` / `keys.rs`。
 
 **R1 的落地要点（写代码时的实际结论）：**
 
@@ -1186,9 +1194,9 @@ H1  H3  H4（无依赖、零行为变化）→ H2 → H8 → H6 → H7
 | D | 1–2 天 | ✅ 完成（D1–D5，commit `cff5940`…） |
 | E | 0.5–1 天 | ✅ 完成（含 `system/`、`monster/` 结构拆分） |
 | F | 0.5–1 天 | ✅ 完成（F3/F4 clippy 清零 + `scripts/gate.ps1`；F5 改名 `ecs_core`） |
-| G | 1–2 天（TUI 解耦） | ⏳ R1 完成；R2 部分；R3–R5 待续 |
+| G | 1–2 天（TUI 解耦） | ⏳ R1 完成、**R5 完成**；R2 部分；R3/R4 待续 |
 | **H** | 2–3 天（只碰形状） | ⏳ 计划已落地（文档 `55d8086`），代码待开工 |
-| R5（旧 crate 归档） | 0.5 天 | ⏳ **已具备条件**：4 个旧 crate 无使用方、测试可跑 |
+| **R5（旧 crate 归档）** | 0.5 天 | ✅ 已完成：见 §11.3 Phase G 的 R5 行与 `archive/README.md` |
 
 ### 11.9 下一步（Phase H 的开工顺序）
 
@@ -1256,7 +1264,7 @@ core ──> presentation ──> render-api <── tui / gpu
 - 编译期 feature vs 运行时后端选择；
 - crate 命名。
 
-**执行时机：** ✅ R1 已落地（Phase G）；R2–R5 待续。详见 §11.3 Phase G。
+**执行时机：** ✅ R1 与 **R5** 已落地（Phase G）；R2–R4 待续。详见 §11.3 Phase G。
 
 > 原则：**每个保留的抽象必须有真实读取方/消费者；否则就是下一个 `ActionKind`。**
 ---

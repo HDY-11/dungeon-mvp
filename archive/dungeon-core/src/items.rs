@@ -275,7 +275,8 @@ impl ItemRegistry {
     /// 从 assets/items.json 加载并初始化全局注册表。
     pub fn load() -> &'static Self {
         ITEM_REGISTRY.get_or_init(|| {
-            let data = include_str!("../../assets/items.json");
+            // 已归档（archive/README.md）：多一层 `../`，指向仓库根的 assets/items.json。
+            let data = include_str!("../../../assets/items.json");
             let defs: Vec<ItemDef> = serde_json::from_str(data).expect_log("Invalid items.json");
             let max_id = defs.iter().map(|d| d.id).max().unwrap_or(0);
             let mut items = vec![None; max_id + 1];

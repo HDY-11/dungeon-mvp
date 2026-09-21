@@ -7,16 +7,8 @@ edition = "2024"
 bevy_ecs = "0.16"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
-# ⚠️ 旧 `dungeon-*` crate 只被**遗留代码**需要：`src/lib.rs` 仍声明
-# `pub mod keymap` / `pub mod throw`，而这两个模块用的是旧领域模型。
-# `main.rs`（新装配层）不用它们，但 `cargo test -p dungeon-app` 会编译 `lib.rs`，
-# 所以现在还不能从这张表里删——删了连 lib 测试目标都编不过。
-# **触发条件：** R5 清理 `src/lib.rs` 的 keymap/throw 与 `src/pages/` 孤儿目录后，
-# 这四行与本包脱离，那时一并删除。
-dungeon-core = { path = "dungeon-core" }
-dungeon-action = { path = "dungeon-action" }
-dungeon-world = { path = "dungeon-world" }
-dungeon-render = { path = "dungeon-render" }
+# 旧 `dungeon-*` crate 已归档到 `archive/`（R5，见 archive/README.md）：
+# 新装配层只用下面这几个 crate，`src/lib.rs` 只声明 `pub mod keys`。
 ecs_core = { path = "ecs_core" }
 presentation = { path = "presentation" }
 render-api = { workspace = true }
@@ -33,10 +25,6 @@ bevy_ecs = { workspace = true }
 
 [workspace]
 members = [
-    "dungeon-core",
-    "dungeon-action",
-    "dungeon-world",
-    "dungeon-render",
     "terrain-forge",
     "ecs_core",
     "presentation",
@@ -44,6 +32,12 @@ members = [
     "utils",
     "sys",
     "tui",
+    # 已归档的旧架构（R5，见 archive/README.md）：**保留为 members 只为让它们仍可编译/可测**，
+    # 随时能回查历史实现；新代码零依赖。彻底不用时可把下面 4 行连同 `archive/` 一起删掉。
+    "archive/dungeon-core",
+    "archive/dungeon-action",
+    "archive/dungeon-world",
+    "archive/dungeon-render",
 ]
 
 [workspace.dependencies]

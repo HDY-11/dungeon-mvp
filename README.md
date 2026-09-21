@@ -43,14 +43,14 @@ ecs_core/                 ← 唯一业务/领域层，完全 ECS（crate: ecs_c
   world/                  ← init.rs 初始化 / loop_.rs 应用入口 / query.rs 查询辅助
 ```
 
-旧 `dungeon-*`、`src/pages/` 等目录在迁移完成前暂时保留（**只作历史参考，已无人依赖**，将随 R5 归档）：
+旧 crate 已归档到 `archive/`（**只作历史参考，新代码零依赖**；归档理由与仍可编译的现状见 [archive/README.md](archive/README.md)）：
 
 ```
-dungeon-core/             ← 旧领域数据/工具（历史参考）
-dungeon-action/           ← 旧行动执行（历史参考）
-dungeon-world/            ← 旧世界生命周期（历史参考）
-dungeon-render/           ← 旧渲染（历史参考）
-src/pages/                ← 旧页面处理器（历史参考，未编入模块树）
+archive/dungeon-core/     ← 旧领域数据/工具（历史参考）
+archive/dungeon-action/   ← 旧行动执行（历史参考）
+archive/dungeon-world/    ← 旧世界生命周期（历史参考）
+archive/dungeon-render/   ← 旧渲染（历史参考）
+archive/legacy-tests/     ← 旧架构集成测试（不参与编译）
 terrain-forge/            ← 地图生成子模块（git submodule，仍在使用）
 ```
 
@@ -212,7 +212,7 @@ fn write_something(world: &mut World) { ... }
 
 这避免了 RwLock 死锁问题，且使数据流更清晰。
 
-旧 crate 只作历史参考，**已不在新代码的依赖里**（`src/lib.rs` 只声明 `pub mod keys`）。
+旧 `dungeon-*` 已归档到 `archive/`（**新代码零依赖**，见 [archive/README.md](archive/README.md)）。
 
 ### 构建
 

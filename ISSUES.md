@@ -25,11 +25,13 @@ terrain-forge 26 个；`dungeon-render` 0 测试、应用层（main.rs 装备/�
 | `render-api`（契约 + 集成） | **34**（30 单测 + 4 集成） |
 | `tui`（含 `TestBackend` 全帧断言） | **25** |
 | `dungeon-app`：端到端 `mvp_loop_test` + 装配层单测 + `keys` | **9 + 6 + 6** |
-| `cargo test --workspace` | **28 个目标全绿 / 0 failed** |
+| `terrain-forge`（外部子模块） | **39** |
+| `archive/dungeon-*`（已归档旧架构，**不属新方向保障**） | 19 + 5 + 15 + 6 |
+| `cargo test --workspace` | **28 个目标全绿 / 295 passed / 0 failed** |
 
-`dungeon-render` 与 `src/pages` 的缺口**不再跟踪**：这些目录的代码将由 R5 整体归档到
-`archive/`，为一个即将归档的目录补测试是净亏（判据见 LESSONS `LECS22` 的"加第 N 个要改几处"同源逻辑：
-**新增测试要落在会被保留的代码上**）。
+`dungeon-render` 与 `src/pages` 的缺口**不再跟踪**：这些代码已随 R5 归档到 `archive/`
+（`src/pages/*` 是孤儿文件，直接删除），为一个已退出的目录补测试是净亏——判据与
+LESSONS `LECS22` 的"加第 N 个要改几处"同源：**新增测试要落在会被保留、会被继续改的代码上**。
 
 **唯一仍待补的项：** `mvp_playtest` 级的手感验证（tap-tap 节奏、视野跟随）——它不是单测能覆盖的，
 已由 `mvp_loop_test` 的 9 条链路断言兜住"不 panic、不卡死、帧与世界同步"。
