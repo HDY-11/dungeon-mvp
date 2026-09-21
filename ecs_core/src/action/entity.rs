@@ -106,14 +106,45 @@ type ReadyActionEntity = (Entity, &'static ChildOf);
 /// 带 payload 的到期行动（`Move` / `BasicAttack`）。
 type ReadyActionPayload<A> = (Entity, &'static ChildOf, &'static A);
 
-/// 行动状态事件：执行器只发，completion 只读。
+/// 行动终态的**唯一出口**：执行器只能经它结束一个行动。
 ///
-/// 打包成一个 `SystemParam` 而不是每个执行器各收三个 `EventWriter`：
-/// 三个执行器的参数个数因此各减 2，也不再可能漏接其中一个。
+/// # 为什么把两个 `EventWriter` 藏起来（Phase H1 / ECS35 / ECS36）
+///
+/// H1 之前，每个执行器手写三件事：`remove::<Ready>()`（只有 `Move` 写了）、
+/// `write(ActionSucceededEvent)`、`write(ActionFailedEvent)`。这带来一个**编译器
+/// 不会报错**的失败模式（ECS35）：新增执行器漏写终态事件 → actor 永久停在
+/// `Active`（生成系统被 `Without<Active>` 挡住，不再为它产出候选）→ action 子实体
+/// 永久泄漏，且无任何报错。
+///
+/// 现在**字段是私有的**：执行器拿不到 `EventWriter`，只能调 [`Self::succeed`] 或
+/// [`Self::fail`]，两者都**同时**做「清 `Ready`」+「恰好写一个事件」。于是
+/// 「恰好一个终态事件 + `Ready` 被消费」从**约定**变成了**类型层面的保证**。
+///
+/// 清理放在这里（而不是留给 completion 的 `despawn` 顺带做）还有一层意义：
+/// 它去掉了「`Ready` 清理由谁负责」这一处只有注释兜着的不变式（ECS36）。
 #[derive(SystemParam)]
-pub struct ActionEvents<'w> {
-    pub succeeded: EventWriter<'w, ActionSucceededEvent>,
-    pub failed: EventWriter<'w, ActionFailedEvent>,
+pub struct ActionEvents<'w, 's> {
+    succeeded: EventWriter<'w, ActionSucceededEvent>,
+    failed: EventWriter<'w, ActionFailedEvent>,
+    /// `Commands<'w, 's>` 需要两个生命周期：`'w` 借 `Entities`，`'s` 借延迟命令队列
+    /// （bevy 0.16 的 `Commands` 定义即如此，所以本 `SystemParam` 也必须带两个参数）。
+    commands: Commands<'w, 's>,
+}
+
+impl ActionEvents<'_, '_> {
+    /// 行动成功结束：清 `Ready` + 发 [`ActionSucceededEvent`]（恰好一个）。
+    pub fn succeed(&mut self, action: Entity, actor: Entity) {
+        self.commands.entity(action).remove::<Ready>();
+        self.succeeded.write(ActionSucceededEvent { entity: actor });
+    }
+
+    /// 行动失败结束：清 `Ready` + 发 [`ActionFailedEvent`]（恰好一个）。
+    ///
+    /// 失败**不回收实体**——回收仍是 completion 的职责（见模块头分层说明）。
+    pub fn fail(&mut self, action: Entity, actor: Entity) {
+        self.commands.entity(action).remove::<Ready>();
+        self.failed.write(ActionFailedEvent { entity: actor });
+    }
 }
 
 /// 移动类执行器共同的只读世界信息。
@@ -645,9 +676,9 @@ pub fn execute_wander_system(
     for (action, child_of) in &actions {
         let actor = child_of.parent();
         let Ok(position) = actors.get(actor) else {
-            // actor 已消失：清掉残留 action 实体并结束行动。
-            commands.entity(action).despawn();
-            events.failed.write(ActionFailedEvent { entity: actor });
+            // actor 已消失：这个 action 没有可回转的对象，直接失败收场
+            // （终态出口顺带清 `Ready`，实体交给 completion 回收）。
+            events.fail(action, actor);
             continue;
         };
 
@@ -668,7 +699,7 @@ pub fn execute_wander_system(
                 log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) 被挡，原地不动");
             }
         }
-        events.succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeed(action, actor);
     }
 }
 
@@ -677,9 +708,8 @@ pub fn execute_wander_system(
 /// 等价旧 `execution::execute_wait_system` 的语义：**无条件成功**——
 /// 回合照常推进（AV 已经付过），actor 回到 `Idle`。
 ///
-/// 这里刻意不 `.remove::<Ready>()`：completion 会 `despawn` 整个 action 实体，
-/// 它上面的 `Ready` 随之消失；而「执行器不得回收实体」这条分层约束
-/// （见 [`execute_move_system`]）在 `Wait` 上同样成立。
+/// `Ready` 由 [`ActionEvents::succeed`] 统一清掉（H1），实体仍由 completion 回收：
+/// 「执行器不得回收实体」这条分层约束（见 [`execute_move_system`]）在 `Wait` 上同样成立。
 pub fn execute_wait_system(
     actions: Query<ReadyActionEntity, ReadyAction<Wait>>,
     mut events: ActionEvents,
@@ -687,7 +717,7 @@ pub fn execute_wait_system(
     for (action, child_of) in &actions {
         let actor = child_of.parent();
         log::debug!("PoC 等待: actor={actor:?}（action={action:?}）");
-        events.succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeed(action, actor);
     }
 }
 
@@ -735,20 +765,20 @@ pub fn execute_flee_system(
             .get(actor)
             .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
         {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         }
 
         let Ok(player_entity) = player.single() else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
         let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
         let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
         let player_tile = Position::new(player_position.0, player_position.1);
@@ -798,7 +828,7 @@ pub fn execute_flee_system(
         }
 
         log::debug!("PoC 逃跑: actor={actor:?} action={action:?}");
-        events.succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeed(action, actor);
     }
 }
 
@@ -830,15 +860,15 @@ pub fn execute_chase_system(
         let actor = child_of.parent();
 
         let Ok(player_entity) = player.single() else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
         let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
         let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         };
 
@@ -849,7 +879,7 @@ pub fn execute_chase_system(
         let memory = last_known.get(actor).ok().and_then(|known| known.0);
         // 保活：既看不见又没有记忆 → 行动失败。
         if !can_see && memory.is_none() {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         }
 
@@ -892,7 +922,7 @@ pub fn execute_chase_system(
         }
 
         log::debug!("PoC 追击: actor={actor:?} action={action:?} can_see={can_see}");
-        events.succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeed(action, actor);
     }
 }
 
@@ -934,7 +964,7 @@ pub fn execute_basic_attack_system(
             "PoC 攻击保活检查: attacker={actor:?} target={target:?} ok={ok} action={action:?}"
         );
         if !ok {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
             continue;
         }
 
@@ -942,7 +972,7 @@ pub fn execute_basic_attack_system(
             attacker: actor,
             target,
         });
-        events.succeeded.write(ActionSucceededEvent { entity: actor });
+        events.succeed(action, actor);
     }
 }
 
@@ -960,8 +990,10 @@ pub fn execute_basic_attack_system(
 /// 之前必须 exclusive，唯一原因是复用了 `movement::execute_move(&mut World, ...)`
 /// ——那个签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用。
 /// 抽取纯规则后这个约束自动消失，A41 的边界随之收窄。
+///
+/// H1 之后这里也**不再需要 `Commands`**：`Ready` 清理与终态事件都由
+/// [`ActionEvents`] 的终态出口一并负责，执行器不再自己回收实体。
 pub fn execute_move_system(
-    mut commands: Commands,
     mut actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
     mut actors: Query<&mut Position>,
     movement: MovementContext,
@@ -972,9 +1004,8 @@ pub fn execute_move_system(
     for (action, child_of, action_move) in &mut actions {
         let actor = child_of.parent();
         let Ok(mut position) = actors.get_mut(actor) else {
-            // actor 已消失：清掉残留 action 实体并结束行动。
-            commands.entity(action).despawn();
-            events.failed.write(ActionFailedEvent { entity: actor });
+            // actor 已消失：这个 action 没有可回转的对象，直接失败收场。
+            events.fail(action, actor);
             continue;
         };
 
@@ -1000,11 +1031,10 @@ pub fn execute_move_system(
             }
         }
 
-        commands.entity(action).remove::<Ready>();
         if moved.is_some() {
-            events.succeeded.write(ActionSucceededEvent { entity: actor });
+            events.succeed(action, actor);
         } else {
-            events.failed.write(ActionFailedEvent { entity: actor });
+            events.fail(action, actor);
         }
     }
 }
@@ -1015,6 +1045,12 @@ pub fn execute_move_system(
 ///
 /// 这是 `ActionSucceeded/FailedEvent` 从零消费者的死事件变成真实状态回转机制的地方
 /// （§3.6.6）；它也是唯一允许写 actor `Idle`/`Failure` 的地方之一。
+///
+/// H1 之后职责边界更清楚了：**终态出口（[`ActionEvents`]）负责"结束行动"**
+/// （清 `Ready` + 恰好一个事件），**本系统负责"回收并回转 actor"**。
+/// 这里的 `remove::<Ready>()` 因此只剩防御意义（执行器已清过），保留它是为了
+/// 万一有别的路径给 actor 挂了 `Ready`（actor 的 `Ready` 与 action 实体的 `Ready`
+/// 是同一个组件类型）。
 pub fn action_completion_system(
     mut commands: Commands,
     mut succeeded: EventReader<ActionSucceededEvent>,

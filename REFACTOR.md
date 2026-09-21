@@ -1056,7 +1056,7 @@ A ──▶ F（并行）
 
 | # | 任务 | 位置 | 内容影响 |
 |---|---|---|---|
-| H1 | 行动终态收成单一出口：统一 `Ready` 清理 + 保证"恰好一个终态事件" | `action/entity.rs` | 无 |
+| H1 | 行动终态收成单一出口：统一 `Ready` 清理 + 保证"恰好一个终态事件" | `action/entity.rs` | 无 | ✅ **已完成**：`ActionEvents` 字段私有化 + `succeed`/`fail` 两个方法（清 `Ready` + 恰好一个事件）；6 个执行器 15 处裸写全部改走出口；`ECS35`/`ECS36` 均修复。**变异验证**：去掉终态出口的 `remove::<Ready>()` → 7 个用例立刻失败 |
 | H2 | 伤害计算输入结构体化 + 返回因子分解；**公式与数值一律不变** | `combat/mod.rs` | 无 |
 | H3 | `build_action_poc_schedule()` 按角色分组（生成器组 / 执行器组各自独立） | `action/entity.rs` | 无 |
 | H4 | `TileProps` 静态属性表：收敛 5 处 match；`Tile` 保留为种类键 | `map/mod.rs` | 无（值不变） |

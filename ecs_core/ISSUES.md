@@ -1,4 +1,4 @@
-﻿> **⚠️ 修改前必须阅读或回忆 [RULE.md](../RULE.md)——它定义了本文档的维护规则和更新时机。**
+> **⚠️ 修改前必须阅读或回忆 [RULE.md](../RULE.md)——它定义了本文档的维护规则和更新时机。**
 
 # 发现的问题记录 —— ecs_core
 
@@ -127,6 +127,61 @@
 
 
 ## ✅ 已修复
+
+### ECS35 — 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 ✅已修复
+
+**修复前：** 每个执行器手写 `events.succeeded.write(...)` / `events.failed.write(...)`。若新增执行器漏写，**actor 会永久停在 `Active`**（生成系统被 `Without<Active>` 挡住，不再为它产出候选），且 action 子实体无终态事件可消费，永久泄漏。**编译器不会报错**，链路也没有兜底。
+
+**修复后（Phase H1）：** 终态收成**唯一出口**——`ActionEvents` 的两个 `EventWriter` 改为**私有字段**，并新增两个方法：
+
+```rust
+pub struct ActionEvents<'w, 's> {
+    succeeded: EventWriter<'w, ActionSucceededEvent>,  // 私有
+    failed:    EventWriter<'w, ActionFailedEvent>,     // 私有
+    commands:  Commands<'w, 's>,
+}
+impl ActionEvents<'_, '_> {
+    pub fn succeed(&mut self, action: Entity, actor: Entity);
+    pub fn fail(&mut self, action: Entity, actor: Entity);
+}
+```
+
+于是「**恰好一个终态事件**」不再靠人记住，而是**类型层面的保证**：执行器拿不到
+`EventWriter`，只能经这两个方法结束行动，而它们各自恰好发一个事件。
+6 个执行器的 15 处裸 `events.*.write(...)` 全部改走新出口。
+
+**判定：** 不需要"兜底检测"补丁——把出口收成一个，漏发事件在**编译期**就不可能发生。
+
+**位置：** `ecs_core/src/action/entity.rs`（`ActionEvents` 及 6 个 `execute_*_system`）
+
+**关联：** ECS36（同一根因的另一半）；REFACTOR §11.3 Phase H（H1）；DESIGN DsnE8。
+
+---
+
+### ECS36 — `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 ✅已修复
+
+**修复前：** `execute_move_system` 显式 `remove::<Ready>()`，其余 5 个执行器**靠 completion `despawn` 实体顺带清理**——同一件清理有两条路径，且只有注释兜着。`components.rs` 声明"执行系统只处理 `With<Ready>` 的实体"，该守卫因此依赖"恰好有一方清理"。
+
+**修复后（Phase H1）：** `Ready` 的清理并入终态出口——`ActionEvents::succeed` / `::fail`
+**必然**清 `Ready`，与发事件是同一个原子动作。`execute_move_system` 原有的显式清理
+已删除（不再需要），它也**不再需要 `Commands` 参数**；`action_completion_system` 里的
+`remove::<Ready>()` 保留作防御（注释已说明它只剩防御意义）。
+
+**H1 之前只有 `Move` 成立的断言，现在对全部 6 个行动成立**：`entity_tests.rs` 的
+`run_one_action_roundtrip`（被 6 个 `parity_*` 用例共用）现在断言
+「执行器跑完、completion 之前 `Ready` 已消失」。**变异验证：** 把终态出口里的
+`remove::<Ready>()` 去掉后，**7 个用例立刻失败**（6 个 `parity_*` +
+`parameterized_move_matches_world_based_move`），证明这条断言真的在守这条不变式。
+
+**为什么不用"再跑一轮执行器、断言没有新事件"来测：** 终态事件是 completion 的输入，
+`clear()` 掉它 completion 就收不回实体（断言会以"实体未被回收"假失败）；
+先跑 completion 则实体已 despawn，断言退化为平凡真。见 `entity_tests.rs` 里的说明。
+
+**位置：** `ecs_core/src/action/entity.rs`（`ActionEvents` / `execute_move_system` /
+`action_completion_system`）、`ecs_core/src/components.rs`（`Ready` 的文档）、
+`ecs_core/src/action/entity_tests.rs`（`run_one_action_roundtrip`）
+
+**关联：** ECS35（同一根因）；REFACTOR §11.3 Phase H（H1）。
 
 ### ECS7 — 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed` ✅已修复
 
@@ -655,30 +710,6 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 **位置：** `ecs_core/src/world/init.rs:346`
 
 **备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
-
----
-
-### ECS35 — 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 🟡
-
-**问题：** 每个执行器手写 `events.succeeded.write(...)` / `events.failed.write(...)`。若新增执行器漏写，**actor 会永久停在 `Active`**（生成系统被 `Without<Active>` 挡住，不再为它产出候选），且 action 子实体无终态事件可消费，永久泄漏。**编译器不会报错**，链路也没有兜底。
-
-**影响：** 🟡 中 — 每加一个行动/技能执行器都要靠人记住这条约定；技能的分支比 `Move`/`Wait` 多，命中概率更高。
-
-**位置：** `ecs_core/src/action/entity.rs`（各 `execute_*_system` 的 `events.*.write`）、`:1018`（`action_completion_system` 为唯一消费者）
-
-**备注：** **记录在案，Phase H 逐项确认**。修法：终态收成一个出口（统一 `Ready` 清理 + 保证恰好一个终态事件），或加"Actor 为 `Active` 但无对应 action 子实体"的兜底检测。关联 ECS36。
-
----
-
-### ECS36 — `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 🟡
-
-**问题：** `execute_move_system` 显式 `remove::<Ready>()`，其余 5 个执行器**靠 completion `despawn` 实体顺带清理**。`components.rs` 的注释声明"执行系统只处理 `With<Ready>` 的实体"，因此该守卫**强依赖"恰好有一方清理"**；新增执行器时这条不变式没有任何机制保障。
-
-**影响：** 🟡 中 — 与 ECS35 同源（行动链缺终态不变式），扩展行动类型时会踩。
-
-**位置：** `ecs_core/src/action/entity.rs:1003`（显式清理）对比 `:649` / `:680`（靠 despawn 顺带）、`ecs_core/src/components.rs:270`（注释声明的守卫）
-
-**备注：** **记录在案，Phase H 逐项确认**。修法与 ECS35 合并：终态收成一个出口。
 
 ---
 

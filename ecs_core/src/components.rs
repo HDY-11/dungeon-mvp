@@ -267,8 +267,11 @@ pub struct ActionTimer {
 /// 当前行动的 AV 已归零，可以执行。
 ///
 /// 由 `tick_action_timers_system` 在 `remaining_av <= 0` 时插入；
-/// 执行系统只处理 `With<Ready>` 的实体；`finish_action_*` / `mount_action`
-/// 会清理它。
+/// 执行系统只处理 `With<Ready>` 的实体。
+///
+/// **清理方是唯一的**（Phase H1）：执行器一律经 `ActionEvents::succeed` / `::fail`
+/// 结束行动，那对方法同时清 `Ready` 并发终态事件——所以「谁负责清 `Ready`」不再是
+/// 散落在 6 个执行器里的约定，而是终态出口的内部实现（ECS35 / ECS36）。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Ready;
 

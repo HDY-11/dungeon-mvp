@@ -1517,9 +1517,15 @@ fn flee_generation_requires_low_health() {
 
 /// 一次「到期 → 执行 → 完成」的往返，返回 action 实体是否已被回收。
 ///
-/// **执行器只负责发事件**：`Ready` 的清理分两条路——`execute_move_system`
-/// 显式 `remove::<Ready>()`，其余执行器靠 completion despawn action 实体顺带清掉。
-/// 因此这一层的断言是「事件已发出」，而不是「Ready 已被移除」。
+/// **H1 之后口径已统一**：执行器一律经 `ActionEvents::succeed` / `::fail` 结束行动，
+/// 那对方法是行动终态的**唯一出口**——同时清 `Ready` 并**恰好**发一个终态事件。
+/// 所以这里可以（也应该）同时断言两件事：
+///
+/// 1. `Ready` 在执行器跑完、completion 之前就已被消费 → 同一行动不可能被执行两次；
+/// 2. 该行动恰好产生一个完成/失败事件 → 不会有 action 卡在 `Active` 而无人回收（ECS35）。
+///
+/// H1 之前第 1 条只有 `Move` 成立（其余 5 个执行器靠 completion `despawn` 顺带清），
+/// 所以当时这里只能断言「事件已发出」（ECS36）。
 /// 只跑该行动的专属执行器 + completion，避免整轮调度把「一步」变成多步。
 fn run_one_action_roundtrip(world: &mut World, action: Entity) {
     use crate::events::{ActionFailedEvent, ActionSucceededEvent};
@@ -1532,10 +1538,13 @@ fn run_one_action_roundtrip(world: &mut World, action: Entity) {
     );
 
     // 清空两类事件缓冲，后续只数本轮产生的。
+    //
+    // 用 `clear()` 而不是 `update()`：`update()` 是**缓冲区轮换**（事件会存活两轮，
+    // 且 reader 游标不会回退），在测试里清不干净——真正的"归零"是 `clear()`。
     world
         .resource_mut::<Events<ActionSucceededEvent>>()
-        .update();
-    world.resource_mut::<Events<ActionFailedEvent>>().update();
+        .clear();
+    world.resource_mut::<Events<ActionFailedEvent>>().clear();
 
     let _ = world.run_system_once(execute_wait_system);
     let _ = world.run_system_once(execute_move_system);
@@ -1550,6 +1559,22 @@ fn run_one_action_roundtrip(world: &mut World, action: Entity) {
         emitted, 1,
         "每个到期的 action 必须恰好产生一个完成/失败事件"
     );
+
+    // H1：终态出口负责清 `Ready`，不依赖 completion 的 despawn 顺带清理。
+    assert!(
+        world.get::<Ready>(action).is_none(),
+        "执行器结束行动时必须清掉 Ready（否则同一行动会被反复执行）"
+    );
+
+    // H1：`Ready` 已消费 → 这个 action 不可再被执行器认领。
+    //
+    // 这里**不能**用「再跑一轮执行器、断言没有新事件」来验证：终态事件是 completion
+    // 的输入，一旦被 `clear()` 掉，completion 就再也收不回这个实体，断言会以
+    // "action 实体未被回收" 的形式失败。而若先跑 completion，实体已被 despawn，
+    // 「执行器不再执行它」就成了查询层面的平凡真——两种写法都测不到东西。
+    // 真正有区分度、且**在生产路径上**成立的断言就是上一条：`Ready` 在 completion
+    // 之前就没了。若终态出口忘了清 `Ready`，它会一直挂到 completion 才随实体消失，
+    // 这条断言立刻失败——ECS36 描述的正是这个缺口。
 
     world_run_completion_only(world);
     assert!(

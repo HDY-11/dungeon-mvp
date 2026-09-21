@@ -281,6 +281,8 @@ impl MonsterTemplate {
 - Phase C（全量迁移，C1–C9 完成）：六个行动逐行动迁移并各配 parity 场景；主循环切换到新链路（`world/loop_.rs` 改为「先挂载、再推进」两段式）；`ActionKind` / `mount_action` 中央 match / `finish_action_*` / `decide_monster_actions` / `choose_action` / `run_action_cycle` / 旧独占执行系统与 actor 上的行动 ZST 挂载路径**全部删除**，全库无 `ActionKind` 引用。
 - 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：行动链路里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
 - 迁移期约束（写测试时要注意）：`Ready` 的清理分两条路（`execute_move_system` 显式清，其余靠 completion despawn 实体）；`Idle`/`Failure` 必须互斥（I91）；「挂载玩家行动」与「推进世界」必须分两段调度，否则会把「本轮已执行完」误判成「命令被拒绝」。
+  > **该约束已在 Phase H1 取消**——`Ready` 的清理收进终态出口（见下方「Phase H1 进展」），
+  > 上面这条保留为迁移期的历史记录。
 
 **进展（Phase D：速度组件，D1–D5 完成）：**
 
@@ -291,6 +293,34 @@ impl MonsterTemplate {
 - 顺带确立的新不变式（旧口径做不到）：`AV × 速度 == base_duration` 恒成立、AV 与 `base_duration` 严格成正比。旧式因为有常数反应时项，「300ms 的攻击」实际要付 310 AV、而「500ms 的游荡」付 470 AV——短行动被惩罚得更狠。删除该项是 Phase D 唯一的**有意行为改动**，由 `dropping_reaction_time_*` 的量化结论记录。
 - **意外发现（值得记入教训）**：速度组件改变了各行动的执行轮次，于是怪物消耗随机数的时机随之改变，`system::tests::fov_memory_and_occupancy_update` 里「玩家选定的目标格在推进期间保持空闲」这条原本"碰巧成立"的假设立刻失效（怪物游荡到该格，命令被改判成攻击）。教训：**测试若依赖"没有别的实体碰巧走过来"，它就是在依赖执行顺序，而执行顺序正是本次要改的东西**——该类用例必须先清场再断言。
 - 元组 `Bundle` 的元数上限：bevy_ecs 0.16 的元组 `Bundle` 只实现到 **15 元**（`all_tuples!(tuple_impl, 0, 15, B)`），玩家基础束原本已 16 个元素，直接加两个速度组件会编译失败。解法是用 `#[derive(Bundle)] struct Speed` 打包这两个组件——**打包不是新增组件**，实体上仍是两个独立组件，查询不变。这是「实体组件数」与「元组元数」解耦的通用手法。
+
+---
+
+**进展（Phase H1：行动终态收成单一出口）：**
+
+H1 只碰**形状**，不改任何行为与数值。它解掉的是 Phase H 计划里记为 ECS35 / ECS36 的一对问题——
+「行动终态只有约定、没有机制」：
+
+| | H1 之前 | H1 之后 |
+|---|---|---|
+| 谁能结束行动 | 6 个执行器各自 `events.succeeded/failed.write(...)`（15 处裸写） | 只有 `ActionEvents::succeed` / `::fail`：字段私有，**执行器拿不到 `EventWriter`** |
+| `Ready` 谁清 | `execute_move_system` 显式清，其余 5 个靠 completion `despawn` 顺带 | 终态出口**必然**清（与发事件是同一个原子动作） |
+| 漏写终态事件 | **编译通过**，运行期 actor 永久卡 `Active` + 子实体泄漏 | **编译不过**（没有可用的写入句柄） |
+| 测试能断言什么 | 6 个 parity 用例里只有 `Move` 能断言 `Ready` 被消费 | 6 个全部能断言（共用 `run_one_action_roundtrip`） |
+
+两个实现要点：
+
+1. **私有字段是这里的机制本体**，不是封装洁癖：它把「恰好一个终态事件」从注释级约定
+   变成类型级保证，因此不需要"兜底检测系统"这类补丁。
+2. **`SystemParam` 带两个生命周期**：`Commands<'w, 's>` 在 bevy 0.16 里用 `'w` 借
+   `Entities`、`'s` 借延迟命令队列，所以 `ActionEvents` 必须写成 `ActionEvents<'w, 's>`
+   （第一版写 `Commands<'w, 'w>` 直接编译失败：`SystemParam` 的 `'s` 无法满足）。
+
+**变异验证（断言真的在守不变式）：** 把终态出口里的 `remove::<Ready>()` 去掉后，
+**7 个用例立刻失败**（6 个 `parity_*` + `parameterized_move_matches_world_based_move`）。
+这条验证是必要的——一条永远为真的断言比没有断言更糟，它会把缺口伪装成已覆盖。
+
+**关联：** REFACTOR.md §11.3 Phase H（H1）；ISSUES ECS35 / ECS36（均已修复）。
 
 ---
 
