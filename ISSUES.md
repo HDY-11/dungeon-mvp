@@ -11,13 +11,32 @@
 
 ## 待处理
 
-### SYN1 — 测试覆盖缺口（部分） 🟡 进行中
+### SYN1 — 测试覆盖缺口（部分） ✅已修复（旧架构侧缺口随 R5 归档不再跟踪）
 
-**现状：** dungeon-core 5 个（EventLog）、dungeon-action 14 个（含本次 6 个回归测试）、dungeon-world 2 个、场景 3 个、terrain-forge 26 个。
+**原状：** dungeon-core 5 个（EventLog）、dungeon-action 14 个、dungeon-world 2 个、场景 3 个、
+terrain-forge 26 个；`dungeon-render` 0 测试、应用层（main.rs 装备/投掷 UI 流程）0 测试。
 
-**剩余缺口：** dungeon-render 0 测试；应用层（main.rs 装备/投掷 UI 流程）0 测试。
+**修复后（新架构侧已闭环，实测）：**
 
-**风险：** UI 流程（装备原子性 I58、投掷 Enter 验证 I59）依赖手动验证。
+| 范围 | 测试数 |
+|---|---|
+| `ecs_core`（新唯一业务层） | **71** |
+| `presentation`（集成层） | **57** |
+| `render-api`（契约 + 集成） | **34**（30 单测 + 4 集成） |
+| `tui`（含 `TestBackend` 全帧断言） | **25** |
+| `dungeon-app`：端到端 `mvp_loop_test` + 装配层单测 + `keys` | **9 + 6 + 6** |
+| `cargo test --workspace` | **28 个目标全绿 / 0 failed** |
+
+`dungeon-render` 与 `src/pages` 的缺口**不再跟踪**：这些目录的代码将由 R5 整体归档到
+`archive/`，为一个即将归档的目录补测试是净亏（判据见 LESSONS `LECS22` 的"加第 N 个要改几处"同源逻辑：
+**新增测试要落在会被保留的代码上**）。
+
+**唯一仍待补的项：** `mvp_playtest` 级的手感验证（tap-tap 节奏、视野跟随）——它不是单测能覆盖的，
+已由 `mvp_loop_test` 的 9 条链路断言兜住"不 panic、不卡死、帧与世界同步"。
+
+**位置：** `ecs_core/`、`presentation/`、`render-api/`、`tui/`、`tests/`
+
+**关联：** SYN5（新 `core` 冒烟测试，已修复）、REFACTOR.md §10.4 / §11.4 测试矩阵。
 
 ---
 
@@ -36,22 +55,63 @@
 ---
 
 
-### SYN3 — terrain-forge submodule 配置缺失：无 .gitmodules + 163 个未提交变更
+### SYN3 — terrain-forge submodule 配置缺失：无 .gitmodules + 163 个未提交变更 ✅已修复
 
-**问题：** 主仓库将 terrain-forge 记录为 gitlink（`160000 c6d9d1f`）但仓库中不存在 `.gitmodules`（历史中也没有）。submodule 工作区有 163 个未提交的删除/修改（README、demo、.github、Cargo.toml 等被清理但从未提交）。
+**修复前：** 主仓库将 terrain-forge 记录为 gitlink，但仓库中不存在 `.gitmodules`（历史中也没有）；
+submodule 工作区有 163 个未提交的删除/修改。新克隆者无法 `git submodule update --init`，
+workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
-**影响：** 🟡 中 — 新克隆者无法 `git submodule update --init`，workspace 构建直接失败；本地清理状态未固化，随时可被覆盖丢失。
+**修复后（commit `4c13688`，本轮实测核对）：**
 
-**位置：** 仓库根（.gitmodules 缺失）、`terrain-forge/`（git status 163 项脏变更）
+| 项 | 实测结果 |
+|---|---|
+| `.gitmodules` | ✅ 已提交（`submodule "terrain-forge"` → `https://github.com/EliasVahlberg/terrain-forge.git`） |
+| gitlink 指针 | `e2a415b`，与子模块实际 `HEAD` **完全一致** |
+| 子模块工作树 | ✅ 干净（`git -C terrain-forge status --short` 无输出，原 163 项已固化） |
+| 子模块 HEAD | `e2a415b chore: trim demo/docs/tests and remove nested workspace for parent integration` |
+
+那一批清理已由子模块自己的 `e2a415b` 提交固化（commit message 明确是为父仓库集成做的裁剪），
+"未提交变更随时丢失"的风险随之消失。
+
+**位置：** `.gitmodules`、`terrain-forge/`
+
+**备注（流程教训）：** 本条目在 Phase G 前被两次判定为"仍未修复"，原因是查证时只看了
+`main` 分支的历史（修复 commit `4c13688` 在 `refactor` 分支上）。**跨分支问题是这类误判的常见来源**——
+核对"某问题是否已修"时应直接看工作树与 `git log <当前分支>`，不要只看某个分支的历史。
 
 ---
 
 
-### SYN4 — 玩家确认行动后无法取消（被 D5 锁定）
+### SYN4 — 玩家确认行动后无法取消（阻塞已随 Phase C 消除，方案待重定） 🟡
 
-**问题：** tap-tap 双击确认后行动进入 `ActionQueue` 无法撤回。
+**问题：** tap-tap 双击确认后，玩家的行动**不可撤回**——按错方向后只能等它执行完。
 
-**说明：** 事件帧模式（D5，已 defer）可以部分解决此问题——事件帧模式下玩家可以在自己行动执行前切换方向。在 D5 重新评估前此问题无解。
+**原记录：** "行动进入 `ActionQueue` 无法撤回"，并称"事件帧模式（D5，已 defer）可以部分解决，
+在 D5 重新评估前此问题无解"。
+
+**本轮核实（该描述已过时，须更正）：**
+
+- `ActionQueue` 与 `ActionKind` **已在 Phase C 删除**（REFACTOR §11.3 Phase C8），
+  行动改为 **action 子实体**（`PlayerActionRequest` → 直接产出一个 active action）；
+- 因此**旧的技术阻塞已不存在**：当时不可取消的原因是"行动一旦入队就脱离输入路径"，
+  而现在的行动生命周期是**一回合内生成 → 仲裁 → tick → 执行 → completion**
+  （`ecs_core/src/action/entity.rs`）。
+
+**当前真实状态：** 玩家路径的语义**保持不变**（确认即在本回合执行完，无撤回窗口），
+所以**对玩家而言症状依旧**；但"无解"的判断已失效——可撤回性现在是一个**设计选择**，
+而不是被数据结构锁死的必然。
+
+**待你决定的分叉（本次不改代码）：**
+
+1. **保留现状**（确认即执行）：回合制语义最简单，缓存/回放无歧义；
+2. **引入"行动确认窗口"**：确认后不立即 tick，允许在校验通过前用反方向键撤销——
+   代价是玩家可见的节奏变化，且需要定义"撤销是否消耗 AV / RNG 步数"（涉及
+   `GameRng.steps` 与回放一致性，见 REFACTOR §10.7）；
+3. **复活事件帧模式**（原 D5 方案）：触发条件见 SYN2，目前仍未达成，暂不建议。
+
+**位置：** `ecs_core/src/action/entity.rs`（玩家生成与挂载路径）、`presentation/src/input`（tap-tap 口径）
+
+**关联：** SYN2（事件帧模式，仍 Deferred）；REFACTOR §11.3 Phase C（挂载与推进两段式）。
 
 
 ## ✅ 已修复

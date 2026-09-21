@@ -575,9 +575,12 @@ sys::spawn_key_source()
 - 掉落表
 - 下楼（descend）、存档读档
 
-### 8.1 行动系统目标重构（未落地）
+### 8.1 行动系统目标重构（✅ 已落地）
 
-> **进展：** AV 门禁（I89）与事件生命周期（I90）已落地；`ActionKind` 删除 / action 实体 PoC 仍待做。
+> **进展（已过期描述已更正）：** AV 门禁（I89）与事件生命周期（I90）→ Phase A 落地；
+> `ActionKind` 删除与 action 实体 PoC → **Phase B/C 全部落地**（commit `ac6623f`…`a8e2175`）；
+> 速度组件迁移 → Phase D；死抽象清理 → Phase E。
+> 下方清单是**当时的规划文本**，保留供追溯；逐项落地记录见 §11.3 Phase B/C/D/E。
 
 以 §3.6 行动实体方案为准，下一步需要：
 
@@ -680,7 +683,7 @@ sys::spawn_key_source()
 冻结（只允许追加/修 bug，不允许重命名/重排/改语义）：
 
 - `core` 组件/资源/事件的**名称与语义**：`Position/Health/Magic/Level/Experience/Attack/Defense/MagicMastery/MoveSpeed/AttackSpeed/CritRate/CritDamage`；`Player/Monster/Stairs` marker；`Idle/Active/Failure`、`Can*`。`Agility` 与 `ActionKind` 已删除（Phase D / Phase C）；行动 ZST 名称（`Wait/Move/BasicAttack/Chase/Flee/Wander`）冻结，已从 actor 移到 action 子实体；`ActionTimer` 随之移动。
-- `core` 资源：`Map/MapSeed/FloorNumber/GameRng/MapMemory/VisibleMemory/OccupancyMap/EventLog/TurnManager/PendingExp`。
+- `core` 资源：`Map/MapSeed/FloorNumber/GameRng/MapMemory/VisibleMemory/OccupancyMap/EventLog/TurnManager`（`PendingExp` 已在 Phase E 删除——奖励改由 `DeathEvent` 携带）。
 - `core` 事件：`AttackIntentEvent/AttackEvent/DeathEvent/LevelUpEvent`（消费者/生命周期按 §3.6.8 补齐）。
 - 行动实体新组件（`ActionPriority` / `ActionTimer` / `Candidate` / `ActiveAction` / `Ready` / `ChildOf` 归属）在 PoC 通过后再冻结；PoC 期间允许调整。
 - serde 兼容：`Tile` u8 0..10、`MonsterKindId` 变体、`MapKind` 变体只能末尾追加；新字段 `#[serde(default)]`。
@@ -752,9 +755,10 @@ sys::spawn_key_source()
 
 ## 11. 实施计划（第 2 步起）
 
-> **状态：** A/B/C/D 已完成，F 部分完成（I87/I88）；执行中，下一步 Phase E/F3-F4。
-> **基线：** Phase D 完成时 `cargo test -p core` **71 passed**、`cargo test --workspace` 25 个目标全绿 **198 passed**、`cargo check --workspace` 通过。
-> **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、A43（死抽象清理，Phase E 逐项确认）、F3/F4（core clippy、一键门禁）。已关闭：A42（Phase C）、G35（Phase D）、I87/I88（Phase A 后）。
+> **状态：** A–F 全部完成；G 完成 R1（`presentation` 57 / `tui` 25），R2 部分（`Look`/`Dialog` 已落地），R3–R5 待续；**H 设计输入已落地（commit `55d8086`），代码待开工**。
+> **基线（本轮实测）：** `cargo test -p ecs_core` **71 passed**；`cargo test --workspace` **28 个测试目标全绿 / 0 failed**（含旧 `dungeon-*` 与 `terrain-forge`）；`scripts/gate.ps1` 9 步全绿（含 5 条 `cargo tree` 依赖边界）；`cargo check --workspace` 通过。
+> **开放：** A41（exclusive `&mut World`，范围已随 Phase C 收窄至 `world/loop_.rs` 应用入口）、R2–R5、Phase H（H1–H14）。已关闭：A42（Phase C）、G35（Phase D）、A43（Phase E 逐项处置完毕）、F3/F4（core clippy、一键门禁）、I87/I88（Phase A 后）、SYN3（子模块配置）。
+> **不在门禁内：** 旧 `dungeon-*` / 根 `dungeon-app` 的历史集成测试——它们**能跑通但不代表新方向**（见 `PROTOCOLS.md` §五「为什么不覆盖全部」）。
 
 ### 11.1 目标与范围
 
@@ -1156,7 +1160,7 @@ H1  H3  H4（无依赖、零行为变化）→ H2 → H8 → H6 → H7
 | 7 | I87/I88 | **Phase A 后立即修**，恢复 `cargo test` 门禁 |
 | 8 | `core` 改名 | **已执行（F5）**：改名 `ecs_core`，消除与标准库 `core` 的遮蔽；见 DESIGN DsnX15 |
 
-**下一步：** Phase E（死抽象清理，逐项确认）与 F3/F4（core clippy、一键门禁）。
+**下一步：** Phase E 与 F3/F4 均已完成（见 §11.3 Phase E / F）；当前下一步是 **Phase H 的 H1 / H3 / H4**（见 §11.9）。
 
 ### 11.7 风险与缓解
 
@@ -1174,17 +1178,32 @@ H1  H3  H4（无依赖、零行为变化）→ H2 → H8 → H6 → H7
 
 ### 11.8 预估与下一步
 
-| 阶段 | 预估 |
-|---|---|
-| A | 0.5–1 天 |
-| B | 0.5–1 天 |
-| C | 2–3 天 |
-| D | 1–2 天 |
-| E | 0.5–1 天 |
-| F | 0.5–1 天 |
-| G | 1–2 天（TUI 解耦） |
+| 阶段 | 预估 | 实际 |
+|---|---|---|
+| A | 0.5–1 天 | ✅ 完成（commit `95449a9`） |
+| B | 0.5–1 天 | ✅ 完成（commit `ac6623f`） |
+| C | 2–3 天 | ✅ 完成（C1–C9，commit `83700ff`…`a8e2175`） |
+| D | 1–2 天 | ✅ 完成（D1–D5，commit `cff5940`…） |
+| E | 0.5–1 天 | ✅ 完成（含 `system/`、`monster/` 结构拆分） |
+| F | 0.5–1 天 | ✅ 完成（F3/F4 clippy 清零 + `scripts/gate.ps1`；F5 改名 `ecs_core`） |
+| G | 1–2 天（TUI 解耦） | ⏳ R1 完成；R2 部分；R3–R5 待续 |
+| **H** | 2–3 天（只碰形状） | ⏳ 计划已落地（文档 `55d8086`），代码待开工 |
+| R5（旧 crate 归档） | 0.5 天 | ⏳ **已具备条件**：4 个旧 crate 无使用方、测试可跑 |
 
-**下一步：** Phase E 前逐项确认 §10.8 清单；F3/F4 补齐 clippy 与一键门禁。
+### 11.9 下一步（Phase H 的开工顺序）
+
+`H1` / `H3` / `H4` 之间无依赖且**零行为变化**，因此先做这三项；它们各自解掉一个
+"下一个 `ActionKind`"（`ECS35`/`ECS36`、技能执行器挂载点、`ECS31`）：
+
+```text
+本轮：H1（行动终态单一出口）→ H3（schedule 分组）→ H4（TileProps 属性表）
+      ↓ 每项收尾都跑 gate.ps1，且 ecs_core 71 测试不删不改断言全绿
+下一轮：H2（伤害输入结构体化）→ H8（规则修正器）→ H6 / H7（物种信息归位）
+      ↓
+再下一轮：H9 → H11 → H10（dummy 技能，关键验收）→ H13 / H12 / H14 成文
+      ↓
+独立轮次：R3（bevy_app 宿主，网络已可用——原"环境无外网"的阻塞已消失）
+```
 
 ---
 

@@ -43,15 +43,15 @@ ecs_core/                 ← 唯一业务/领域层，完全 ECS（crate: ecs_c
   world/                  ← init.rs 初始化 / loop_.rs 应用入口 / query.rs 查询辅助
 ```
 
-旧 crate 在迁移完成前暂时保留：
+旧 `dungeon-*`、`src/pages/` 等目录在迁移完成前暂时保留（**只作历史参考，已无人依赖**，将随 R5 归档）：
 
 ```
 dungeon-core/             ← 旧领域数据/工具（历史参考）
 dungeon-action/           ← 旧行动执行（历史参考）
 dungeon-world/            ← 旧世界生命周期（历史参考）
 dungeon-render/           ← 旧渲染（历史参考）
-src/                      ← 旧应用层（历史参考）
-terrain-forge/            ← 地图生成子模块（按需保留）
+src/pages/                ← 旧页面处理器（历史参考，未编入模块树）
+terrain-forge/            ← 地图生成子模块（git submodule，仍在使用）
 ```
 
 渲染契约（新增，见 [DESIGN.md DsnA1](DESIGN.md) / [DsnX14](DESIGN.md)）：
@@ -212,12 +212,23 @@ fn write_something(world: &mut World) { ... }
 
 这避免了 RwLock 死锁问题，且使数据流更清晰。
 
+旧 crate 只作历史参考，**已不在新代码的依赖里**（`src/lib.rs` 只声明 `pub mod keys`）。
+
 ### 构建
 
 ```bash
-cargo check -p core
-cargo run
+cargo run                      # 跑游戏
+cargo check --workspace        # 全工作区构建检查
+
+# 验收统一走一条命令（9 步：构建 / 新方向测试 / 端到端 / bin / clippy / 依赖边界）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
+
+# 单 crate
+cargo test -p ecs_core         # 71 passed
+cargo test -p presentation     # 57 passed
 ```
+
+门禁覆盖范围与**不覆盖**范围见 [PROTOCOLS.md §五](PROTOCOLS.md)。
 
 ## 设计参考
 
