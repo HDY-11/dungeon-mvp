@@ -1,4 +1,4 @@
-> **⚠️ 修改前必须阅读或回忆 [RULE.md](../RULE.md)——它定义了本文档的维护规则和更新时机。**
+﻿> **⚠️ 修改前必须阅读或回忆 [RULE.md](../RULE.md)——它定义了本文档的维护规则和更新时机。**
 
 # 发现的问题记录 —— ecs_core
 
@@ -562,3 +562,123 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 
 **原编号：** `G22`（迁移前）
+### ECS27 — 移动规则与 `Tile` API 都没有"地形代价"维度，地形类装备效果无落点 🟡
+
+**问题：** `Tile` 的公开 API 只有 `glyph()` / `walkable()` / `blocking()`，全部是二值；`can_move_to` 只判"能否走 + 是否被占用"；移动 AV = `base_duration / clamp(speed)`，`base_duration` 是常量，**不随目标地块变化**。因此"地形减速"这不是"有但无视不了"，而是**该能力根本不存在**——"无视某类地形减速"这类装备效果无处落地。
+
+**影响：** 🟡 中 — 阻断"地形影响移动"这一整类设计（地形代价、地形类装备、地形类状态），而 `DsnE8` 已记「地形 → `MoveSpeed`」的方向，说明这是既定设计方向的实现缺口。
+
+**位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法）、`ecs_core/src/action/execution/movement.rs:32-66`（`can_move_to`）、`ecs_core/src/balance.rs:79`（`action_av`）
+
+**备注：** **记录在案，Phase H 逐项确认**。修法见 DESIGN DsnE10 / DsnE13；具体代价数值属 GAME.md。
+
+---
+
+### ECS28 — 规则层扩展点缺失：规则无法获知"执行者身上有什么" 🟡
+
+**问题：** `movement.rs` 的分层卖点是**纯规则不碰 `World`**，但装备/状态类效果要求规则知道"移动者是谁、带了什么"。直接给纯函数加 `&World` 参数会退回 `ECS2` 所批评的形态（把读资源与读组件揉进一次调用），并丢掉可单测性。项目现有正确范例是 `ActorSpeeds`（系统层查询 → 纯数据输入给 `action_av`），但**没有推广成通用形态**，因此每加一类"规则修正"都要重新决定怎么接。
+
+**影响：** 🟡 中 — 装备、状态、地形三类影响都卡在这里；不推广则每类各写一套接法。
+
+**位置：** `ecs_core/src/action/entity.rs`（`ActorSpeeds` / `actor_speeds`，现有范例）、`ecs_core/src/action/execution/movement.rs`
+
+**备注：** **记录在案，Phase H 逐项确认**。形态见 DESIGN DsnE10（修正器在系统层求值、纯函数只吃结果、pull 读取）。
+
+---
+
+### ECS29 — `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 🟡
+
+**问题：** 签名是 5 个裸标量 `(attack, defense, crit_rate, crit_damage, crit_roll)`，**恰好表达"减一次防、乘一次暴击"**；每新增一个伤害修正都要改签名 + 改所有调用点。返回 `MeleeResult { damage, is_crit }` 只有最终值与是否暴击，**没有各因子分解**，因此日志无法解释"为什么是这个数"，也没有"按因子触发"的落点。
+
+**影响：** 🟡 中 — 装备、Buff、技能、生物范畴的固有性质最终都要落到这个函数的输入或因子位置；形状不先留出，后续每加一项都要改接口。
+
+**位置：** `ecs_core/src/combat/mod.rs:31-46`
+
+**备注：** **记录在案，Phase H 逐项确认**。接口形状见 DESIGN DsnE9；**公式与系数一律不变，分区与系数属 GAME.md（待定）**。
+
+---
+
+### ECS30 — 行动候选查询接受 actor 的**任意**子实体，持久子实体会污染仲裁 🟡
+
+**问题：** `CandidateAction = (Entity, &ActionPriority, &ChildOf)`，候选查询是 `Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>`。该查询**不看技能/行动类型**，因此 actor 的任意子实体只要带 `Candidate` 就会被纳入仲裁，**落选者会被 `despawn`**。实测 bevy 0.16 的 `Children` 是 `linked_spawn`，子实体语义同时承担"级联销毁"。
+
+**影响：** 🟡 中高 — 每加一种"挂在 actor 下的持久实体"都会命中，而装备与地块效果的落地（DsnE12）都会加世界级实体；失败模式是**静默 despawn**，不报错。
+
+**位置：** `ecs_core/src/action/entity.rs:95`（类型别名）、`:528`（`action_arbitration_system` 候选查询）
+
+**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE12：持久效果**不用关系型归属**，用组件 + 类型化 `Query` 发现。
+
+---
+
+### ECS31 — `Tile` 的 5 处中央 match：加一个地形变体要改 5 个地方 🟡
+
+**问题：** 加一个 `Tile` 变体需要在 `glyph()` / `walkable()` / `blocking()` / `From<u8>` / `Into<u8>` **五处**同步修改，属中央分派债（与已删除的 `ActionKind` 同类）。且地形属性（如移动代价）没有存放位置，只能继续往这 5 处加。
+
+**影响：** 🟡 中 — 每次扩展地形种类都要改 5 处且容易漏改。
+
+**位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法与 serde 转换）
+
+**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE13：属性收敛到静态属性表，`Tile` 保留为种类键。
+
+---
+
+### ECS32 — 物种信息散在三处：`Can*` 能力在 spawn 代码、数值在模板、权重在 `spawn.rs` 🟡
+
+**问题：** `MonsterTemplate` 只有数值字段；**能力（`Can*`）在 `world/init.rs` 的 spawn 代码里插入**；**生成权重在 `monster/spawn.rs`**。于是"这只怪能做什么"要读三个文件，加一只怪要改多处。`DsnE6` 已把 `spawn_weight` 记为模板字段的方向，但**未落地**。
+
+**影响：** 🟡 中 — 阻碍"加一只怪 = 加一行数据"这个目标；设计已定方向，属未落地。
+
+**位置：** `ecs_core/src/world/init.rs`（`spawn_monsters_system` 的能力插入）、`ecs_core/src/monster/template.rs`、`ecs_core/src/monster/spawn.rs`
+
+**备注：** **记录在案，Phase H 逐项确认**。修法：能力/技能作为**模板的列表字段**（每物种固定但非全物种共有 → 列表，不展开成全字段 DTO）。
+
+---
+
+### ECS33 — `MonsterTemplate`/`MonsterStats` 是全字段 DTO，`Magic` 是恒 `0.0` 占位 🟢
+
+**问题：** `template.rs` 的 `stats()` 无条件产出 `MonsterStats` 的全部字段，`monster_base_bundle` 再逐字段搬进实体。其中 `magic: Magic::new(0.0)` 对所有怪物恒为占位值，而 `stats.magic` 的**唯一消费者是玩家**的构建——即"怪物从来不用，却作为字段强制声明"。新增按物种可选的数据（抗性/技能等）会继续以占位值形态堆进这个 DTO。
+
+**影响：** 🟢 低 — 不写不读、无行为后果；但它是"新增按需字段"的第一道阻力。
+
+**位置：** `ecs_core/src/monster/template.rs:85-121`（`MonsterStats` / `stats()`）、`ecs_core/src/world/init.rs:310-334`（`monster_base_bundle`）
+
+**备注：** **记录在案，Phase H 逐项确认**。修法：模板只装 100% 需要的字段；按需数据改用组件在 spawn 时添加。**中间 DTO 与模板同样受此约束**，否则只是把占位值从模板挪到 DTO。
+
+---
+
+### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
+
+**问题：** `spawn_monsters_system` 用 `rand::rngs::SmallRng::seed_from_u64(seed)`，其中 `seed` 是 `MapSeed` 按楼层派生。严格说这落在 `DsnE5`（"统一走 `GameRng` **或基于 `MapSeed` 的派生 RNG**"）的第二种形态内，**当前确定性是成立的**；但它与 `GameRng` 是**两套独立状态**，而 `GameRng` 的 `state`/`steps` 是回放与存档的基础。若将来该派生种子的算法变动，同 `(seed, floor)` 的怪物布局会改变，而这类改动**不会体现在 `GameRng.steps` 上**。
+
+**影响：** 🟡 中 — 不立即致命，但新增的生成/掉落类系统会继续复制这一先例，形成"第二随机源"惯例，削弱回放与 SL 防护的可验证性。
+
+**位置：** `ecs_core/src/world/init.rs:346`
+
+**备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
+
+---
+
+### ECS35 — 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 🟡
+
+**问题：** 每个执行器手写 `events.succeeded.write(...)` / `events.failed.write(...)`。若新增执行器漏写，**actor 会永久停在 `Active`**（生成系统被 `Without<Active>` 挡住，不再为它产出候选），且 action 子实体无终态事件可消费，永久泄漏。**编译器不会报错**，链路也没有兜底。
+
+**影响：** 🟡 中 — 每加一个行动/技能执行器都要靠人记住这条约定；技能的分支比 `Move`/`Wait` 多，命中概率更高。
+
+**位置：** `ecs_core/src/action/entity.rs`（各 `execute_*_system` 的 `events.*.write`）、`:1018`（`action_completion_system` 为唯一消费者）
+
+**备注：** **记录在案，Phase H 逐项确认**。修法：终态收成一个出口（统一 `Ready` 清理 + 保证恰好一个终态事件），或加"Actor 为 `Active` 但无对应 action 子实体"的兜底检测。关联 ECS36。
+
+---
+
+### ECS36 — `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 🟡
+
+**问题：** `execute_move_system` 显式 `remove::<Ready>()`，其余 5 个执行器**靠 completion `despawn` 实体顺带清理**。`components.rs` 的注释声明"执行系统只处理 `With<Ready>` 的实体"，因此该守卫**强依赖"恰好有一方清理"**；新增执行器时这条不变式没有任何机制保障。
+
+**影响：** 🟡 中 — 与 ECS35 同源（行动链缺终态不变式），扩展行动类型时会踩。
+
+**位置：** `ecs_core/src/action/entity.rs:1003`（显式清理）对比 `:649` / `:680`（靠 despawn 顺带）、`ecs_core/src/components.rs:270`（注释声明的守卫）
+
+**备注：** **记录在案，Phase H 逐项确认**。修法与 ECS35 合并：终态收成一个出口。
+
+---
+

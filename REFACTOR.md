@@ -700,7 +700,7 @@ sys::spawn_key_source()
 ### 10.6 进入下半前建议处理（按优先级）
 
 1. **修复 `core` doctest 失败**：✅ 已修（I86）。`std::convert::Infallible` + `ScheduleLabel` 手写 impl。**crate 改名已落地（F5）**：`core` → `ecs_core`（目录同名），遮蔽问题从根上消除，见 DESIGN DsnX15。
-2. **给 `core` 加冒烟回归**：进行中 — 已补 AV 门禁（快怪多动/慢怪等待）与事件只结算一次（I89/I90，共 4 个测试）；地图生成确定性、玩家移动/攻击、死亡→经验→升级、FOV/记忆/占用图仍待补。
+2. **给 `core` 加冒烟回归**：✅ 已完成（Phase A）——`ecs_core` 现 **71 passed**，覆盖地图确定性、玩家移动/阻挡、攻击只结算一次、死亡→经验→升级、FOV/记忆/占用图、AV 门禁与事件生命周期。**注意 A6 的三个用例已随 Phase B/C 重构消失**（见 §11.4 的说明），"同等时间预算下快怪行动次数更多"这一行为声称**当前无直接断言**，后继用例 `faster_monster_gets_its_action_ready_first` 只钉住"快怪先拿 `Ready`"。
 3. **修复 `sys` 独立构建**：给 `sys` 的 `log` 依赖显式加 `features = ["std"]`（或 workspace `log` 统一声明），确保 `cargo test -p sys` 不依赖 feature 合并偶然通过；补输入/日志测试。
 4. **处理失效的根集成测试**：`tests/scenario_test.rs` / `tests/throw_test.rs` 针对旧 crate；要么删除/归档，要么重写为新 `core` + `render-api` 的 headless 测试。不要让 `cargo test --workspace` 长期失败。
 5. **建立 CI/本地门禁**：至少 `cargo check --workspace` + `cargo test -p render-api -p core -p utils -p tui`（修复后）+ `cargo clippy -p render-api -- -D warnings`；旧 crate 测试单独标记，不计入新代码门禁。
@@ -766,7 +766,9 @@ sys::spawn_key_source()
 4. `Agility` → `MoveSpeed` / `AttackSpeed`（Phase D）；
 5. 同类死抽象/重复表示清理（Phase E）；
 6. 构建/测试门禁修复（Phase F）；
-7. 回到 `presentation` + `tui` 解耦（Phase G）。
+7. 回到 `presentation` + `tui` 解耦（Phase G）；
+8. **扩展性加固（Phase H）**：为下一批设计（战斗公式分层、地形代价、装备、技能）
+   预留**形状**，不填值——见 §11.3 Phase H 与 DESIGN.md DsnX16。
 
 **不做：** 物品/背包/装备、buff/技能、掉落表、下楼、存档读档；这些仍按 §8 保持 S4。
 
@@ -780,10 +782,11 @@ sys::spawn_key_source()
 | **D** | 速度组件迁移 | C | `MoveSpeed`/`AttackSpeed`；删除 `Agility` 与旧公式 | ✅ D1–D5 全部完成（commit cff5940…）：`Agility`/旧公式零引用、AV 单调与 clamp 测试、怪物速度齐全、回合顺序场景通过 |
 | **E** | 死抽象清理 | C/D | 身份 ZST、`EntityClass`/`CreatureKind`、死事件、`BeAttacked`、`PendingExp`、死 combat 函数等 | ✅ 全部完成：删除 6 类死抽象 + `DeathEvent` 接线（`PendingExp` 旁路随之消失）；`cargo clippy -p ecs_core -- -D warnings` 干净，71 测试通过 |
 | **F** | 构建/测试门禁 | A 起可并行 | I87、I88、CI 本地门禁 | ✅ I87/I88 已在 Phase A 后修（commit 7d5b8e1）：`cargo test --workspace` 25 个目标全绿 |
-| **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | ⏳ R1 完成：新建 `presentation`（57 测试）；`tui` 去 `ecs_core` 依赖、改消费 `SceneFrame`（24 测试）；边界由 `scripts/gate.ps1` 的 `cargo tree` 步骤强制 |
+| **G** | presentation + tui 解耦 | E/F | 提取 `render-api` 消费层、`TuiPlugin` | ⏳ R1 完成：新建 `presentation`（57 测试）；`tui` 去 `ecs_core` 依赖、改消费 `SceneFrame`（25 测试）；边界由 `scripts/gate.ps1` 的 `cargo tree` 步骤强制 |
+| **H** | 扩展性加固（只碰形状，不碰值） | A–G | 行动终态单一出口、伤害输入结构体化、schedule 分组、`TileProps` 表、物种信息归位、规则修正器接口、技能三层骨架、世界级效果实体 | ⏳ 计划中：见 §11.3 Phase H；**不改数值、不改行为**（现有 71 测试须全绿） |
 
 ```text
-A ──▶ B ──▶ C ──▶ D ──▶ E ──▶ G
+A ──▶ B ──▶ C ──▶ D ──▶ E ──▶ G ──▶ H
 A ──▶ F（并行）
 ```
 
@@ -805,7 +808,7 @@ A ──▶ F（并行）
 
 #### Phase B — action 实体 PoC（✅ 已完成）
 
-> **落地记录（commit 待补）：** `core/src/action/entity.rs` + 测试拆到 `core/src/action/entity_tests.rs`；
+> **落地记录（commit `ac6623f`）：** `core/src/action/entity.rs` + 测试拆到 `core/src/action/entity_tests.rs`；
 > 调度标签 `ActionPocSchedule`（`core/src/schedule.rs`），由 `build_action_poc_schedule()` 构建，**未接主循环**。
 
 | 编号 | 任务 | 落地情况 |
@@ -1028,6 +1031,85 @@ A ──▶ F（并行）
 放在 `main.rs` 里等于"主循环接线"永远没人测），`translate_key` 移进
 `src/keys.rs`。`main.rs` 现在只剩终端生命周期与主循环，没有一条规则。
 
+#### Phase H — 扩展性加固（⏳ 计划中）
+
+> **动因：** 下一批设计（战斗公式分层、地形代价、装备、技能、危险程度/生物范畴）
+> 会同时触及行动链路、怪物表、地图属性与规则层。它们**尚未定值**，但已能确定需要
+> 哪些**形状**。本轮只把形状留出来，**不新增任何内容、不改任何数值、不改任何行为**。
+>
+> **归属纪律：** 形状进 DESIGN / 实现问题进 ISSUES / **数值与内容进 GAME.md（本轮完全不动）**。
+> 判据见 **DESIGN.md DsnX16**。
+
+**范围（只碰形状）**
+
+| # | 任务 | 位置 | 内容影响 |
+|---|---|---|---|
+| H1 | 行动终态收成单一出口：统一 `Ready` 清理 + 保证"恰好一个终态事件" | `action/entity.rs` | 无 |
+| H2 | 伤害计算输入结构体化 + 返回因子分解；**公式与数值一律不变** | `combat/mod.rs` | 无 |
+| H3 | `build_action_poc_schedule()` 按角色分组（生成器组 / 执行器组各自独立） | `action/entity.rs` | 无 |
+| H4 | `TileProps` 静态属性表：收敛 5 处 match；`Tile` 保留为种类键 | `map/mod.rs` | 无（值不变） |
+| H5 | 怪物生成的随机源：**只记录 ISSUES（ECS34），本轮不改代码** | — | 无 |
+| H6 | 物种信息归位：能力/技能作为**模板的列表字段** | `monster/template.rs`、`world/init.rs` | 无（只换存放位置） |
+| H7 | `spawn_weight` 进模板，删除 `spawn.rs` 的三层 match（补完 `DsnE6`） | `monster/` | 无（同值换位置） |
+| H8 | 规则修正器接口（`ActorSpeeds` 的推广）：预留"基础值修正 / 乘区修正"两类位 | `action/`、规则层 | 形状定，**填值待 GAME.md** |
+| H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 无 |
+| H10 | 技能三层骨架（激活 / 委派 / 行为）+ **一个 dummy 技能**走通 | 新模块 | 形状定，**无真技能** |
+| H11 | 世界级效果实体模型 + 一个最小 `StatusEffect` | `ecs_core` | 形状定，**时长口径待定** |
+| H12 | 扩展点判据成文（`LECS22`） | 文档 | — |
+| H13 | 两类测试纪律：数据表配穷举测试、新组件配"真能被创建"测试 | 测试 | — |
+| H14 | "格子身份"判据成文（`DsnE13`） | 文档 | — |
+
+**明确不做（防范围蔓延）**
+
+- **不改 `Map.tiles` 的网格表示**：实测地图在生成后**运行时零写入**，实体化会让每格读取
+  从数组索引变成哈希/查询，且 `Tile` 的 u8 序列化是已冻结的存档契约。
+- **不改 `Map` 是资源还是组件**：仅当要做多层/多地图时才有收益（见下方待定项）。
+- **不写新伤害公式的分区与系数**：接口留位即可。
+- **不写 `GAME.md`**：本轮不产生任何数值。
+
+**验收**
+
+| 验收项 | 判据 |
+|---|---|
+| 行为不变 | `scripts/gate.ps1` 全绿；`ecs_core` 现有 71 测试**全部保持通过**（不删不改断言） |
+| H2 | 现有伤害测试全绿 + 新增"返回的因子分解可复算出最终值"测试 |
+| H3 | 调度顺序语义不变（现有链路测试全绿），且分组后各是独立扩展点 |
+| H4 | 加一个地形属性只改属性表；`Tile` 的 serde 判别值不变 |
+| H7 | 权重与现有实现逐值一致（parity 测试） |
+| **H10（关键）** | **加一个 dummy 技能，只改"新文件 + 执行器分组一行"**——超过则先修扩展点再写真技能 |
+| H11 | 效果实体能被类型化 `Query` 发现；恰好一个 owner 系统负责终结；存档可枚举 |
+
+**依赖顺序**
+
+```text
+H1  H3  H4（无依赖、零行为变化）→ H2 → H8 → H6 → H7
+                                → H9 → H11 → H10 → H13
+                                → H12  H14 成文
+```
+
+**待定决策（本阶段只记形状，值待内容阶段）**
+
+| 待定项 | 触发条件 | 归属 |
+|---|---|---|
+| 伤害公式的分区与系数 | 内容阶段设计公式时 | **GAME.md** |
+| 增伤/暴击等分区的叠加方式（加算或乘区） | 同上 | **GAME.md** |
+| 地形减速的数值口径与系数 | 定 AV 口径时 | **GAME.md** |
+| 危险程度各档的成长系数 | 内容阶段 | **GAME.md** |
+| 生物范畴各族的固有性质取值 | 内容阶段 | **GAME.md** |
+| 技能子实体是否存档 | 首个真技能时（默认不存，照 §10.7） | DESIGN |
+| 状态效果的时长口径（AV 或秒） | 内容阶段 | **GAME.md** |
+| 多层 / 多地图是否要做 | 真需要跨图时 | DESIGN |
+| `Can*` 是否收窄到"内在能力" | 先实测 `CanBasicAttack` 与 `Attack` 是否一一对应 | DESIGN |
+
+**风险与缓解**
+
+| 风险 | 缓解 |
+|---|---|
+| 改接口时顺手改了数值 | 验收要求"现有测试不删不改断言全绿"；数值改动一律进 GAME.md |
+| H10 骨架过度设计 | 只上 dummy 技能，真技能留给内容阶段 |
+| H11 效果实体泄漏 | 每类恰好一个 owner 系统 + 存档可枚举 + 子实体数量断言 |
+| 范围蔓延到内容 | 上方"明确不做"清单 + DsnX16 的三步判据 |
+
 ### 11.4 测试矩阵
 
 | 测试 | 阶段 | 目的 |
@@ -1037,7 +1119,7 @@ A ──▶ F（并行）
 | `attack_applies_damage_once` | A/C | 伤害只结算一次 |
 | `monster_death_rewards_exp_and_levels_up` | A | 死亡→经验→升级链路 |
 | `fov_memory_occupancy_update` | A | 视野/记忆/占用图 |
-| `fast_actor_gets_more_actions` | A/C | AV 门禁与多动 |
+| ~~`fast_actor_gets_more_actions`~~ | ~~A/C~~ | **已随 Phase B/C 消失**（全库无此用例，代码与文档均零匹配）。后继为 `faster_monster_gets_its_action_ready_first`（D），但它只断言"快怪先拿 `Ready`"，**不再断言"同等时间预算下行动次数更多"**——该行为声称当前无直接覆盖 |
 | `action_entity_poc_round_trip` | B | 生成/仲裁/Tick/执行/完成 |
 | `arbitration_priority_and_cleanup` | B/C | 优先级、loser despawn、无残留 |
 | `player_action_not_overridden_by_ai` | C | 玩家路径独立 |
