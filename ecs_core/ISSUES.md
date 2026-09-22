@@ -695,7 +695,7 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 **位置：** `ecs_core/src/action/entity.rs:95`（类型别名）、`:528`（`action_arbitration_system` 候选查询）
 
-**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE12：持久效果**不用关系型归属**，用组件 + 类型化 `Query` 发现。
+**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE12：持久效果**不用 `ChildOf`**，改用**专用关系类型**（`EffectOf` / `OwnedEffects`）——这样"效果不参与行动仲裁"从"靠 filter 拦"升级为**类型保证**（判据见 DsnE12 第 1 条与 ISSUES ECS41）。
 
 ---
 
@@ -732,6 +732,70 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 **位置：** `ecs_core/src/world/init.rs:346`
 
 **备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
+
+---
+
+### ECS41 — 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 🟡
+
+**问题：** 效果实体需要一个"挂在谁身上"的表达，而现成的 `ChildOf` 有两个缺陷：
+
+1. **不安全（巧合式安全）**：`action_arbitration_system` 的候选查询
+   `Query<(Entity, &ActionPriority, &ChildOf), (With<Candidate>, Without<ActiveAction>)>`
+   **不看实体类型**，落选者一律 `despawn`（ECS30）。今天不误伤只是因为 filter 恰好含
+   `With<Candidate> + &ActionPriority`——任何新挂在 actor 下的子实体只要带了这两个组件之一，
+   就会被行动仲裁**静默删除**，不报错。
+2. **不够用**：`ChildOf` 一个父只有**一个** `Children` 列表，无法把"行动子实体"与
+   "效果子实体"分成两个分组。
+
+**影响：** 🟡 中高 — 效果/装备落地（DsnE12 / H9 / H11）必然踩到；失败模式是静默删除。
+
+**位置：** `ecs_core/src/action/entity.rs`（`CandidateAction` 类型别名与
+`action_arbitration_system` 的候选查询）
+
+**修法（DESIGN DsnE12 第 1 条）：** 用**专用关系类型**表达效果归属，让"效果不参与行动仲裁"
+成为**类型保证**，而不是靠 filter 拦：
+
+```rust
+#[derive(Component)]
+#[relationship(relationship_target = OwnedEffects)]
+pub struct EffectOf(pub Entity);
+
+#[derive(Component)]
+#[relationship_target(relationship = EffectOf, linked_spawn)]
+pub struct OwnedEffects(Vec<Entity>);
+```
+
+（`Relationship` / `relationship_target` 是 bevy 0.16 的公开派生，
+见 `bevy_ecs-0.16.1/src/relationship/mod.rs:35-72`——**不是**需要自己写 unsafe 的扩展点。）
+
+**关联：** ECS30（同一段查询的另一个面）、ECS42（`linked_spawn` 对装备是错的）、
+DESIGN DsnE12；REFACTOR §11.3 Phase H（H9/H11）。
+
+---
+
+### ECS42 — `linked_spawn` 的语义对不同效果是相反的：状态效果要级联，装备不能级联 🟡
+
+**问题：** 用关系挂载效果时，"拥有者 `despawn` 是否级联 `despawn` 效果"必须逐类决定，
+而两类效果要的答案**相反**：
+
+| 效果 | 期望 | 用 `linked_spawn` |
+|---|---|---|
+| 状态效果（中毒、护盾、加速） | 人死了效果消失 | ✅ 对 |
+| 技能授予的持续效果 | 施法者没了效果没了 | ✅ 对（但"自杀并把地块变成生成器"这类**不属于此类**，见 DsnE12） |
+| **装备（掉落物）** | 人死了**掉出来**给玩家拾取 | ❌ **错**：战利品随尸体一起消失 |
+
+即：把"效果"当成一个统一的类别去套同一个级联语义，会得到**一个静默的数据丢失 bug**
+（怪物死了、装备没了），而且它只在"玩家击杀带装备的怪物"时才显现。
+
+**影响：** 🟡 中 — 影响掉落与装备整条链路；失败模式是静默消失（无报错、无日志）。
+
+**位置：** 尚无代码落点（H9/H11 落地时才会出现）；设计落点 DESIGN DsnE12 第 1 条的落点表。
+
+**修法：** 装备的落点**单独决定**（DsnE12 的开放项）——按 `DsnE13` 的判据：装备若需要
+**独立身份**（可被偷、单独销毁、单独耐久），就用实体关系但**关闭 `linked_spawn`**；
+若不需要，则用"位置 + `Equipment` 组件"表达，"掉在地上"就是换了位置。
+
+**关联：** ECS41、DESIGN DsnE12 第 1 条与开放项；REFACTOR §11.3 Phase H（H9/H11）。
 
 ---
 
