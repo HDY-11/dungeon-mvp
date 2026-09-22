@@ -17,6 +17,8 @@
 //! 模块布局：
 //!
 //! - [`entity`]：action 实体链路本体（组件、系统、调度），C7 起已接进主循环；
+//! - [`ownership`]：行动归属关系（`ActionOf` / `ActionChildren`）——用它而**不用**
+//!   通用 `ChildOf`，让"只有行动实体参与行动仲裁"成为类型保证（ISSUES ECS30/ECS41）；
 //! - [`generation`]：生成侧的类型与条件（`PlayerCommand`、追击/逃跑条件）；
 //! - [`execution`]：执行侧的**纯规则**（移动判定；`movement` 子模块）。
 //!
@@ -26,6 +28,7 @@
 pub mod entity;
 pub mod execution;
 pub mod generation;
+pub mod ownership;
 
 pub use entity::{
     ActionName, ActionPriority, ActionSource, ActiveAction, Candidate, PRIORITY_CHASE,
@@ -33,3 +36,4 @@ pub use entity::{
 };
 pub use execution::*;
 pub use generation::*;
+pub use ownership::{ActionChildren, ActionOf};

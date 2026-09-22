@@ -34,6 +34,7 @@
 //! （见 REFACTOR.md §10.7）。
 
 use crate::action::generation::player::PlayerCommand;
+use crate::action::ownership::ActionOf;
 use crate::balance::{
     CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, FLEE_HP_RATIO_EXIT, UNARMED_ATTACK_DURATION,
     WAIT_DURATION, WANDER_DURATION, action_av,
@@ -92,7 +93,11 @@ type PlayerActorData = (
 type AiActorData = (Entity, Option<&'static MoveSpeed>);
 
 /// 仲裁的输入：尚未激活的候选（优先级 + 归属）。
-type CandidateAction = (Entity, &'static ActionPriority, &'static ChildOf);
+///
+/// 归属用 [`ActionOf`] 而**不是**通用 `ChildOf`：仲裁会 `despawn` 落选者，
+/// 因此"这条查询只可能匹配到行动实体"必须是**类型保证**，不能靠 filter 恰好写对
+/// （ISSUES ECS30 / ECS41）。
+type CandidateAction = (Entity, &'static ActionPriority, &'static ActionOf);
 
 /// 已到期（`Ready`）的行动实体，按具体行动类型 `A` 过滤。
 ///
@@ -101,10 +106,10 @@ type CandidateAction = (Entity, &'static ActionPriority, &'static ChildOf);
 type ReadyAction<A> = (With<ActiveAction>, With<Ready>, With<A>);
 
 /// 到期行动的数据：实体 id + 归属。
-type ReadyActionEntity = (Entity, &'static ChildOf);
+type ReadyActionEntity = (Entity, &'static ActionOf);
 
 /// 带 payload 的到期行动（`Move` / `BasicAttack`）。
-type ReadyActionPayload<A> = (Entity, &'static ChildOf, &'static A);
+type ReadyActionPayload<A> = (Entity, &'static ActionOf, &'static A);
 
 /// 行动终态的**唯一出口**：执行器只能经它结束一个行动。
 ///
@@ -283,7 +288,7 @@ pub fn wander_generation_system(
 ) {
     for (actor, move_speed) in &actors {
         commands.spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionName("Wander"),
@@ -312,7 +317,7 @@ pub fn flee_generation_system(
             continue;
         }
         commands.spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_FLEE),
             ActionSource::Ai,
             ActionName("Flee"),
@@ -338,7 +343,7 @@ pub fn wait_generation_system(
 ) {
     for actor in &actors {
         commands.spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WAIT),
             ActionSource::Ai,
             ActionName("Wait"),
@@ -381,7 +386,7 @@ pub fn chase_generation_system(
             continue;
         }
         commands.spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_CHASE),
             ActionSource::Ai,
             ActionName("Chase"),
@@ -501,7 +506,7 @@ pub fn player_action_generation_system(
     let remaining_av = rule.action_av(duration, actor_speeds(player, move_speed, attack_speed));
 
     let mut action_cmd = commands.spawn((
-        ChildOf(player),
+        ActionOf(player),
         ActionPriority(PRIORITY_PLAYER),
         ActionSource::Player,
         ActionTimer { remaining_av },
@@ -557,11 +562,11 @@ pub fn build_player_mount_schedule() -> Schedule {
 pub fn action_arbitration_system(
     mut commands: Commands,
     candidates: Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>,
-    active_actions: Query<&ChildOf, With<ActiveAction>>,
+    active_actions: Query<&ActionOf, With<ActiveAction>>,
 ) {
     // 已经持有 `ActiveAction` 的 actor：本轮不得再被授予行动。
     // （候选查询里的 `Without<ActiveAction>` 只保证候选自身未激活，挡不住这种情况。）
-    let busy_actors: HashSet<Entity> = active_actions.iter().map(ChildOf::parent).collect();
+    let busy_actors: HashSet<Entity> = active_actions.iter().map(ActionOf::parent).collect();
 
     // 每个 actor 选一个赢家：(priority, bits) 最小者。
     let mut winners: HashMap<Entity, (Entity, i32, u64)> = HashMap::new();
@@ -981,7 +986,7 @@ pub fn execute_basic_attack_system(
 /// 为什么这样写是安全的（Phase B 时这里曾是 exclusive，属过度保守）：
 ///
 /// - 驱动实体是 **action 实体**（`ActiveAction + Ready + Move` 都在它身上），
-///   `ChildOf` 只作**读**，用来拿 actor id；
+///   [`ActionOf`] 只作**读**，用来拿 actor id；
 /// - 被写的是**另一个实体**的 `Position`，因此 `Query<&mut Position>` 的
 ///   per-entity 唯一可变访问没有被违反；
 /// - 规则由纯函数 [`crate::action::execution::movement::moved_position`] 提供，
@@ -1055,7 +1060,7 @@ pub fn action_completion_system(
     mut commands: Commands,
     mut succeeded: EventReader<ActionSucceededEvent>,
     mut failed: EventReader<ActionFailedEvent>,
-    actions: Query<(Entity, &ChildOf), With<ActiveAction>>,
+    actions: Query<(Entity, &ActionOf), With<ActiveAction>>,
 ) {
     let done: Vec<(Entity, bool)> = succeeded
         .read()
@@ -1064,11 +1069,14 @@ pub fn action_completion_system(
         .collect();
 
     for (actor, is_success) in done {
-        // 该 actor 的所有 action 子实体：despawn 的实体无法再查询，
+        // 该 actor 的所有 action 实体：despawn 的实体无法再查询，
         // 因此按“归属 + 仍是 ActiveAction”逐个回收。
+        //
+        // 这里**不需要**先判断 actor 是否还在：`ActionOf` 是 `linked_spawn` 关系，
+        // actor 被 despawn 时它名下的行动实体已经一并消失（见 `action::ownership`）。
         let targets: Vec<Entity> = actions
             .iter()
-            .filter(|(_, child_of)| child_of.parent() == actor)
+            .filter(|(_, action_of)| action_of.parent() == actor)
             .map(|(action, _)| action)
             .collect();
         for action in targets {

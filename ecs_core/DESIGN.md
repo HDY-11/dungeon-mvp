@@ -617,6 +617,12 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
    pub struct OwnedEffects(Vec<Entity>);
    ```
 
+   > **落地进展（Phase H）：** 行动侧那一半**已经落地**——`ActionOf` / `ActionChildren`
+   > （`ecs_core/src/action/ownership.rs`）取代了行动链里的 `ChildOf`，
+   > 候选查询因此**结构上**匹配不到非行动实体（ISSUES ECS30 / ECS41 已修复）。
+   > 效果侧那一半（`EffectOf` / `OwnedEffects`）随 H11 落地；
+   > 届时不变量是：**两套关系互不可见**，所以"效果不能参与行动仲裁"由编译期保证。
+
    | 效果落点 | 归属 | 读取方式 | 级联语义 |
    |---|---|---|---|
    | actor 拥有的（buff、技能授予的持续效果） | actor 的 `EffectOf` 子实体 | 类型化 `Query<&EffectOf>` | `linked_spawn`：拥有者没了效果也没了 |

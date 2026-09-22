@@ -687,15 +687,73 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 ---
 
-### ECS30 — 行动候选查询接受 actor 的**任意**子实体，持久子实体会污染仲裁 🟡
+### ECS30 — 行动候选查询接受 actor 的**任意**子实体，持久子实体会污染仲裁 ✅已修复
 
-**问题：** `CandidateAction = (Entity, &ActionPriority, &ChildOf)`，候选查询是 `Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>`。该查询**不看技能/行动类型**，因此 actor 的任意子实体只要带 `Candidate` 就会被纳入仲裁，**落选者会被 `despawn`**。实测 bevy 0.16 的 `Children` 是 `linked_spawn`，子实体语义同时承担"级联销毁"。
+**修复前：** `CandidateAction = (Entity, &ActionPriority, &ChildOf)`，候选查询是 `Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>`。该查询**不看实体类型**，因此 actor 的任意子实体只要带 `Candidate` 就会被纳入仲裁：**赢家会被 `insert(ActiveAction)` 认领、落选者会被 `despawn`**。实测 bevy 0.16 的 `Children` 是 `linked_spawn`，子实体语义同时承担"级联销毁"。
 
-**影响：** 🟡 中高 — 每加一种"挂在 actor 下的持久实体"都会命中，而装备与地块效果的落地（DsnE12）都会加世界级实体；失败模式是**静默 despawn**，不报错。
+**影响：** 🟡 中高 — 每加一种"挂在 actor 下的持久实体"都会命中，而装备与地块效果的落地（DsnE12）都会加世界级实体；失败模式是**静默**（无报错、无日志）。
 
-**位置：** `ecs_core/src/action/entity.rs:95`（类型别名）、`:528`（`action_arbitration_system` 候选查询）
+**修复后（Phase H / ECS41 一并处置）：** 行动归属改用**专用关系类型**
+（`ecs_core/src/action/ownership.rs`）：
 
-**备注：** **记录在案，Phase H 逐项确认**。处置方向见 DESIGN DsnE12：持久效果**不用 `ChildOf`**，改用**专用关系类型**（`EffectOf` / `OwnedEffects`）——这样"效果不参与行动仲裁"从"靠 filter 拦"升级为**类型保证**（判据见 DsnE12 第 1 条与 ISSUES ECS41）。
+```rust
+#[derive(Component)] #[relationship(relationship_target = ActionChildren)]
+pub struct ActionOf(pub Entity);
+#[derive(Component)] #[relationship_target(relationship = ActionOf, linked_spawn)]
+pub struct ActionChildren(Vec<Entity>);
+```
+
+候选查询、`ReadyAction` 系列别名、仲裁/执行/completion 的归属读取全部改走 `ActionOf`，
+**生产代码里不再有 `ChildOf`**。于是"这条查询只可能匹配到行动实体"从"filter 恰好写对"
+升级为**类型保证**：别的子实体类型上根本没有 `ActionOf`，过滤条件写错也匹配不到。
+
+**行为证据（新用例，且经变异验证）：**
+`action_chain_never_claims_or_despawns_unrelated_children_of_an_actor` 刻意构造**最容易命中的情形**——
+actor 名下放一个用**通用层级关系** `ChildOf` 挂着的旁观者，并给它 `Candidate` +
+`ActionPriority(PRIORITY_FLEE)`（最高优先级），然后跑满 5 轮完整链路，断言它
+**不被动、不被删、组件不被改写**。
+
+> **变异验证的教训（值得记一笔）：** 这条用例的**第一版写弱了**——只断言"旁观者还活着"。
+> 把候选查询改回 `ChildOf` 后它**照样通过**：因为旧口径下旁观者会**赢下仲裁**，
+> 被 `insert(ActiveAction)` 认领，于是它当然还"活着"（只是已经变成行动实体了）。
+> 补上 `ActiveAction` / `Candidate` 两条断言后，同一变异**立刻失败**。
+> 教训：**"实体还在"不等于"没被动过"**——杀不死的 bug 常常是"被改写了"而不是"被删了"。
+
+**位置：** `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/entity.rs`
+（别名 + 仲裁 + 执行 + completion）、`ecs_core/src/action/entity_tests.rs`（归属构造与对照用例）
+
+**关联：** ECS41（同一根因的另一半）；DESIGN DsnE12 第 1 条；REFACTOR §11.3 Phase H（H9/H11）。
+
+---
+
+### ECS41 — 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 ✅已修复
+
+**修复前：** 效果实体需要一个"挂在谁身上"的表达，而现成的 `ChildOf` 有两个缺陷：
+
+1. **不安全（巧合式安全）**：行动链的候选查询
+   `Query<(Entity, &ActionPriority, &ChildOf), (With<Candidate>, Without<ActiveAction>)>`
+   **不看实体类型**——新挂在 actor 下的子实体只要带了这两个组件之一，就会被行动仲裁
+   **认领或静默删除**（ECS30）。
+2. **不够用**：`ChildOf` 一个父只有**一个** `Children` 列表，无法把"行动子实体"与
+   "效果子实体"分成两个分组。
+
+**修复后（Phase H）：** 行动侧先落地**专用关系**（`ActionOf` / `ActionChildren`，
+`ecs_core/src/action/ownership.rs`），两者分工明确：
+
+| 关系 | 谁用 | 级联销毁 | 参与行动仲裁 |
+|---|---|---|---|
+| `ActionOf` / `ActionChildren` | 行动实体 | ✅（`linked_spawn`，actor 死亡不留残留） | ✅ 唯一参与者 |
+| `EffectOf` / `OwnedEffects`（H11 建） | 效果实体 | 按效果类别定（见 ECS42） | ❌ **结构上匹配不到** |
+| `ChildOf` / `Children`（通用层级） | 不属于行动链的东西 | ✅ | ❌ |
+
+`Relationship` / `relationship_target` 是 bevy 0.16 的公开派生
+（`bevy_ecs-0.16.1/src/relationship/mod.rs:35-72`），**不需要自己写 unsafe**。
+
+**位置：** `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出）、
+`ecs_core/src/action/entity.rs`
+
+**关联：** ECS30（同一根因，同时修复）、ECS42（`linked_spawn` 对装备是错的）、
+DESIGN DsnE12 第 1 条；REFACTOR §11.3 Phase H（H9/H11）。
 
 ---
 
@@ -732,44 +790,6 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 **位置：** `ecs_core/src/world/init.rs:346`
 
 **备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
-
----
-
-### ECS41 — 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 🟡
-
-**问题：** 效果实体需要一个"挂在谁身上"的表达，而现成的 `ChildOf` 有两个缺陷：
-
-1. **不安全（巧合式安全）**：`action_arbitration_system` 的候选查询
-   `Query<(Entity, &ActionPriority, &ChildOf), (With<Candidate>, Without<ActiveAction>)>`
-   **不看实体类型**，落选者一律 `despawn`（ECS30）。今天不误伤只是因为 filter 恰好含
-   `With<Candidate> + &ActionPriority`——任何新挂在 actor 下的子实体只要带了这两个组件之一，
-   就会被行动仲裁**静默删除**，不报错。
-2. **不够用**：`ChildOf` 一个父只有**一个** `Children` 列表，无法把"行动子实体"与
-   "效果子实体"分成两个分组。
-
-**影响：** 🟡 中高 — 效果/装备落地（DsnE12 / H9 / H11）必然踩到；失败模式是静默删除。
-
-**位置：** `ecs_core/src/action/entity.rs`（`CandidateAction` 类型别名与
-`action_arbitration_system` 的候选查询）
-
-**修法（DESIGN DsnE12 第 1 条）：** 用**专用关系类型**表达效果归属，让"效果不参与行动仲裁"
-成为**类型保证**，而不是靠 filter 拦：
-
-```rust
-#[derive(Component)]
-#[relationship(relationship_target = OwnedEffects)]
-pub struct EffectOf(pub Entity);
-
-#[derive(Component)]
-#[relationship_target(relationship = EffectOf, linked_spawn)]
-pub struct OwnedEffects(Vec<Entity>);
-```
-
-（`Relationship` / `relationship_target` 是 bevy 0.16 的公开派生，
-见 `bevy_ecs-0.16.1/src/relationship/mod.rs:35-72`——**不是**需要自己写 unsafe 的扩展点。）
-
-**关联：** ECS30（同一段查询的另一个面）、ECS42（`linked_spawn` 对装备是错的）、
-DESIGN DsnE12；REFACTOR §11.3 Phase H（H9/H11）。
 
 ---
 

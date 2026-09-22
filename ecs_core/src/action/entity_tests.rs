@@ -55,7 +55,7 @@ fn unregistered_component_query_returns_empty_without_panic() {
 
 /// 找出「有行动能力但没在行动」的 actor 的等待候选（C1）。
 fn wait_candidate_for(world: &mut World, actor: Entity) -> Option<Entity> {
-    let mut query = world.query_filtered::<(Entity, &ChildOf), With<Wait>>();
+    let mut query = world.query_filtered::<(Entity, &ActionOf), With<Wait>>();
     query
         .iter(world)
         .find(|(_, child_of)| child_of.parent() == actor)
@@ -73,12 +73,12 @@ fn run_wait_candidate(world: &mut World, actor: Entity) -> Entity {
 fn run_generation_and_arbitration(world: &mut World, actor: Entity) -> Vec<Entity> {
     run_generation_systems(world);
     let _ = world.run_system_once(action_arbitration_system);
-    let mut query = world.query_filtered::<Entity, (With<ActiveAction>, With<ChildOf>)>();
+    let mut query = world.query_filtered::<Entity, (With<ActiveAction>, With<ActionOf>)>();
     query
         .iter(world)
         .filter(|action| {
             world
-                .get::<ChildOf>(*action)
+                .get::<ActionOf>(*action)
                 .is_some_and(|child_of| child_of.parent() == actor)
         })
         .collect()
@@ -173,7 +173,7 @@ fn arbitration_picks_higher_priority_and_cleans_up_candidates() {
 
     let high = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_FLEE),
             ActionName("Flee"),
             ActionTimer { remaining_av: 50.0 },
@@ -183,7 +183,7 @@ fn arbitration_picks_higher_priority_and_cleans_up_candidates() {
         .id();
     let low = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionName("Wander"),
             ActionTimer { remaining_av: 50.0 },
@@ -218,7 +218,7 @@ fn arbitration_tie_break_is_deterministic() {
 
     let first = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionTimer {
                 remaining_av: 500.0,
@@ -229,7 +229,7 @@ fn arbitration_tie_break_is_deterministic() {
         .id();
     let second = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionTimer {
                 remaining_av: 500.0,
@@ -262,7 +262,7 @@ fn arbitration_skips_actor_that_already_has_an_active_action() {
 
     let existing = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionTimer { remaining_av: 5.0 },
@@ -289,13 +289,78 @@ fn arbitration_skips_actor_that_already_has_an_active_action() {
     );
 }
 
+/// **actor 名下与行动无关的子实体不得被行动链路认领或删掉**（ISSUES ECS30 / ECS41）。
+///
+/// 这条是"用专用关系 `ActionOf` 而不是通用 `ChildOf`"的**行为证据**。
+/// H 之前候选查询是 `Query<(Entity, &ActionPriority, &ChildOf), (With<Candidate>, ..)>`，
+/// 落选者一律 `despawn`、赢家被 `insert(ActiveAction)`——那时 actor 名下任何**带
+/// `Candidate` 的持久子实体**（未来效果实体的典型形态）都会被行动链路**认领**：
+/// 轻则被当落选者删掉，重则它自己的组件被改写成"正在执行的行动"。
+///
+/// 用例刻意制造**最容易命中的情形**，而不是挑软柿子：
+///
+/// - 旁观者用**通用层级关系** `ChildOf(actor)`（模拟未来的效果子实体）；
+/// - 刻意带上 `Candidate` 与 `ActionPriority(PRIORITY_FLEE)`——**最高优先级**，
+///   旧口径下它必定赢下仲裁；
+/// - 跑满 5 轮完整链路（生成/仲裁/tick/执行/completion 都真的发生过）。
+///
+/// 现在候选查询要求 `&ActionOf`，而旁观者结构上没有这个关系，因此**匹配不到**：
+/// 它既不被动、也不被删，actor 自己照常行动。
+#[test]
+fn action_chain_never_claims_or_despawns_unrelated_children_of_an_actor() {
+    let (mut world, _player) = poc_world();
+    let actor = poc_actor(&mut world, (5, 5));
+
+    let bystander = world
+        .spawn((
+            ChildOf(actor),
+            Candidate,
+            ActionPriority(PRIORITY_FLEE),
+            ActionSource::Ai,
+        ))
+        .id();
+    assert!(
+        world.get::<ActionOf>(bystander).is_none(),
+        "旁观者不得是行动实体（它只有通用层级关系）"
+    );
+
+    for _ in 0..5 {
+        world.run_schedule(ActionPocSchedule);
+    }
+
+    assert!(
+        world.get_entity(bystander).is_ok(),
+        "行动链路不得回收与行动无关的子实体（ECS30：旧口径下它会被当落选者 despawn）"
+    );
+    assert!(
+        world.get::<ActiveAction>(bystander).is_none(),
+        "行动链路不得把无关子实体**认领**成行动（ECS41：旧口径下它会赢下仲裁并被打上 ActiveAction）"
+    );
+    assert!(
+        world.get::<Candidate>(bystander).is_some(),
+        "旁观者自己的组件不得被行动链路改写"
+    );
+    assert!(
+        world.get::<ChildOf>(bystander).is_some(),
+        "旁观者的归属关系也不得被行动链路改动"
+    );
+    // 反面证据：actor 自己照常走完了 5 轮（说明上面不是"整条链路根本没跑起来"）。
+    assert!(
+        world.get::<Idle>(actor).is_some(),
+        "actor 自己必须照常行动：一轮结束时回到 Idle"
+    );
+    assert!(
+        world.get::<Active>(actor).is_none(),
+        "actor 不得被卡在 Active"
+    );
+}
+
 /// 生成系统只 spawn 候选：不得改动 actor 的 `Idle`/`Active`/`Failure`。
 ///
 /// 用「游荡能力」计数（等待是兜底行为，见 `wait_generation_*` 用例），
 /// 因此这里只跑游荡生成系统，避免把兜底候选算进来。
 #[test]
-fn generation_only_spawns_candidates() {
-    let (mut world, _player) = poc_world();
+fn generation_only_spawns_candidates() {    let (mut world, _player) = poc_world();
     let actor = poc_actor(&mut world, (5, 5));
 
     let _ = world.run_system_once(wander_generation_system);
@@ -320,7 +385,7 @@ fn generation_only_spawns_candidates() {
         PRIORITY_WANDER
     );
     assert_eq!(
-        world.get::<ChildOf>(action).unwrap().parent(),
+        world.get::<ActionOf>(action).unwrap().parent(),
         actor,
         "候选必须挂在 actor 下"
     );
@@ -334,7 +399,7 @@ fn generation_skips_actor_with_active_action() {
 
     let active = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionTimer {
                 remaining_av: 500.0,
@@ -390,7 +455,7 @@ fn low_health_actor_arbitrates_to_flee() {
     run_generation_systems(&mut world);
     let _ = world.run_system_once(action_arbitration_system);
 
-    let mut query = world.query_filtered::<(&ActionPriority, &ChildOf), With<ActiveAction>>();
+    let mut query = world.query_filtered::<(&ActionPriority, &ActionOf), With<ActiveAction>>();
     let winners: Vec<i32> = query
         .iter(&world)
         .filter(|(_, child_of)| child_of.parent() == actor)
@@ -436,7 +501,7 @@ fn wait_loses_to_wander_and_candidate_is_cleaned_up() {
             .iter(&world)
             .find(|action| {
                 world
-                    .get::<ChildOf>(*action)
+                    .get::<ActionOf>(*action)
                     .is_some_and(|child_of| child_of.parent() == actor)
             })
             .expect("应当生成 Wander 候选")
@@ -508,12 +573,12 @@ fn player_move_scene(player_pos: (usize, usize)) -> (World, Entity) {
 
 /// 当前挂在某个 actor 名下的 action 实体。
 fn action_entities_of(world: &mut World, actor: Entity) -> Vec<Entity> {
-    let mut query = world.query_filtered::<Entity, With<ChildOf>>();
+    let mut query = world.query_filtered::<Entity, With<ActionOf>>();
     query
         .iter(world)
         .filter(|action| {
             world
-                .get::<ChildOf>(*action)
+                .get::<ActionOf>(*action)
                 .is_some_and(|child_of| child_of.parent() == actor)
         })
         .collect()
@@ -918,7 +983,7 @@ fn wander_action_consumes_exactly_one_random_step() {
         let (mut world, actor) = wander_parity_scene(seed, pos);
         let _action = world
             .spawn((
-                ChildOf(actor),
+                ActionOf(actor),
                 ActionPriority(PRIORITY_WANDER),
                 ActionSource::Ai,
                 ActionTimer { remaining_av: 0.0 },
@@ -964,7 +1029,7 @@ fn wander_blocked_still_succeeds() {
     );
     let action = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -1045,7 +1110,7 @@ fn set_visibility(world: &mut World, monster: Entity, player_tile: (usize, usize
 fn mount_ready_chase(world: &mut World, monster: Entity) -> Entity {
     let action = world
         .spawn((
-            ChildOf(monster),
+            ActionOf(monster),
             ActionPriority(PRIORITY_CHASE),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -1190,7 +1255,7 @@ fn chase_generation_requires_sight_or_memory() {
         world.get::<ActionPriority>(spawned[0]).unwrap().0,
         PRIORITY_CHASE
     );
-    assert_eq!(world.get::<ChildOf>(spawned[0]).unwrap().parent(), monster);
+    assert_eq!(world.get::<ActionOf>(spawned[0]).unwrap().parent(), monster);
 
     // 情形 C：看不见但有记忆 → 生成。
     let (mut world, _player, monster) = chase_parity_scene(31, player_tile, monster_tile);
@@ -1261,7 +1326,7 @@ fn idle_and_failure_are_mutually_exclusive() {
     world.entity_mut(monster).remove::<Idle>().insert(Failure);
     let action = world
         .spawn((
-            ChildOf(monster),
+            ActionOf(monster),
             ActionPriority(PRIORITY_WAIT),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -1362,7 +1427,7 @@ fn flee_parity_scene(
 fn mount_ready_flee(world: &mut World, monster: Entity) -> Entity {
     let action = world
         .spawn((
-            ChildOf(monster),
+            ActionOf(monster),
             ActionPriority(PRIORITY_FLEE),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -1683,7 +1748,7 @@ fn parity_wander_scenario() {
     let start = world.get::<Position>(actor).unwrap().to_tuple();
     let action = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -1798,7 +1863,7 @@ fn parity_all_actions_leave_no_residue() {
         let actor = poc_actor(&mut world, (20, 20));
         let action = world
             .spawn((
-                ChildOf(actor),
+                ActionOf(actor),
                 ActionPriority(PRIORITY_WANDER),
                 ActionTimer { remaining_av: 0.0 },
                 Wander,
@@ -2038,7 +2103,7 @@ fn move_parity_scene(
 
     let action = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -2128,7 +2193,7 @@ fn parameterized_move_executor_coexists_with_settle_systems() {
 
     let action = world
         .spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionTimer { remaining_av: 0.0 },
@@ -2191,7 +2256,7 @@ fn run_generation_and_collect(world: &mut World) -> Vec<Entity> {
 
 /// 属于 `actor` 的、带 `T` 的 action 实体（通常是候选或 active action）。
 fn actions_of<T: Component>(world: &mut World, actor: Entity) -> Vec<Entity> {
-    let mut query = world.query_filtered::<(Entity, &ChildOf), With<T>>();
+    let mut query = world.query_filtered::<(Entity, &ActionOf), With<T>>();
     query
         .iter(world)
         .filter(|(_, child_of)| child_of.parent() == actor)
@@ -2222,7 +2287,7 @@ fn generated_actions_read_their_category_speed() {
         .find(|action| {
             world.get::<Wander>(*action).is_some()
                 && world
-                    .get::<ChildOf>(*action)
+                    .get::<ActionOf>(*action)
                     .is_some_and(|child_of| child_of.parent() == monster)
         })
         .expect("游荡候选应当被生成");
@@ -2232,7 +2297,7 @@ fn generated_actions_read_their_category_speed() {
         .find(|action| {
             world.get::<Wait>(*action).is_some()
                 && world
-                    .get::<ChildOf>(*action)
+                    .get::<ActionOf>(*action)
                     .is_some_and(|child_of| child_of.parent() == monster)
         })
         .expect("等待候选应当被生成");

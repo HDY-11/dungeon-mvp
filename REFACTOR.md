@@ -1064,9 +1064,9 @@ A ──▶ F（并行）
 | H6 | 物种信息归位：能力/技能作为**模板的列表字段** | `monster/template.rs`、`world/init.rs` | 无（只换存放位置） |
 | H7 | `spawn_weight` 进模板，删除 `spawn.rs` 的三层 match（补完 `DsnE6`） | `monster/` | 无（同值换位置） |
 | H8 | 规则修正器**求值侧**：五步（base → 收桶 → 过滤 `ignored` → 两类修正位 → 纯函数） | `action/`、规则层 | 形状定，**填值待 GAME.md**。DsnE10 已改写：载体是效果实体（DsnE12），本条只管折算 |
-| H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 无 |
+| H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 无 | ⏳ **前置已清**：行动侧专用关系 `ActionOf`/`ActionChildren` 已落地，格子效果不再与行动链抢 `ChildOf` |
 | H10 | 技能三层骨架（激活 / 委派 / 行为）+ **一个 dummy 技能**走通 | 新模块 | 形状定，**无真技能** |
-| H11 | 效果实体模型 + **最小闭环一对**：地形减速（格子侧）× 无视地形的装备（actor 侧） | `ecs_core` | 形状定，**时长口径待定**。挂载用**专用关系** `EffectOf`/`OwnedEffects`，**不用 `ChildOf`**（DsnE12 第 1 条 / ECS41 / ECS42） |
+| H11 | 效果实体模型 + **最小闭环一对**：地形减速（格子侧）× 无视地形的装备（actor 侧） | `ecs_core` | 形状定，**时长口径待定**。挂载用**专用关系** `EffectOf`/`OwnedEffects`，**不用 `ChildOf`**（DsnE12 第 1 条 / ECS41 / ECS42）。**行动侧同类关系已落地，照抄即可** |
 | H12 | 扩展点判据成文（`LECS22`） | 文档 | — |
 | H13 | 两类测试纪律：数据表配穷举测试、新组件配"真能被创建"测试 | 测试 | — |
 | H14 | "格子身份"判据成文（`DsnE13`） | 文档 | — |
