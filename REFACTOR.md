@@ -1057,13 +1057,13 @@ A ──▶ F（并行）
 | # | 任务 | 位置 | 内容影响 |
 |---|---|---|---|
 | H1 | 行动终态收成单一出口：统一 `Ready` 清理 + 保证"恰好一个终态事件" | `action/entity.rs` | 无 | ✅ **已完成**：`ActionEvents` 字段私有化 + `succeed`/`fail` 两个方法（清 `Ready` + 恰好一个事件）；6 个执行器 15 处裸写全部改走出口；`ECS35`/`ECS36` 均修复。**变异验证**：去掉终态出口的 `remove::<Ready>()` → 7 个用例立刻失败 |
-| H2 | 伤害计算输入结构体化 + 返回因子分解；**公式与数值一律不变** | `combat/mod.rs` | 无 |
+| H2 | 伤害计算输入结构体化 + 返回因子分解；**公式与数值一律不变** | `combat/mod.rs` | 无 | ✅ **已完成**：实现落在新模块 `rules/damage.rs`（`MeleeInput` / `MeleeBreakdown` + `recompute()`）；`combat::compute_melee_damage` 保留为薄适配器；三条口径用例钉住下限/阈值/倍率 + 因子复算逐位一致（96 passed） |
 | H3 | `build_action_poc_schedule()` 按角色分组（生成器组 / 执行器组各自独立） | `action/entity.rs` | 无 | ✅ **已完成**：新增 `ActionPhase`（`SystemSet`：Generate / Arbitrate / Tick / Execute / Complete），顺序只在一处用 `.chain()` 钉住；执行器从"13 项长链里的一项"变成"往 `Execute` 组加一行"。新增用例 `action_phases_keep_their_total_order_and_execute_group_is_open`（72 passed） |
 | H4 | `TileProps` 静态属性表：收敛 5 处 match；`Tile` 保留为种类键 | `map/mod.rs` | 无（值不变） | ✅ **已完成**：新增 `map/tile.rs`（`Tile` + `TileProps` + `TILE_PROPS`），`glyph`/`walkable`/`blocks_vision`/`Serialize`/`Deserialize` **全部读表**（判别值改由 `#[repr(u8)]` 决定）；`presentation::tile_id` 不再自带穷尽 match；新增 4 条穷举/钉值测试（76 passed） |
 | H5 | 怪物生成的随机源：**只记录 ISSUES（ECS34），本轮不改代码** | — | 无 | ✅ 已完成（`ECS34` 已在 Phase H 开工时记录在案） |
 | H6 | 物种信息归位：能力/技能作为**模板的列表字段** | `monster/template.rs`、`world/init.rs` | 无（只换存放位置） |
 | H7 | `spawn_weight` 进模板，删除 `spawn.rs` 的三层 match（补完 `DsnE6`） | `monster/` | 无（同值换位置） |
-| H8 | 规则修正器**求值侧**：五步（base → 收桶 → 过滤 `ignored` → 两类修正位 → 纯函数） | `action/`、规则层 | 形状定，**填值待 GAME.md**。DsnE10 已改写：载体是效果实体（DsnE12），本条只管折算 |
+| H8 | 规则修正器**求值侧**：五步（base → 收桶 → 过滤 `ignored` → 两类修正位 → 纯函数） | `action/`、规则层 | 形状定，**填值待 GAME.md**。DsnE10 已改写：载体是效果实体（DsnE12），本条只管折算 | ✅ **求值侧 ③④⑤ 已完成**（`rules/modifier.rs`：`Modifier`/`EffectSource`/`apply_modifiers`/`evaluate_modifiers`）；**接线已就位且零行为变化**（`SpeedRule::action_av` 先折算有效速度，空桶等价旧口径，有测试钉住）；①②收桶待 H9/H11 |
 | H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 无 | ⏳ **前置已清**：行动侧专用关系 `ActionOf`/`ActionChildren` 已落地，格子效果不再与行动链抢 `ChildOf` |
 | H10 | 技能三层骨架（激活 / 委派 / 行为）+ **一个 dummy 技能**走通 | 新模块 | 形状定，**无真技能** |
 | H11 | 效果实体模型 + **最小闭环一对**：地形减速（格子侧）× 无视地形的装备（actor 侧） | `ecs_core` | 形状定，**时长口径待定**。挂载用**专用关系** `EffectOf`/`OwnedEffects`，**不用 `ChildOf`**（DsnE12 第 1 条 / ECS41 / ECS42）。**行动侧同类关系已落地，照抄即可** |

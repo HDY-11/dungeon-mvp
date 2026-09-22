@@ -675,15 +675,39 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 ---
 
-### ECS29 — `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 🟡
+### ECS29 — `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 ✅已修复
 
-**问题：** 签名是 5 个裸标量 `(attack, defense, crit_rate, crit_damage, crit_roll)`，**恰好表达"减一次防、乘一次暴击"**；每新增一个伤害修正都要改签名 + 改所有调用点。返回 `MeleeResult { damage, is_crit }` 只有最终值与是否暴击，**没有各因子分解**，因此日志无法解释"为什么是这个数"，也没有"按因子触发"的落点。
+**修复前：** 签名是 5 个裸标量 `(attack, defense, crit_rate, crit_damage, crit_roll)`，**恰好表达"减一次防、乘一次暴击"**；每新增一个伤害修正都要改签名 + 改所有调用点。返回 `MeleeResult { damage, is_crit }` 只有最终值与是否暴击，**没有各因子分解**，因此日志无法解释"为什么是这个数"，也没有"按因子触发"的落点。
 
-**影响：** 🟡 中 — 装备、Buff、技能、生物范畴的固有性质最终都要落到这个函数的输入或因子位置；形状不先留出，后续每加一项都要改接口。
+**修复后（Phase H2）：** 实现搬到 `ecs_core/src/rules/damage.rs`（数值类规则统一进 `rules`，
+`combat` 只管位置/目标类规则），形状按 DESIGN DsnE9 定案：
 
-**位置：** `ecs_core/src/combat/mod.rs:31-46`
+| 决策 | 落地形态 |
+|---|---|
+| 输入按来源分组 | `MeleeInput { attack, defense, target_crit: CritProfile { rate, damage }, crit_roll }` |
+| 返回因子分解 | `MeleeBreakdown { base, crit_multiplier, damage, is_crit }` + `recompute()` |
+| 随机数仍在系统层 | `crit_roll` 仍由调用方从 `GameRng` 取，`rules::melee` 保持纯函数 |
 
-**备注：** **记录在案，Phase H 逐项确认**。接口形状见 DESIGN DsnE9；**公式与系数一律不变，分区与系数属 GAME.md（待定）**。
+`combat::compute_melee_damage` **保留为薄适配器**（内部转调 `rules::melee`），
+因此唯一的调用点（`system/combat.rs`）不必为"改形状"而改动。
+
+**验收（Phase H2 的两条线）：**
+
+- **公式与数值不变**：`damage_floor_is_one`（下限 1）、
+  `crit_threshold_is_strictly_greater`（`>` 而非 `>=`）、
+  `crit_multiplier_is_neutral_or_one_plus_bonus`（负数加成吃 `max(0.0)`）；
+  另加字段映射回归 `legacy_scalar_adapter_maps_fields_correctly`（用 `to_bits` 比较，正确处理 NaN）；
+- **返回可复算**：`factors_reconstruct_the_final_damage` —— `base × crit_multiplier`
+  逐位等于 `damage`。这条让"返回因子分解"成为**可断言的性质**，而不只是一堆字段。
+
+**仍然待定（属 GAME.md，本轮一个都没填）：** 分区（有哪些因子）与系数（防御系数、
+增伤叠加方式）。要改成加权形式时 `MeleeInput` 已是"按来源分组的输入"，加字段即可。
+
+**位置：** `ecs_core/src/rules/damage.rs`（新）、`ecs_core/src/combat/mod.rs`（适配器）、
+`ecs_core/src/system/combat.rs`（调用点不变）
+
+**关联：** DESIGN DsnE9 / DsnE10（修正器与伤害输入是同一套"结构化输入"思路）；
+REFACTOR §11.3 Phase H（H2）。
 
 ---
 

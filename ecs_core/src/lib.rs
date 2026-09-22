@@ -3,7 +3,7 @@
 //! 唯一的游戏逻辑/业务领域层，完全采用 ECS 范式。
 //!
 //! 模块按依赖层级组织：
-//! `components/events/resources/balance -> map/spatial -> action/combat/monster -> system/world`。
+//! `components/events/resources/balance/rules -> map/spatial -> action/combat/monster -> system/world`。
 
 pub mod action;
 pub mod balance;
@@ -14,6 +14,7 @@ pub mod events;
 pub mod map;
 pub mod monster;
 pub mod resources;
+pub mod rules;
 pub mod schedule;
 pub mod spatial;
 pub mod system;
@@ -31,6 +32,7 @@ pub use events::*;
 pub use map::*;
 pub use monster::*;
 pub use resources::*;
+pub use rules::*;
 pub use schedule::*;
 pub use spatial::*;
 pub use system::*;

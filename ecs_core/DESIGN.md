@@ -425,7 +425,31 @@ pub fn compute_melee_damage(
 
 **关联：** ISSUES ECS29（现签名无扩展位） | REFACTOR.md §11.3 Phase H（H2） | GAME.md（分区与系数，待定）
 
-**状态：** 待落地（Phase H）。
+**状态：** ✅ **已落地**（Phase H2）。实现落在 **`ecs_core/src/rules/damage.rs`**（不是 `combat/`）
+——`combat` 现在只管**位置与目标**类规则（能不能打、8 方向相邻、目标存活），
+数值类规则统一进 `rules`：
+
+| 决策 | 落地形态 |
+|---|---|
+| 输入按来源分组 | `MeleeInput { attack, defense, target_crit: CritProfile { rate, damage }, crit_roll }` |
+| 返回因子分解 | `MeleeBreakdown { base, crit_multiplier, damage, is_crit }` + `recompute()` |
+| 随机数仍在系统层 | `crit_roll` 参数不变；`rules::melee` 保持纯函数 |
+
+**兼容与验收：**
+
+- `combat::compute_melee_damage` 保留为**薄适配器**（内部转调 `rules::melee`）：
+  结算链路（`system/combat.rs`，唯一调用点）不必为改形状而改动；
+- 「公式与数值不变」由三条口径用例钉住：`damage_floor_is_one`、
+  `crit_threshold_is_strictly_greater`（`>` 而非 `>=`）、
+  `crit_multiplier_is_neutral_or_one_plus_bonus`（负数加成吃 `max(0.0)`）；
+- 适配器另有一条字段映射回归（`legacy_scalar_adapter_maps_fields_correctly`，
+  用 `to_bits` 比较以正确处理 NaN）；
+- `factors_reconstruct_the_final_damage`：`base × crit_multiplier` 逐位等于 `damage`
+  ——这条让"返回因子分解"成为**可断言的性质**，而不是一堆字段。
+
+**仍然待定（属 GAME.md，本阶段一个都没填）：** 分区（有哪些因子）、系数（防御系数、
+增伤叠加方式）。要改成加权形式时 `MeleeInput` 已是"按来源分组的输入"，加字段即可，
+不必再动签名与调用点。
 
 ---
 
@@ -538,8 +562,23 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 | DsnE8（地形 → `MoveSpeed`、Phase H4 的 `move_cost` 预留列）| DsnE12（载体侧）
 | DsnE13（索引还是实体的判据）| LESSONS LECS22
 
-**状态：** 已改写定案（形状），**待落地**（H8 定求值接口、H9 定格索引、H11 做最小闭环）。
-具体修正来源与数值随内容阶段补齐。
+**状态：** 已改写定案（形状），**求值侧的 ③④⑤ 步已落地**（Phase H8：
+`ecs_core/src/rules/modifier.rs`）；具体修正来源与数值随内容阶段补齐。
+
+- ✅ **求值侧 ③④⑤ 已实现**：`Modifier { source: EffectSource, base_delta, multiplier }`、
+  `apply_modifiers(base, mods, ignored)`、`evaluate_modifiers(...) -> ModifierOutcome`
+  （附参与/被无视的条数，供日志与调试解释"为什么是这个数"）；
+  初始来源桶：`Intrinsic` / `Equipment` / `Status` / `Terrain`（`#[non_exhaustive]`，可增补）；
+- ✅ **接线已就位且零行为变化**：`SpeedRule::action_av` 现在先经
+  `SpeedModifiers::effective_speed`（两个桶合并 → 过滤 → 折叠）再交给
+  `balance::action_av` 做 clamp 与除法；`Wait`（`Fixed`）**不读修正器**
+  （让不吃速度的行动受地形影响是另一条设计决策，不该顺手决定）。
+  当前所有生成/挂载路径都传 `SpeedModifiers::EMPTY`，因此 AV 逐值等于接上之前
+  （`empty_speed_modifiers_keep_the_previous_av_exactly` 钉住）；
+- ✅ **"无视某类"已可执行**：`ignoring_the_terrain_bucket_changes_the_av_without_any_special_case`
+  ——同一份修正，只因为 `ignored` 不同就得到不同 AV，规则里没有任何特例分支；
+- ⏳ **第 ①② 步（收桶）待 H9/H11**：格索引与效果实体落地后，系统层才会往两个桶里放东西。
+  在此之前 `SpeedModifiers::EMPTY` 就是全部调用路径。
 
 ---
 

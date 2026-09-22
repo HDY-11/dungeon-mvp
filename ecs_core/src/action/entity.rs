@@ -48,6 +48,7 @@ use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{GameRng, OccupancyMap};
+use crate::rules::{EffectSource, Modifier, apply_modifiers};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
@@ -233,11 +234,95 @@ pub struct ActorSpeeds {
 
 impl SpeedRule {
     /// 计算该规则下行动的 AV。
-    pub fn action_av(self, base_duration: f64, speeds: ActorSpeeds) -> f64 {
+    ///
+    /// 速度先经 [`SpeedModifiers::effective_speed`] 折算（求值侧第 ③④⑤ 步），
+    /// 再交给 [`crate::balance::action_av`] 做 clamp 与除法。
+    /// **`modifiers` 为空时逐值等于旧口径**——这就是接上求值侧的零行为变化保证。
+    pub fn action_av(
+        self,
+        base_duration: f64,
+        speeds: ActorSpeeds,
+        modifiers: SpeedModifiers<'_>,
+    ) -> f64 {
+        self.action_av_ignoring(base_duration, speeds, modifiers, &[])
+    }
+
+    /// 同上，但显式给出"无视哪些来源"（`EffectSource` 列表）。
+    ///
+    /// 单独开一个方法而不是给 [`Self::action_av`] 再加参数：**绝大多数调用点没有
+    /// 无视类效果**，让它们继续读作"算 AV"而不是"算 AV 并声明无视了什么"。
+    pub fn action_av_ignoring(
+        self,
+        base_duration: f64,
+        speeds: ActorSpeeds,
+        modifiers: SpeedModifiers<'_>,
+        ignored: &[EffectSource],
+    ) -> f64 {
         match self {
-            SpeedRule::Move => action_av(base_duration, speeds.move_speed),
-            SpeedRule::Attack => action_av(base_duration, speeds.attack_speed),
+            // `Move`/`Attack` 是"倍率速度"路径：修正器作用在**速度**上。
+            SpeedRule::Move => action_av(
+                base_duration,
+                modifiers.effective_speed(speeds.move_speed, ignored),
+            ),
+            SpeedRule::Attack => action_av(
+                base_duration,
+                modifiers.effective_speed(speeds.attack_speed, ignored),
+            ),
+            // `Fixed` 不吃任何速度（REFACTOR.md §11.6 第 4 项），因此也**不读修正器**：
+            // 让 `Wait` 受地形减速影响是另一条设计决策，不该由这里顺手决定。
             SpeedRule::Fixed => base_duration,
+        }
+    }
+}
+
+/// 速度修正的来源：**actor 自带**（装备/状态效果）与**当前格**（地形）。
+///
+/// 这是求值五步里第 ② 步"收桶"的**输入形状**（DESIGN DsnE10 / Phase H8）：
+/// 两个来源是两份列表，规则层拿到的仍是**一份** `&[Modifier]`——
+/// "两个数据来源，一个答案"（DsnE13 第 3 条）。
+///
+/// **当前恒为空**（Phase H8 只有形状）：H9 落格索引、H11 落效果实体之后，
+/// 系统层才会往这两个桶里放东西。空桶下 [`effective_speed`] 逐值等于 base，
+/// 这就是"接上求值侧"零行为变化的依据。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpeedModifiers<'a> {
+    /// actor 自带的修正（`EffectSource::Equipment` / `Status`），按 DsnE11 生成时收集。
+    pub actor: &'a [Modifier],
+    /// 当前格带来的修正（`EffectSource::Terrain`），来自格索引。
+    pub cell: &'a [Modifier],
+}
+
+impl<'a> SpeedModifiers<'a> {
+    /// 两个桶都为空——**当前所有生成/挂载路径都用这个**。
+    pub const EMPTY: Self = Self {
+        actor: &[],
+        cell: &[],
+    };
+
+    /// 依次判断两个桶是否都为空。
+    pub fn is_empty(&self) -> bool {
+        self.actor.is_empty() && self.cell.is_empty()
+    }
+
+    /// 求值五步的第 ③④⑤ 步：过滤 → 折叠 → 有效速度。
+    ///
+    /// `ignored` 是"无视某类来源"的落点（例：无视地形减速的靴子 = `ignored` 含
+    /// `EffectSource::Terrain`）。规则层**不解释**它，只丢掉对应桶。
+    ///
+    /// **不在算法层做 clamp**：`clamp_speed` 仍由 `balance::action_av` 负责，
+    /// 这里的职责只是把效果折算成"有效速度"这一个数。两处都夹会让
+    /// "夹取发生了几次"变得不可读，也会掩盖 `MIN/MAX_SPEED` 的真实作用点。
+    pub fn effective_speed(&self, base: f64, ignored: &[EffectSource]) -> f64 {
+        // 两个桶拼成一份列表再折叠："两个数据来源，一个答案"。
+        // 用固定容量的小数组避免为每次 AV 计算分配 Vec（生成系统每轮都会调用）。
+        match (self.actor.len(), self.cell.len()) {
+            (0, 0) => base,
+            _ => {
+                let mut all: Vec<Modifier> = Vec::with_capacity(self.actor.len() + self.cell.len());
+                all.extend_from_slice(self.actor);
+                all.extend_from_slice(self.cell);
+                apply_modifiers(base, &all, ignored)
+            }
         }
     }
 }
@@ -296,6 +381,7 @@ pub fn wander_generation_system(
                 remaining_av: SpeedRule::Move.action_av(
                     WANDER_DURATION,
                     actor_speeds(actor, move_speed, None),
+                    SpeedModifiers::EMPTY,
                 ),
             },
             Wander,
@@ -325,6 +411,7 @@ pub fn flee_generation_system(
                 remaining_av: SpeedRule::Move.action_av(
                     FLEE_DURATION,
                     actor_speeds(actor, move_speed, None),
+                    SpeedModifiers::EMPTY,
                 ),
             },
             Flee,
@@ -347,9 +434,14 @@ pub fn wait_generation_system(
             ActionPriority(PRIORITY_WAIT),
             ActionSource::Ai,
             ActionName("Wait"),
-            // 固定耗时：等待不受任何速度倍率影响（REFACTOR.md §11.6 第 4 项）。
+            // 固定耗时：等待不受任何速度倍率影响（REFACTOR.md §11.6 第 4 项），
+            // 因此也**不传修正器**——`Fixed` 分支根本不读它。
             ActionTimer {
-                remaining_av: SpeedRule::Fixed.action_av(WAIT_DURATION, actor_speeds(actor, None, None)),
+                remaining_av: SpeedRule::Fixed.action_av(
+                    WAIT_DURATION,
+                    actor_speeds(actor, None, None),
+                    SpeedModifiers::EMPTY,
+                ),
             },
             Wait,
             Candidate,
@@ -394,6 +486,7 @@ pub fn chase_generation_system(
                 remaining_av: SpeedRule::Move.action_av(
                     CHASE_DURATION,
                     actor_speeds(actor, move_speed, None),
+                    SpeedModifiers::EMPTY,
                 ),
             },
             Chase,
@@ -503,7 +596,11 @@ pub fn player_action_generation_system(
         }
     };
 
-    let remaining_av = rule.action_av(duration, actor_speeds(player, move_speed, attack_speed));
+    let remaining_av = rule.action_av(
+        duration,
+        actor_speeds(player, move_speed, attack_speed),
+        SpeedModifiers::EMPTY,
+    );
 
     let mut action_cmd = commands.spawn((
         ActionOf(player),
@@ -1323,6 +1420,7 @@ mod tests {
                     move_speed: crate::balance::PLAYER_MOVE_SPEED,
                     attack_speed: crate::balance::PLAYER_ATTACK_SPEED,
                 },
+                SpeedModifiers::EMPTY,
             ),
             WAIT_DURATION,
             "Wait 必须固定耗时，即使玩家速度是 1.25"
@@ -1340,19 +1438,114 @@ mod tests {
         };
 
         assert_eq!(
-            SpeedRule::Move.action_av(WANDER_DURATION, speeds),
+            SpeedRule::Move.action_av(WANDER_DURATION, speeds, SpeedModifiers::EMPTY),
             WANDER_DURATION / speeds.move_speed,
             "移动类行动必须读 MoveSpeed"
         );
         assert_eq!(
-            SpeedRule::Attack.action_av(UNARMED_ATTACK_DURATION, speeds),
+            SpeedRule::Attack.action_av(
+                UNARMED_ATTACK_DURATION,
+                speeds,
+                SpeedModifiers::EMPTY
+            ),
             UNARMED_ATTACK_DURATION / speeds.attack_speed,
             "攻击类行动必须读 AttackSpeed"
         );
         assert_eq!(
-            SpeedRule::Fixed.action_av(WAIT_DURATION, speeds),
+            SpeedRule::Fixed.action_av(WAIT_DURATION, speeds, SpeedModifiers::EMPTY),
             WAIT_DURATION,
             "Wait 固定耗时，不受任何速度影响"
+        );
+    }
+
+    // ── Phase H8：求值侧接线的形状（空桶零行为变化 / 无视是数据） ──
+
+    /// H8 的接线保证：**两个桶都为空时，AV 逐值等于接上求值侧之前**。
+    ///
+    /// 这是"接上求值侧本身不改变任何现有行为"的直接证据，也是本阶段唯一
+    /// 被允许的产出形式（Phase H8 只碰形状）。
+    #[test]
+    fn empty_speed_modifiers_keep_the_previous_av_exactly() {
+        let speeds = ActorSpeeds {
+            move_speed: 1.25,
+            attack_speed: 0.8,
+        };
+        assert!(SpeedModifiers::EMPTY.is_empty());
+        assert_eq!(
+            SpeedRule::Move.action_av(WANDER_DURATION, speeds, SpeedModifiers::EMPTY),
+            action_av(WANDER_DURATION, speeds.move_speed),
+            "空桶必须等价于旧口径（移动）"
+        );
+        assert_eq!(
+            SpeedRule::Attack.action_av(
+                UNARMED_ATTACK_DURATION,
+                speeds,
+                SpeedModifiers::EMPTY
+            ),
+            action_av(UNARMED_ATTACK_DURATION, speeds.attack_speed),
+            "空桶必须等价于旧口径（攻击）"
+        );
+    }
+
+    /// 修正器作用在**速度**上，而不是作用在 AV 上：`AV = base / clamp(有效速度)`。
+    ///
+    /// 用一对互逆的修正（-0.25 与 ×0.5）把这层关系钉死：`(1.0 - 0.25) × 0.5 = 0.375`，
+    /// 于是 AV = `WANDER_DURATION / 0.375`。
+    #[test]
+    fn speed_modifiers_fold_into_the_speed_not_the_av() {
+        let mods = [
+            Modifier::delta(EffectSource::Equipment, -0.25),
+            Modifier::scaled(EffectSource::Status, 0.5),
+        ];
+        let bucket = SpeedModifiers {
+            actor: &mods,
+            cell: &[],
+        };
+        let speeds = ActorSpeeds {
+            move_speed: 1.0,
+            attack_speed: 1.0,
+        };
+
+        assert_eq!(bucket.effective_speed(1.0, &[]), 0.375);
+        assert_eq!(
+            SpeedRule::Move.action_av(WANDER_DURATION, speeds, bucket),
+            WANDER_DURATION / 0.375,
+            "AV 必须由折算后的有效速度算出"
+        );
+    }
+
+    /// **"无视某类减速"是数据**：同一个地形修正，只因为 `ignored` 不同就得到不同 AV。
+    ///
+    /// 这条用例就是 DsnE10 第 ③ 步的可执行定义——规则里没有任何"若带了某装备则……"，
+    /// 只有一个被丢掉的来源桶。
+    #[test]
+    fn ignoring_the_terrain_bucket_changes_the_av_without_any_special_case() {
+        let terrain = [Modifier::delta(EffectSource::Terrain, -0.5)];
+        let boots = [Modifier::delta(EffectSource::Equipment, 0.0)];
+        let cell = SpeedModifiers {
+            actor: &boots,
+            cell: &terrain,
+        };
+        let speeds = ActorSpeeds {
+            move_speed: 1.0,
+            attack_speed: 1.0,
+        };
+
+        // 不无视：1.0 - 0.5 + 0.0 = 0.5 → AV 翻倍
+        assert_eq!(
+            SpeedRule::Move.action_av_ignoring(WANDER_DURATION, speeds, cell, &[]),
+            WANDER_DURATION / 0.5
+        );
+        // 无视地形：只剩装备那条（+0.0）→ 速度 1.0 → AV 回到基准
+        assert_eq!(
+            SpeedRule::Move.action_av_ignoring(
+                WANDER_DURATION,
+                speeds,
+                cell,
+                &[EffectSource::Terrain]
+            ),
+            WANDER_DURATION,
+            "无视地形之后不该再有地形减速"
         );
     }
 }

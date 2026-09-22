@@ -24,10 +24,16 @@ pub fn can_attack_positions(attacker: Position, target: Position, target_health:
     attacker.is_near(target) && target_health.is_alive()
 }
 
-/// 根据攻击/防御与暴击参数计算最终伤害。
+/// 根据攻击/防御与暴击参数计算最终伤害（**兼容形状**）。
 ///
-/// 纯函数：`crit_roll` 由调用方提供（结算系统从 `GameRng` 取），
-/// 这样「随机数消耗点」留在系统层，公式本身可单测。
+/// **Phase H2 之后真正的实现是 [`crate::rules::melee`]**（结构化输入 + 因子分解返回）。
+/// 本函数保留为**薄适配器**，好处有二：
+///
+/// 1. 结算链路（`system/combat.rs`）不必为了"改形状"而一起改；
+/// 2. 「新口径与旧口径逐值一致」这条 H2 验收，可以由**旧实现本身**当基准来断言
+///    （见 `rules/damage_tests.rs`）——比拿一堆硬编码期望值更可靠。
+///
+/// 想拿因子分解（日志/调试/按因子触发）的调用方直接用 [`crate::rules::melee`]。
 pub fn compute_melee_damage(
     attack: f64,
     defense: f64,
@@ -35,12 +41,17 @@ pub fn compute_melee_damage(
     crit_damage: f64,
     crit_roll: f64,
 ) -> MeleeResult {
-    let base = (attack - defense).max(1.0);
-    let is_crit = crit_rate > crit_roll;
-    let damage = if is_crit {
-        base * (1.0 + crit_damage.max(0.0))
-    } else {
-        base
-    };
-    MeleeResult { damage, is_crit }
+    let breakdown = crate::rules::melee(crate::rules::MeleeInput {
+        attack,
+        defense,
+        target_crit: crate::rules::CritProfile {
+            rate: crit_rate,
+            damage: crit_damage,
+        },
+        crit_roll,
+    });
+    MeleeResult {
+        damage: breakdown.damage,
+        is_crit: breakdown.is_crit,
+    }
 }
