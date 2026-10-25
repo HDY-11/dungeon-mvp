@@ -183,9 +183,9 @@ tui/                      ← TUI 后端（不认识 ecs_core、不认识 presen
 80 × 60（4800 格）的洞穴地图由 **terrain-forge** 引擎按管线生成。
 
 - **算法**：`room_accretion` — Brogue 风格有机洞穴，滑动房间直到贴合已有结构
-- **多类型（DsnE7）**：`MapKind` 三类型（标准洞穴/繁茂洞穴/地海），由 `map_kind_for(seed, floor)` 确定性派生（F1 固定标准洞穴）；环境修饰差异化（水域规模、障碍种类、装饰方块）
+- **多类型（DsnE7；数值与环境参数见 GAME.md Gm10）**：`MapKind` 三类型（标准洞穴/繁茂洞穴/地海），由 `map_kind_for(seed, floor)` 确定性派生（F1 固定标准洞穴）；环境修饰差异化（水域规模、障碍种类、装饰方块）
 - **生成管线**：terrain-forge → detect_cave_regions → generate_water → carve_expand → generate_obstacles → generate_terrain_decor → ensure_connectivity
-- **Tile 种类**：`Wall` `Floor` `ShallowWater`(可行走) `DeepWater`(不可行走) `Stalactite`(#黄) + 繁茂（`Mycelium` `FungalPatch` `HangingVine`）+ 地海（`Sand` `Seagrass` `CoralReef`）
+- **Tile 种类**（属性与外观见 GAME.md Gm10「环境 Tile」）：`Wall` `Floor` `ShallowWater`(可行走) `DeepWater`(不可行走) `Stalactite` + 繁茂（`Mycelium` `FungalPatch` `HangingVine`）+ 地海（`Sand` `Seagrass` `CoralReef`）
 - **水体生成**：种子率按类型（洞穴 2‰ / 地海 20‰）→ 深水扩散 → 浅水扩散
 - **通道挖掘**：墙挖成 Floor，深水变涉水浅水（保留水域且保证连通）
 - **房间检测**：BFS flood-fill 找出连通 Floor 区域（max 12），按大小排序
