@@ -98,7 +98,7 @@ fn available_actions(item: &ItemStack) -> Vec<&'static str> {
 
 **为什么更好：** 布局是**有状态含义的纯函数**——它的正确性依赖"输入是哪一个矩形"，而不是"输入是个矩形"。凡是这类函数（坐标变换、裁剪、分页），都该在签名或类型上区分"整帧"与"子区域"，否则误用不会报错，只会静默算错。判别信号：**数据层断言全绿、画面却不对**时，先怀疑"两块代码各自算了同一个派生量"。
 
-**参见 REFACTOR.md §11.3 Phase G（R1 落地记录）；`tui/src/render/tests.rs::layout_is_computed_once_and_viewport_matches_the_drawn_area`**
+**参见 REFACTOR §1 Phase G（R1 落地记录）；`tui/src/render/tests.rs::layout_is_computed_once_and_viewport_matches_the_drawn_area`**
 
 **原编号：** `LTUI4`（迁移前）
 

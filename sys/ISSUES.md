@@ -31,7 +31,7 @@
 
 
 
-**关联：** REFACTOR.md §10.4 / §10.6 第 3 项 / §11.3 Phase F（F1）。
+**关联：** REFACTOR §1（Phase F，F1）。
 
 
 

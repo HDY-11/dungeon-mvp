@@ -140,7 +140,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
 ### 为什么不覆盖全部
 
 - **旧 `dungeon-*` crate 与根 `dungeon-app` 的测试不在门禁内**：它们针对被取代的
-  旧架构，纳入只会长期红着（REFACTOR.md §10.4 / §10.6 第 4、5 项）。需要全量时
+  旧架构，纳入只会长期红着（REFACTOR §3）。需要全量时
   单独跑 `cargo test --workspace`，并自行判断失败项属于哪一类。
 - 每个 Phase 收尾仍按 [RULE.md](RULE.md) 的文档纪律更新对应文档；门禁只管代码。
 

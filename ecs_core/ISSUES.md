@@ -15,17 +15,17 @@
 
 **问题：** 当前行动系统由 `ActionKind` 中央 enum + actor 上的 ZST 行动组件 + exclusive `&mut World` 系统组成；AV 计时器没有参与执行门禁，事件生命周期也不正确。继续加行动/行为会继续增加中央 match 和耦合。
 
-**决策草案：** 按 REFACTOR.md §3.6 改为 action 实体方案：
+**决策草案：** 按 DESIGN DsnE8 改为 action 实体方案：
 
 - 一个行动 = 一个 actor 的子实体（`ChildOf` + `ActionPriority` + `ActionTimer` + ZST/payload + `Candidate/ActiveAction/Ready`）；
 - `Can*` 保持 actor 上的 ZST 组件，不子实体化；
 - 生成系统只 spawn 候选；仲裁系统唯一写入 actor 行动状态；执行系统按行动类型专用 query，零中央 match；completion 系统消费 `ActionSucceeded/FailedEvent`；
 - 删除 `ActionKind` 与 `mount_action` 中央 match；
-- 速度按 REFACTOR.md §2.6 改为 `MoveSpeed` / `AttackSpeed`，删除 `Agility`。
+- 速度按 DESIGN DsnE8 ② 改为 `MoveSpeed` / `AttackSpeed`，删除 `Agility`。
 
 **状态：** ✅已落地。① 行动即实体：Phase B/C 完成；② 速度组件：Phase D 完成（`Agility` 已删除，改为 `MoveSpeed`/`AttackSpeed` 倍率）。详见 [DESIGN.md](DESIGN.md) DsnE8 与 [REFACTOR.md](../REFACTOR.md) §11.3。
 
-**关联：** REFACTOR.md §2.6 / §3.6 / §10.6；ISSUES ECS2 / ECS3 / ECS25、ECS8 / ECS9、ECS7。
+**关联：** DESIGN DsnE8 / REFACTOR §2；ISSUES ECS2 / ECS3 / ECS25、ECS8 / ECS9、ECS7。
 
 ---
 
@@ -34,7 +34,7 @@
 
 **问题：** `action/execution/mod.rs` 的 tick/执行系统、`action/generation/ai.rs::decide_monster_actions`、`action/mod.rs::mount_action/finish_action_*`、`world/loop_.rs` 的推进函数都收 `&mut World`，手动 query/改实体/发事件；`run_action_cycle` 手动顺序调用系统。玩法逻辑被写成过程式代码，无法用 `Query`/`Commands`/`EventWriter` 组合，也无法并行。
 
-**影响：** 🟡 中高 — 阻断 action 实体方案（REFACTOR §3.6）的落地；每次新增行动/行为都要改多个 exclusive 函数。
+**影响：** 🟡 中高 — 阻断 action 实体方案（DESIGN DsnE8）的落地；每次新增行动/行为都要改多个 exclusive 函数。
 
 **位置：** `core/src/action/execution/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/mod.rs`、`core/src/world/loop_.rs`、`core/src/combat/mod.rs`（直接执行辅助）
 
@@ -46,18 +46,18 @@
 **位置：** 原 `action/execution/mod.rs`、`action/generation/ai.rs`、`action/mod.rs` 已随 Phase C 删除；
 现存唯一 `&mut World` 是 `ecs_core/src/world/loop_.rs`。
 
-**关联：** REFACTOR.md §3.6 / §8.1；ISSUES ECS3、ECS8、ECS9。
+**关联：** DESIGN DsnE8 / §8.1；ISSUES ECS3、ECS8、ECS9。
 
 ---
 
 
 ### ECS3 — 删除 `ActionKind`：行动改为 action 子实体
 
-**问题：** `ActionKind` 是中央分派 enum，`mount_action` 对它做 match；新增行动要改 enum + 中央 match + 生成/执行分支。`REFACTOR.md §3.2–3.5` 描述的 `ActionIntent + 仲裁` 方案从未落地，当前 `ai.rs::choose_action` 是独占的 `if/else` 函数。
+**问题：** `ActionKind` 是中央分派 enum，`mount_action` 对它做 match；新增行动要改 enum + 中央 match + 生成/执行分支。当时设想的 `ActionIntent + 仲裁` 方案从未落地，`ai.rs::choose_action` 是独占的 `if/else` 函数（该实现在 Phase C 已整体删除，见 DESIGN DsnE8）。
 
 **影响：** 🟡 中 — 扩展成本高；与 `Can*` + ZST + 专用 query 的 ECS 方向不一致。
 
-**决策：** 按 REFACTOR.md §3.6 改为 action 实体方案；`Can*` 保持组件；不再需要 `ActionKind`。
+**决策：** 按 DESIGN DsnE8 改为 action 实体方案；`Can*` 保持组件；不再需要 `ActionKind`。
 
 **位置：** `core/src/action/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/generation/player.rs`、`core/src/world/loop_.rs`
 
@@ -77,7 +77,7 @@
 
 **A41 范围收窄（同批完成）：** 执行器不再需要 exclusive `&mut World`。原先「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」的判断，是「复用 `movement::execute_move(&mut World, ...)`」造成的假象，不是 ECS 限制——`Query<&mut T>` 只保证 per-entity 唯一可变访问，驱动实体与被写实体不同即无冲突。落点计算抽成纯函数 `movement::moved_position` 后，`execute_move_system` 已是普通系统（parity 测试 + 与 `CoreSettleSchedule` 同调度共存测试佐证）。剩余 exclusive 代码只剩 `world/loop_.rs` 的应用层入口（`&mut World` 参数传递，属 DsnX2 的有意选择）。
 
-**关联：** D29、REFACTOR.md §3.6 / §11.3 Phase C。
+**关联：** D29、DESIGN DsnE8 / §11.3 Phase C。
 
 ---
 
@@ -92,7 +92,7 @@
 
 **状态：** ✅已修复（Phase C5 迁移对照测试时发现；新链路的 `action_completion_system` 一开始也照抄了这个疏漏，已同批修正）。修复：`finish_action_failure` 先 `remove::<Idle>()`，`finish_action_success` 先 `remove::<Failure>()`，恢复「两者互斥」不变式；回归测试 `idle_and_failure_are_mutually_exclusive`。
 
-**关联：** REFACTOR.md §11.3 Phase C（C5）
+**关联：** REFACTOR §1（Phase C）
 
 
 ### ECS5 — 材料物品无消耗渠道
@@ -160,7 +160,7 @@
 `presentation/src/catalog.rs`（`tile_id`）
 
 **关联：** ECS27（地形代价维度——`move_cost` 列即该问题的预留位）、ECS28、DsnE13；
-REFACTOR §11.3 Phase H（H4）。
+REFACTOR §1（Phase H4）。
 
 ### ECS35 — 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 ✅已修复
 
@@ -188,7 +188,7 @@ impl ActionEvents<'_, '_> {
 
 **位置：** `ecs_core/src/action/entity.rs`（`ActionEvents` 及 6 个 `execute_*_system`）
 
-**关联：** ECS36（同一根因的另一半）；REFACTOR §11.3 Phase H（H1）；DESIGN DsnE8。
+**关联：** ECS36（同一根因的另一半）；REFACTOR §1（Phase H1）；DESIGN DsnE8。
 
 ---
 
@@ -215,7 +215,7 @@ impl ActionEvents<'_, '_> {
 `action_completion_system`）、`ecs_core/src/components.rs`（`Ready` 的文档）、
 `ecs_core/src/action/entity_tests.rs`（`run_one_action_roundtrip`）
 
-**关联：** ECS35（同一根因）；REFACTOR §11.3 Phase H（H1）。
+**关联：** ECS35（同一根因）；REFACTOR §1（Phase H1）。
 
 ### ECS7 — 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed` ✅已修复
 
@@ -231,8 +231,8 @@ AV = base_duration ÷ clamp(速度, MIN_SPEED=0.25, MAX_SPEED=4.0)
 
 - 行动类别 → 速度的映射在**挂载点**决定（`SpeedRule`：`Move` / `Attack` / `Fixed`）：
   移动/追击/逃跑/游荡读 `MoveSpeed`，近战攻击读 `AttackSpeed`，`Wait` 固定 800
-  且不受任何速度影响（§11.6 第 4 项）；
-- 已确认**删除反应时**（§11.6 第 3 项）；试玩若需要「出手前的固定延迟」，
+  且不受任何速度影响（REFACTOR §1（Phase D 的决策确认））；
+- 已确认**删除反应时**（REFACTOR §1（Phase D 的决策确认））；试玩若需要「出手前的固定延迟」，
   再统一加回一个常数项；
 - 执行器完全不接触速度：AV 在生成时就固化进 `ActionTimer`，之后 tick/执行只看剩余值。
 - 架构上顺带解耦：AV 计算变成纯函数
@@ -242,10 +242,10 @@ AV = base_duration ÷ clamp(速度, MIN_SPEED=0.25, MAX_SPEED=4.0)
 **删除的符号：** `Agility`、`agility_to_reaction`、`agility_speed_factor`、
 旧 `action_av(duration, agility)`、以及仅作迁移工具的 `agility_to_speed`。
 `core/` + `tests/` 全量 grep 已无代码级 `Agility` 引用（仅 2 处测试名/注释中的
-历史说明）；旧 `dungeon-*` crate 不在本轮范围（§10.5「不再维护」，
+历史说明）；旧 `dungeon-*` crate 不在本轮范围（DsnX17「旧实现只在 archive/」，
 随 Phase G / R5 清理）。
 
-**怪物与玩家的迁移口径（§11.6 第 5 项「先按旧敏捷保行为」）：**
+**怪物与玩家的迁移口径（REFACTOR §1（Phase D 的决策确认））：**
 速度 = **旧「耗时系数」的倒数**，因此新 AV 精确等于旧式的「`耗时 × 耗时系数`」
 一项，丢掉的只有等量叠加的反应时常数项。**各角色之间的相对快慢与旧版完全一致**，
 由 `template_speeds_preserve_legacy_agility_ordering` 钉住。
@@ -294,7 +294,7 @@ AV = base_duration ÷ clamp(速度, MIN_SPEED=0.25, MAX_SPEED=4.0)
 `core/src/monster/mod.rs`（`MonsterSpeeds` 与八个模板）、
 `core/src/world/init.rs`（玩家与怪物 spawn）、`core/src/test_util.rs`（helper）。
 
-**关联：** D29、ECS8、REFACTOR.md §2.6 / §3.6.7 / §11.3 Phase D / §11.6；
+**关联：** D29、ECS8、DESIGN DsnE8.7 / §11.3 Phase D / REFACTOR §1；
 DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 **教训见 LESSONS.md LSYN20**（「测试若依赖『没有别的实体碰巧动过』，它依赖的其实是执行顺序」）。
 
@@ -382,7 +382,7 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 
 
-**关联：** A41、REFACTOR.md §3.6.8 / §5。
+**关联：** A41、DESIGN DsnE8 / §5。
 
 
 
@@ -596,7 +596,7 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 
 **影响：** 🟡 中 — 死抽象让文档/代码看起来比实际复杂，且容易误以为扩展点已存在。
 
-**位置：** 见 REFACTOR.md §10.8 逐项清单。
+**位置：** 见 ISSUES ECS25 逐项清单。
 
 **状态：** ✅已修复（Phase E 全量清理完成）。原则是「每个保留的抽象必须有真实读取方/消费者」，逐项**实测**后处置如下（两处与当初预判不同，已标注）：
 
@@ -620,9 +620,9 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 `monster/mod.rs`（455 行）拆为 `mod.rs`(15) + `template`(物种数值) + `spawn`(出现概率) + `monster_tests`。
 `mod.rs` 只留模块声明与重导出，与 `map/`・`spatial/`・`action/` 的形式一致。
 
-**确认记录：** 2026-09 对话；§11.6 第 6 项。
+**确认记录：** 2026-09 对话；REFACTOR §1（Phase C 的决策确认）。
 
-**关联：** REFACTOR.md §10.8。
+**关联：** ISSUES ECS25。
 
 ---
 
@@ -707,7 +707,7 @@ DESIGN DsnE8 ②；GAME.md Gm1 / Gm4 / Gm7 / Gm8。
 `ecs_core/src/system/combat.rs`（调用点不变）
 
 **关联：** DESIGN DsnE9 / DsnE10（修正器与伤害输入是同一套"结构化输入"思路）；
-REFACTOR §11.3 Phase H（H2）。
+REFACTOR §1（Phase H2）。
 
 ---
 
@@ -746,7 +746,7 @@ actor 名下放一个用**通用层级关系** `ChildOf` 挂着的旁观者，�
 **位置：** `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/entity.rs`
 （别名 + 仲裁 + 执行 + completion）、`ecs_core/src/action/entity_tests.rs`（归属构造与对照用例）
 
-**关联：** ECS41（同一根因的另一半）；DESIGN DsnE12 第 1 条；REFACTOR §11.3 Phase H（H9/H11）。
+**关联：** ECS41（同一根因的另一半）；DESIGN DsnE12 第 1 条；REFACTOR §2.1（H9/H11 未完成）。
 
 ---
 
@@ -777,7 +777,7 @@ actor 名下放一个用**通用层级关系** `ChildOf` 挂着的旁观者，�
 `ecs_core/src/action/entity.rs`
 
 **关联：** ECS30（同一根因，同时修复）、ECS42（`linked_spawn` 对装备是错的）、
-DESIGN DsnE12 第 1 条；REFACTOR §11.3 Phase H（H9/H11）。
+DESIGN DsnE12 第 1 条；REFACTOR §2.1（H9/H11 未完成）。
 
 ---
 
@@ -839,7 +839,7 @@ DESIGN DsnE12 第 1 条；REFACTOR §11.3 Phase H（H9/H11）。
 **独立身份**（可被偷、单独销毁、单独耐久），就用实体关系但**关闭 `linked_spawn`**；
 若不需要，则用"位置 + `Equipment` 组件"表达，"掉在地上"就是换了位置。
 
-**关联：** ECS41、DESIGN DsnE12 第 1 条与开放项；REFACTOR §11.3 Phase H（H9/H11）。
+**关联：** ECS41、DESIGN DsnE12 第 1 条与开放项；REFACTOR §2.1（H9/H11 未完成）。
 
 ---
 
@@ -881,7 +881,7 @@ H1 之后终态只有一个出口），执行器里的保活分支随之删除�
 
 **关联：** DESIGN DsnE8（设计哲学 → 保活检查，已标注本缺口）/ DsnE4（已合并进 DsnE8）；
 GAME.md Gm1 / Gm8；ECS35（终态出口，H1 已修复，本条的取消路径复用它）；
-REFACTOR §11.3 Phase H（H1/H3 提供了 Phase 分组与终态出口这两块前置）。
+REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置）。
 
 ---
 

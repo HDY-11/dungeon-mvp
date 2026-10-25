@@ -342,7 +342,7 @@ assert_eq!(player_pos(&world), dest);
 
 **推广：** 凡是「命令驱动推进直到某条件满足」的接口（本项目是 `apply_player_command`），它的副作用范围就是"整个世界演化一轮"，写测试时默认世界里的一切都在动，需要静态前提就自己把它固定住。
 
-**参见 REFACTOR.md §11.3 Phase D（D3 迁移记录）；ISSUES.md #G35**
+**参见 REFACTOR §1（Phase D）；ISSUES.md #G35**
 
 **原编号：** `LSYN20`（迁移前）
 

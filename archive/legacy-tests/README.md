@@ -9,8 +9,8 @@
 
 它们被 `cargo test -p dungeon-app` 编译时直接报错，导致根 crate 的测试门禁长期不可用（ISSUES I88）。
 
-**为什么归档而不是删除：** REFACTOR.md §8 把旧 `dungeon-*` 视为历史参考；这两个文件记录了旧架构的场景测试写法（TestBackend 逐帧截图、装备/投掷原子性场景），对迁移期的行为对照仍有参考价值。它们在 `archive/` 下不参与编译，不会进入任何 `cargo test` 门禁。
+**为什么归档而不是删除：** 旧 `dungeon-*` 被视为历史参考（见 `archive/README.md`）；这两个文件记录了旧架构的场景测试写法（TestBackend 逐帧截图、装备/投掷原子性场景），对迁移期的行为对照仍有参考价值。它们在 `archive/` 下不参与编译，不会进入任何 `cargo test` 门禁。
 
 **替代品：** `tests/core_loop_test.rs` —— 只用新 `core` 公共 API 的 headless 端到端测试（new_game / apply_player_command / player_alive / request_quit）。
 
-**状态：** 归档于 REFACTOR.md §11 Phase F（I88）。新架构的渲染快照测试（SceneFrame golden / TestBackend）属于 Phase G（presentation + tui），不在本轮范围。
+**状态：** 归档于 Phase F（I88，见 REFACTOR §1）。新架构的渲染快照测试（SceneFrame golden / TestBackend）属于 Phase G（presentation + tui），不在本轮范围。

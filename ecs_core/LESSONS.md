@@ -333,7 +333,7 @@ assert!(world.get::<Idle>(bystander).is_some());   // 反面对照：没有 Wait
 
 **为什么更好：** ECS 查询的空结果是一个**没有信号**的失败——没有 panic、没有日志、没有类型错误。凡是拿「查询结果」当行为证据的测试或诊断，都必须先排除"类型/archetype 不齐"这一解释，否则会把测量误差当成被测对象的性质。这条与 LSYN9（测试需要独立的 World）互补：独立 World 解决了"互相污染"，但没解决"组件类型没注册"。
 
-**参见 REFACTOR.md §11.3 Phase C（C1 迁移记录）**
+**参见 REFACTOR §1（Phase C）（C1 迁移记录）**
 
 **原编号：** `LECS21`（迁移前）
 
@@ -360,6 +360,6 @@ assert!(world.get::<Idle>(bystander).is_some());   // 反面对照：没有 Wait
 
 **配套纪律（缺了它，数据表就是净亏）：** 数据表把"漏加一项"的错误从**编译期穷举检查**推到了**运行期静默**。所以每张数据表必须配一个**枚举全部行并断言有效**的测试（本项目范例：`every_monster_template_has_usable_speeds`、`stats_expose_template_speeds`），每个新组件配一个"**真的能被创建**"的测试（`With<A>` 写了但没人 spawn `A`，编译器不会告诉你）。
 
-**参见 ISSUES.md ECS31 / ECS32 / ECS35 | DESIGN.md DsnE13 | REFACTOR.md §11.3 Phase H**
+**参见 ISSUES.md ECS31 / ECS32 / ECS35 | DESIGN.md DsnE13 | REFACTOR §2.1（Phase H 剩余）**
 
 ---

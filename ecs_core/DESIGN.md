@@ -171,8 +171,8 @@ impl MonsterTemplate {
    只做**环境修饰差异化**（水域规模、障碍种类、装饰方块）。理由：新算法意味着第二套
    连通性/出生点/楼梯保证要各自证明一遍，而玩家能感知的差异几乎全在环境修饰上。
 2. **类型由 `(MapSeed, floor)` 确定性派生。** 存档只存种子，读档后当前层与下楼结果一致
-   ——**存档零改动**（REFACTOR §10.7 的确定性约束）。派生公式的**取值与分布**属 GAME.md。
-3. **`Tile` 只追加、不重排。** 新增方块走 serde 判别值末尾追加（REFACTOR §10.7）；
+   ——**存档零改动**（DESIGN DsnX17 的确定性约束）。派生公式的**取值与分布**属 GAME.md。
+3. **`Tile` 只追加、不重排。** 新增方块走 serde 判别值末尾追加（DESIGN DsnX17）；
    `Tile` 保留为种类键，属性收敛在 `TILE_PROPS` 静态表（Phase H4 / DsnE13）。
 
 **明确不做 / 暂缓**
@@ -180,7 +180,7 @@ impl MonsterTemplate {
 - 多分支楼梯（树状分支）暂缓：等类型系统稳定后再规划"类型分配"。
 - 不为某类型单独做地形算法、单独做连通性保证。
 
-**关联：** GAME.md Gm10（环境参数/方块/生成管线）、Gm7、Gm8 | ISSUES ECS15（种群补足）/ ECS22（通道 4 方向）/ ECS26（楼梯落点） | REFACTOR §11.3 Phase H（H4） | DsnE13（格子属性身份判据）
+**关联：** GAME.md Gm10（环境参数/方块/生成管线）、Gm7、Gm8 | ISSUES ECS15（种群补足）/ ECS22（通道 4 方向）/ ECS26（楼梯落点） | REFACTOR §1（Phase H4） | DsnE13（格子属性身份判据）
 
 **状态：** 已落地（三类型 + 6 新方块 + 5 新怪 + 8 新掉落）；**内容已迁 GAME.md**，本条只保留决策。
 
@@ -223,7 +223,7 @@ Wander 50 > Wait 0；比较器是 `(ActionPriority, entity.to_bits())` 的**全�
 
 **无前摇 / 无后摇：** 后摇在回合制里没有意义（玩家在怪物行动前就想好了），前摇曾由反应时
 覆盖——反应时删除后，**出手前的固定延迟目前不存在**；若试玩觉得需要，加回一个统一常数
-（REFACTOR §11.6 第 3 项），而不是恢复按敏捷分档。
+（REFACTOR REFACTOR §1（Phase D 的决策确认）），而不是恢复按敏捷分档。
 
 **无预测轴 / 无锁定轴：** 行动轴上的条目都是"已锁定、必然要执行（除非保活失败）"。
 预测需要模拟未来世界状态，在 ECS 里要克隆 World 或维护回滚日志，收益不抵成本。
@@ -274,9 +274,9 @@ Wander 50 > Wait 0；比较器是 `(ActionPriority, entity.to_bits())` 的**全�
 - 仲裁需要 `ChildOf` 分组；Bevy 0.16 `Children` 是 `linked_spawn`，父实体 despawn 会联动 despawn 子实体。
 - 事件必须有真实消费者；`ActionSucceeded/Failed` 正好由 completion 消费，`DeathEvent`/`LevelUpEvent` 要么接线要么删除。
 
-**关联：** REFACTOR.md §2.6 / §3.6 / §8.1 / §10.6 / §10.8 | ISSUES D29、A41、A42、A43、I89、I90、G35
+**关联：** DESIGN DsnE8 / §8.1 / REFACTOR §2 / ISSUES ECS25 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** ①（行动即实体）Phase B/C 已落地、②（速度组件）Phase D 已落地；Phase H 的 H1（终态单一出口）/ H3（`ActionPhase` 分组）也已落地，见下方各自的进展小节。I89（AV 门禁）与 I90（事件生命周期）已修；§11.6 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
+**状态：** ①（行动即实体）Phase B/C 已落地、②（速度组件）Phase D 已落地；Phase H 的 H1（终态单一出口）/ H3（`ActionPhase` 分组）也已落地，见下方各自的进展小节。I89（AV 门禁）与 I90（事件生命周期）已修；REFACTOR §1 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
 
 **唯一未闭合的设计缺口：** 保活检查的**覆盖范围**——设计意图是"对所有待执行行动持续生效"，
 实现是"只在执行前检查"。见上方「设计哲学 → 保活检查」与 ISSUES **ECS43**。
@@ -327,7 +327,7 @@ H1 只碰**形状**，不改任何行为与数值。它解掉的是 Phase H 计�
 **7 个用例立刻失败**（6 个 `parity_*` + `parameterized_move_matches_world_based_move`）。
 这条验证是必要的——一条永远为真的断言比没有断言更糟，它会把缺口伪装成已覆盖。
 
-**关联：** REFACTOR.md §11.3 Phase H（H1）；ISSUES ECS35 / ECS36（均已修复）。
+**关联：** REFACTOR §1（Phase H1）；ISSUES ECS35 / ECS36（均已修复）。
 
 **进展（Phase H3：调度按角色分组）：**
 
@@ -363,7 +363,7 @@ H3 把 `build_action_poc_schedule` 从「13 个系统一条 `.chain()`」改成
 并向 `Execute` 组追加一个扩展系统，验证它能直接接进链路、且整轮照常执行完并回收实体。
 这条用例同时是 H10（技能三层骨架）接法的样板。
 
-**关联：** REFACTOR.md §11.3 Phase H（H3）；LESSONS LECS22（扩展点判据）。
+**关联：** REFACTOR §1（Phase H3）；LESSONS LECS22（扩展点判据）。
 
 **进展（Phase H4：`TileProps` 静态属性表）：**
 
@@ -390,7 +390,7 @@ H3 把 `build_action_poc_schedule` 从「13 个系统一条 `.chain()`」改成
 （地图/移动/视野都读地形身份）。这既是"判别值受保护"的证据，也说明
 **枚举声明顺序是领域事实**，不是可以随手整理的排版。
 
-**关联：** REFACTOR.md §11.3 Phase H（H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）；
+**关联：** REFACTOR §1（Phase H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）；
 DESIGN DsnE13。
 
 ---
@@ -430,7 +430,7 @@ pub fn compute_melee_damage(
 
 伤害公式是**承重层**：装备、Buff、技能、生物范畴的固有性质最终都要落到这个函数的输入或因子位置上。先让形状能容纳"多因子"，后续内容设计就不必再改接口。
 
-**关联：** ISSUES ECS29（现签名无扩展位） | REFACTOR.md §11.3 Phase H（H2） | GAME.md（分区与系数，待定）
+**关联：** ISSUES ECS29（现签名无扩展位） | REFACTOR §1（Phase H2） | GAME.md（分区与系数，待定）
 
 **状态：** ✅ **已落地**（Phase H2）。实现落在 **`ecs_core/src/rules/damage.rs`**（不是 `combat/`）
 ——`combat` 现在只管**位置与目标**类规则（能不能打、8 方向相邻、目标存活），
@@ -565,7 +565,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 - 不决定时长单位口径（AV 或秒）——见 GAME.md 待定。
 
 **关联：** ISSUES ECS27（地形代价维度）/ ECS28（求值入口缺失）/ ECS30（挂载关系）
-/ ECS41（挂载关系用专用 `Relationship`）| REFACTOR.md §11.3 Phase H（H8 / H9 / H11）
+/ ECS41（挂载关系用专用 `Relationship`）| REFACTOR §2.1（H9/H11 未完成）
 | DsnE8（地形 → `MoveSpeed`、Phase H4 的 `move_cost` 预留列）| DsnE12（载体侧）
 | DsnE13（索引还是实体的判据）| LESSONS LECS22
 
@@ -621,7 +621,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 
 `Can*` 目前是 actor 上的 ZST 能力标记，且**能力散在 spawn 代码、数值在模板**（见 ISSUES ECS34）。技能属"可授予"（卷轴学习、装备授予）还是"固有"，决定技能走 `Can*` 组件集合还是技能表 + 统一读取入口——**待查 `CanBasicAttack` 与 `Attack` 是否一一对应后再定**（见 REFACTOR.md Phase H 待定项）。
 
-**关联：** ISSUES ECS31/ECS34 | REFACTOR.md §11.3 Phase H（H10/H12） | DsnE12（长期效果的载体）
+**关联：** ISSUES ECS31/ECS34 | REFACTOR §2.1（H10/H12 未完成） | DsnE12（长期效果的载体）
 
 **状态：** 待落地（Phase H）。本轮只搭骨架 + 一个 dummy 技能走通，**不含任何真技能**。
 
@@ -686,7 +686,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 3. **求值入口在 DsnE10**：actor 侧与格子侧**两个数据来源，一份列表**，由 DsnE10 的五步求值折算成纯函数的输入。本条目只管"效果活在哪里、由谁终结"，不管它怎么被折算。
 4. **每类效果恰好一个 owner 系统**负责它的全部终结路径（过期、被解除、被替换）。其他系统只能改它的数据，不能 `despawn` 它。既有范例：`action_completion_system` 是**唯一**允许回收 action 实体的地方。
 5. **效果必须可寻靶**：效果实体携带 tag，解除类效果（如火焰）以"对范围内的 `<tag>` 生效"表达，**不得在结算链路里写"若是火焰且是某效果则删除"的特例分支**（同类教训见 `EntityClass::Item` 的恒假判断）。
-6. **存档可发现**：持久效果必须能被存档统一枚举写出——这是"放世界实体空间"而非"各自存在子系统私有结构里"的主要理由。**技能实例（瞬态子实体）不存档**，照 §10.7「行动实体不存档」的既有惯例。
+6. **存档可发现**：持久效果必须能被存档统一枚举写出——这是"放世界实体空间"而非"各自存在子系统私有结构里"的主要理由。**技能实例（瞬态子实体）不存档**，照 DESIGN DsnX17 ⑥「瞬态子实体不存档」。
 7. **消费随机数的效果系统必须显式排序**：`GameRng` 的确定性与 `steps` 语义是回放/存档基础，Bevy 系统顺序默认未指定。
 
 **开放项（待用户决定；本轮只记形状）**
@@ -703,7 +703,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 - 不决定时长单位口径（AV 或秒）——见 GAME.md 待定。
 
 **关联：** ISSUES ECS30 / ECS41（挂载关系）/ ECS42（`linked_spawn` 语义相反）
-| REFACTOR.md §11.3 Phase H（H9/H11） | DsnE11（三层结构第③层）
+| REFACTOR §2.1（Phase H 剩余）（H9/H11） | DsnE11（三层结构第③层）
 | **DsnE10（求值侧）** | DsnE13（索引还是实体的判据）| `OccupancyMap`（既有范例）
 
 **状态：** 已改写定案（形状），**待落地**（H9 格索引、H11 最小闭环）。
@@ -742,7 +742,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 - 不改 `Map` 的网格表示；不改 `Map` 是资源还是组件（**仅当要做多层/多地图时才有收益**，见 REFACTOR.md Phase H 待定项）。
 - 不新增任何具体地形属性（移动代价的数值属于 GAME.md）。
 
-**关联：** ISSUES ECS27/ECS28/ECS32 | REFACTOR.md §11.3 Phase H（H4/H9/H14） | DsnE12（效果实体）
+**关联：** ISSUES ECS27/ECS28/ECS32 | REFACTOR §2.1（H9/H14 未完成） | DsnE12（效果实体）
 
 **状态：** 第 1 项（静态属性表）**已落地**（Phase H4，见 DsnE8「Phase H4 进展」）；第 2–4 项待落地（H9 / H11）。
 

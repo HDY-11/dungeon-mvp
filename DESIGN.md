@@ -457,9 +457,9 @@ Last        : TUI draw / GPU sync
 - 输入去重/tap-tap：保持在 `presentation`；GPU repeat 归一化。
 - GPU 非 drop-in：需要 asset catalog、camera、runner、UI 文本；先做平铺 tilemap + sprite。
 
-**关联：** DESIGN DsnX1 / DsnT1 / DsnP2 / DsnA1；REFACTOR §12；ISSUES I87/I88；README 渲染契约章节。
+**关联：** DESIGN DsnX1 / DsnT1 / DsnP2 / DsnA1；DESIGN DsnX14；ISSUES I87/I88；README 渲染契约章节。
 
-**状态：** R0/R1 已落地（REFACTOR §11 Phase G）。
+**状态：** R0/R1 已落地（见 REFACTOR §1）。
 
 - **R0**（`render-api` v1，34 测试）已完成；
 - **R1** 已完成：新建 `presentation`（`extract` / `catalog` / `camera` / `ui` / `input`，
@@ -503,7 +503,7 @@ Last        : TUI draw / GPU sync
 - 依赖方同步：根 `Cargo.toml`、`tui/Cargo.toml`、`src/main.rs`、
   `tests/core_loop_test.rs`、`tui/src/{render,scene}.rs`、`scripts/gate.ps1`。
 - 旧 `dungeon-core` 不改名、不动其内部的 `dungeon_core::` 引用——它属于待清理的
-  历史层（DsnX13 / REFACTOR §12 R5）。
+  历史层（DsnX13 / DESIGN DsnX14 R5）。
 
 **背景**
 
@@ -528,7 +528,7 @@ Last        : TUI draw / GPU sync
 
 **代价**
 
-- 与历史文档/commit 里的 `core` 字样不再字面一致；已在 REFACTOR §10.5 的冻结清单
+- 与历史文档/commit 里的 `core` 字样不再字面一致；已在 DESIGN DsnX17 的冻结清单
   与本节记录映射关系，检索时注意 `core`（旧名）与 `ecs_core`（现名）。
 - `cargo -p core` 这类命令要改成 `-p ecs_core`；已同步 `scripts/gate.ps1`。
 - 目录名 `ecs_core/` 与包名一致，避免了「目录 `core`／包名 `ecs_core`」这种
@@ -543,7 +543,7 @@ Last        : TUI draw / GPU sync
 - ~~目录留 `core/`、只改包名~~：排除，包名与目录名不一致会让 `cargo -p` 与
   路径引用长期对不上（本次一并改掉）。
 
-**关联：** REFACTOR §10.5 冻结清单 / §10.6 第 1 项 / §11.3 Phase F5 / §11.6 第 8 项；
+**关联：** DESIGN DsnX17 冻结清单 / REFACTOR §1（Phase F）；
 ISSUES I86；DESIGN DsnX13 / DsnX14。
 
 **状态：** 已落地（Phase F5）。`cargo check --workspace`、`cargo test --workspace`
@@ -591,3 +591,61 @@ ISSUES ECS27–ECS36（本轮记录的实现问题）；
 LESSONS LECS22（扩展点判据）。
 
 **状态：** 已定案。本轮据此完成 `DsnE9`–`DsnE13`、`ECS27`–`ECS36`、`LECS22` 与 REFACTOR Phase H 的写入。
+
+---
+
+**原编号：** `DsnX16`（迁移前）
+
+### DsnX17 兼容性与冻结契约（原 DESIGN DsnX17 / §10.7 折入）
+
+**决策**
+
+下面这些是**跨 crate 的硬约束**，任何改动都必须先过它们。它们原先记在 `REFACTOR.md`
+（分支内计划文档，合并前应折进 DESIGN），已随 2026-09 的文档治理折入本条——
+`REFACTOR.md` 不再承载契约，只承载"还没做完的计划"。
+
+**① 冻结：只允许追加 / 修 bug，不允许重命名、重排、改语义**
+
+| 类别 | 冻结内容 |
+|---|---|
+| `ecs_core` 组件 | `Position` / `Health` / `Magic` / `Level` / `Experience` / `Attack` / `Defense` / `MagicMastery` / `MoveSpeed` / `AttackSpeed` / `CritRate` / `CritDamage`；标记 `Player` / `Monster` / `Stairs`；状态 `Idle` / `Active` / `Failure`；能力 `Can*` |
+| `ecs_core` 资源 | `Map` / `MapSeed` / `FloorNumber` / `GameRng` / `MapMemory` / `VisibleMemory` / `OccupancyMap` / `EventLog` / `TurnManager` |
+| `ecs_core` 事件 | `AttackIntentEvent` / `AttackEvent` / `DeathEvent` / `LevelUpEvent` |
+| 行动链路 | 行动 ZST 名称（`Wait` / `Move` / `BasicAttack` / `Chase` / `Flee` / `Wander`）、`ActionPriority` / `ActionTimer` / `Candidate` / `ActiveAction` / `Ready`、归属关系 `ActionOf` / `ActionChildren` |
+| 应用入口 | `world_loop::{new_game, apply_player_command, request_quit}` 的调用语义（名字可留兼容包装） |
+| 渲染契约 | `render-api` v1 的 `SceneFrame` / `VisualKey` / `UiView` / `InputEvent` 字段**可追加**；破坏性改动必须递增 `CONTRACT_VERSION` |
+| 架构边界 | `ecs_core` 不依赖 `bevy_app` / ratatui / wgpu / `render-api` / `presentation`；`tui` / 未来的 `gpu` 不依赖 `ecs_core` |
+
+**② serde 只追加**
+
+已 derive serde 的类型（`Tile` / `MapKind` / `MonsterKindId` / `Map` / `Room` 等）**不得重排变体、
+不得复用旧判别值**；新增字段一律 `#[serde(default)]`。`Tile` 的判别值现由 `#[repr(u8)]` +
+声明顺序决定（H4），因此**枚举的书写顺序本身就是契约**。
+
+**③ 确定性**
+
+- `GameRng` 的算法与 `steps` 语义是回放与存档的基础；**改算法等同改存档格式**。
+- 地图生成对 `(MapSeed, FloorNumber)` 必须确定；改生成算法 = 改同 seed 地图，
+  需要 DESIGN 记录 + golden seed 测试。
+- 消费随机数的系统必须显式排序（Bevy 系统顺序默认未指定）。
+
+**④ 显示数据不属于领域**
+
+`Tile` 表里的 `glyph`、`MonsterTemplate` 的 `glyph`/颜色是**渲染数据**，
+外观的唯一来源是后端的 catalog（`tui::TuiCatalog`，见 DsnT1）。领域层不得把它们当稳定契约。
+
+**⑤ 无存档承诺（当前）**
+
+新 `ecs_core` **尚未迁移存档**：旧 `dungeon-world` 的存档格式与新组件不兼容
+（旧实现在 `archive/`）。在迁移完成前，不要对外承诺"新 core 可读旧档"。
+
+**⑥ 瞬态子实体不存档**
+
+action 实体与技能实例都是瞬态子实体；存档只存 actor 状态/速度/身份，读档后重新生成行动。
+**子实体的组件名不得作为存档格式的一部分。**
+
+**关联：** DsnX13（业务领域收敛）/ DsnX15（crate 改名）/ DsnE8（行动系统唯一权威条目，
+含行动链路的完整语义）/ DsnE13（`Tile` 属性表与判别值）/ DsnT1（外观归后端）
+| RULE.md §八（实现改动后的规格复核）
+
+**状态：** 长期有效。改动上述任何一项之前：先改本条，再改代码。

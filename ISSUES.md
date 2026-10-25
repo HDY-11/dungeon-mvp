@@ -38,7 +38,7 @@ LESSONS `LECS22` 的"加第 N 个要改几处"同源：**新增测试要落在�
 
 **位置：** `ecs_core/`、`presentation/`、`render-api/`、`tui/`、`tests/`
 
-**关联：** SYN5（新 `core` 冒烟测试，已修复）、REFACTOR.md §10.4 / §11.4 测试矩阵。
+**关联：** SYN5（新 `core` 冒烟测试，已修复）、REFACTOR §1。
 
 ---
 
@@ -93,7 +93,7 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
 **本轮核实（该描述已过时，须更正）：**
 
-- `ActionQueue` 与 `ActionKind` **已在 Phase C 删除**（REFACTOR §11.3 Phase C8），
+- `ActionQueue` 与 `ActionKind` **已在 Phase C 删除**（REFACTOR §1（Phase C）），
   行动改为 **action 子实体**（`PlayerActionRequest` → 直接产出一个 active action）；
 - 因此**旧的技术阻塞已不存在**：当时不可取消的原因是"行动一旦入队就脱离输入路径"，
   而现在的行动生命周期是**一回合内生成 → 仲裁 → tick → 执行 → completion**
@@ -108,12 +108,12 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 1. **保留现状**（确认即执行）：回合制语义最简单，缓存/回放无歧义；
 2. **引入"行动确认窗口"**：确认后不立即 tick，允许在校验通过前用反方向键撤销——
    代价是玩家可见的节奏变化，且需要定义"撤销是否消耗 AV / RNG 步数"（涉及
-   `GameRng.steps` 与回放一致性，见 REFACTOR §10.7）；
+   `GameRng.steps` 与回放一致性，见 DESIGN DsnX17）；
 3. **复活事件帧模式**（原 D5 方案）：触发条件见 SYN2，目前仍未达成，暂不建议。
 
 **位置：** `ecs_core/src/action/entity.rs`（玩家生成与挂载路径）、`presentation/src/input`（tap-tap 口径）
 
-**关联：** SYN2（事件帧模式，仍 Deferred）；REFACTOR §11.3 Phase C（挂载与推进两段式）。
+**关联：** SYN2（事件帧模式，仍 Deferred）；DESIGN DsnE8（挂载与推进两段式）。
 
 
 ## ✅ 已修复
@@ -146,7 +146,7 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
 - 顺带修正 `tick_action_timers_system`：推进量抽取为 `positive_timer_delta`，`min == 0`（全部已归零）时仍补齐 `Ready`。该口径与旧架构 `dungeon-action/src/state_action/runtime.rs` 一致。
 
-**关联：** REFACTOR.md §10.4 / §10.6 第 2 项 / §11.3 Phase A；ISSUES SYN1、SYN6、ECS3、ECS7。
+**关联：** REFACTOR §1（Phase A）；ISSUES SYN1、SYN6、ECS3、ECS7。
 
 ---
 
@@ -185,7 +185,7 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
 
 
-**关联：** REFACTOR.md §10.6 第 1 项
+**关联：** REFACTOR §1（Phase F）
 
 
 
@@ -226,7 +226,7 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
 
 
-**关联：** REFACTOR.md §10.4 / §10.6 第 4 项 / §11.3 Phase F（F2）。
+**关联：** REFACTOR §1（Phase F）。
 
 
 

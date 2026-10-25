@@ -37,10 +37,11 @@ core ──> presentation ──> render-api <── tui / gpu
 **背景**
 
 当前 `tui/src/scene.rs` 直接查询 `core` 组件，`render_game(frame, &mut World)` 把后端与 World 焊死；换 GPU 必须重写提取逻辑。Bevy 的插件系统解决“装配”，但它的渲染可替换性来自“主世界 → Extract → 渲染世界”的分离；本决策只借用这个分离思想，不引入完整 render sub-app。
+> （上述 `tui/src/scene.rs` 已在 R1 删除，本条是当时的动因记录。）
 
-**关联：** REFACTOR.md §1.1 | DESIGN.md DsnT1（渲染优化属于 TUI 后端内部）| DsnP2（页栈状态放 presentation，渲染放后端）
+**关联：** DESIGN.md DsnX14（渲染分层总览 / crate 布局）| DsnT1（渲染优化属于 TUI 后端内部）| DsnP2（页栈状态放 presentation，渲染放后端）
 
-**状态：** `render-api` v1 已落地（34 个测试通过，`cargo clippy -p render-api -D warnings` 干净）。下一步：`presentation` 提取层 + `tui` 去 `core` 依赖。
+**状态：** `render-api` v1 已落地（34 个测试通过，`cargo clippy -p render-api -D warnings` 干净）；R1（`presentation` 提取层 + `tui` 去 `ecs_core` 依赖）亦已落地，见 DESIGN DsnX14。
 
 
 ---
