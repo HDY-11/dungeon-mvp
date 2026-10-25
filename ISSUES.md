@@ -4,45 +4,12 @@
 
 **归属范围：** 跨 crate 协同、工具链与流程、迁移动因；以及不属于任何单一 crate 的问题。
 
-**编号：** `SYN1`、`SYN2`… 每个 crate 独立编号，见 [RULE.md](RULE.md) 与 [REFACTOR.md](REFACTOR.md) §13。
+**编号：** `SYN1`、`SYN2`… 每个 crate 独立编号，见 [RULE.md](RULE.md) §七。
 根目录只记**跨 crate 协同 / 工具链与流程 / 迁移动因**；单 crate 的问题记在对应 crate 的 ISSUES.md 里。
 
 **优先级：** 🔴 高（影响正确性或游戏体验） / 🟡 中（维护性或功能缺口） / 🟢 低（整洁或边缘情况）
 
 ## 待处理
-
-### SYN1 — 测试覆盖缺口（部分） ✅已修复（旧架构侧缺口随 R5 归档不再跟踪）
-
-**原状：** dungeon-core 5 个（EventLog）、dungeon-action 14 个、dungeon-world 2 个、场景 3 个、
-terrain-forge 26 个；`dungeon-render` 0 测试、应用层（main.rs 装备/投掷 UI 流程）0 测试。
-
-**修复后（新架构侧已闭环，实测）：**
-
-| 范围 | 测试数 |
-|---|---|
-| `ecs_core`（新唯一业务层） | **71** |
-| `presentation`（集成层） | **57** |
-| `render-api`（契约 + 集成） | **34**（30 单测 + 4 集成） |
-| `tui`（含 `TestBackend` 全帧断言） | **25** |
-| `dungeon-app`：端到端 `mvp_loop_test` + 装配层单测 + `keys` | **9 + 6 + 6** |
-| `terrain-forge`（外部子模块） | **39** |
-| `archive/dungeon-*`（已归档旧架构，**不属新方向保障**） | 19 + 5 + 15 + 6 |
-| `cargo test --workspace` | **28 个目标全绿 / 295 passed / 0 failed** |
-
-`dungeon-render` 与 `src/pages` 的缺口**不再跟踪**：这些代码已随 R5 归档到 `archive/`
-（`src/pages/*` 是孤儿文件，直接删除），为一个已退出的目录补测试是净亏——判据与
-LESSONS `LECS22` 的"加第 N 个要改几处"同源：**新增测试要落在会被保留、会被继续改的代码上**。
-
-**唯一仍待补的项：** `mvp_playtest` 级的手感验证（tap-tap 节奏、视野跟随）——它不是单测能覆盖的，
-已由 `mvp_loop_test` 的 9 条链路断言兜住"不 panic、不卡死、帧与世界同步"。
-
-**位置：** `ecs_core/`、`presentation/`、`render-api/`、`tui/`、`tests/`
-
-**关联：** SYN5（新 `core` 冒烟测试，已修复）、REFACTOR §1。
-
----
-
-
 
 ### SYN2 — 事件帧模式（Deferred — 触发条件达成时重新评估）
 
@@ -55,34 +22,6 @@ LESSONS `LECS22` 的"加第 N 个要改几处"同源：**新增测试要落在�
 **触发条件：** 出现**足够复杂的战斗逻辑**，即新增的怪物/boss 有需要玩家在过程中作出反应的能力——例如范围攻击预警、状态效果倒计时、可打断的吟唱、地形变化。当单次 tick 内的行动序列构成决策信息时，事件帧模式从"nice to have"变为"need to have"。
 
 ---
-
-
-### SYN3 — terrain-forge submodule 配置缺失：无 .gitmodules + 163 个未提交变更 ✅已修复
-
-**修复前：** 主仓库将 terrain-forge 记录为 gitlink，但仓库中不存在 `.gitmodules`（历史中也没有）；
-submodule 工作区有 163 个未提交的删除/修改。新克隆者无法 `git submodule update --init`，
-workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
-
-**修复后（commit `4c13688`，本轮实测核对）：**
-
-| 项 | 实测结果 |
-|---|---|
-| `.gitmodules` | ✅ 已提交（`submodule "terrain-forge"` → `https://github.com/EliasVahlberg/terrain-forge.git`） |
-| gitlink 指针 | `e2a415b`，与子模块实际 `HEAD` **完全一致** |
-| 子模块工作树 | ✅ 干净（`git -C terrain-forge status --short` 无输出，原 163 项已固化） |
-| 子模块 HEAD | `e2a415b chore: trim demo/docs/tests and remove nested workspace for parent integration` |
-
-那一批清理已由子模块自己的 `e2a415b` 提交固化（commit message 明确是为父仓库集成做的裁剪），
-"未提交变更随时丢失"的风险随之消失。
-
-**位置：** `.gitmodules`、`terrain-forge/`
-
-**备注（流程教训）：** 本条目在 Phase G 前被两次判定为"仍未修复"，原因是查证时只看了
-`main` 分支的历史（修复 commit `4c13688` 在 `refactor` 分支上）。**跨分支问题是这类误判的常见来源**——
-核对"某问题是否已修"时应直接看工作树与 `git log <当前分支>`，不要只看某个分支的历史。
-
----
-
 
 ### SYN4 — 玩家确认行动后无法取消（阻塞已随 Phase C 消除，方案待重定） 🟡
 
@@ -115,192 +54,31 @@ workspace 构建直接失败；本地清理状态随时可被覆盖丢失。
 
 **关联：** SYN2（事件帧模式，仍 Deferred）；DESIGN DsnE8（挂载与推进两段式）。
 
-
-## ✅ 已修复
-
-### SYN5 — 新 `core` 冒烟测试缺口：地图/移动/战斗/成长/视野/AI 无回归保障 ✅已修复
-
-**问题：** 新 `core`（core crate）目前只有 4 个测试（AV 门禁 2 个、事件生命周期 1 个、最小闭环 1 个）。地图生成确定性、玩家移动与阻挡、攻击伤害只结算一次、死亡→经验→升级、FOV/记忆/占用图、快怪多动这些核心语义都没有测试；而 `ActionKind` → action 实体（ECS3）与 `Agility` → 速度组件（ECS7）两项重构即将改动同一批系统，没有安全网就无法判断行为漂移。
-
-**影响：** 🟡 中高 — 重构期间任何行为漂移都只能在人工试玩中发现；不能让 `cargo test -p core` 的门禁停留在 4 个测试。
-
-**位置：** `core/src/`（`world/init.rs`、`world/loop_.rs`、`system/mod.rs`、`action/execution/mod.rs`）；新增测试 helper `core/src/test_util.rs`
-
-**状态：** ✅已修复（Phase A）— A1–A7 全部落地，`cargo test -p core` 从 4 个测试增加到 **18 个**通过（+1 个 doctest 目标 0）。
-
-**修复后：**
-
-- 新增 `core/src/test_util.rs`（`#[cfg(test)]`）：`test_world` / `fill_map` / `carve_single_floor` / `single_tile_scene` / `spawn_test_actor` / `spawn_test_player` / `spawn_test_monster` / `kill_entity` / `world_snapshot` 等 helper；
-
-- A1 `world::loop_::tests::map_generation_is_deterministic`：同 seed 两次 `new_game` 的 tiles/rooms/出生点/楼梯/怪物全量快照相等；`different_seed_changes_the_world` 作反面对照；
-
-- A2 `player_move_into_free_tile` / `player_move_blocked_by_wall` / `player_move_out_of_bounds_is_rejected` / `rejected_move_leaves_player_idle`：合法移动改变 `Position`，撞墙/越界/被占用被拒且位置不变、玩家不卡在 `Active`；
-
-- A3 `system::tests::attack_applies_damage_once`：HP 精确扣 10、重复 settle 不再扣、日志恰好两条；
-
-- A4 `monster_death_rewards_exp_and_levels_up` / `experience_below_threshold_does_not_level_up`：死亡 despawn、经验入账、跨阈值升级并重算 HP/MP 上限与回满；
-
-- A5 `fov_memory_and_occupancy_update` / `occupancy_tracks_actors_but_not_stairs`：视野非空含自身、`MapMemory` 已探索、`OccupancyMap` 记录玩家与怪物、移动后新旧格同步、楼梯不占位；
-
-- A6 `fast_actor_gets_more_actions` / `tick_advances_to_the_next_event_and_empties_only_the_fastest` / `only_the_action_whose_timer_hit_zero_executes`：同时间预算内 AV=100 的行动次数多于 AV=300；时间轴推进与旧实现 `timer_advances_to_next_event` 一致；
-
-- 顺带修正 `tick_action_timers_system`：推进量抽取为 `positive_timer_delta`，`min == 0`（全部已归零）时仍补齐 `Ready`。该口径与旧架构 `dungeon-action/src/state_action/runtime.rs` 一致。
-
-**关联：** REFACTOR §1（Phase A）；ISSUES SYN1、SYN6、ECS3、ECS7。
-
----
-
-
-**原编号：** `P9`（迁移前）
-
-### SYN6 — `core` doctest 因 crate 名 `core` 与标准库冲突失败 ✅已修复（根因已消除：F5 改名 `ecs_core`）
-
-
-
-**问题：** `core/src/resources.rs:65` 写 `core::convert::Infallible`；doctest 编译时 `core::` 解析到本地 `core` crate 而非标准库，`cargo test -p core` 的 doctest 失败（单测为 0）。
-
-
-
-**影响：** 🟡 中 — `core` 的测试门禁不可用；crate 名 `core` 与 Rust 标准库同名是长期隐患。
-
-
-
-**位置：** `core/src/resources.rs:65`
-
-
-
-**状态：** ✅已修复。**改名已落地（F5）**：crate 名由 `core` 改为 `ecs_core`（目录同名），与标准库 `core` 的遮蔽从根上消除，`core::convert::Infallible` 这类必须绕行/特意写成 `std::` 的写法不再必要。决策见 DESIGN DsnX15。
-
-
-
-**修复：**
-
-
-
-- `core/src/resources.rs:65` 改为 `std::convert::Infallible`；
-
-- `core/src/schedule.rs` 的 `ScheduleLabel` 改为手写 impl（`derive` 宏展开会引用 `core::fmt` / `core::hash`，在 crate 名为 `core` 时被本地 crate 遮蔽）；
-
-- `cargo test -p core` 现在通过（3 个单测 + doctest）。
-
-
-
-**关联：** REFACTOR §1（Phase F）
-
-
-
----
-
-
-
-
-**原编号：** `I86`（迁移前）
-
-### SYN7 — 根集成测试失效，`cargo test -p dungeon-app` 无法编译 ✅已修复
-
-
-
-**修复前：** `tests/throw_test.rs` 引用不存在的 `dungeon_tui`；`tests/scenario_test.rs` 针对旧 `dungeon-*` 架构（`setup_world` / `advance_and_settle_parallel` / `dungeon_action` / `dungeon_render`）。`cargo test -p dungeon-app --no-run` 直接编译失败。
-
-
-
-**修复后：**
-
-
-
-- 两个失效文件 `git mv` 到 `archive/legacy-tests/`（不参与编译），附 `README.md` 说明失效原因、归档理由与替代品；
-
-- 新增 `tests/core_loop_test.rs`：只用新 `core` 公共 API（`new_game` / `apply_player_command` / `player_alive` / `request_quit`）的 headless 端到端测试 8 个（初始化、等待、移动、被墙拒绝、击败相邻怪物、退出请求、game_over 拒绝命令、玩家死亡结束游戏）；
-
-- `Cargo.toml` 增加 `[dev-dependencies] bevy_ecs`（集成测试直接操作 `core` 的世界，需要同一份 ECS 类型）；
-
-- `cargo test -p dungeon-app` 通过（8 passed）。
-
-
-
-**注意：** 渲染快照测试（`SceneFrame` golden / `TestBackend`）属于 Phase G，本轮不新增。
-
-
-
-**位置：** `tests/`、`archive/legacy-tests/`、`Cargo.toml`
-
-
-
-**关联：** REFACTOR §1（Phase F）。
-
-
-
----
-
-
-
-
-**原编号：** `I88`（迁移前）
-
-### SYN8 — Gm9 投掷伤害表与自身公式/代码不符 ✅已修复
-
-**修复前：** 公式 `基础=3+floor(楼层/2)` 下 F10 应为 8，表写 7；F5 对防 3 哥布林表写 2-4，实际 2-3。
-
-**修复后：** 表格重算：F5 行 2-3、F10 行 8/8-9/5-6，与公式及代码一致。
-
-**位置：** `GAME.md:471-475`
-
----
-
-
-**原编号：** `D23`（迁移前）
-
-### SYN9 — SL 刷掉落漏洞：RNG 状态不持久化，读档重放随机序列 ✅已修复
-
-**修复前：** 存档只存 map_seed，restore 用 `GameRng::new(map_seed+42)` 从种子重建，读档后暴击/掉落/游荡随机序列重放，可存档→杀怪→读档重掷实现 SL 刷掉落；且与 descend 的含 floor 派生不一致。
-
-**修复后：** GameRng 重写为可序列化的 xorshift64* 状态机（impl `rand::TryRng`，每次 `next` 计一步）；掉落 roll 改走 GameRng（不再绕过状态）；GameSave 存 `rng_state/rng_steps`，restore 用 `from_state` 精确恢复。旧档（无状态）保持旧派生种子行为。回归测试 3 个（状态持久/续接非重放/旧档默认）。
-
-**位置：** `dungeon-core/src/resources.rs`（GameRng）、`dungeon-action/src/execute.rs`（handle_kill）、`dungeon-world/src/persist.rs`
-
----
-
-
-**原编号：** `G32`（迁移前）
-
-### SYN10 — RULE.md 编辑流程优化（移除宣誓 + 强化记录优先） ✅已修复
-
-**修复前：** RULE.md 要求编辑前"宣誓"，AI 须在每回合第一次编辑前声明流程步骤。实际效果不佳（"反智能体"），且核心问题（先修后记）未被有效约束。
-
-**修复后：**
-1. 移除"宣誓"机制
-2. 新增醒目 🚨 区块：**用户报告问题 → 先记录 ISSUES → 再修复**
-3. 简化编辑前检查清单，保留三条核心检查
-4. 同步保存高优先级 memory（`rulemd-bug-report-flow`），确保每轮启动可见
-
-**位置：** `RULE.md` §六
-
-
-**原编号：** `R1`（迁移前）
-
-### SYN11 — 主循环空闲 sleep 1ms 导致有限机型 CPU 满载 ✅已修复
-
-**修复前：** 主循环无输入时 `sleep(1ms)`，渲染一帧约 5ms，合计 6ms/帧 ≈ 166fps 空转。有限机型上单核 100% 满载，系统可能因过热/调度杀死进程。
-
-**修复后：** 空闲 sleep 改为 32ms，渲染频率降到约 27fps。回合制终端游戏在无操作时不需要高刷新率。
-
-**位置：** `src/main.rs:88`
-
-
-**原编号：** `P8`（迁移前）
-
-### SYN12 — 全部 `.unwrap()` 替换为 `.expect()` ✅已修复
-
-**状态：** 全部 ~35 处 `.unwrap()` 已替换。生产代码零 unwrap。
-
-
-**原编号：** `I17`（迁移前）
-
-### SYN13 — 斜向键无 OS key-repeat（Won't Fix — 终端环境限制） ✅已修复
-
-**问题：** 按住 Home/End/PgUp/PgDn 不放，角色不会连续斜向移动。多数终端不发斜向键的 OS key-repeat 事件。
-
-**结论：** 终端环境引起，不在项目控制范围内。
-
-
-**原编号：** `I10`（迁移前）
+## ✅ 已修复（索引表）
+
+> **2026-09 文档治理：** 本区由「逐条 修复前/修复后」压缩成索引表——明细读的人少、
+> 查的人多。**原文完整保留**在 `docs-pre-governance` tag（取回方式见
+> `archive/docs-trash-manifest.md`）。表格保留 id / 结论 / 位置 / 参考四项，
+> 需要「为什么这么修」的细节时按 id 去 tag 里查。
+>
+> **位置列是修复当时的路径**：`core/` 后来改名 `ecs_core/`（DESIGN DsnX15），
+> 且部分文件已随重构删除（`action/execution/mod.rs`、旧 `dungeon-*` 等）。
+> 查现状请看「参考」列的 DESIGN / LESSONS 条目。
+>
+> **规则偏差（待用户批准修 RULE §二）：** RULE §二 要求「已修复」条目保留
+> 修复前/修复后正文。本条按 2026-09 用户授权压缩；若长期采用，应把 RULE §二
+> 改成「已修复区维护索引表，明细归档」。
+
+| id | 修复后的行为（一句话） | 位置 | 参考 |
+|---|---|---|---|
+| SYN1 | 测试覆盖缺口（部分）（旧架构侧缺口随 R5 归档不再跟踪） | `ecs_core/`、`presentation/`、`render-api/` | SYN5 / LECS22 |
+| SYN3 | terrain-forge submodule 配置缺失：无 .gitmodules + 163 个未提交变更 | `.gitmodules`、`terrain-forge/` |  |
+| SYN5 | 新 `core` 冒烟测试缺口：地图/移动/战斗/成长/视野/AI 无回归保障 | `core/src/`（`world/init.rs`、`world/loop_.rs` | SYN1 / SYN6 |
+| SYN6 | `core` doctest 因 crate 名 `core` 与标准库冲突失败（根因已消除：F5 改名 `ecs_core`） | `core/src/resources.rs:65` | DsnX15 |
+| SYN7 | 根集成测试失效，`cargo test -p dungeon-app` 无法编译 | `tests/`、`archive/legacy-tests/`、`Cargo.toml` |  |
+| SYN8 | Gm9 投掷伤害表与自身公式/代码不符 | `GAME.md:471-475` |  |
+| SYN9 | SL 刷掉落漏洞：RNG 状态不持久化，读档重放随机序列 | `dungeon-core/src/resources.rs`（GameRng）、`dungeon-action/src/execute.rs`（handle_kill）、`dungeon-world/src/persist.rs` |  |
+| SYN10 | RULE.md 编辑流程优化（移除宣誓 + 强化记录优先） | `RULE.md` §六 |  |
+| SYN11 | 主循环空闲 sleep 1ms 导致有限机型 CPU 满载 | `src/main.rs:88` |  |
+| SYN12 | 全部 `.unwrap()` 替换为 `.expect()` | — |  |
+| SYN13 | 斜向键无 OS key-repeat（Won't Fix — 终端环境限制） | — |  |
