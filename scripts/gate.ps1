@@ -62,7 +62,7 @@ foreach ($step in $steps) {
     $results += [pscustomobject]@{ Step = $step.Name; ExitCode = $exitCode }
 }
 
-# ── 依赖边界（DESIGN Dsn28）────────────────────────────
+# ── 依赖边界（DESIGN DsnX14）────────────────────────────
 #
 # 这三条边界是「渲染后端可替换」的全部保证，而它们**只能靠依赖图验证**：
 # 代码里看起来没用到 `ecs_core` 不代表依赖表里没有（那样早晚会有人"顺手"用一下）。
@@ -89,7 +89,20 @@ foreach ($rule in $forbidden) {
         Write-Host ("  PASS  {0} 不依赖 {1}" -f $rule.Pkg, $rule.Banned) -ForegroundColor Green
     }
 }
-$results += [pscustomobject]@{ Step = '依赖边界（Dsn28）'; ExitCode = $(if ($boundaryOk) { 0 } else { 1 }) }
+$results += [pscustomobject]@{ Step = '依赖边界（DsnX14）'; ExitCode = $(if ($boundaryOk) { 0 } else { 1 }) }
+
+# ── 文档一致性（RULE §十）──────────────────────────────
+#
+# 只查能机械判定的四件事：交叉引用是否存在、章节/旧式编号是否失效、
+# `<!-- &ID -->` 标记是否与标题配对、GAME 的枚举表行数是否与代码一致。
+# 文档内容对不对、条目该不该存在——这些不是脚本能判断的，留给规格复核（RULE §八）。
+Write-Host ''
+Write-Host '=== 文档一致性（RULE §十）===' -ForegroundColor Cyan
+$ErrorActionPreference = 'Continue'
+& python scripts/docs_check.py
+$docsExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+$results += [pscustomobject]@{ Step = '文档一致性（RULE §十）'; ExitCode = $docsExit }
 
 Write-Host ''
 Write-Host '=== 门禁结果 ===' -ForegroundColor Cyan
