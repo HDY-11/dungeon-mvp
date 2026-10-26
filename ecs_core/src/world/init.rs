@@ -17,7 +17,7 @@ use crate::events::{
 };
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
-use crate::monster::{MonsterKindId, monster_template, roll_one_kind};
+use crate::monster::{MonsterKindId, attach_abilities, monster_template, roll_one_kind};
 use crate::resources::*;
 use crate::schedule::CoreInitSchedule;
 use crate::system::{
@@ -318,7 +318,6 @@ fn monster_base_bundle(
         template.kind,
         Position::new(pos.0, pos.1),
         stats.health,
-        stats.magic,
         Level(stats.level),
         stats.experience_reward,
         stats.attack,
@@ -356,11 +355,9 @@ pub fn spawn_monsters_system(
             .insert(EntityName(template.name.into()))
             .insert(AttackName(template.attack_name.into()))
             .insert(LastKnownPlayerPos::default())
-            .insert(CanChase)
-            .insert(CanFlee)
-            .insert(CanWander)
-            .insert(CanWait)
             .insert(Idle);
+        // 能力来自模板（Phase H6）：这个循环不再列举任何物种名。
+        attach_abilities(&mut cmd, template.abilities);
 
         // 物种身份由 `monster_base_bundle` 里的 `MonsterKindId` 表达，
         // 不再额外插入一层身份 ZST（`Rat`/`Scorpion`/… 已删除，见 entity_cls.rs）。

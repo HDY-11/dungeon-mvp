@@ -26,7 +26,8 @@
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
 | 空间与地图 | DsnE2 · DsnE3 · DsnE7 · DsnE13 |
-| 数据与随机 | DsnE5 · DsnE6 |
+| 怪物与物种 | DsnE6 |
+| 数据与随机 | DsnE5 |
 
 
 <!-- &DsnE1  怪物决策走并行 Schedule，不串行遍历；可调试性优先于整洁 -->
@@ -126,49 +127,82 @@ wander_decision_system ─┘
 
 ---
 
-## 四、输入与渲染
+## 三、核心机制（续：怪物 · 行动 · 规则 · 效果 · 地形）
+
+> 本节标题原为「四、输入与渲染」——自 `presentation` / `tui` 拆出后，本文件已不再持有
+> 任何输入与渲染内容，标题却留了下来（2026-09 核对文档陈述时更正）。
 
 **原编号：** `DsnE5`（迁移前）
 <!-- &/DsnE5 -->
 
-<!-- &DsnE6  物种数值收进模板表；能力与生成权重仍待归位(ECS32，含原 ECS33 的 DTO 问题) -->
-### DsnE6 MonsterTemplate 结构体统一 — 设计中，实验方向
+<!-- &DsnE6  一个物种=一行数据：数值+能力+按地图的生成权重同住模板 -->
+### DsnE6 物种模板：一个物种一行数据（已落地）
 
-**决策（暂缓执行）**
+**决策**
 
-将 `monster_def.rs` 中 7 个分散的 match 函数（`monster_glyph`、`monster_color`、`monster_name`、`monster_attack_name`、`monster_stats`、`monster_loot`、`monster_spawn_weight`）合并为一个 `MonsterTemplate` 结构体 + 一个查表函数。
+一个物种 = 一条 `MonsterTemplate` 常量，**三类信息都在这一行里**：
 
-```rust
-pub struct MonsterTemplate {
-    glyph: char,
-    color: (u8, u8, u8),
-    name: &'static str,
-    attack_name: &'static str,
-    // 系数——不存最终值，存公式参数
-    hp_base: i32, hp_per_floor: i32,
-    atk_base: u32, atk_per_floor: f64, atk_max: u32,
-    def: u32, agi: u32, magic_mastery: u32,
-    exp_base: f64, exp_per_floor: f64,
-    loot: &'static [LootEntry],
-    spawn_weight_base: f32, spawn_weight_per_floor: f32,
-    spawn_weight_min: f32, spawn_weight_max: f32,
-}
+| 字段 | 回答的问题 | 归位前住在哪 |
+|---|---|---|
+| 数值（`hp_base` … `exp_per_floor`） | 这只怪多强 | 本条目（Phase C 起已收敛） |
+| `abilities: &'static [Ability]` | 这只怪能做什么 | `world/init.rs` 的 spawn 代码逐条 `insert` |
+| `spawn: &'static [SpawnWeightFor]` | 这只怪多常见（**按地图类型**） | `monster/spawn.rs` 的三层 `match` |
 
-impl MonsterTemplate {
-    pub fn stats(&self, floor: u32) -> Stats { /* 统一公式 */ }
-    pub fn spawn_weight(&self, floor: u32) -> f32 { /* 统一公式 */ }
-    // glyph/color/name 等退化为字段直接访问
-}
-```
+于是"加一只怪" = 加一条常量 + 在种类池里排一次位。查询退化为查表/字段访问：
+`monster_template(kind)` → `&'static MonsterTemplate`；`template.stats(floor)`；
+`template.spawn_weight(map_kind, floor)`（表里没有该地图的条目 = `0.0` = 不生成）。
 
-收益：
-- 加新怪物从改 7 个 match 变为加 1 行数据
-- 对外的 `monster_glyph(kind)` 等函数退化为 `template(kind).glyph` 等字段访问
-- 未来切换到 JSON 配置驱动只需改 `fn template()` 的加载源，调用方不变
+**背景与被否方案**
 
-**当前状态：** 暂缓。当前 `monster_stats` 等函数中的公式是直接赋值（裸数值），尚未抽象为统一的系数+公式体系。GAME.md 的数值标注体系（`[⃞计算]/[⃞直觉]/[⃞试调]`）也未完成。在公式体系设计就绪前，硬套系数反而引入硬编码的假灵活性。先记录方向，等 GAME.md 完成后再实施。
+- **被取代的旧计划（2026-09 作废）：** 本条曾停在"设计中，实验方向 / 暂缓"，
+  理由是"公式体系未就绪，硬套系数只会引入假灵活性"。H6 时该理由不再成立——
+  数值本来就是系数 + 公式，而**能力与权重是散落**（不是未抽象）：继续等只是让
+  "加一只怪要改三个文件"固化（ISSUES ECS32）。
+- **被否：把 `Can*` ZST 直接放进模板的列表字段。** 模板是 `Copy` 字面量**数据**，
+  `Can*` 是 bevy 组件；混进一张表会让"数据表"变成"组件清单"，加一行数据都要引用
+  `components`。中间留一层 `Ability` 枚举作 `Ability → Can*` 的**唯一**映射点
+  （`spawn::attach_abilities`），加一种能力由编译器逼着补那一支。
+- **被否：权重留在 `spawn.rs`。** "这只怪多常见"与"这只怪多强"是同一物种的两个属性，
+  分居两个文件的代价在 ECS32 里已经显形（读一处不够）。
+- **被否：按枚举顺序自动派生种类池**（池 = 有权重条目的物种，更整洁）。池序是
+  **RNG 敏感**的——`roll_one_kind` 按池序累加权重，派生会把 `LushCavern` 的池从
+  `[孢子怪, 蘑菇傀儡, 鼠, 哥布林]` 变成 `[鼠, 哥布林, 孢子怪, 蘑菇傀儡]`，行为静默改变。
+  池因此保持**显式数组**，顺序由 `kind_pools_keep_their_declared_order` 钉死。
+- **被否：`spawn_weight` 用 4 个裸 f32 字段**（旧草图的 `_base`/`_per_floor`/`_min`/`_max`）。
+  10 条曲线每条只用到一侧截断，裸字段会让"没用上的那侧填什么"变成暗规则。改用一个
+  `SpawnWeight`（`rising` / `falling` 两个构造器 + `clamp` 求值），没用上的一侧填无穷
+  ——于是 `.max(底)` 与 `.clamp(底, INF)` 在所有有限输入上**逐位相等**，搬迁不产生数值差异。
 
-**关联：** GAME.md Gm8（怪物设计）、LESSONS.md（无直接关联）
+**代价**
+
+1. **权重与池分居两个文件**：加物种要改两处（模板常量 + 种类池）。前者是数据、后者是顺序，
+   由 `pools_and_weights_cover_the_same_species` 维持"池 ⟺ 有权重条目"。不合并成一处是
+   有意的——合并只能靠"按枚举派生"，而那正是上面被否的那条。
+2. **位级比较绑住了公式形态**：`assert_eq!` 对 f64 是位级比较，任何**数学等价但舍入顺序不同**
+   的改写都可能被拒绝。这是刻意的：权重是行为，浮点差异会平移 `GameRng` 的消费。
+3. **`MonsterStats` 少了一个字段**：怪物不再自带恒为 `0.0` 的 `Magic` 占位
+   （原 ECS33 并入 ECS32 的那半条）。将来法系怪要蓝条，就在 spawn 时按需 `insert`，
+   而不是"每只怪都带一个 0"。
+
+**落地记录（H6 / H7）**
+
+| | 归位前 | 归位后 | 加一只怪要改 |
+|---|---|---|---|
+| 能力 | `spawn_monsters_system` 里四条 `insert` | 模板 `abilities` 列（`Ability` 枚举） | 常量里写一行 |
+| 权重 | `spawn.rs` 三层 `match`、10 条裸表达式 | 模板 `spawn` 列（`SpawnWeightFor` × 图表） | 常量里写一行 |
+| 种类池 | `spawn.rs` 三个显式数组 | **不变**（顺序是行为） | 池里排一次位 |
+
+- `spawn_weights_match_the_legacy_match_arms`：把归位前三层 `match` **原样抄进测试**，
+  3 地图 × 8 物种 × 6 楼层逐点 `assert_eq!`（f64 位级相等）。
+- `kind_pools_keep_their_declared_order` / `pools_and_weights_cover_the_same_species`：锁顺序、锁一致性。
+- `every_template_grants_the_legacy_ability_set` / `attach_abilities_maps_each_ability_to_its_marker`：锁能力集合。
+- **变异验证：** ① 把 `LUSH_KINDS` 的"鼠"提到首位 → `kind_pools_keep_their_declared_order` 失败；
+  ② 把鼠的繁茂下限 `0.5` 改成 `0.4` → `spawn_weights_match_the_legacy_match_arms` 失败。
+  两处都被**对应用例**接住，其余用例不受影响。
+
+**状态：** 已定 — H6/H7 已落地（`ecs_core/src/monster/template.rs`、`spawn.rs`，2026-09）。
+
+**关联：** ISSUES ECS32（已修复，含原 ECS33）| GAME.md Gm8（怪物数值）/ Gm10（按地图类型的权重口径）| DsnE13（静态属性表的同形做法）| DsnE11（能力/技能的三层结构，H10 将接上 `abilities`）
 
 ---
 

@@ -42,23 +42,6 @@
 
 ---
 
-<!-- &ECS32  物种信息散三处：能力在 spawn 代码、数值在模板、权重在 spawn.rs -->
-### ECS32 — 物种信息散在三处：`Can*` 能力在 spawn 代码、数值在模板、权重在 `spawn.rs` 🟡
-
-**问题：** `MonsterTemplate` 只有数值字段；**能力（`Can*`）在 `world/init.rs` 的 spawn 代码里插入**；**生成权重在 `monster/spawn.rs`**。于是"这只怪能做什么"要读三个文件，加一只怪要改多处。`DsnE6` 已把 `spawn_weight` 记为模板字段的方向，但**未落地**。
-
-**影响：** 🟡 中 — 阻碍"加一只怪 = 加一行数据"这个目标；设计已定方向，属未落地。
-
-**位置：** `ecs_core/src/world/init.rs`（`spawn_monsters_system` 的能力插入）、`ecs_core/src/monster/template.rs`、`ecs_core/src/monster/spawn.rs`
-
-**备注：** **待 H6 落地**。修法：能力/技能作为**模板的列表字段**（每物种固定但非全物种共有 → 列表，不展开成全字段 DTO）。
-> **同模块一并处理（原 ECS33，已并入本条，编号不回收）：** `MonsterTemplate`/`MonsterStats` 是全字段 DTO，
-> `Magic` 对所有怪物恒为 `0.0` 占位。修法与 ECS32 同源：模板只装 100% 需要的字段，
-> 按需数据在 spawn 时加组件——**中间 DTO 与模板同样受此约束**。
-<!-- &/ECS32 -->
-
----
-
 <!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
 ### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
 
@@ -141,6 +124,7 @@ H1 之后终态只有一个出口），执行器里的保活分支随之删除�
 **关联：** DESIGN DsnE8（设计哲学 → 保活检查，已标注本缺口）/ DsnE4（已合并进 DsnE8）；
 GAME.md Gm1 / Gm8；ECS35（终态出口，H1 已修复，本条的取消路径复用它）；
 REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置）。
+<!-- &/ECS43 -->
 
 ---
 
@@ -177,8 +161,8 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS29 | `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 | `ecs_core/src/rules/damage.rs`（新）、`ecs_core/src/combat/mod.rs`（适配器） | DsnE9 / DsnE10 |
 | ECS30 | 行动候选查询接受 actor 的**任意**子实体，持久子实体会污染仲裁 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/entity.rs` | DsnE12 / ECS41 |
 | ECS31 | `Tile` 的 5 处中央 match：加一个地形变体要改 5 个地方 | `ecs_core/src/map/tile.rs`（新）、`ecs_core/src/map/mod.rs`（改为转出） | LECS22 / DsnE13 / ECS22 |
+| ECS32 | 物种信息散三处 → 全部收进模板一行（能力列表 + 按地图的生成权重），去掉恒 0 的 `Magic` 占位（原 ECS33） | `ecs_core/src/monster/template.rs`、`spawn.rs`、`world/init.rs` | DsnE6 / DsnE11 |
 | ECS35 | 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 | `ecs_core/src/action/entity.rs`（`ActionEvents` 及 6 个 `execute_*_system`） | DsnE8 / ECS36 |
 | ECS36 | `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 | `ecs_core/src/action/entity.rs` | ECS35 |
 | ECS41 | 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出） | DsnE12 / ECS30 / ECS42 |
-<!-- &/ECS43 -->
 

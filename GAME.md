@@ -294,7 +294,8 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 ## Gm7 掉落物系统
 
 > ⬜**未迁移**：物品注册表 / 背包 / 掉落表 / 合成目前只在 `archive/` 旧实现里。
-> 例外：怪物经验与掉落权重已作为模板字段进入 `ecs_core`（`monster/template.rs`）。
+> 例外：怪物经验与**出现权重**已作为模板字段进入 `ecs_core`（`monster/template.rs` 的
+> `exp_base`… 与 `spawn` 列）；**掉落表本身仍未迁**（没有 `loot` 字段）。
 
 
 ### 设计参考

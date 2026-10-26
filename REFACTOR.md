@@ -28,10 +28,12 @@
 | H2 | 伤害结构化输入 + 因子分解（`rules/damage.rs`） | DsnE9 | `389e460` |
 | H3 | 调度按角色分组（`ActionPhase`） | DsnE8 | `5a9ea90` |
 | H4 | `TileProps` 静态属性表（`map/tile.rs`，加地形从改 6 处到 2 处） | DsnE13、ECS31 | `badfe1d` |
+| H6 | 物种能力归位：`abilities: &'static [Ability]` 进模板，spawn 代码不再列举物种名；删掉恒 0 的 `Magic` 占位 | DsnE6、ECS32 | 与 H7 同一提交 |
+| H7 | 生成权重归位：`spawn: &'static [SpawnWeightFor]` 进模板，`spawn.rs` 三层 `match` → 一次查表 | DsnE6、ECS32 | 与 H6 同一提交 |
 | H8 | 规则修正器求值侧（`rules/modifier.rs`：来源桶 / 两类位 / 过滤 / 折叠） | DsnE10 | `389e460` |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **96 passed**；`cargo test --workspace`
-28 目标 **320 passed / 0 failed**；`scripts/gate.ps1` 9 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **102 passed**；`cargo test --workspace`
+28 目标 **320 passed / 0 failed**；`scripts/gate.ps1` 10 步全绿。
 
 ---
 
@@ -41,8 +43,6 @@
 
 | # | 任务 | 位置 | 约束 |
 |---|---|---|---|
-| H6 | 物种信息归位：能力/技能作为**模板的列表字段**（现在能力散在 spawn 代码里） | `monster/template.rs`、`world/init.rs` | 解 ECS32；只换存放位置，不改数值 |
-| H7 | `spawn_weight` 进模板，删掉 `spawn.rs` 的三层 match | `monster/` | 补完 DsnE6；同值换位置 + parity 测试 |
 | H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 解 ECS27/ECS28 的接线前提；`TILE_PROPS.move_cost` 在此才接线 |
 | H11 | 效果实体模型 + **最小闭环一对**：地形减速（格子侧）× 无视地形的装备（actor 侧） | `ecs_core` | 挂载用专用关系 `EffectOf`（照 `ActionOf`），**不用 `ChildOf`**（ECS41/ECS42） |
 | H10 | 技能三层骨架（激活/委派/行为）+ **一个 dummy 技能** | 新模块 | **关键验收**：加 dummy 只改"新文件 + `ActionPhase::Execute` 一行"；超过则先修扩展点 |
