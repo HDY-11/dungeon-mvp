@@ -68,6 +68,8 @@ def main() -> int:
 
     for p, t in texts.items():
         rel = p.relative_to(ROOT).as_posix()
+        # `archive/` 是历史记录，本来就用来点名"已被删掉的东西"，不做交叉引用校验
+        skip_xref = rel.startswith("archive/")
         for lineno, line in enumerate(t.splitlines(), 1):
             if IGNORE in line:
                 continue
@@ -75,8 +77,13 @@ def main() -> int:
             if line.lstrip().startswith("**编号：**"):
                 continue
             legacy_hits += len(LEGACY_RE.findall(line))
+            if skip_xref:
+                continue
             for m in ID_RE.finditer(line):
                 eid = m.group(0)
+                # 「原 ECS33（已并入…）」这类**墓碑引用**是合法的：显式指向已删除条目
+                if re.search(r"原\s*" + re.escape(eid), line):
+                    continue
                 # `Dsn28` 这类无类别字母的旧写法不在 ID_RE 里，另行检查
                 if eid not in defined:
                     fails.append(f"{rel}:{lineno}  未定义的引用 {eid}")

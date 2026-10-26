@@ -79,11 +79,7 @@
 | SYN5 | 新 `core` 冒烟测试缺口：地图/移动/战斗/成长/视野/AI 无回归保障 | `core/src/`（`world/init.rs`、`world/loop_.rs` | SYN1 / SYN6 |
 | SYN6 | `core` doctest 因 crate 名 `core` 与标准库冲突失败（根因已消除：F5 改名 `ecs_core`） | `core/src/resources.rs:65` | DsnX15 |
 | SYN7 | 根集成测试失效，`cargo test -p dungeon-app` 无法编译 | `tests/`、`archive/legacy-tests/`、`Cargo.toml` |  |
-| SYN8 | Gm9 投掷伤害表与自身公式/代码不符 | `GAME.md:471-475` |  |
 | SYN9 | SL 刷掉落漏洞：RNG 状态不持久化，读档重放随机序列 | `dungeon-core/src/resources.rs`（GameRng）、`dungeon-action/src/execute.rs`（handle_kill）、`dungeon-world/src/persist.rs` |  |
-| SYN10 | RULE.md 编辑流程优化（移除宣誓 + 强化记录优先） | `RULE.md` §六 |  |
 | SYN11 | 主循环空闲 sleep 1ms 导致有限机型 CPU 满载 | `src/main.rs:88` |  |
-| SYN12 | 全部 `.unwrap()` 替换为 `.expect()` | — |  |
-| SYN13 | 斜向键无 OS key-repeat（Won't Fix — 终端环境限制） | — |  |
 <!-- &/SYN4 -->
 

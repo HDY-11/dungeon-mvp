@@ -11,39 +11,6 @@
 
 ## 待处理
 
-<!-- &ECS5  材料物品无消耗渠道；合成 Phase1 部分解决，待物品迁移后重评 -->
-### ECS5 — 材料物品无消耗渠道
-
-**问题：** 生物血肉（id=10）、破布（11）、坚硬木棍（12）、染血兽牙（13）、黑色甲壳（14）五种材料物品只能拾取和堆积，没有任何消耗途径。背包 36 格在 4-5 层后会被材料大量占用，玩家被迫在"拾取所有材料"和"留空间给有用物品"之间做无趣的选择。
-
-```rust
-// 当前材料的全部用途：占背包格
-// 没有任何合成/升级/交换/消耗机制消费它们
-```
-
-**影响：** 🟡 中 — 材料的存在感为零。玩家的理性选择是"忽略所有材料掉落"。
-
-**方案：** 模板碎片系统（DESIGN.md DsnX12）。碎片作为一次性消耗品，用材料合成指定物品。Phase 1 材料开始有出口，Phase 2 引入核心→完整模板。渐进实现。
-
-**状态：** 部分修复 — Phase 1 已落地（模板碎片作为独立消耗品掉落和使用，材料已有消耗渠道）。Phase 2（模板核心）与 Phase 3（实验级碎片）保持 Deferred。**注意：** 物品系统尚未迁移到 `ecs_core`（[DESIGN.md](DESIGN.md) DsnX13 S4），本条在物品迁移后需要重新评估。
-
-**位置：** `assets/items.json` items 10-14
-<!-- &/ECS5 -->
-
-<!-- &ECS6  战斗公式线性无层次：Won't Fix（怪物≥8 或武器≥3 时重评） -->
-### ECS6 — 战斗公式缺乏层次深度（Won't Fix — MVP 范围决策）
-
-**表现：** 当前 `max(攻击 - 防御, 1)` 的差值公式完全线性，1 点攻击永远对应 1 点伤害。无穿甲穿透、无元素属性/抗性、无距离衰减、无背后/侧击加成。装备增强集中在 +攻击/+防御 两个维度。
-
-**影响：** 🟢 低 — MVP 阶段可以接受。但扩展到 8+ 种怪物、3+ 种武器类型时，所有战斗都会感觉"差不多"——只有数值差异，没有策略差异。当需要设计"抗高攻怪"和"抗高防怪"两种不同策略时，当前公式无法提供区分度。
-
-**状态：** Won't Fix — MVP 范围决策。触发条件：怪物种类 ≥8 或武器类型 ≥3 时重新评估。
-
-**位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
-<!-- &/ECS6 -->
-
----
-
 <!-- &ECS27  地形没有"代价"维度：地形类减速/装备无处落地（H9 接线） -->
 ### ECS27 — 移动规则与 `Tile` API 都没有"地形代价"维度，地形类装备效果无落点 🟡
 
@@ -53,7 +20,8 @@
 
 **位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法）、`ecs_core/src/action/execution/movement.rs:32-66`（`can_move_to`）、`ecs_core/src/balance.rs:79`（`action_av`）
 
-**备注：** **记录在案，Phase H 逐项确认**。修法见 DESIGN DsnE10 / DsnE13；具体代价数值属 GAME.md。
+**备注：** 修法见 DESIGN DsnE10 / DsnE13；具体代价数值属 GAME.md。
+**进展：** H4 已加 `TILE_PROPS.move_cost` 预留列（恒 1.0、未接线）；**H9 才把它接进移动 AV**。
 <!-- &/ECS27 -->
 
 ---
@@ -67,7 +35,9 @@
 
 **位置：** `ecs_core/src/action/entity.rs`（`ActorSpeeds` / `actor_speeds`，现有范例）、`ecs_core/src/action/execution/movement.rs`
 
-**备注：** **记录在案，Phase H 逐项确认**。形态见 DESIGN DsnE10（修正器在系统层求值、纯函数只吃结果、pull 读取）。
+**备注：** 形态见 DESIGN DsnE10（修正器在系统层求值、纯函数只吃结果、pull 读取）。
+**进展：** H8 已落地**求值侧 ③④⑤**（`rules/modifier.rs`：分桶 → 过滤 → 折叠 → 纯函数，
+接 `SpeedRule::action_av`，空桶等于旧口径）；**①②（收桶）仍待 H9/H11**。
 <!-- &/ECS28 -->
 
 ---
@@ -81,22 +51,11 @@
 
 **位置：** `ecs_core/src/world/init.rs`（`spawn_monsters_system` 的能力插入）、`ecs_core/src/monster/template.rs`、`ecs_core/src/monster/spawn.rs`
 
-**备注：** **记录在案，Phase H 逐项确认**。修法：能力/技能作为**模板的列表字段**（每物种固定但非全物种共有 → 列表，不展开成全字段 DTO）。
+**备注：** **待 H6 落地**。修法：能力/技能作为**模板的列表字段**（每物种固定但非全物种共有 → 列表，不展开成全字段 DTO）。
+> **同模块一并处理（原 ECS33，已并入本条，编号不回收）：** `MonsterTemplate`/`MonsterStats` 是全字段 DTO，
+> `Magic` 对所有怪物恒为 `0.0` 占位。修法与 ECS32 同源：模板只装 100% 需要的字段，
+> 按需数据在 spawn 时加组件——**中间 DTO 与模板同样受此约束**。
 <!-- &/ECS32 -->
-
----
-
-<!-- &ECS33  MonsterTemplate/MonsterStats 是全字段 DTO，Magic 恒 0 占位 -->
-### ECS33 — `MonsterTemplate`/`MonsterStats` 是全字段 DTO，`Magic` 是恒 `0.0` 占位 🟢
-
-**问题：** `template.rs` 的 `stats()` 无条件产出 `MonsterStats` 的全部字段，`monster_base_bundle` 再逐字段搬进实体。其中 `magic: Magic::new(0.0)` 对所有怪物恒为占位值，而 `stats.magic` 的**唯一消费者是玩家**的构建——即"怪物从来不用，却作为字段强制声明"。新增按物种可选的数据（抗性/技能等）会继续以占位值形态堆进这个 DTO。
-
-**影响：** 🟢 低 — 不写不读、无行为后果；但它是"新增按需字段"的第一道阻力。
-
-**位置：** `ecs_core/src/monster/template.rs:85-121`（`MonsterStats` / `stats()`）、`ecs_core/src/world/init.rs:310-334`（`monster_base_bundle`）
-
-**备注：** **记录在案，Phase H 逐项确认**。修法：模板只装 100% 需要的字段；按需数据改用组件在 spawn 时添加。**中间 DTO 与模板同样受此约束**，否则只是把占位值从模板挪到 DTO。
-<!-- &/ECS33 -->
 
 ---
 
@@ -109,7 +68,7 @@
 
 **位置：** `ecs_core/src/world/init.rs:346`
 
-**备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
+**备注：** **待 H5 处置**（该轮只记录、不改代码）。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
 <!-- &/ECS34 -->
 
 ---
@@ -202,28 +161,17 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 
 | id | 修复后的行为（一句话） | 位置 | 参考 |
 |---|---|---|---|
-| ECS1 | 行动实体 + 速度组件：AV 系统与 `ActionKind` 的替代设计（草案） | — | DsnE8 / ECS2 / ECS3 |
 | ECS2 | 玩法系统用 exclusive `&mut World` 代替正常系统 | `core/src/action/execution/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/mod.rs` | DsnE8 / ECS3 / ECS8 |
 | ECS3 | 删除 `ActionKind`：行动改为 action 子实体 | `core/src/action/mod.rs`、`core/src/action/generation/ai.rs`、`core/src/action/generation/player.rs` | DsnE8 |
 | ECS4 | `finish_action_failure` 不清 `Idle`：actor 可同时持有 `Idle` + `Failure` | `core/src/action/mod.rs:71-81`（`finish_action_success` / `finish_action_failure`） |  |
 | ECS7 | 删除 `Agility`，改为 `MoveSpeed` / `AttackSpeed` | `core/src/components.rs`（`MoveSpeed`/`AttackSpeed`/`Speed`） | DsnE8 / ECS8 |
 | ECS8 | AV 门禁缺失：`ActionTimer` 未参与执行判断 | `core/src/action/execution/mod.rs:21-38`（tick）、`:42-303`（execute_*）、`:305-313`（run_action_cycle）；`core/src/world/loop_.rs:36-43`（advance_until_player_acted） | ECS3 / ECS7 |
 | ECS9 | 事件生命周期错误：`EventReader` 每轮重读历史事件 | `core/src/system/mod.rs:257-282`（build_core_schedule/run_settle_systems）、`core/src/world/init.rs:70-76`（Events 注册）、`core/src/world/init.rs:393-416`（build_init_schedule/run_initialization） | DsnE8 |
-| ECS10 | Gm4 玩家初始 HP 文档算术错误：28 vs 实现 33 | `GAME.md:152` |  |
-| ECS11 | Gm6 熟练度表格与公式/代码错位一级 | `GAME.md:194-195`（Gm5）、`GAME.md:223-228`（Gm6） |  |
-| ECS12 | Gm1 移动耗时 300ms 与 Gm7 武器攻速矛盾，CanMove.duration 成死字段 | `GAME.md:14` |  |
-| ECS13 | Gm3 升级经验表 round vs 实现 trunc（每级差 1） | `GAME.md:106-120` |  |
-| ECS14 | Gm6 卷轴「每层 1-3 张」未记载深层增量 | `GAME.md:201` |  |
 | ECS15 | 怪物种群补足循环无进展保证，深层/水域地图可死循环 | `dungeon-world/src/population.rs`（generate_monster_population 补足段） |  |
-| ECS16 | 单房间地面物品放置 random_range 空区间 panic | `dungeon-world/src/init.rs`（place_ground_items 单房间分支） |  |
-| ECS17 | pick_stair_pos 兜底坐标未钳制，可引发越界 panic | `dungeon-world/src/init.rs`（pick_stair_pos 兜底） |  |
-| ECS18 | 护盾/狂暴实际时长约为文档宣称 3 倍，技能超模 | `dungeon-core/src/items.rs`（use_item 卷轴学习）、`GAME.md:98-99/194-195` |  |
 | ECS19 | 玩家近战攻击无距离校验，可隔空命中已离开的怪物 | `dungeon-action/src/execute.rs`（check_condition/execute_attack/adjacent_8） | LECS20 / ECS20 |
 | ECS20 | 逃跑怪物永不回头：滞回未落地 + 卡墙角原地挨打 | `dungeon-core/src/ops.rs`（FLEE_HP_RATIO_EXIT）、`dungeon-action/src/execute.rs`（check_condition/execute_flee/monster_attack_player） |  |
 | ECS21 | 对角穿墙（corner-cutting）：玩家与怪物均可斜穿墙角 | `dungeon-action/src/execute.rs`（can_move_to）、`dungeon-action/src/player.rs`、`dungeon-core/src/pathfinding.rs`（astar） |  |
 | ECS22 | `ensure_connectivity` 直线收尾挖单格而非 2x2（G22 修复不完整） | `dungeon-core/src/map_gen.rs`（carve_2x2） |  |
-| ECS23 | `place_ground_items` 单房间退路硬编码 `SmallRng::seed_from_u64(42)` | `dungeon-world/src/init.rs` | DsnE5 |
-| ECS24 | `place_skill_scrolls` 缺少 exclude 参数 | `dungeon-world/src/init.rs:94` |  |
 | ECS25 | 同类死抽象/重复表示清理 | 清单已归档（`docs-pre-governance` tag） |  |
 | ECS26 | 楼梯/地面物品可能生成在不可行走格上 + 通道 4 方向断裂 | `dungeon-world/src/init.rs`（pick_stair_pos/place_ground_items）、`dungeon-world/src/persist.rs`、`dungeon-core/src/map_gen.rs`（generate_stalactites/ensure_connection_between/ensure_connectivity） |  |
 | ECS29 | `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 | `ecs_core/src/rules/damage.rs`（新）、`ecs_core/src/combat/mod.rs`（适配器） | DsnE9 / DsnE10 |

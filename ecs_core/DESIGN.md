@@ -131,7 +131,7 @@ wander_decision_system ─┘
 **原编号：** `DsnE5`（迁移前）
 <!-- &/DsnE5 -->
 
-<!-- &DsnE6  物种数值收进模板表；能力与生成权重仍待归位(ECS32/ECS33) -->
+<!-- &DsnE6  物种数值收进模板表；能力与生成权重仍待归位(ECS32，含原 ECS33 的 DTO 问题) -->
 ### DsnE6 MonsterTemplate 结构体统一 — 设计中，实验方向
 
 **决策（暂缓执行）**
