@@ -48,6 +48,7 @@ use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{GameRng, OccupancyMap};
+use crate::effect::EffectContext;
 use crate::rules::{EffectSource, Modifier, apply_modifiers};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
@@ -84,14 +85,18 @@ type PlayerActorData = (
     Option<&'static AttackSpeed>,
 );
 
-/// 一个 AI actor 的数据：实体 id + 移动速度。
+/// 一个 AI actor 的数据：实体 id + 移动速度 + 所在格。
 ///
 /// 用 `Option<&MoveSpeed>` 而不是必需组件——理由见 [`actor_speeds`]：
 /// 必需组件会让漏挂速度的 actor 直接从查询里消失（LESSONS.md LECS21）。
 ///
+/// `&Position` 是 `&'static`（必需）：收桶要读**脚下这一格的**修正（`EffectContext::collect`），
+/// 没有位置就没有格子可言。缺位置的 actor 本来也无法执行移动类行动，
+/// 因此这里用必需组件是"提前失败"，不是新的静默风险。
+///
 /// `With<C>` / `Without<Active>` / `Or<..>` 是 **filter**，不能写进数据元组，
 /// 所以必须与 [`AiActor`] 一起作为 `Query` 的两个泛型参数给出去。
-type AiActorData = (Entity, Option<&'static MoveSpeed>);
+type AiActorData = (Entity, Option<&'static MoveSpeed>, &'static Position);
 
 /// 仲裁的输入：尚未激活的候选（优先级 + 归属）。
 ///
@@ -370,18 +375,24 @@ fn actor_speeds(
 pub fn wander_generation_system(
     mut commands: Commands,
     actors: Query<AiActorData, AiActor<CanWander>>,
+    effects: EffectContext,
 ) {
-    for (actor, move_speed) in &actors {
+    for (actor, move_speed, position) in &actors {
+        let collected = effects.collect(actor, position.to_tuple());
         commands.spawn((
             ActionOf(actor),
             ActionPriority(PRIORITY_WANDER),
             ActionSource::Ai,
             ActionName("Wander"),
             ActionTimer {
-                remaining_av: SpeedRule::Move.action_av(
+                remaining_av: SpeedRule::Move.action_av_ignoring(
                     WANDER_DURATION,
                     actor_speeds(actor, move_speed, None),
-                    SpeedModifiers::EMPTY,
+                    SpeedModifiers {
+                        actor: &collected.actor,
+                        cell: &collected.cell,
+                    },
+                    &collected.ignored,
                 ),
             },
             Wander,
@@ -396,22 +407,28 @@ pub fn wander_generation_system(
 /// 以及给 §3.6.4「每个行为一个生成系统」提供第二个样本。
 pub fn flee_generation_system(
     mut commands: Commands,
-    actors: Query<(Entity, Option<&MoveSpeed>, &Health), AiActor<CanFlee>>,
+    actors: Query<(Entity, Option<&MoveSpeed>, &Health, &Position), AiActor<CanFlee>>,
+    effects: EffectContext,
 ) {
-    for (actor, move_speed, health) in &actors {
+    for (actor, move_speed, health, position) in &actors {
         if health.ratio() >= FLEE_HP_RATIO {
             continue;
         }
+        let collected = effects.collect(actor, position.to_tuple());
         commands.spawn((
             ActionOf(actor),
             ActionPriority(PRIORITY_FLEE),
             ActionSource::Ai,
             ActionName("Flee"),
             ActionTimer {
-                remaining_av: SpeedRule::Move.action_av(
+                remaining_av: SpeedRule::Move.action_av_ignoring(
                     FLEE_DURATION,
                     actor_speeds(actor, move_speed, None),
-                    SpeedModifiers::EMPTY,
+                    SpeedModifiers {
+                        actor: &collected.actor,
+                        cell: &collected.cell,
+                    },
+                    &collected.ignored,
                 ),
             },
             Flee,
@@ -459,13 +476,14 @@ pub fn chase_generation_system(
     viewsheds: Query<&Viewshed>,
     last_known: Query<&LastKnownPlayerPos>,
     player: Query<&Position, With<Player>>,
+    effects: EffectContext,
 ) {
     let Ok(player_position) = player.single() else {
         return;
     };
     let player_position = player_position.to_tuple();
 
-    for (actor, move_speed) in &actors {
+    for (actor, move_speed, position) in &actors {
         let can_see = viewsheds
             .get(actor)
             .ok()
@@ -477,16 +495,21 @@ pub fn chase_generation_system(
         if !can_see && !has_memory {
             continue;
         }
+        let collected = effects.collect(actor, position.to_tuple());
         commands.spawn((
             ActionOf(actor),
             ActionPriority(PRIORITY_CHASE),
             ActionSource::Ai,
             ActionName("Chase"),
             ActionTimer {
-                remaining_av: SpeedRule::Move.action_av(
+                remaining_av: SpeedRule::Move.action_av_ignoring(
                     CHASE_DURATION,
                     actor_speeds(actor, move_speed, None),
-                    SpeedModifiers::EMPTY,
+                    SpeedModifiers {
+                        actor: &collected.actor,
+                        cell: &collected.cell,
+                    },
+                    &collected.ignored,
                 ),
             },
             Chase,
@@ -549,6 +572,7 @@ pub fn player_action_generation_system(
     players: Query<PlayerActorData, (With<Player>, Without<Active>)>,
     monsters: Query<(), With<Monster>>,
     movement: MovementContext,
+    effects: EffectContext,
 ) {
     let Some(command) = request.command.take() else {
         return;
@@ -596,10 +620,16 @@ pub fn player_action_generation_system(
         }
     };
 
-    let remaining_av = rule.action_av(
+    // 收桶（求值第 ② 步）：玩家脚下这一格的修正 + 玩家名下效果声明的无视来源。
+    let collected = effects.collect(player, position.to_tuple());
+    let remaining_av = rule.action_av_ignoring(
         duration,
         actor_speeds(player, move_speed, attack_speed),
-        SpeedModifiers::EMPTY,
+        SpeedModifiers {
+            actor: &collected.actor,
+            cell: &collected.cell,
+        },
+        &collected.ignored,
     );
 
     let mut action_cmd = commands.spawn((

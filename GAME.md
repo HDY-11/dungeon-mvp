@@ -594,6 +594,12 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 **可通行/阻挡视线这两列在代码里的唯一来源是 `Tile::props()`（`ecs_core/src/map/tile.rs` 的
 `TILE_PROPS` 表）**，本表同样只是镜像（Phase H4 / DESIGN DsnE13）。
 
+**地形代价（`move_cost`）当前恒为 `1.0`，数值口径未定**：`TILE_PROPS` 已有这一列、
+移动 AV 也已经真的消费它（Phase H9 接线），但**表里没有一个非 1.0 的值**——
+所以"某些地形变慢"这件事还没有内容，只有位置。要启用时：先在本表加一列写明倍率
+（`[⃞试调]`），再改 `TILE_PROPS`；`terrain_move_cost_is_still_a_neutral_placeholder`
+这条测试会拦住"代码里偷偷填数"。
+
 ### 地图类型与环境参数（原 DsnE7）
 
 楼层类型由 `map_kind_for(seed, floor)` **确定性派生**：F1 固定标准洞穴（新手层），

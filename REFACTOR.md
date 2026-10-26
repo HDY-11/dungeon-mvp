@@ -31,9 +31,15 @@
 | H6 | 物种能力归位：`abilities: &'static [Ability]` 进模板，spawn 代码不再列举物种名；删掉恒 0 的 `Magic` 占位 | DsnE6、ECS32 | 与 H7 同一提交 |
 | H7 | 生成权重归位：`spawn: &'static [SpawnWeightFor]` 进模板，`spawn.rs` 三层 `match` → 一次查表 | DsnE6、ECS32 | 与 H6 同一提交 |
 | H8 | 规则修正器求值侧（`rules/modifier.rs`：来源桶 / 两类位 / 过滤 / 折叠） | DsnE10 | `389e460` |
+| H9 | 格子属性统一读取入口（`effect::cell_attributes`）+ 格子效果的格索引（`CellEffects`，照 `OccupancyMap` 每轮重建）+ `move_cost` 接线 | DsnE13、ECS27 | 与 H11 同一提交 |
+| H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **102 passed**；`cargo test --workspace`
-28 目标 **320 passed / 0 failed**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **121 passed**；`cargo test --workspace`
+28 目标 **345 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+
+**H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
+级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
+来源桶集合 → 维持 `Intrinsic`/`Equipment`/`Status`/`Terrain` 四项不拆。
 
 ---
 
@@ -43,14 +49,8 @@
 
 | # | 任务 | 位置 | 约束 |
 |---|---|---|---|
-| H9 | 格子属性统一读取入口 + 效果实体的位置索引（照 `OccupancyMap`） | `map/`、`resources.rs` | 解 ECS27/ECS28 的接线前提；`TILE_PROPS.move_cost` 在此才接线 |
-| H11 | 效果实体模型 + **最小闭环一对**：地形减速（格子侧）× 无视地形的装备（actor 侧） | `ecs_core` | 挂载用专用关系 `EffectOf`（照 `ActionOf`），**不用 `ChildOf`**（ECS41/ECS42） |
 | H10 | 技能三层骨架（激活/委派/行为）+ **一个 dummy 技能** | 新模块 | **关键验收**：加 dummy 只改"新文件 + `ActionPhase::Execute` 一行"；超过则先修扩展点 |
 | H12 / H13 / H14 | 判据成文（`LECS22`）/ 两类测试纪律 / 格子身份判据（`DsnE13`） | 文档 | 随上面几项收尾时一起落地 |
-
-**H9/H11 开工前要定的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
-级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
-来源桶集合 → 维持 `Intrinsic`/`Equipment`/`Status`/`Terrain` 四项不拆。
 
 ### 2.2 渲染后端（DsnX14 的 R2–R4）
 

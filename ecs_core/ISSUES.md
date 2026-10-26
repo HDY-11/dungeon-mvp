@@ -11,37 +11,6 @@
 
 ## 待处理
 
-<!-- &ECS27  地形没有"代价"维度：地形类减速/装备无处落地（H9 接线） -->
-### ECS27 — 移动规则与 `Tile` API 都没有"地形代价"维度，地形类装备效果无落点 🟡
-
-**问题：** `Tile` 的公开 API 只有 `glyph()` / `walkable()` / `blocking()`，全部是二值；`can_move_to` 只判"能否走 + 是否被占用"；移动 AV = `base_duration / clamp(speed)`，`base_duration` 是常量，**不随目标地块变化**。因此"地形减速"这不是"有但无视不了"，而是**该能力根本不存在**——"无视某类地形减速"这类装备效果无处落地。
-
-**影响：** 🟡 中 — 阻断"地形影响移动"这一整类设计（地形代价、地形类装备、地形类状态），而 `DsnE8` 已记「地形 → `MoveSpeed`」的方向，说明这是既定设计方向的实现缺口。
-
-**位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法）、`ecs_core/src/action/execution/movement.rs:32-66`（`can_move_to`）、`ecs_core/src/balance.rs:79`（`action_av`）
-
-**备注：** 修法见 DESIGN DsnE10 / DsnE13；具体代价数值属 GAME.md。
-**进展：** H4 已加 `TILE_PROPS.move_cost` 预留列（恒 1.0、未接线）；**H9 才把它接进移动 AV**。
-<!-- &/ECS27 -->
-
----
-
-<!-- &ECS28  规则层拿不到"执行者身上有什么"：修正器求值入口缺失（DsnE10） -->
-### ECS28 — 规则层扩展点缺失：规则无法获知"执行者身上有什么" 🟡
-
-**问题：** `movement.rs` 的分层卖点是**纯规则不碰 `World`**，但装备/状态类效果要求规则知道"移动者是谁、带了什么"。直接给纯函数加 `&World` 参数会退回 `ECS2` 所批评的形态（把读资源与读组件揉进一次调用），并丢掉可单测性。项目现有正确范例是 `ActorSpeeds`（系统层查询 → 纯数据输入给 `action_av`），但**没有推广成通用形态**，因此每加一类"规则修正"都要重新决定怎么接。
-
-**影响：** 🟡 中 — 装备、状态、地形三类影响都卡在这里；不推广则每类各写一套接法。
-
-**位置：** `ecs_core/src/action/entity.rs`（`ActorSpeeds` / `actor_speeds`，现有范例）、`ecs_core/src/action/execution/movement.rs`
-
-**备注：** 形态见 DESIGN DsnE10（修正器在系统层求值、纯函数只吃结果、pull 读取）。
-**进展：** H8 已落地**求值侧 ③④⑤**（`rules/modifier.rs`：分桶 → 过滤 → 折叠 → 纯函数，
-接 `SpeedRule::action_av`，空桶等于旧口径）；**①②（收桶）仍待 H9/H11**。
-<!-- &/ECS28 -->
-
----
-
 <!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
 ### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
 
@@ -53,34 +22,6 @@
 
 **备注：** **待 H5 处置**（该轮只记录、不改代码）。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
 <!-- &/ECS34 -->
-
----
-
-<!-- &ECS42  linked_spawn 语义相反：状态效果要级联，装备掉落物不能级联 -->
-### ECS42 — `linked_spawn` 的语义对不同效果是相反的：状态效果要级联，装备不能级联 🟡
-
-**问题：** 用关系挂载效果时，"拥有者 `despawn` 是否级联 `despawn` 效果"必须逐类决定，
-而两类效果要的答案**相反**：
-
-| 效果 | 期望 | 用 `linked_spawn` |
-|---|---|---|
-| 状态效果（中毒、护盾、加速） | 人死了效果消失 | ✅ 对 |
-| 技能授予的持续效果 | 施法者没了效果没了 | ✅ 对（但"自杀并把地块变成生成器"这类**不属于此类**，见 DsnE12） |
-| **装备（掉落物）** | 人死了**掉出来**给玩家拾取 | ❌ **错**：战利品随尸体一起消失 |
-
-即：把"效果"当成一个统一的类别去套同一个级联语义，会得到**一个静默的数据丢失 bug**
-（怪物死了、装备没了），而且它只在"玩家击杀带装备的怪物"时才显现。
-
-**影响：** 🟡 中 — 影响掉落与装备整条链路；失败模式是静默消失（无报错、无日志）。
-
-**位置：** 尚无代码落点（H9/H11 落地时才会出现）；设计落点 DESIGN DsnE12 第 1 条的落点表。
-
-**修法：** 装备的落点**单独决定**（DsnE12 的开放项）——按 `DsnE13` 的判据：装备若需要
-**独立身份**（可被偷、单独销毁、单独耐久），就用实体关系但**关闭 `linked_spawn`**；
-若不需要，则用"位置 + `Equipment` 组件"表达，"掉在地上"就是换了位置。
-
-**关联：** ECS41、DESIGN DsnE12 第 1 条与开放项；REFACTOR §2.1（H9/H11 未完成）。
-<!-- &/ECS42 -->
 
 ---
 
@@ -158,6 +99,8 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS22 | `ensure_connectivity` 直线收尾挖单格而非 2x2（G22 修复不完整） | `dungeon-core/src/map_gen.rs`（carve_2x2） |  |
 | ECS25 | 同类死抽象/重复表示清理 | 清单已归档（`docs-pre-governance` tag） |  |
 | ECS26 | 楼梯/地面物品可能生成在不可行走格上 + 通道 4 方向断裂 | `dungeon-world/src/init.rs`（pick_stair_pos/place_ground_items）、`dungeon-world/src/persist.rs`、`dungeon-core/src/map_gen.rs`（generate_stalactites/ensure_connection_between/ensure_connectivity） |  |
+| ECS27 | 移动与格子都有"代价"维度：`TILE_PROPS.move_cost` 接进移动 AV，格子效果提供 `Terrain` 桶乘区 | `ecs_core/src/effect/cell.rs`、`effect/collect.rs`、`map/tile.rs` | DsnE13 / DsnE10 / DsnE12 |
+| ECS28 | 规则层扩展点：`EffectContext::collect` → `CollectedModifiers`，规则仍只吃纯数据 | `ecs_core/src/effect/collect.rs`、`action/entity.rs`（`SpeedRule::action_av_ignoring`） | DsnE10 / DsnE12 |
 | ECS29 | `compute_melee_damage` 的签名无扩展位，返回类型是黑箱 | `ecs_core/src/rules/damage.rs`（新）、`ecs_core/src/combat/mod.rs`（适配器） | DsnE9 / DsnE10 |
 | ECS30 | 行动候选查询接受 actor 的**任意**子实体，持久子实体会污染仲裁 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/entity.rs` | DsnE12 / ECS41 |
 | ECS31 | `Tile` 的 5 处中央 match：加一个地形变体要改 5 个地方 | `ecs_core/src/map/tile.rs`（新）、`ecs_core/src/map/mod.rs`（改为转出） | LECS22 / DsnE13 / ECS22 |
@@ -165,4 +108,5 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS35 | 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 | `ecs_core/src/action/entity.rs`（`ActionEvents` 及 6 个 `execute_*_system`） | DsnE8 / ECS36 |
 | ECS36 | `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 | `ecs_core/src/action/entity.rs` | ECS35 |
 | ECS41 | 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出） | DsnE12 / ECS30 / ECS42 |
+| ECS42 | 级联语义相反的两类效果用两个关系类型分开：`EffectOf`（级联）/ `EquippedBy`（不级联） | `ecs_core/src/effect/ownership.rs`（新） | DsnE12 |
 

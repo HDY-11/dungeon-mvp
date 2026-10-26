@@ -61,6 +61,9 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(MapMemory::new());
     world.insert_resource(VisibleMemory::default());
     world.insert_resource(OccupancyMap::new());
+    // 格索引：格子侧效果的派生数据，由 `rebuild_cell_effects_system` 每轮重建
+    // （H9；形状照 `OccupancyMap`，但它是效果子系统的私有索引，见 `effect/cell.rs`）。
+    world.insert_resource(crate::effect::CellEffects::new());
     world.insert_resource(EventLog::new());
     world.insert_resource(TurnManager::new());
     world.insert_resource(PlayerSpawn((0, 0)));

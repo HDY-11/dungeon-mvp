@@ -642,8 +642,9 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
    > **落地进展（Phase H）：** 行动侧那一半**已经落地**——`ActionOf` / `ActionChildren`
    > （`ecs_core/src/action/ownership.rs`）取代了行动链里的 `ChildOf`，
    > 候选查询因此**结构上**匹配不到非行动实体（ISSUES ECS30 / ECS41 已修复）。
-   > 效果侧那一半（`EffectOf` / `OwnedEffects`）随 H11 落地；
-   > 届时不变量是：**两套关系互不可见**，所以"效果不能参与行动仲裁"由编译期保证。
+   > 效果侧那一半**也已落地（H11）**：`EffectOf` / `OwnedEffects`（级联）与
+   > `EquippedBy` / `EquippedItems`（**不**级联）在 `ecs_core/src/effect/ownership.rs`。
+   > 不变量成立：**两套关系互不可见**，所以"效果不能参与行动仲裁"由编译期保证。
 
    | 效果落点 | 归属 | 读取方式 | 级联语义 |
    |---|---|---|---|
@@ -704,9 +705,51 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 | REFACTOR §2.1（Phase H 剩余）（H9/H11） | DsnE11（三层结构第③层）
 | **DsnE10（求值侧）** | DsnE13（索引还是实体的判据）| `OccupancyMap`（既有范例）
 
-**状态：** 已定 — 已改写定案（形状），**待落地**（H9 格索引、H11 最小闭环）。
-三个开放项**全部定案**（2026-09）：装备用两个关系类型分开级联语义、格子效果每格一实体 + 格索引、
-来源桶维持四项（不拆）。
+**落地记录（H9 / H11，2026-09）**
+
+`ecs_core/src/effect/` 三个文件，对应本条的三个落点与一条读取入口：
+
+| 落点 | 落地物 | 级联 |
+|---|---|---|
+| actor 拥有的持续效果 | `ownership::EffectOf` / `OwnedEffects` | ✅ `linked_spawn` |
+| 装备 | `ownership::EquippedBy` / `EquippedItems` | ❌ 不级联（**实测**：拥有者消失后装备存活，`EquippedBy` 被关系机制自动清掉 → 正是"无主待认领"的状态） |
+| 格子效果 | `cell::CellEffectAt` + `CellEffects`（`[[Option<Entity>; W]; H]`，照 `OccupancyMap`）+ 每轮重建的 `rebuild_cell_effects_system` | 与 actor 无父子关系 |
+
+- **统一读取入口 = `cell_attributes(&TileProps, Option<&CellMoveCost>) -> CellAttributes`**：
+  地形表与格子效果合成一个可解释的结构（`walkable` / `blocks_vision` / `move_cost` / `has_effect`）。
+  取 `&TileProps` 而不是 `Tile`，是为了让"读表"这件事能被单测钉住（合成一个 `move_cost: 2.5`
+  的属性即可断言，不必改 `TILE_PROPS` 的数值）。
+- **收桶 = `EffectContext::collect(actor, cell) -> CollectedModifiers`**：这是 ECS28 要的那条接缝，
+  系统层一次查询拿齐"脚下这一格的修正 + actor 名下效果声明的无视来源"，
+  纯规则仍然只吃 `&[Modifier]` + `&[EffectSource]`。
+- **最小闭环一对**：`cell::CellMoveCost`（格子侧，贡献 `Terrain` 桶的速度乘区）与
+  `IgnoresSource`（actor 侧，让求值第 ③ 步丢掉该桶）。验收在 `effect_tests.rs`：
+  同一格 `2.0` 代价 → 移动 AV 是平地两倍；给 actor 挂 `IgnoresSource::TERRAIN` → 回到平地值；
+  挂 `IgnoresSource(Status)` → **仍**是两倍（无视是**按桶**生效，退化成一个布尔会当场失败）。
+  **规则层（`rules/modifier.rs`）一行没改。**
+
+**用哪一格：脚下，而不是"要去的那一格"**
+
+AV 在**生成期**固化（`SpeedRule` 的既有约定）。玩家的 `Move` 在生成期知道方向，
+但 AI 的 `Chase`/`Flee`/`Wander` **不知道**——方向是执行期才在 `execute_*_system` 里定的。
+所以"目标格"口径要求把 AI 的 AV 计算整体推到执行期，那会推翻"AV 挂载时固化"。
+取脚下这一格则始终是生成期确定的事实。**代价**：踏入减速格的**这一步本身不变慢**（下一步才慢）；
+要做"进入即变慢"是一次独立换道。
+
+**`CellEffectAt` 为什么不复用 `Position`**
+
+`rebuild_occupancy_system` 的查询是 `Query<(Entity, &Position, Option<&Stairs>)>`——**任何**
+带 `Position` 的实体都会被登记进占用图。格子效果若用 `Position`，立刻变成"占着格子"的实体：
+玩家走不进一块本来能走的泥潭，且无任何报错。这是本项目第三次踩同一类问题
+（`ChildOf` 的候选查询、`Position` 的占用图、这次），测试 `cell_effects_do_not_enter_the_occupancy_map` 把它钉住。
+
+**变异验证：** 把格子修正的来源桶从 `Terrain` 改成 `Status` → **4 条用例失败**
+（最小闭环两条 + 收桶断言 + "无视是按桶生效"那条），而"两倍代价变慢"那条**仍然通过**
+——正好证明这几条测试区分的是"变慢了"与"在正确的桶下变慢"。
+
+**状态：** 已定 — 形状与 H9/H11 **均已落地**；三个开放项全部定案（2026-09）。
+**未落地**：装备侧的实际物品（物品系统未迁移，R2/S4）；格子效果的时长/解除路径（尚无第二个效果，
+owner 系统按 DsnE12 第 4 条届时一并加）。
 
 ---
 
@@ -762,23 +805,27 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 `ids_match_the_pre_h4_serde_mapping` / `properties_match_the_pre_h4_values`
 逐值钉住搬迁前的口径（防止抄错一格）。
 
-**`move_cost` 是 H8 的预留位**：本轮只加列、恒为 1.0、**不接线**——
-移动 AV 仍只由 `MoveSpeed` 决定。`move_cost_is_still_a_reserved_slot` 守住这一点，
-防止"顺手填值"绕过 GAME.md（数值口径待定，见 DESIGN DsnX16）。
+**`move_cost` 的接线（H9）**：`TILE_PROPS.move_cost` 已**真的被消费**——移动类行动的 AV 由
+`EffectContext::collect` 收进 `Terrain` 桶的乘区（`1/move_cost`）。但**表里没有非 1.0 的值**，
+所以"地形变慢"目前没有内容、只有位置（数值口径属 GAME.md，见 DESIGN DsnX16）。
+`terrain_move_cost_is_still_a_neutral_placeholder` 守住"代码里不许偷偷填数"，
+`cell_attributes_consume_the_terrain_move_cost_column` 用一个合成的 `move_cost: 2.5` 证明这一列
+**确实被读**（后者防的正是"接线了但没人读"这种空实现）。
 
 **变异验证：** 交换 `Tile::Wall` 与 `Tile::Floor` 的声明顺序 → 20+ 个用例失败
 （地图/移动/视野都读地形身份）。这既是"判别值受保护"的证据，也说明
 **枚举声明顺序是领域事实**，不是可以随手整理的排版。
 
-**关联：** REFACTOR §1（Phase H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）。
+**关联：** REFACTOR §1（Phase H4 / H9）；ISSUES ECS31、ECS27（`move_cost` 的来处，均已修复）。
 
-**状态：** 已定 — 第 1 项（静态属性表）**已落地**（Phase H4，见 DsnE8「Phase H4 进展」）；第 2–4 项待落地（H9 / H11）。
+**状态：** 已定 — 四项**全部落地**（第 1 项 H4；第 2–3 项 H9）。
 
 - ✅ **第 1 项已实现**：`ecs_core/src/map/tile.rs` 的 `TILE_PROPS` 就是本决策说的那张表，
   `Tile::props()` 是唯一查表入口；`glyph` / `walkable` / `blocks_vision` / serde 读写全部读表，
   加一个地形从"改六处"变成"改两处"（ISSUES ECS31 已修复）。
-- ⏳ **第 2–3 项待做（H9）**："格子属性统一读取入口"要从"地形属性"扩展到"地形 + 效果实体"，
-  届时规则层调用的仍是同一个入口，只是背后多一个数据来源。
+- ✅ **第 2–3 项已落地（H9）**：格子效果用世界级实体 + `CellEffects` 格索引（每格一个，见 DsnE12）；
+  **统一读取入口**是 `effect::cell_attributes(&TileProps, Option<&CellMoveCost>) -> CellAttributes`
+  ——地形表与格子效果两个数据来源、一个答案，规则层不必知道数据在哪。
 - ✅ **第 4 项的前提已就位**：属性表已经与枚举解耦，将来改网格存储不必再动属性定义。
 <!-- &/DsnE13 -->
 

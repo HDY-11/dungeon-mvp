@@ -82,6 +82,10 @@ pub fn build_core_schedule() -> Schedule {
             perception::update_map_memory_system,
             perception::update_visible_memory_system,
             occupancy::rebuild_occupancy_system,
+            // 格索引与占用图并列：都是"每轮重建的派生数据"——没有增量更新，
+            // 就没有漏改导致的幽灵条目。顺序无关（两者读的组件不同），
+            // 放在占用图旁边只为让人一眼看到"这张图上有两个格索引"。
+            crate::effect::rebuild_cell_effects_system,
             update_events_system,
         )
             .chain(),
