@@ -41,7 +41,7 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **关联：** DESIGN.md DsnX14（渲染分层总览 / crate 布局）| DsnT1（渲染优化属于 TUI 后端内部）| DsnP2（页栈状态放 presentation，渲染放后端）
 
-**状态：** `render-api` v1 已落地（34 个测试通过，`cargo clippy -p render-api -D warnings` 干净）；R1（`presentation` 提取层 + `tui` 去 `ecs_core` 依赖）亦已落地，见 DESIGN DsnX14。
+**状态：** 已定 — `render-api` v1 已落地（34 个测试通过，`cargo clippy -p render-api -D warnings` 干净）；R1（`presentation` 提取层 + `tui` 去 `ecs_core` 依赖）亦已落地，见 DESIGN DsnX14。
 
 
 ---

@@ -182,7 +182,7 @@ impl MonsterTemplate {
 
 **关联：** GAME.md Gm10（环境参数/方块/生成管线）、Gm7、Gm8 | ISSUES ECS15（种群补足）/ ECS22（通道 4 方向）/ ECS26（楼梯落点） | REFACTOR §1（Phase H4） | DsnE13（格子属性身份判据）
 
-**状态：** 已落地（三类型 + 6 新方块 + 5 新怪 + 8 新掉落）；**内容已迁 GAME.md**，本条只保留决策。
+**状态：** 已定 — 已落地（三类型 + 6 新方块 + 5 新怪 + 8 新掉落）；**内容已迁 GAME.md**，本条只保留决策。
 
 ---
 
@@ -276,7 +276,7 @@ Wander 50 > Wait 0；比较器是 `(ActionPriority, entity.to_bits())` 的**全�
 
 **关联：** DESIGN DsnE8 / §8.1 / REFACTOR §2 / ISSUES ECS25 | ISSUES D29、A41、A42、A43、I89、I90、G35
 
-**状态：** ①（行动即实体）Phase B/C 已落地、②（速度组件）Phase D 已落地；Phase H 的 H1（终态单一出口）/ H3（`ActionPhase` 分组）也已落地，见下方各自的进展小节。I89（AV 门禁）与 I90（事件生命周期）已修；REFACTOR §1 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
+**状态：** 已定 — ①（行动即实体）Phase B/C 已落地、②（速度组件）Phase D 已落地；Phase H 的 H1（终态单一出口）/ H3（`ActionPhase` 分组）也已落地，见下方各自的进展小节。I89（AV 门禁）与 I90（事件生命周期）已修；REFACTOR §1 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
 
 **唯一未闭合的设计缺口：** 保活检查的**覆盖范围**——设计意图是"对所有待执行行动持续生效"，
 实现是"只在执行前检查"。见上方「设计哲学 → 保活检查」与 ISSUES **ECS43**。
@@ -432,7 +432,7 @@ pub fn compute_melee_damage(
 
 **关联：** ISSUES ECS29（现签名无扩展位） | REFACTOR §1（Phase H2） | GAME.md（分区与系数，待定）
 
-**状态：** ✅ **已落地**（Phase H2）。实现落在 **`ecs_core/src/rules/damage.rs`**（不是 `combat/`）
+**状态：** 已定 — ✅ **已落地**（Phase H2）。实现落在 **`ecs_core/src/rules/damage.rs`**（不是 `combat/`）
 ——`combat` 现在只管**位置与目标**类规则（能不能打、8 方向相邻、目标存活），
 数值类规则统一进 `rules`：
 
@@ -569,7 +569,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 | DsnE8（地形 → `MoveSpeed`、Phase H4 的 `move_cost` 预留列）| DsnE12（载体侧）
 | DsnE13（索引还是实体的判据）| LESSONS LECS22
 
-**状态：** 已改写定案（形状），**求值侧的 ③④⑤ 步已落地**（Phase H8：
+**状态：** 已定 — 已改写定案（形状），**求值侧的 ③④⑤ 步已落地**（Phase H8：
 `ecs_core/src/rules/modifier.rs`）；具体修正来源与数值随内容阶段补齐。
 
 - ✅ **求值侧 ③④⑤ 已实现**：`Modifier { source: EffectSource, base_delta, multiplier }`、
@@ -623,7 +623,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 
 **关联：** ISSUES ECS31/ECS34 | REFACTOR §2.1（H10/H12 未完成） | DsnE12（长期效果的载体）
 
-**状态：** 待落地（Phase H）。本轮只搭骨架 + 一个 dummy 技能走通，**不含任何真技能**。
+**状态：** 已定 — 待落地（Phase H）。本轮只搭骨架 + 一个 dummy 技能走通，**不含任何真技能**。
 
 ---
 
@@ -706,7 +706,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 | REFACTOR §2.1（Phase H 剩余）（H9/H11） | DsnE11（三层结构第③层）
 | **DsnE10（求值侧）** | DsnE13（索引还是实体的判据）| `OccupancyMap`（既有范例）
 
-**状态：** 已改写定案（形状），**待落地**（H9 格索引、H11 最小闭环）。
+**状态：** 已定 — 已改写定案（形状），**待落地**（H9 格索引、H11 最小闭环）。
 本轮只做一个最小效果走通，验证机制；三个开放项待用户决定。
 
 ---
@@ -744,7 +744,7 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 
 **关联：** ISSUES ECS27/ECS28/ECS32 | REFACTOR §2.1（H9/H14 未完成） | DsnE12（效果实体）
 
-**状态：** 第 1 项（静态属性表）**已落地**（Phase H4，见 DsnE8「Phase H4 进展」）；第 2–4 项待落地（H9 / H11）。
+**状态：** 已定 — 第 1 项（静态属性表）**已落地**（Phase H4，见 DsnE8「Phase H4 进展」）；第 2–4 项待落地（H9 / H11）。
 
 - ✅ **第 1 项已实现**：`ecs_core/src/map/tile.rs` 的 `TILE_PROPS` 就是本决策说的那张表，
   `Tile::props()` 是唯一查表入口；`glyph` / `walkable` / `blocks_vision` / serde 读写全部读表，
