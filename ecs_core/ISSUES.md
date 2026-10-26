@@ -11,6 +11,7 @@
 
 ## 待处理
 
+<!-- &ECS5  材料物品无消耗渠道；合成 Phase1 部分解决，待物品迁移后重评 -->
 ### ECS5 — 材料物品无消耗渠道
 
 **问题：** 生物血肉（id=10）、破布（11）、坚硬木棍（12）、染血兽牙（13）、黑色甲壳（14）五种材料物品只能拾取和堆积，没有任何消耗途径。背包 36 格在 4-5 层后会被材料大量占用，玩家被迫在"拾取所有材料"和"留空间给有用物品"之间做无趣的选择。
@@ -27,7 +28,9 @@
 **状态：** 部分修复 — Phase 1 已落地（模板碎片作为独立消耗品掉落和使用，材料已有消耗渠道）。Phase 2（模板核心）与 Phase 3（实验级碎片）保持 Deferred。**注意：** 物品系统尚未迁移到 `ecs_core`（[DESIGN.md](DESIGN.md) DsnX13 S4），本条在物品迁移后需要重新评估。
 
 **位置：** `assets/items.json` items 10-14
+<!-- &/ECS5 -->
 
+<!-- &ECS6  战斗公式线性无层次：Won't Fix（怪物≥8 或武器≥3 时重评） -->
 ### ECS6 — 战斗公式缺乏层次深度（Won't Fix — MVP 范围决策）
 
 **表现：** 当前 `max(攻击 - 防御, 1)` 的差值公式完全线性，1 点攻击永远对应 1 点伤害。无穿甲穿透、无元素属性/抗性、无距离衰减、无背后/侧击加成。装备增强集中在 +攻击/+防御 两个维度。
@@ -37,9 +40,11 @@
 **状态：** Won't Fix — MVP 范围决策。触发条件：怪物种类 ≥8 或武器类型 ≥3 时重新评估。
 
 **位置：** `dungeon-action/src/execute.rs:285-310`（execute_attack）
+<!-- &/ECS6 -->
 
 ---
 
+<!-- &ECS27  地形没有"代价"维度：地形类减速/装备无处落地（H9 接线） -->
 ### ECS27 — 移动规则与 `Tile` API 都没有"地形代价"维度，地形类装备效果无落点 🟡
 
 **问题：** `Tile` 的公开 API 只有 `glyph()` / `walkable()` / `blocking()`，全部是二值；`can_move_to` 只判"能否走 + 是否被占用"；移动 AV = `base_duration / clamp(speed)`，`base_duration` 是常量，**不随目标地块变化**。因此"地形减速"这不是"有但无视不了"，而是**该能力根本不存在**——"无视某类地形减速"这类装备效果无处落地。
@@ -49,9 +54,11 @@
 **位置：** `ecs_core/src/map/mod.rs`（`Tile` 的方法）、`ecs_core/src/action/execution/movement.rs:32-66`（`can_move_to`）、`ecs_core/src/balance.rs:79`（`action_av`）
 
 **备注：** **记录在案，Phase H 逐项确认**。修法见 DESIGN DsnE10 / DsnE13；具体代价数值属 GAME.md。
+<!-- &/ECS27 -->
 
 ---
 
+<!-- &ECS28  规则层拿不到"执行者身上有什么"：修正器求值入口缺失（DsnE10） -->
 ### ECS28 — 规则层扩展点缺失：规则无法获知"执行者身上有什么" 🟡
 
 **问题：** `movement.rs` 的分层卖点是**纯规则不碰 `World`**，但装备/状态类效果要求规则知道"移动者是谁、带了什么"。直接给纯函数加 `&World` 参数会退回 `ECS2` 所批评的形态（把读资源与读组件揉进一次调用），并丢掉可单测性。项目现有正确范例是 `ActorSpeeds`（系统层查询 → 纯数据输入给 `action_av`），但**没有推广成通用形态**，因此每加一类"规则修正"都要重新决定怎么接。
@@ -61,9 +68,11 @@
 **位置：** `ecs_core/src/action/entity.rs`（`ActorSpeeds` / `actor_speeds`，现有范例）、`ecs_core/src/action/execution/movement.rs`
 
 **备注：** **记录在案，Phase H 逐项确认**。形态见 DESIGN DsnE10（修正器在系统层求值、纯函数只吃结果、pull 读取）。
+<!-- &/ECS28 -->
 
 ---
 
+<!-- &ECS32  物种信息散三处：能力在 spawn 代码、数值在模板、权重在 spawn.rs -->
 ### ECS32 — 物种信息散在三处：`Can*` 能力在 spawn 代码、数值在模板、权重在 `spawn.rs` 🟡
 
 **问题：** `MonsterTemplate` 只有数值字段；**能力（`Can*`）在 `world/init.rs` 的 spawn 代码里插入**；**生成权重在 `monster/spawn.rs`**。于是"这只怪能做什么"要读三个文件，加一只怪要改多处。`DsnE6` 已把 `spawn_weight` 记为模板字段的方向，但**未落地**。
@@ -73,9 +82,11 @@
 **位置：** `ecs_core/src/world/init.rs`（`spawn_monsters_system` 的能力插入）、`ecs_core/src/monster/template.rs`、`ecs_core/src/monster/spawn.rs`
 
 **备注：** **记录在案，Phase H 逐项确认**。修法：能力/技能作为**模板的列表字段**（每物种固定但非全物种共有 → 列表，不展开成全字段 DTO）。
+<!-- &/ECS32 -->
 
 ---
 
+<!-- &ECS33  MonsterTemplate/MonsterStats 是全字段 DTO，Magic 恒 0 占位 -->
 ### ECS33 — `MonsterTemplate`/`MonsterStats` 是全字段 DTO，`Magic` 是恒 `0.0` 占位 🟢
 
 **问题：** `template.rs` 的 `stats()` 无条件产出 `MonsterStats` 的全部字段，`monster_base_bundle` 再逐字段搬进实体。其中 `magic: Magic::new(0.0)` 对所有怪物恒为占位值，而 `stats.magic` 的**唯一消费者是玩家**的构建——即"怪物从来不用，却作为字段强制声明"。新增按物种可选的数据（抗性/技能等）会继续以占位值形态堆进这个 DTO。
@@ -85,9 +96,11 @@
 **位置：** `ecs_core/src/monster/template.rs:85-121`（`MonsterStats` / `stats()`）、`ecs_core/src/world/init.rs:310-334`（`monster_base_bundle`）
 
 **备注：** **记录在案，Phase H 逐项确认**。修法：模板只装 100% 需要的字段；按需数据改用组件在 spawn 时添加。**中间 DTO 与模板同样受此约束**，否则只是把占位值从模板挪到 DTO。
+<!-- &/ECS33 -->
 
 ---
 
+<!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
 ### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
 
 **问题：** `spawn_monsters_system` 用 `rand::rngs::SmallRng::seed_from_u64(seed)`，其中 `seed` 是 `MapSeed` 按楼层派生。严格说这落在 `DsnE5`（"统一走 `GameRng` **或基于 `MapSeed` 的派生 RNG**"）的第二种形态内，**当前确定性是成立的**；但它与 `GameRng` 是**两套独立状态**，而 `GameRng` 的 `state`/`steps` 是回放与存档的基础。若将来该派生种子的算法变动，同 `(seed, floor)` 的怪物布局会改变，而这类改动**不会体现在 `GameRng.steps` 上**。
@@ -97,9 +110,11 @@
 **位置：** `ecs_core/src/world/init.rs:346`
 
 **备注：** **记录在案，Phase H 逐项确认**。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
+<!-- &/ECS34 -->
 
 ---
 
+<!-- &ECS42  linked_spawn 语义相反：状态效果要级联，装备掉落物不能级联 -->
 ### ECS42 — `linked_spawn` 的语义对不同效果是相反的：状态效果要级联，装备不能级联 🟡
 
 **问题：** 用关系挂载效果时，"拥有者 `despawn` 是否级联 `despawn` 效果"必须逐类决定，
@@ -123,9 +138,11 @@
 若不需要，则用"位置 + `Equipment` 组件"表达，"掉在地上"就是换了位置。
 
 **关联：** ECS41、DESIGN DsnE12 第 1 条与开放项；REFACTOR §2.1（H9/H11 未完成）。
+<!-- &/ECS42 -->
 
 ---
 
+<!-- &ECS43  保活只覆盖即将执行的行动：失效行动会占槽位让 actor 空转 -->
 ### ECS43 — 保活检查只覆盖"即将执行"的行动，待执行期间的失效检测缺失 🟡
 
 **问题：** 保活（keep-alive）目前在**每个执行器内部**各写一份，只在行动 AV 归零、轮到自己执行
@@ -215,3 +232,5 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS35 | 行动终态无保证：执行器漏发事件 → actor 永久卡 `Active` + 子实体泄漏 | `ecs_core/src/action/entity.rs`（`ActionEvents` 及 6 个 `execute_*_system`） | DsnE8 / ECS36 |
 | ECS36 | `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 | `ecs_core/src/action/entity.rs` | ECS35 |
 | ECS41 | 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出） | DsnE12 / ECS30 / ECS42 |
+<!-- &/ECS43 -->
+

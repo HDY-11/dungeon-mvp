@@ -55,7 +55,8 @@ def main() -> int:
     # ---- 已定义 ID 集合：`### ID` 标题、表格首列 `| ID |`、`<!-- &ID` 标记 ----
     defined = set()
     for p, t in texts.items():
-        for m in re.finditer(r"^### ([A-Za-z]+\d+)\b", t, re.M):
+        # 标题层级：DESIGN 用 `### ID`、GAME 用 `## GmN`，两级都认
+        for m in re.finditer(r"^#{2,3} ([A-Za-z]+\d+)\b", t, re.M):
             defined.add(m.group(1))
         for m in re.finditer(r"^\| ([A-Za-z]+\d+) \|", t, re.M):
             defined.add(m.group(1))
@@ -104,7 +105,7 @@ def main() -> int:
         rel = p.relative_to(ROOT).as_posix()
         opens = re.findall(r"^<!-- &([A-Za-z]+\d+) ", t, re.M)
         closes = re.findall(r"^<!-- &/([A-Za-z]+\d+) -->", t, re.M)
-        heads = re.findall(r"^### ([A-Za-z]+\d+) ", t, re.M)
+        heads = re.findall(r"^#{2,3} ([A-Za-z]+\d+) ", t, re.M)
         if not opens and not closes:
             continue
         if sorted(opens) != sorted(closes):

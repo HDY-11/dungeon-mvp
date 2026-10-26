@@ -15,6 +15,16 @@
 
 ---
 
+## 主题索引（语义概览）
+
+> 条目按编号顺序排列；本表按主题归类。`grep '^<!-- &'` 可列出全部条目与结论。
+
+| 主题 | 条目 |
+|---|---|
+| 渲染契约 | DsnA1 |
+
+
+<!-- &DsnA1  后端无关只读契约 SceneFrame/VisualKey/UiView/InputEvent；tui 不依赖 ecs_core -->
 ### DsnA1 渲染契约 `render-api`：后端无关的 SceneFrame（已落地 v1）
 
 **决策**
@@ -47,3 +57,5 @@ core ──> presentation ──> render-api <── tui / gpu
 ---
 
 **原编号：** `DsnA1`（迁移前）
+<!-- &/DsnA1 -->
+
