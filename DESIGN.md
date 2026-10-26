@@ -15,6 +15,22 @@
 
 ---
 
+## 主题索引（语义概览，便于按主题跳转）
+
+> 条目按编号顺序排列（编号是稳定 ID、不复用）；本表按**主题**归类。
+> 与 `&ID` 标记配合：`grep '^<!-- &' DESIGN.md` 一次列出全部条目与一句话结论。
+
+| 主题 | 条目 |
+|---|---|
+| 分层与边界 | DsnX1 · DsnX2 · DsnX13 · DsnX15 |
+| 渲染契约 | DsnX14 |
+| 数据与存档 | DsnX10 · DsnX17 |
+| 物品 / 装备 / 技能 / 合成（多为未迁移） | DsnX3 · DsnX4 · DsnX5 · DsnX6 · DsnX7 · DsnX8 · DsnX9 · DsnX12 |
+| 流程与文档 | DsnX11 · DsnX16 |
+| 路线 | DsnX18 |
+
+
+<!-- &DsnX1  四层 crate 拆分：ECS 核心 / 渲染契约 / 集成层 / 后端 -->
 ### DsnX1 四层 Crate 拆分
 
 **决策**
@@ -41,7 +57,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 ---
 
 **原编号：** `DsnX1`（迁移前）
+<!-- &/DsnX1 -->
 
+<!-- &DsnX2  移除全局 World，改显式 &World/&mut World 参数传递 -->
 ### DsnX2 移除全局 World，改为参数传递
 
 **决策**
@@ -61,7 +79,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 ---
 
 **原编号：** `DsnX2`（迁移前）
+<!-- &/DsnX2 -->
 
+<!-- &DsnX3  物品系统用 Registry + ItemStack + LootTable（未迁移） -->
 ### DsnX3 物品系统 — Registry + ItemStack
 
 **决策**
@@ -79,7 +99,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 ---
 
 **原编号：** `DsnX3`（迁移前）
+<!-- &/DsnX3 -->
 
+<!-- &DsnX4  拾取物 Instance 独立成实体，便于渲染与交互（未迁移） -->
 ### DsnX4 ItemPickup 作为独立实体
 
 **决策**
@@ -95,7 +117,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 ---
 
 **原编号：** `DsnX4`（迁移前）
+<!-- &/DsnX4 -->
 
+<!-- &DsnX5  装备槽配对失败时背包满的处理顺序（未迁移） -->
 ### DsnX5 装备槽配对背包满的处理
 
 **决策**
@@ -116,7 +140,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 ---
 
 **原编号：** `DsnX5`（迁移前）
+<!-- &/DsnX5 -->
 
+<!-- &DsnX6  主手/副手双槽，投掷物走副手（未迁移） -->
 ### DsnX6 主手/副手系统
 
 **决策**
@@ -143,7 +169,9 @@ t 键 → 列出 throwable 物品 → 选择目标 → 自动装副手 → 瞄�
 ---
 
 **原编号：** `DsnX6`（迁移前）
+<!-- &/DsnX6 -->
 
+<!-- &DsnX7  投掷作为一等 AV 行动，不再旁路（未迁移） -->
 ### DsnX7 投掷作为一等 AV 行动
 
 **决策**
@@ -184,7 +212,9 @@ t 键 → 列出 throwable 物品 → 选择目标 → 自动装副手 → 瞄�
 ---
 
 **原编号：** `DsnX7`（迁移前）
+<!-- &/DsnX7 -->
 
+<!-- &DsnX8  技能系统重设计：数据驱动的四层结构（设计中·未迁移） -->
 ### DsnX8 技能系统重设计（设计中）
 
 **决策**
@@ -206,7 +236,9 @@ t 键 → 列出 throwable 物品 → 选择目标 → 自动装副手 → 瞄�
 ---
 
 **原编号：** `DsnX8`（迁移前）
+<!-- &/DsnX8 -->
 
+<!-- &DsnX9  物品系统的设计方向：从 MC 借鉴但以 Rust 方式表达（未迁移） -->
 ### DsnX9 物品系统设计方向（从 MC 借鉴，以 Rust 方式）
 
 **决策**
@@ -254,7 +286,9 @@ pub struct ItemMeta {
 ## 三、数据与兼容
 
 **原编号：** `DsnX9`（迁移前）
+<!-- &/DsnX9 -->
 
+<!-- &DsnX10  存档用 bincode 完整快照，不做增量 -->
 ### DsnX10 存档 bincode + 完整快照
 
 **决策**
@@ -271,7 +305,9 @@ pub struct ItemMeta {
 ---
 
 **原编号：** `DsnX10`（迁移前）
+<!-- &/DsnX10 -->
 
+<!-- &DsnX11  提交历史当设计文档用：决策要写进 commit 正文 -->
 ### DsnX11 提交历史作为设计文档
 
 **决策**
@@ -291,7 +327,9 @@ pub struct ItemMeta {
 ---
 
 **原编号：** `DsnX11`（迁移前）
+<!-- &/DsnX11 -->
 
+<!-- &DsnX12  合成系统：模板 + 碎片 + 核心（未迁移） -->
 ### DsnX12 合成系统：模板 + 碎片 + 核心（已定案）
 
 **决策**
@@ -351,7 +389,9 @@ Phase 3（深化）：实验级碎片+条件合成
 ---
 
 **原编号：** `DsnX12`（迁移前）
+<!-- &/DsnX12 -->
 
+<!-- &DsnX13  业务领域收敛到单一 ecs_core；旧组件体系作废 -->
 ### DsnX13 业务领域收敛至 `core`，旧组件体系作废（进行中）
 
 **决策**
@@ -372,7 +412,9 @@ refactor 分支已经删除旧模型并引入 ECS 原生行动模型，但旧 cr
 ---
 
 **原编号：** `DsnX13`（迁移前）
+<!-- &/DsnX13 -->
 
+<!-- &DsnX14  渲染后端插件化：ecs_core→presentation→render-api←tui/gpu -->
 ### DsnX14 渲染后端插件化：`render-api` / `presentation` / TUI / GPU（草案）
 
 **决策**
@@ -493,7 +535,9 @@ Last        : TUI draw / GPU sync
 ---
 
 **原编号：** `DsnX14`（迁移前）
+<!-- &/DsnX14 -->
 
+<!-- &DsnX15  crate 改名 core→ecs_core，消除与标准库 core 的遮蔽 -->
 ### DsnX15 `core` crate 改名 `ecs_core`（措辞与路径对齐）
 
 **决策**
@@ -550,7 +594,9 @@ ISSUES I86；DESIGN DsnX13 / DsnX14。
 （25 目标 / 198 passed）、`scripts/gate.ps1`（4 步）在改名后全绿。
 
 **原编号：** `DsnX15`（迁移前）
+<!-- &/DsnX15 -->
 
+<!-- &DsnX16  形状进 DESIGN/ISSUES，值进 GAME；讨论只落形状 -->
 ### DsnX16 结构与内容的分离：形状进 DESIGN/ISSUES，值进 GAME.md
 
 **决策**
@@ -595,7 +641,9 @@ LESSONS LECS22（扩展点判据）。
 ---
 
 **原编号：** `DsnX16`（迁移前）
+<!-- &/DsnX16 -->
 
+<!-- &DsnX17  冻结契约：组件/资源/事件/边界 + serde 只追加 + 确定性 + 不承诺旧档 -->
 ### DsnX17 兼容性与冻结契约（原 DESIGN DsnX17 / §10.7 折入）
 
 **决策**
@@ -662,7 +710,9 @@ action 实体与技能实例都是瞬态子实体；存档只存 actor 状态/�
 ---
 
 **原编号：** `DsnX17`（文档治理时折入）
+<!-- &/DsnX17 -->
 
+<!-- &DsnX18  技术路线表：换道必须留痕（旧路线保留并标注被否原因） -->
 ### DsnX18 技术路线表（换道记录）
 
 **这份表回答一个问题：我们能换道，但换过的道必须留痕。**
@@ -718,3 +768,5 @@ action 实体与技能实例都是瞬态子实体；存档只存 actor 状态/�
   缓解：判不准时按换道处理（多写一行，成本远低于架构悄悄漂移）。
 
 **状态：** 已定（长期维护）。**换道先改这张表，再改代码。**
+<!-- &/DsnX18 -->
+

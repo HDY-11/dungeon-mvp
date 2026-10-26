@@ -15,6 +15,21 @@
 
 ---
 
+## 主题索引（语义概览，便于按主题跳转）
+
+> 条目正文按编号顺序排列（编号是稳定 ID，不复用）；本表按**主题**归类，
+> 与 `&ID` 标记配合使用：`grep '^<!-- &'` 可一次列出全部条目及其一句话结论。
+
+| 主题 | 条目 |
+|---|---|
+| 调度与并行 | DsnE1 |
+| 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
+| 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
+| 空间与地图 | DsnE2 · DsnE3 · DsnE7 · DsnE13 |
+| 数据与随机 | DsnE5 · DsnE6 |
+
+
+<!-- &DsnE1  怪物决策走并行 Schedule，不串行遍历；可调试性优先于整洁 -->
 ### DsnE1 并行怪物决策（Schedule）
 
 **决策**
@@ -38,7 +53,9 @@ wander_decision_system ─┘
 ---
 
 **原编号：** `DsnE1`（迁移前）
+<!-- &/DsnE1 -->
 
+<!-- &DsnE2  占用图是独立资源，不进 Map；每轮重建 -->
 ### DsnE2 碰撞图（Occupancy Map）独立于 Map
 
 **决策**
@@ -56,7 +73,9 @@ wander_decision_system ─┘
 ---
 
 **原编号：** `DsnE2`（迁移前）
+<!-- &/DsnE2 -->
 
+<!-- &DsnE3  视野记忆拆两个结构：已探索(MapMemory) 与 此刻可见(VisibleMemory) -->
 ### DsnE3 视野记忆双结构（MapMemory + VisibleMemory）
 
 **决策**
@@ -74,7 +93,9 @@ wander_decision_system ─┘
 ## 二、核心机制
 
 **原编号：** `DsnE3`（迁移前）
+<!-- &/DsnE3 -->
 
+<!-- &DsnE4  已并入 DsnE8；保留编号供历史引用解析 -->
 ### DsnE4 行动系统设计哲学
 
 > **本条目已并入 DsnE8「行动系统：设计哲学 + 行动即实体 + 速度组件」（2026-09 合并）。**
@@ -90,7 +111,9 @@ wander_decision_system ─┘
 ---
 
 **原编号：** `DsnE4`（迁移前）
+<!-- &/DsnE4 -->
 
+<!-- &DsnE5  GameRng 是唯一随机源；派生 RNG 必须对 (seed,floor) 确定 -->
 ### DsnE5 线程局部 RNG → GameRng 统一
 
 **决策**
@@ -106,7 +129,9 @@ wander_decision_system ─┘
 ## 四、输入与渲染
 
 **原编号：** `DsnE5`（迁移前）
+<!-- &/DsnE5 -->
 
+<!-- &DsnE6  物种数值收进模板表；能力与生成权重仍待归位(ECS32/ECS33) -->
 ### DsnE6 MonsterTemplate 结构体统一 — 设计中，实验方向
 
 **决策（暂缓执行）**
@@ -148,7 +173,9 @@ impl MonsterTemplate {
 ---
 
 **原编号：** `DsnE6`（迁移前）
+<!-- &/DsnE6 -->
 
+<!-- &DsnE7  三类型地图共用同一骨架，只做环境修饰；取值在 GAME Gm10 -->
 ### DsnE7 多类型地图：只做环境修饰，不引入新算法（内容已迁 GAME）
 
 > **归属变更（2026-09）：** 本条原本把**环境参数、新方块属性、生态对应与掉落**都写在
@@ -187,51 +214,41 @@ impl MonsterTemplate {
 ---
 
 **原编号：** `DsnE7`（迁移前）
+<!-- &/DsnE7 -->
 
-### DsnE8 行动系统：设计哲学 + 行动即实体 + 速度组件（已落地）
+<!-- &DsnE8  行动=actor 瞬态子实体；AV 走倍率；终态单一出口；保活覆盖缺口=ECS43 -->
+### DsnE8 行动系统：设计哲学 + 行动即实体 + 速度组件
 
-> **本条是行动系统的唯一权威条目**（2026-09 合并了原 DsnE4「行动系统设计哲学」）。
-> 结构：**设计哲学**（经得起下次重构的部分）→ **具体决策**（① 行动即实体 / ② 速度组件）
-> → **落地记录**（Phase B/C/D/H1/H3 的逐项进展与教训）。
+> **行动系统的唯一权威条目**（2026-09 合并了原 DsnE4）。
+> 结构：设计哲学 → 决策（① 行动即实体 / ② 速度组件）→ 落地记录 → 必须守住的不变式。
 
 #### 设计哲学（原 DsnE4，已就地更正被实现推翻的两处）
 
-行动系统经历了多轮演化（提交历史里多次 revert 与 fix）。以下是**留下来仍然成立**的原则：
+**组件式行动授权：** 能力由 `Can*` 组件赋予。系统遍历检查哪种行动的条件满足；
+加新行为 = 加新组件 + 加新 system，**不修改决策流程**。
 
-**组件式行动授权：** 行动能力由组件赋予（`CanMove`/`CanChase`/`CanFlee`/`CanWander`/`CanWait`）。
-系统遍历并检查哪种行动的条件满足。加新行为 = 加新组件 + 加新 system，**不修改决策流程**。
-
-**AV 是单一数值，没有独立冷却系统**：~~`AV = 反应时 + 耗时 × 修正系数`（`反应时 = max(100 - 敏捷×3, 20)`）~~
+**AV 是单一数值，没有独立冷却系统**：~~`AV = 反应时 + 耗时 × 修正系数`~~
 → **已被 Phase D 推翻**：`Agility` 与反应时一并删除，现行唯一口径是
-**`AV = base_duration / clamp(速度倍率, 0.25, 4.0)`**（见下方 ② 与 GAME.md Gm1）。
-保留这句旧公式只为让历史 commit 与旧讨论可解析。
+`AV = base_duration / clamp(速度倍率, 0.25, 4.0)`（见 ② 与 GAME.md Gm1）。
 
-**事件驱动推进：** 每轮只推进「最小正 AV」，而不是固定帧 tick——事件密集时不浪费计算、
-稀疏时不空转。实现上由 `active_action_timer_delta` + `tick_action_timers_system` 承担。
+**事件驱动推进：** 每轮只推进「最小正 AV」，而不是固定帧 tick。
 
-**保活检查（keep-alive）**：行动入队/生成时检查一次条件，**之后还必须持续生效**——
-因为其他实体的行动会在等待期间改变世界状态（目标跑了、血量回升了、走廊被堵了）。
-> **不变式（2026-09 更正）：** 保活检查必须覆盖**所有待执行的行动**，而不只是"即将执行的那一个"。
-> 现状是**只在执行前**检查（每个执行器各写一份），因此一个已经失效的行动会继续占着 actor
-> 唯一的 `ActiveAction` 槽位（生成系统被 `Without<Active>` 挡住），让 actor 空转若干回合
-> 才在轮到自己时失败。**这是实现缺口，记在 ISSUES ECS43**，修法形状见该条目
-> （`ActionPhase::Validate`：与执行器对称的"每个行动一个校验系统"）。
+**保活检查：** 生成时检查一次条件，且**必须对所有待执行行动持续生效**——失效的行动会继续
+占着 actor 唯一的 `ActiveAction` 槽位，让 actor 空转若干回合。
+**现状只在执行前检查（每个执行器各一份）→ 这是缺口，见 ISSUES ECS43。**
 
-**优先级仲裁：** 每个行动自带 `ActionPriority`（数值越小越优先）：Flee 200 > Chase 100 >
-Wander 50 > Wait 0；比较器是 `(ActionPriority, entity.to_bits())` 的**全序**，不含随机数。
-静态优先级在当前阶段合理；未来要动态优先级再加修正器，不改仲裁器。
+**优先级仲裁：** 每个行动自带 `ActionPriority`（越小越优先：Flee 200 > Chase 100 >
+Wander 50 > Wait 0），比较器是 `(ActionPriority, entity.to_bits())` 的**全序**，不含随机数。
 
-**无前摇 / 无后摇：** 后摇在回合制里没有意义（玩家在怪物行动前就想好了），前摇曾由反应时
-覆盖——反应时删除后，**出手前的固定延迟目前不存在**；若试玩觉得需要，加回一个统一常数
-（REFACTOR REFACTOR §1（Phase D 的决策确认）），而不是恢复按敏捷分档。
+**无前摇 / 无后摇：** 反应时删除后，出手前的固定延迟目前不存在；若试玩需要，加回一个
+统一常数，**不要恢复按敏捷分档**。
 
-**无预测轴 / 无锁定轴：** 行动轴上的条目都是"已锁定、必然要执行（除非保活失败）"。
-预测需要模拟未来世界状态，在 ECS 里要克隆 World 或维护回滚日志，收益不抵成本。
+**无预测轴 / 无锁定轴：** 预测需要模拟未来世界状态（克隆 World 或回滚日志），收益不抵成本。
 
-**行动系统的三个问题**（这才是它的本质，不是"谁先执行的顺序器"）：
-**选什么行动**（生成 → 仲裁）、**何时做**（AV 倒计时）、**做多久**（AV 组成）。
+**行动系统的三个问题**（本质不是"谁先执行的顺序器"）：**选什么行动**（生成 → 仲裁）、
+**何时做**（AV 倒计时）、**做多久**（AV 组成）。
 
-**被否掉的方案（背景）**
+**被否掉的方案**
 
 | 方案 | 为什么否掉 |
 |---|---|
@@ -241,162 +258,81 @@ Wander 50 > Wait 0；比较器是 `(ActionPriority, entity.to_bits())` 的**全�
 | 状态机 | 状态把"状态"与"行动"耦合（"进入追击模式 → 执行 CanChase"），决策权从组件被抢到状态机系统 |
 | 预测轴 / 锁定轴 | 与组件式决策不兼容：系统只能知道"此刻条件满足"，无法知道"下一帧是否仍满足" |
 
-**决策**
-
-两条相关决策，合并为一次行动系统重构：
+#### 决策
 
 **① 行动即实体（替代 `ActionKind`）**
 
-- 一个行动 = 一个 actor 的子实体（action entity），不再用中央 `ActionKind` enum 分派。
-- Action 实体组件：`ChildOf(actor)`、`ActionPriority(u32)`、`ActionTimer`、`ActionSource`、生命周期标记 `Candidate` / `ActiveAction` / `Ready`，以及具体行动 ZST/payload（`Wait` / `Move { dx, dy }` / `BasicAttack { target }` / `Chase` / `Flee` / `Wander`）。
-- `Can*` **保持 actor 上的 ZST 组件**，不子实体化：能力回答“能不能做”，action 实体回答“正在考虑/执行什么”。
-- 保留生成/仲裁分离，不因当前规模合并为单函数（用户确认；OCP 扩展点）。
-- 普通怪 = 新模板 / Bundle（不同 `Can*`）；新增普通怪不需要修改 AI / 生成 / 执行代码。
-- 系统流程：生成系统只 spawn 候选 → 仲裁系统唯一写入 actor 行动状态（按 `ActionPriority` + `action_entity.to_bits()` 全序）→ Tick 推进 AV 并加 `Ready` → 执行系统按行动类型专用 query（零中央 match）→ completion 系统消费 `ActionSucceeded/FailedEvent` 并回收 action 实体。
+- 一个行动 = 一个 actor 的**瞬态子实体**，不再用中央 `ActionKind` enum 分派。
+- 组件：归属关系 `ActionOf(actor)`（专用关系，**不是**通用 `ChildOf`，见 DsnE12 / ECS41）、
+  `ActionPriority`、`ActionTimer`、`ActionSource`、生命周期标记 `Candidate` / `ActiveAction` /
+  `Ready`，以及具体行动 ZST/payload（`Wait` / `Move { dx, dy }` / `BasicAttack { target }` /
+  `Chase` / `Flee` / `Wander`）。
+- `Can*` **保持 actor 上的 ZST 组件**，不子实体化：能力回答"能不能做"，action 实体回答
+  "正在考虑/执行什么"。
+- 保留生成/仲裁分离（OCP 扩展点）；普通怪 = 新模板/Bundle，加怪不改 AI/生成/执行代码。
+- 流程：生成只 spawn 候选 → 仲裁唯一写 actor 行动状态 →
+  tick 推进 AV 并加 `Ready` → 执行按行动类型专用 query（零中央 match）→
+  completion 消费终态事件并回收 action 实体。
 - 玩家行动直接生成 active action，不进入 AI 仲裁。
 
 **② 速度组件（替代 `Agility`）**
 
-- 删除 `Agility`；新增 `MoveSpeed(f64)` / `AttackSpeed(f64)` 两个倍率组件（1.0 基准，越高越快）。
-- `AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)`。
-- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；`Wait` 固定 `WAIT_DURATION`（已确认；后续再评估 `WaitSpeed`）。
-- 删除 `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av`；先不保留 `BASE_REACTION`（已确认；试玩需要时再加统一常数）。
-- 迁移顺序：逐行动（Wait → Move → BasicAttack → Wander → Chase → Flee）；怪物速度先按旧敏捷保行为映射，再在 GAME.md 用 `[⃞试调]` 重调。
-- 未来武器速度 → `AttackSpeed`，重甲/地形 → `MoveSpeed`，Buff/装备可动态增删组件。
+- 删除 `Agility`；`MoveSpeed(f64)` / `AttackSpeed(f64)` 是**倍率**（1.0 基准，越高越快）。
+- `Move/Chase/Flee/Wander → MoveSpeed`；`BasicAttack → AttackSpeed`；
+  `Wait` 固定 `WAIT_DURATION`（不吃速度）。
+- 反应时与 `BASE_REACTION` 一律不保留；试玩需要时再加统一常数。
+- 未来武器速度 → `AttackSpeed`；重甲/地形 → `MoveSpeed`（走修正器，见 DsnE10）；
+  Buff/装备可动态增删组件。
 
 **背景**
 
-当前 `ActionKind` 中央 enum + `mount_action` match 让新增行动要改多处；`Can*` + ZST + 专用 query 的执行方式其实可以完全去掉 `ActionKind`。同时当前 `ActionTimer` 从未参与执行门禁（I89）、事件也因 Schedule 重建 + 缺少 `Events::update()` 被重复读取（I90）；这两项已在第 1 步修复，否则速度组件不会真正影响行为。
+`ActionKind` 中央 enum + `mount_action` match 让新增行动要改多处；`ActionTimer` 从未参与
+执行门禁（I89）、事件因 Schedule 重建 + 缺 `Events::update()` 被重复读取（I90）——
+这两项先修，否则速度组件不会真正影响行为。
 
 **代价**
 
-- action 实体带来每轮候选 spawn/despawn 的 churn；当前规模可接受，未来可改持久 `ActionSlot` 或行为实体池化。
-- 仲裁需要 `ChildOf` 分组；Bevy 0.16 `Children` 是 `linked_spawn`，父实体 despawn 会联动 despawn 子实体。
-- 事件必须有真实消费者；`ActionSucceeded/Failed` 正好由 completion 消费，`DeathEvent`/`LevelUpEvent` 要么接线要么删除。
+- action 实体带来每轮候选 spawn/despawn 的 churn；规模上去可改持久 `ActionSlot` 或池化。
+- 归属关系是 `linked_spawn`：actor 被 despawn 时会级联回收行动实体——**这是我们要的**
+  （actor 死了不留残留），但也意味着不能把"要活过拥有者"的东西挂成子实体（ECS42）。
+- 每个事件都必须有真实消费者；注册了没人读的事件就是下一个死抽象（ECS25）。
 
-**关联：** DESIGN DsnE8 / §8.1 / REFACTOR §2 / ISSUES ECS25 | ISSUES D29、A41、A42、A43、I89、I90、G35
+#### 落地记录
 
-**状态：** 已定 — ①（行动即实体）Phase B/C 已落地、②（速度组件）Phase D 已落地；Phase H 的 H1（终态单一出口）/ H3（`ActionPhase` 分组）也已落地，见下方各自的进展小节。I89（AV 门禁）与 I90（事件生命周期）已修；REFACTOR §1 已按推荐执行（逐行动迁移、倍率速度、先删反应时、`Wait` 固定、怪物速度先保行为）。
-
-**唯一未闭合的设计缺口：** 保活检查的**覆盖范围**——设计意图是"对所有待执行行动持续生效"，
-实现是"只在执行前检查"。见上方「设计哲学 → 保活检查」与 ISSUES **ECS43**。
-
-**进展（Phase A/B/C）：**
-
-- Phase A：core 冒烟测试补齐（地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 / 快怪多动），`cargo test -p core` 从 4 → 18 个测试（ISSUES P9）。
-- Phase B（action 实体 PoC）：`core/src/action/entity.rs` 落地 ① 的完整链路；测试覆盖生成 → 仲裁 → tick(`Ready`) → 执行 → completion，含优先级/平局/忙碌 actor/不写 actor 状态等契约。
-- Phase C（全量迁移，C1–C9 完成）：六个行动逐行动迁移并各配 parity 场景；主循环切换到新链路（`world/loop_.rs` 改为「先挂载、再推进」两段式）；`ActionKind` / `mount_action` 中央 match / `finish_action_*` / `decide_monster_actions` / `choose_action` / `run_action_cycle` / 旧独占执行系统与 actor 上的行动 ZST 挂载路径**全部删除**，全库无 `ActionKind` 引用。
-- 执行器形态（修正记录）：`execute_move_system` 一度写成 exclusive `&mut World`，理由是「action 实体 → actor 位置的多实体读写无法用普通 `Query` 表达」。**该结论是错的**：那只是因为复用了 `movement::execute_move(&mut World, ...)`——该签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用；而 Bevy 的 `Query<&mut T>` 只保证 **per-entity** 唯一可变访问，驱动实体（action）与被写实体（actor）不同，读写两处并无真冲突。把移动落点抽成纯函数 `moved_position(map, occupancy, pos, dx, dy) -> Option<Position>`（`can_move_to` 规则不变）后，执行器自然写成普通参数化系统。副作用是 A41 范围收窄：行动链路里已无 exclusive 系统，可与既有 `CoreSettleSchedule` 系统同调度共存（有测试断言）。
-- 迁移期约束（写测试时要注意）：`Ready` 的清理分两条路（`execute_move_system` 显式清，其余靠 completion despawn 实体）；`Idle`/`Failure` 必须互斥（I91）；「挂载玩家行动」与「推进世界」必须分两段调度，否则会把「本轮已执行完」误判成「命令被拒绝」。
-  > **该约束已在 Phase H1 取消**——`Ready` 的清理收进终态出口（见下方「Phase H1 进展」），
-  > 上面这条保留为迁移期的历史记录。
-
-**进展（Phase D：速度组件，D1–D5 完成）：**
-
-- `Agility` / `agility_to_reaction` / `agility_speed_factor` / 旧 `action_av` 全部删除；AV 只剩 `AV = base_duration / clamp(速度, 0.25, 4.0)` 一个口径（`core/src/balance.rs`）。
-- 行动类别 → 速度的映射收在 `SpeedRule`（`Move` / `Attack` / `Fixed`），由生成系统在挂载点决定；`ActorSpeeds` 是 AV 计算的纯输入，使公式可在无 ECS 的单测里逐条钉住。执行器完全不接触速度——AV 在挂载时就固化进 `ActionTimer`。
-- 怪物模板不再保留任何「敏捷」字段：`MonsterSpeeds { move_speed, attack_speed }` 直接写字面速度值。迁移来源（旧敏捷 → 旧耗时系数的倒数）记在 `MonsterSpeeds::MIGRATION_NOTE`，数值表在 GAME.md Gm1。
-- **迁移映射的选择理由**：新 AV 精确等于旧的「`duration` × 耗时系数」一项，丢掉的只有等量叠加的反应时常数项（已确认删除）。因此**角色之间的相对快慢与旧版完全一致**，这是「先按旧敏捷保行为」的可验证含义，由 `template_speeds_preserve_legacy_agility_ordering` 钉住。玩家初始速度 `1.25` 因此是迁移产物而非设计值，已在代码与 GAME.md 双处标注「重新校准时应改回 1.0 并重配平」。
-- 顺带确立的新不变式（旧口径做不到）：`AV × 速度 == base_duration` 恒成立、AV 与 `base_duration` 严格成正比。旧式因为有常数反应时项，「300ms 的攻击」实际要付 310 AV、而「500ms 的游荡」付 470 AV——短行动被惩罚得更狠。删除该项是 Phase D 唯一的**有意行为改动**，由 `dropping_reaction_time_*` 的量化结论记录。
-- **意外发现（值得记入教训）**：速度组件改变了各行动的执行轮次，于是怪物消耗随机数的时机随之改变，`system::tests::fov_memory_and_occupancy_update` 里「玩家选定的目标格在推进期间保持空闲」这条原本"碰巧成立"的假设立刻失效（怪物游荡到该格，命令被改判成攻击）。教训：**测试若依赖"没有别的实体碰巧走过来"，它就是在依赖执行顺序，而执行顺序正是本次要改的东西**——该类用例必须先清场再断言。
-- 元组 `Bundle` 的元数上限：bevy_ecs 0.16 的元组 `Bundle` 只实现到 **15 元**（`all_tuples!(tuple_impl, 0, 15, B)`），玩家基础束原本已 16 个元素，直接加两个速度组件会编译失败。解法是用 `#[derive(Bundle)] struct Speed` 打包这两个组件——**打包不是新增组件**，实体上仍是两个独立组件，查询不变。这是「实体组件数」与「元组元数」解耦的通用手法。
-
----
-
-**进展（Phase H1：行动终态收成单一出口）：**
-
-H1 只碰**形状**，不改任何行为与数值。它解掉的是 Phase H 计划里记为 ECS35 / ECS36 的一对问题——
-「行动终态只有约定、没有机制」：
-
-| | H1 之前 | H1 之后 |
+| 阶段 | 结论 | 提交/证据 |
 |---|---|---|
-| 谁能结束行动 | 6 个执行器各自 `events.succeeded/failed.write(...)`（15 处裸写） | 只有 `ActionEvents::succeed` / `::fail`：字段私有，**执行器拿不到 `EventWriter`** |
-| `Ready` 谁清 | `execute_move_system` 显式清，其余 5 个靠 completion `despawn` 顺带 | 终态出口**必然**清（与发事件是同一个原子动作） |
-| 漏写终态事件 | **编译通过**，运行期 actor 永久卡 `Active` + 子实体泄漏 | **编译不过**（没有可用的写入句柄） |
-| 测试能断言什么 | 6 个 parity 用例里只有 `Move` 能断言 `Ready` 被消费 | 6 个全部能断言（共用 `run_one_action_roundtrip`） |
+| A 冒烟测试 | 地图确定性 / 移动 / 攻击只结算一次 / 死亡→经验→升级 / FOV·记忆·占用图 | `95449a9` |
+| B PoC | 生成→仲裁→tick→执行→completion 全链路可行，无残留子实体 | `ac6623f` |
+| C 全量迁移 | 六行动逐行动 parity；`ActionKind` / `mount_action` / 旧独占执行系统全删；主循环改「先挂载、再推进」两段式 | `83700ff`…`a8e2175` |
+| D 速度组件 | 倍率口径落地；`AV × 速度 == base_duration` 恒成立；迁移保排序由 `template_speeds_preserve_legacy_agility_ordering` 钉住 | `cff5940`… |
+| H1 终态出口 | `ActionEvents::succeed/fail` 字段私有 →「恰好一个终态事件」从约定变类型保证；变异验证（去掉 `remove::<Ready>()`）→ 7 个用例立刻失败 | `f1f6898` |
+| H3 调度分组 | `ActionPhase` 五角色（Generate/Arbitrate/Tick/Execute/Complete），加执行器 = 加一行 | `5a9ea90` |
 
-两个实现要点：
+#### 后续工作必须守住的不变式
 
-1. **私有字段是这里的机制本体**，不是封装洁癖：它把「恰好一个终态事件」从注释级约定
-   变成类型级保证，因此不需要"兜底检测系统"这类补丁。
-2. **`SystemParam` 带两个生命周期**：`Commands<'w, 's>` 在 bevy 0.16 里用 `'w` 借
-   `Entities`、`'s` 借延迟命令队列，所以 `ActionEvents` 必须写成 `ActionEvents<'w, 's>`
-   （第一版写 `Commands<'w, 'w>` 直接编译失败：`SystemParam` 的 `'s` 无法满足）。
+- **挂载与推进必须两段调度**（`PlayerMountSchedule` → 推进循环）：合成一次会把
+  "本轮已执行完"误判成"命令被拒绝"。
+- **`Idle` 与 `Failure` 必须互斥**（I91）：任何写终态的地方都要先清掉另一个。
+- **执行器是普通参数化系统**：落点规则是纯函数（`moved_position`），不需要 exclusive
+  `&mut World`——"必须 exclusive"那个判断是错的（写测试时踩过的坑见 LECS3 / LSYN20）。
+- **元组 `Bundle` 上限 15 元**：打包成 `#[derive(Bundle)] struct Speed`，
+  **打包不是新增组件**（见 LECS3）。
+- **执行器不读速度**：AV 在挂载时就固化进 `ActionTimer`，速度只由 `MoveSpeed`/`AttackSpeed`
+  经 `SpeedRule` 在挂载点决定。
+- **终态只经一个出口**：执行器不得自己 `despawn` 实体或写 `Idle`/`Failure`，
+  那是 `action_completion_system` 的职责。
 
-**变异验证（断言真的在守不变式）：** 把终态出口里的 `remove::<Ready>()` 去掉后，
-**7 个用例立刻失败**（6 个 `parity_*` + `parameterized_move_matches_world_based_move`）。
-这条验证是必要的——一条永远为真的断言比没有断言更糟，它会把缺口伪装成已覆盖。
+**关联：** DsnE9（伤害输入形状）/ DsnE10（修正器求值侧）/ DsnE12（效果实体与归属关系）
+| DESIGN DsnX17（冻结清单）/ DsnX18（路线表）
+| ISSUES ECS41（`ChildOf` → 专用关系）、ECS43（保活覆盖范围，未闭合）
+| LESSONS LECS3（Bundle 上限）、LECS22（扩展点判据）、LSYN20（测试依赖执行顺序）
 
-**关联：** REFACTOR §1（Phase H1）；ISSUES ECS35 / ECS36（均已修复）。
-
-**进展（Phase H3：调度按角色分组）：**
-
-H3 把 `build_action_poc_schedule` 从「13 个系统一条 `.chain()`」改成
-**五个有名字的角色 + 一条角色链**，解掉的是 `LECS22` 里"顺序协调的中央点"那一类扩展成本：
-
-```rust
-#[derive(SystemSet)] pub enum ActionPhase {
-    Generate,   // 只 spawn 候选 / 挂载玩家行动
-    Arbitrate,  // 唯一写 actor 行动状态的系统
-    Tick,       // 推进 ActionTimer，归零加 Ready
-    Execute,    // 按行动类型执行的专用系统集合
-    Complete,   // 回收 action 实体 + actor 回转 Idle/Failure
-}
-```
-
-| | H3 之前 | H3 之后 |
-|---|---|---|
-| 加一个执行器 | 在 13 项长链里找位置，还要确认它与前后系统的顺序 | 往 `ActionPhase::Execute` 加一行 |
-| 加一个生成器 | 同上 | 往 `ActionPhase::Generate` 加一行 |
-| 顺序定义在哪 | 隐含在一条长元组的**书写顺序**里 | `ActionPhase` 的全序 + 一处 `.chain()` |
-
-**为什么不是"合并成一组、让调度器自由排序"**：五个角色之间是**数据依赖**
-（候选 → 仲裁 → 计时 → 执行 → 终态事件），自由排序会破坏语义。
-`LECS22` 的结论在这里具体化为：ECS 消除了**类型分发的**中央点（`With<A>` 取代 `match`），
-但消除不掉**顺序协调的**中央点——所以正确的目标是"加第 N 个只改一处"，而不是"零处"。
-
-**`ApplyDeferred` 的位置不能省**：生成器用 `Commands` spawn 候选、仲裁用 `Query` 读；
-执行器写终态事件、completion 用 `EventReader` 读。分组后这两处落盘必须逐处保留。
-
-**测试怎么证明"分组没改行为"**：新增 `action_phases_keep_their_total_order_and_execute_group_is_open`——
-每个角色**自己记录**有没有跑（读调度图只能证明"登记了"，记录才能证明"按这个顺序真的跑了"），
-并向 `Execute` 组追加一个扩展系统，验证它能直接接进链路、且整轮照常执行完并回收实体。
-这条用例同时是 H10（技能三层骨架）接法的样板。
-
-**关联：** REFACTOR §1（Phase H3）；LESSONS LECS22（扩展点判据）。
-
-**进展（Phase H4：`TileProps` 静态属性表）：**
-
-地形的种类与属性收进 `map/tile.rs` 的一张表（`TILE_PROPS: &[TileProps]`），
-`glyph` / `walkable` / `blocks_vision` / `Serialize` / `Deserialize` **全部读表**，
-判别值改由 `#[repr(u8)]` 决定——**没有一处 `match` 在描述地形**。
-
-| | H4 之前 | H4 之后 |
-|---|---|---|
-| 加一个地形要改 | `glyph` / `walkable` / `blocking` / `From<u8>` / `Into<u8>` /（以及 `presentation::tile_id`）**六处** | `Tile` 末尾 + `TILE_PROPS` 末尾，**两处**（枚举无法自动派生） |
-| 新属性（移动代价）的落点 | 没有，只能继续往 5 个 match 里加 | `TileProps` 加一列 |
-| 漏加一项的报错时机 | 编译期（穷尽 match） | **运行期** → 由穷举测试补回 |
-
-**换表的代价必须用测试补回来**（`LECS22` 的配套纪律）：`table_covers_every_variant_and_round_trips`
-逐行枚举全表并断言"表行 = 枚举顺序 = 判别值 = 序列化往返"，另加
-`ids_match_the_pre_h4_serde_mapping` / `properties_match_the_pre_h4_values`
-逐值钉住搬迁前的口径（防止抄错一格）。
-
-**`move_cost` 是 H8 的预留位**：本轮只加列、恒为 1.0、**不接线**——
-移动 AV 仍只由 `MoveSpeed` 决定。`move_cost_is_still_a_reserved_slot` 守住这一点，
-防止"顺手填值"绕过 GAME.md（数值口径待定，见 DESIGN DsnX16）。
-
-**变异验证：** 交换 `Tile::Wall` 与 `Tile::Floor` 的声明顺序 → 20+ 个用例失败
-（地图/移动/视野都读地形身份）。这既是"判别值受保护"的证据，也说明
-**枚举声明顺序是领域事实**，不是可以随手整理的排版。
-
-**关联：** REFACTOR §1（Phase H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）；
-DESIGN DsnE13。
-
----
+**状态：** 已定 — ①② 与 H1/H3 均已落地；**唯一未闭合的设计缺口是保活检查的覆盖范围（ECS43）**。
 
 **原编号：** `DsnE8`（迁移前）
+<!-- &/DsnE8 -->
 
+<!-- &DsnE9  伤害改成结构化输入 + 因子分解返回；公式与数值不变 -->
 ### DsnE9 伤害计算的输入接口：从标量参数组到结构化输入
 
 **决策**
@@ -461,7 +397,9 @@ pub fn compute_melee_damage(
 ---
 
 **原编号：** `DsnE9`（迁移前）
+<!-- &/DsnE9 -->
 
+<!-- &DsnE10  效果载体是实体；求值侧五步：收桶→过滤→折叠→纯函数 -->
 ### DsnE10 规则修正器：装备/状态/地形如何影响纯函数规则
 
 > **本条目经历了一次改写（2026-09 讨论，尚未落地）。** 初版只把修正器定义为
@@ -590,7 +528,9 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 ---
 
 **原编号：** `DsnE10`（迁移前）
+<!-- &/DsnE10 -->
 
+<!-- &DsnE11  技能三层：激活/委派/行为；技能负责点火，不负责烧多久 -->
 ### DsnE11 技能的三层结构：激活 / 委派 / 行为
 
 **决策**
@@ -628,7 +568,9 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 ---
 
 **原编号：** `DsnE11`（迁移前）
+<!-- &/DsnE11 -->
 
+<!-- &DsnE12  长期效果用世界级实体；归属用专用关系 EffectOf，不用 ChildOf -->
 ### DsnE12 世界级效果实体：长期效果的载体
 
 **决策**
@@ -712,7 +654,9 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 ---
 
 **原编号：** `DsnE12`（迁移前）
+<!-- &/DsnE12 -->
 
+<!-- &DsnE13  格子身份判据：需要独立身份→实体，否则→索引；地形属性进静态表 -->
 ### DsnE13 格子属性的身份判据：索引还是实体
 
 **决策**
@@ -744,6 +688,33 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 
 **关联：** ISSUES ECS27/ECS28/ECS32 | REFACTOR §2.1（H9/H14 未完成） | DsnE12（效果实体）
 
+#### H4 落地记录（原误放在 DsnE8）
+
+地形的种类与属性收进 `map/tile.rs` 的一张表（`TILE_PROPS: &[TileProps]`），
+`glyph` / `walkable` / `blocks_vision` / `Serialize` / `Deserialize` **全部读表**，
+判别值改由 `#[repr(u8)]` 决定——**没有一处 `match` 在描述地形**。
+
+| | H4 之前 | H4 之后 |
+|---|---|---|
+| 加一个地形要改 | `glyph` / `walkable` / `blocking` / `From<u8>` / `Into<u8>` /（以及 `presentation::tile_id`）**六处** | `Tile` 末尾 + `TILE_PROPS` 末尾，**两处**（枚举无法自动派生） |
+| 新属性（移动代价）的落点 | 没有，只能继续往 5 个 match 里加 | `TileProps` 加一列 |
+| 漏加一项的报错时机 | 编译期（穷尽 match） | **运行期** → 由穷举测试补回 |
+
+**换表的代价必须用测试补回来**（`LECS22` 的配套纪律）：`table_covers_every_variant_and_round_trips`
+逐行枚举全表并断言"表行 = 枚举顺序 = 判别值 = 序列化往返"，另加
+`ids_match_the_pre_h4_serde_mapping` / `properties_match_the_pre_h4_values`
+逐值钉住搬迁前的口径（防止抄错一格）。
+
+**`move_cost` 是 H8 的预留位**：本轮只加列、恒为 1.0、**不接线**——
+移动 AV 仍只由 `MoveSpeed` 决定。`move_cost_is_still_a_reserved_slot` 守住这一点，
+防止"顺手填值"绕过 GAME.md（数值口径待定，见 DESIGN DsnX16）。
+
+**变异验证：** 交换 `Tile::Wall` 与 `Tile::Floor` 的声明顺序 → 20+ 个用例失败
+（地图/移动/视野都读地形身份）。这既是"判别值受保护"的证据，也说明
+**枚举声明顺序是领域事实**，不是可以随手整理的排版。
+
+**关联：** REFACTOR §1（Phase H4）；ISSUES ECS31（已修复）、ECS27（`move_cost` 的来处）。
+
 **状态：** 已定 — 第 1 项（静态属性表）**已落地**（Phase H4，见 DsnE8「Phase H4 进展」）；第 2–4 项待落地（H9 / H11）。
 
 - ✅ **第 1 项已实现**：`ecs_core/src/map/tile.rs` 的 `TILE_PROPS` 就是本决策说的那张表，
@@ -752,3 +723,5 @@ actor 走开效果还在，两个 actor 站在同一格受同一个效果。
 - ⏳ **第 2–3 项待做（H9）**："格子属性统一读取入口"要从"地形属性"扩展到"地形 + 效果实体"，
   届时规则层调用的仍是同一个入口，只是背后多一个数据来源。
 - ✅ **第 4 项的前提已就位**：属性表已经与枚举解耦，将来改网格存储不必再动属性定义。
+<!-- &/DsnE13 -->
+
