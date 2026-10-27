@@ -1,14 +1,16 @@
-# REFACTOR.md — 本分支的重构计划（只放"还没做完的"）
+# REFACTOR.md — refactor 阶段的进度板（只放"还没做完的"）
 
-> **定位：** 本文件是 `refactor` 分支的**进度板**，不是设计文档、不是契约文档。
+> **定位：** 本文件记录 **refactor 阶段**（纯架构改进）的进度板，不是设计文档、不是契约文档。
 > 设计决策在 [DESIGN.md](DESIGN.md)、游戏数值在 [GAME.md](GAME.md)、未闭合问题在
 > [ISSUES.md](ISSUES.md) / 各 crate 的 `ISSUES.md`。
 >
 > **纪律：** 一个阶段做完，就把它的**结论**折进对应的 DESIGN 条目，把**遗留**折进 ISSUES，
 > 然后从本文件删掉过程记录——只留一行"已完成（commit X）"。
-> 按 RULE §一，合并前本文件应瘦到只剩"未完成项"，随后整体删除。
-
-**当前分支：** `refactor`（相对 `main` 已重构完毕，待合并前折叠）。
+> 按 RULE §一，本阶段结束后本文件应瘦到只剩"未完成项"，随后整体删除。
+>
+> **阶段边界（2026-09）：** `refactor` 已于 tag `arch-phase-h` 处 fast-forward 并入 `main`，
+> 之后 `main` 上同时有架构与内容两类提交，用**提交前缀**区分：
+> `refactor:` 架构改动 / `content:` 内容新增 / `design:` 换道 / `docs:` 文档 / `fix:` 修 bug。
 
 ---
 
@@ -35,8 +37,8 @@
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **125 passed**；`cargo test --workspace`
-28 目标 **349 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **127 passed**；`cargo test --workspace`
+28 目标 **351 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
@@ -75,7 +77,29 @@
 
 ---
 
-## 3. 折进 DESIGN 的内容（本文件不再保留）
+## 3. 内容 spike（C1–C5）：用内容去撞扩展点
+
+> **为什么记在这里：** refactor 阶段的验收是"不变式没破"，内容阶段的验收是
+> "**扩展点够不够用**"。后者可量化：每条内容实际改了**几个文件、几行、有没有撞上
+> 要改中央分派的地方**（`LECS22` 的实测版）。本文件退场时，这张表折进 GAME.md。
+
+**约束：F1 只看得见 3 种怪（鼠/蝎/哥布林）+ 5 种地形**（其余属繁茂/地海，需下楼）。
+内容必须落在这个可见域内，否则加了等于没加。
+
+| # | 内容 | 撞哪个扩展点（此前用户数） | 状态 |
+|---|---|---|---|
+| C1 | 三只怪能力分化：鼠=猎物、蝎子=不知恐惧、哥布林=完整 | `Ability` 列表（8/8 完全相同） | ✅ 已落地 |
+| C2 | 泥潭格（可走、代价×2，洒在 F1 地板） | `CellEffects` / `CellMoveCost`（**0 用户**） | ⬜ |
+| C3 | 蝎子攻击附加中毒（每回合掉血、N 回合消失） | `EffectOf` + **第一个效果 owner 系统** | ⬜ |
+| C4 | 一件装备 + 地面物品 + 走过去拾取 | `EquippedBy`（**0 用户**）+ `Equipment` 桶 | ⬜ |
+| C5 | 浅水有移动代价（`TILE_PROPS.move_cost` 首次非 1.0） | H9 接线 + `Terrain` 桶 | ⬜ **需先定数值（GAME.md）** |
+
+**stop rule：** 任何一条内容若需要改 **≥3 处**、或需要动**中央 match/分派**，
+立刻停下——那是扩展点的问题，先修扩展点再回来。
+
+---
+
+## 4. 折进 DESIGN 的内容（本文件不再保留）
 
 2026-09 文档治理时，原 `REFACTOR.md` 里**属于契约**的部分已折进
 [DESIGN DsnX17](DESIGN.md)（冻结清单 / serde 只追加 / 确定性 / 显示数据归属 /

@@ -122,17 +122,30 @@ pub struct SpawnWeightFor {
     pub weight: SpawnWeight,
 }
 
-/// 当前八种怪物共有的能力集。
+/// **完整行为谱**：会追、重伤会逃、会游荡、会等待。
 ///
-/// 归位（H6）**只换存放位置**：这四件与原先 `spawn_monsters_system` 里逐一 `insert`
-/// 的完全相同，集合相等即可（组件的插入顺序无语义）。要做出"不会逃跑""只会游荡"
-/// 的怪，就把某个物种的 `abilities` 改成它自己的列表——这是归位之后才**可能**的事。
+/// 起初八种怪物共用这一份列表（Phase H6 归位时"只换存放位置，不改能力"）。
+/// 内容轮（C1）起按物种分化：F1 可见的鼠与蝎子各取不同子集，
+/// 本常量现在代表"完整"那一档（哥布林 + 五种尚未出现在 F1 的物种）。
 const MONSTER_ABILITIES: &[Ability] = &[
     Ability::Chase,
     Ability::Flee,
     Ability::Wander,
     Ability::Wait,
 ];
+
+/// **猎物**：不主动追击，但受伤会逃（鼠）。
+///
+/// 去掉 `Chase` 的直接后果：鼠不会主动进攻，被打了才跑。它是场上最快的物种
+/// （速度 1.11），所以"追一只受伤的鼠"与"追蝎子"是两种手感——这正是 C1 想让
+/// 玩家先感受到的差异。
+const PREY_ABILITIES: &[Ability] = &[Ability::Flee, Ability::Wander, Ability::Wait];
+
+/// **不知恐惧**：会追击，但永不逃跑（蝎子）。
+///
+/// 去掉 `Flee` 的直接后果：`FLEE_HP_RATIO` 那套滞回机制对它完全不生效，
+/// 它会把这一仗打完或者当场死掉；哥布林保留逃跑，于是两者残血时表现相反。
+const FEARLESS_ABILITIES: &[Ability] = &[Ability::Chase, Ability::Wander, Ability::Wait];
 
 /// 怪物数据键。派生 `Ord` 只为排序/快照比较，不表示强度序。
 #[derive(
@@ -251,7 +264,7 @@ const RAT: MonsterTemplate = MonsterTemplate {
     crit_damage: 0.50,
     exp_base: 6.0,
     exp_per_floor: 3.0,
-    abilities: MONSTER_ABILITIES,
+    abilities: PREY_ABILITIES,
     // 洞穴的"基础杂兵"：随楼层让位给蝎子与哥布林，但有底（不会彻底消失）。
     spawn: &[
         SpawnWeightFor {
@@ -283,7 +296,7 @@ const SCORPION: MonsterTemplate = MonsterTemplate {
     crit_damage: 0.50,
     exp_base: 10.0,
     exp_per_floor: 5.0,
-    abilities: MONSTER_ABILITIES,
+    abilities: FEARLESS_ABILITIES,
     // 跨两种生态：洞穴里随楼层变多，地海里作为"少量混入"。
     spawn: &[
         SpawnWeightFor {
@@ -315,6 +328,7 @@ const GOBLIN: MonsterTemplate = MonsterTemplate {
     crit_damage: 0.50,
     exp_base: 15.0,
     exp_per_floor: 7.5,
+    // 完整行为谱（会追、残血会逃）——哥布林是 F1 上最难缠的那一种。
     abilities: MONSTER_ABILITIES,
     // 两种生态里都随楼层快速上升（威胁替换）：洞穴的顶更高、繁茂的顶更低。
     spawn: &[

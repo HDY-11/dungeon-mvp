@@ -235,23 +235,82 @@ fn pick_by_weight_follows_accumulation_order() {
     assert_eq!(pick_by_weight(&[0.0, 10.0], 0.0), 1);
 }
 
-// ── H6：能力归位的等价性 ─────────────────────────────
+// ── C1：能力集按物种分化 ─────────────────────────────
 
-/// H6：八种怪物拿到与归位前**完全同一套** `Can*` 标记。
+/// **能力集按物种分化**（C1 内容轮）——此前八种共用一份列表，等于没有分化。
 ///
-/// 归位前是 `spawn_monsters_system` 里写死的四条 `insert`；归位后是模板字段。
-/// 这条测试锁住"归位没有顺手增删能力"——能力集合本身是行为（`CanFlee` 决定怪会不会跑）。
+/// 这条取代了归位期（H6）的 `every_template_grants_the_legacy_ability_set`：
+/// 那条断言"八种完全相同"，目的是证明**归位不改行为**；现在行为是**有意**改的，
+/// 所以断言换成"三种可见怪各有一个角色"。
+///
+/// 为什么值得单独钉：能力集就是**行为**——`CanChase` 决定它会不会扑上来，
+/// `CanFlee` 决定残血时跑不跑——而它只存在于模板数据里，没有任何编译期约束。
 #[test]
-fn every_template_grants_the_legacy_ability_set() {
-    let expected = [
+fn the_three_visible_species_have_distinct_roles() {
+    let rat = monster_template(MonsterKindId::Rat).abilities;
+    let scorpion = monster_template(MonsterKindId::Scorpion).abilities;
+    let goblin = monster_template(MonsterKindId::Goblin).abilities;
+
+    // 鼠 = 猎物：不主动进攻，但受伤会跑。
+    assert!(
+        !rat.contains(&Ability::Chase),
+        "鼠是猎物，不该主动追击（否则与哥布林没有区别）"
+    );
+    assert!(rat.contains(&Ability::Flee), "鼠胆小，受伤必须会逃");
+
+    // 蝎子 = 不知恐惧：会追，但永不逃。
+    assert!(scorpion.contains(&Ability::Chase), "蝎子必须会追");
+    assert!(
+        !scorpion.contains(&Ability::Flee),
+        "蝎子不该逃跑（`FLEE_HP_RATIO` 的滞回对它本就不该生效）"
+    );
+
+    // 哥布林 = 完整谱。
+    assert!(goblin.contains(&Ability::Chase) && goblin.contains(&Ability::Flee));
+
+    // 三者两两不同——这就是"分化"的字面含义。
+    assert_ne!(rat, scorpion);
+    assert_ne!(rat, goblin);
+    assert_ne!(scorpion, goblin);
+}
+
+/// **兜底能力是硬要求**：没有任何候选的 actor 会永久占着 `ActiveAction` 槽位空转
+/// （ECS43 的失败模式）。这条对所有物种生效，包括以后新加的。
+#[test]
+fn every_template_can_always_act() {
+    for kind in ALL_KINDS {
+        let abilities = monster_template(kind).abilities;
+        assert!(
+            abilities.contains(&Ability::Wander) || abilities.contains(&Ability::Wait),
+            "{kind:?} 没有兜底能力：仲裁会为它产出零候选，actor 将永久空转"
+        );
+    }
+}
+
+/// 尚未出现在 F1 的 5 种保持完整行为谱——改动它们需要**显式修改本测试**。
+///
+/// 它们目前不可达（F1 固定 Cavern，池子只有鼠/蝎/哥布林），给它们分化角色属于
+/// "看不见的内容"。这条不禁止改动，只让改动发生在有人看着的时候。
+#[test]
+fn species_not_yet_reachable_keep_the_full_set() {
+    let full = [
         Ability::Chase,
         Ability::Flee,
         Ability::Wander,
         Ability::Wait,
     ];
-    for kind in ALL_KINDS {
-        let abilities = monster_template(kind).abilities;
-        assert_eq!(abilities, &expected, "{kind:?} 的能力集变了（归位只换位置）");
+    for kind in [
+        MonsterKindId::Sporeling,
+        MonsterKindId::MushroomGolem,
+        MonsterKindId::CaveFish,
+        MonsterKindId::CaveCrab,
+        MonsterKindId::DeepEel,
+    ] {
+        assert_eq!(
+            monster_template(kind).abilities,
+            &full,
+            "{kind:?} 不可达却分化了行为：玩家看不到的改动只会让以后更难推断"
+        );
     }
 }
 
