@@ -258,6 +258,14 @@ fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
             "EXP：{:.0} / {:.0}",
             scene.hud.exp.current, scene.hud.exp.max
         )));
+        // 扩展信息（C3 起：中毒等状态）。`extra_lines` 此前是契约里**没有消费者的字段**，
+        // 现在有内容在写它——所以这里也必须有地方读它，否则状态就只存在于数据结构里。
+        for line in &scene.hud.extra_lines {
+            let text: String = line.spans.iter().map(|span| span.text.as_str()).collect();
+            if !text.is_empty() {
+                lines.push(Line::from(Span::styled(text, Style::default().fg(Color::Red))));
+            }
+        }
     }
 
     lines.push(Line::from(""));

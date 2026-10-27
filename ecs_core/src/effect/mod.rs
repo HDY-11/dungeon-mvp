@@ -30,10 +30,15 @@
 
 pub mod cell;
 pub mod collect;
+pub mod status;
 // `ownership` 不设为 `pub mod`：`action` 已有一个同名子模块，两个 `pub use X::*`
 // 会在 `lib.rs` 的 `pub use effect::*` 处撞成 `ambiguous_glob_reexports`
 // （模块名不是 API —— 四个关系类型才是）。所以这里只转出类型。
 mod ownership;
+
+pub use status::{
+    POISON_DAMAGE_PER_ROUND, POISON_ROUNDS, Poison, poison_apply_system, poison_tick_system,
+};
 
 pub use cell::{
     CellAttributes, CellEffectAt, CellEffects, CellMoveCost, cell_attributes, cell_speed_modifier,

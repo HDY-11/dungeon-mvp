@@ -77,6 +77,10 @@ pub fn build_core_schedule() -> Schedule {
         (
             combat::resolve_attack_system,
             combat::apply_damage_system,
+            // 中毒的顺序有语义（见 `effect/status.rs`）：先运转已有中毒，再让本轮的攻击
+            // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
+            crate::effect::poison_tick_system,
+            crate::effect::poison_apply_system,
             death::check_death_system,
             experience::apply_exp_system,
             perception::fov_system,

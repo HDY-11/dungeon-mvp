@@ -440,8 +440,38 @@ fn build_hud(world: &mut World) -> HudView {
             .unwrap_or_default(),
         attack: attack.map(|a| a.0 as f32).unwrap_or_default(),
         defense: defense.map(|d| d.0 as f32).unwrap_or_default(),
-        extra_lines: Vec::new(),
+        extra_lines: player_status_lines(world),
     }
+}
+
+/// 玩家的状态行（C3 起：中毒）。挂在 `HudView::extra_lines` 上，由后端渲染。
+///
+/// **只读 `EffectOf` 那一组效果**：装备（`EquippedBy`）不在这里——它要显示成"装备"，
+/// 不是"状态"。这条区分正是 DsnE12 用两个关系类型换来的。
+fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
+    let Some(player) = world
+        .query_filtered::<Entity, With<Player>>()
+        .iter(world)
+        .next()
+    else {
+        return Vec::new();
+    };
+    // `OwnedEffects` 只在第一个孩子出现时才存在，所以是 `Option`。
+    let Some(owned) = world.get::<ecs_core::OwnedEffects>(player) else {
+        return Vec::new();
+    };
+    let effects: Vec<Entity> = owned.iter().collect();
+
+    let mut lines = Vec::new();
+    for effect in effects {
+        if let Some(poison) = world.get::<ecs_core::Poison>(effect) {
+            lines.push(render_api::UiTextLine::plain(format!(
+                "中毒 {} 回合",
+                poison.rounds_left
+            )));
+        }
+    }
+    lines
 }
 
 fn build_log(world: &mut World, config: &ExtractConfig) -> Vec<LogLine> {

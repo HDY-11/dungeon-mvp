@@ -449,3 +449,33 @@ fn mud_doubles_the_player_move_av_in_the_real_world() {
         "泥潭必须让移动 AV 恰好翻倍：平地 {plain_av} / 泥潭 {mud_av}"
     );
 }
+
+// ── C3 内容：中毒的结算顺序 ──────────────────────────
+
+/// **C3 的协同验收**：中毒伤害必须在**同一轮**被死亡判定收口。
+///
+/// 这条钉的是 `build_core_schedule` 里的顺序：`poison_tick_system` 必须在
+/// `check_death_system` **之前**。若有人把 tick 挪到死亡判定之后，玩家会看到血量归零
+/// 却没死——而且没有任何测试会报错，除了这一条。
+#[test]
+fn poison_damage_kills_in_the_same_round() {
+    let mut world = new_game(2026);
+    clear_actors(&mut world);
+    let player = player_entity(&world);
+
+    // 一剂必死的毒：1 回合、伤害远超血量上限。
+    world.spawn((
+        ecs_core::EffectOf(player),
+        ecs_core::Poison {
+            damage_per_round: 10_000.0,
+            rounds_left: 1,
+        },
+    ));
+
+    ecs_core::system::run_settle_systems(&mut world);
+
+    assert!(
+        world.resource::<TurnManager>().game_over,
+        "中毒伤害必须在同一轮触发死亡（tick 必须在 check_death 之前）"
+    );
+}
