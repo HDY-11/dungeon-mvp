@@ -37,8 +37,8 @@
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **127 passed**；`cargo test --workspace`
-28 目标 **351 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **138 passed**；`cargo test --workspace`
+28 目标 **366 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
@@ -89,10 +89,10 @@
 | # | 内容 | 撞哪个扩展点（此前用户数） | 状态 |
 |---|---|---|---|
 | C1 | 三只怪能力分化：鼠=猎物、蝎子=不知恐惧、哥布林=完整 | `Ability` 列表（8/8 完全相同） | ✅ 已落地 |
-| C2 | 泥潭格（可走、代价×2，洒在 F1 地板） | `CellEffects` / `CellMoveCost`（**0 用户**） | ⬜ |
-| C3 | 蝎子攻击附加中毒（每回合掉血、N 回合消失） | `EffectOf` + **第一个效果 owner 系统** | ⬜ |
-| C4 | 一件装备 + 地面物品 + 走过去拾取 | `EquippedBy`（**0 用户**）+ `Equipment` 桶 | ⬜ |
-| C5 | 浅水有移动代价（`TILE_PROPS.move_cost` 首次非 1.0） | H9 接线 + `Terrain` 桶 | ⬜ **需先定数值（GAME.md）** |
+| C2 | 泥潭格（可走、代价×2，洒在 F1 地板） | `CellEffects` / `CellMoveCost`（**0 用户**） | ✅ 已落地 |
+| C3 | 蝎子攻击附加中毒（每回合掉血、3 回合消失） | `EffectOf` + **第一个效果 owner 系统** | ✅ 已落地 |
+| C4 | 踏水靴：地面物品 + 走过去拾取 + 立即装备 | `EquippedBy`（**0 用户**）+ 装备→效果翻译 | ✅ 已落地 |
+| C5 | 浅水有移动代价（`TILE_PROPS.move_cost` 首次非 1.0，×1.5） | H9 接线 + `Terrain` 桶 | ✅ 已落地（数值 [⃞试调]） |
 
 **stop rule：** 任何一条内容若需要改 **≥3 处**、或需要动**中央 match/分派**，
 立刻停下——那是扩展点的问题，先修扩展点再回来。

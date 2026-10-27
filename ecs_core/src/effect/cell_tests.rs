@@ -68,17 +68,34 @@ fn neutral_cost_produces_no_modifier() {
     assert_eq!(modifier.base_delta, 0.0);
 }
 
-/// `TILE_PROPS` 的 `move_cost` **当前全部是 1.0**（H4 只留位置，H9 只接线，不填值）。
+/// 地形自带的移动代价：**逐格钉死**（C5 起只有浅水非中性）。
 ///
-/// 这条测试是"数值口径属 GAME.md"的执行版本：有人想调地形代价，要么改 GAME.md 再改表，
-/// 要么被这条断言拦住——它不会让代码静默变成"某些地形开始变慢"。
+/// 这条测试的身份变过一次，值得记下来：H4/H9 时它叫
+/// `terrain_move_cost_is_still_a_neutral_placeholder`，断言"全表都是 1.0"——那是为了守住
+/// "只接线、不填值"。C5 给浅水一个真实代价之后，那条断言就变成了**错误的设计**
+/// （它会把内容决策当成违规）。现在改成"逐格列出应有值"：任何改动都得显式改这张表。
 #[test]
-fn terrain_move_cost_is_still_a_neutral_placeholder() {
-    for props in TILE_PROPS {
+fn terrain_move_costs_are_pinned_per_tile() {
+    use crate::map::Tile;
+    let expected: [(Tile, f64); 11] = [
+        (Tile::Wall, 1.0),
+        (Tile::Floor, 1.0),
+        (Tile::ShallowWater, 1.5),
+        (Tile::DeepWater, 1.0),
+        (Tile::Stalactite, 1.0),
+        (Tile::Mycelium, 1.0),
+        (Tile::FungalPatch, 1.0),
+        (Tile::HangingVine, 1.0),
+        (Tile::Sand, 1.0),
+        (Tile::Seagrass, 1.0),
+        (Tile::CoralReef, 1.0),
+    ];
+    assert_eq!(expected.len(), TILE_PROPS.len(), "表行数变了，请同步这张期望表");
+    for (tile, cost) in expected {
         assert_eq!(
-            props.move_cost, 1.0,
-            "{:?} 的 move_cost 不再是 1.0：地形代价的数值口径需先进 GAME.md",
-            props.tile
+            tile.props().move_cost,
+            cost,
+            "{tile:?} 的移动代价变了：它属 GAME.md 的数值口径（Gm10），改之前先改文档"
         );
     }
 }

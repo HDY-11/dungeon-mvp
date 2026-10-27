@@ -171,12 +171,23 @@ fn monsters_outside_viewshed_are_not_rendered() {
 
     let frame = extract_scene_frame(&mut world, &config, &pages, 1);
     assert_eq!(frame.map.visible_count(), 0, "视野清空后可见格为 0");
+    // 楼梯与地面物品的可见性口径是「**探索过**就画」（它们是导航/拾取目标，不是威胁），
+    // 所以这里只对**怪物**断言"视野外不得可见"——这才是本测试要守的东西。
+    assert!(
+        frame.entities.iter().all(|entity| {
+            !entity.visible
+                || entity.visual == VisualKey::Stairs
+                || matches!(entity.visual, VisualKey::Item(_))
+        }),
+        "视野清空后除楼梯与地面物品外不得有可见实体"
+    );
     assert!(
         frame
             .entities
             .iter()
-            .all(|entity| entity.visual == VisualKey::Stairs || !entity.visible),
-        "视野清空后除楼梯外不得有可见实体"
+            .filter(|entity| matches!(entity.visual, VisualKey::Monster(_)))
+            .all(|entity| !entity.visible),
+        "怪物必须在视野外不可见（防止隔着墙看到怪物）"
     );
 }
 

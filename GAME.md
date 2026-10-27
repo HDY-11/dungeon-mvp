@@ -641,11 +641,16 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 **可通行/阻挡视线这两列在代码里的唯一来源是 `Tile::props()`（`ecs_core/src/map/tile.rs` 的
 `TILE_PROPS` 表）**，本表同样只是镜像（Phase H4 / DESIGN DsnE13）。
 
-**地形代价（`move_cost`）当前恒为 `1.0`，数值口径未定**：`TILE_PROPS` 已有这一列、
-移动 AV 也已经真的消费它（Phase H9 接线），但**表里没有一个非 1.0 的值**——
-所以"某些地形变慢"这件事还没有内容，只有位置。要启用时：先在本表加一列写明倍率
-（`[⃞试调]`），再改 `TILE_PROPS`；`terrain_move_cost_is_still_a_neutral_placeholder`
-这条测试会拦住"代码里偷偷填数"。
+#### 地形移动代价（`move_cost`）[⃞试调: C5 起有真实数值]
+
+| 地形 | 倍率 | 备注 |
+|---|---|---|
+| 浅水 ShallowWater | **×1.5** | [⃞试调] 涉水比平地慢（速度 ×2/3）；C5 之前全表都是 1.0 的预留位 |
+| 其余 10 种 | ×1.0 | 中性 |
+
+口径：**处于这一格时**生效（移动类行动在生成期读脚下这一格，见 Gm1）。它与"泥潭"那类
+格子效果相乘，且**同属 `Terrain` 来源桶**——所以"无视地形"（踏水靴）会同时无视两者。
+`ecs_core/src/effect/cell_tests.rs::terrain_move_costs_are_pinned_per_tile` 逐格钉住这张表。
 
 ### 格子效果：泥潭 [⃞试调: 内容轮首版]
 

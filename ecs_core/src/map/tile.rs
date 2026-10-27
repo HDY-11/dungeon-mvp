@@ -67,11 +67,14 @@ pub struct TileProps {
     pub walkable: bool,
     /// 是否阻挡视线（FOV / LOS）。
     pub blocks_vision: bool,
-    /// 移动代价倍率：**H8 预留的形状**，当前恒为 1.0。
+    /// 移动代价倍率：**处于/进入**这一格时的代价（1.0 = 中性）。
     ///
-    /// 本轮（H4）**只留位置，不填值、不接线**——移动 AV 仍然只由 `MoveSpeed` 决定
-    /// （见 DESIGN DsnE8 ②）。具体数值口径属 GAME.md（待定）。
-    /// 一旦接线，"无视地形减速"这类效果才有落点（ISSUES ECS27）。
+    /// 消费方式（Phase H9 接线，C5 起有真实数值）：移动类行动在生成期把脚下这一格的
+    /// 代价折算成 `Terrain` 来源桶的速度乘区 `1/move_cost`，再交给 `action_av`。
+    /// 所以"无视地形减速"只要丢掉 `Terrain` 桶即可（ISSUES ECS27 / DsnE10）。
+    ///
+    /// **数值口径属 GAME.md**（当前：只有浅水非中性，见 Gm10）。这一列从 H4 的"预留位"
+    /// 变成真值的那一轮，是一条内容决策，不是架构决策。
     pub move_cost: f64,
 }
 
@@ -103,7 +106,9 @@ pub const TILE_PROPS: &[TileProps] = &[
         glyph: '~',
         walkable: true,
         blocks_vision: false,
-        move_cost: 1.0,
+        // [⃞试调] 涉水比平地慢一半（速度 ×2/3）。这是 `move_cost` 第一次拿到非中性值
+        // （内容轮 C5）；在此之前它全是 1.0 的预留位。
+        move_cost: 1.5,
     },
     TileProps {
         tile: Tile::DeepWater,
@@ -316,21 +321,13 @@ mod tests {
         assert!(bad.is_err(), "未定义的判别值必须反序列化失败");
     }
 
-    /// H4 是"只碰形状"的一轮：新加的 `move_cost` 列必须**恒为 1.0**（= 不接线）。
+    /// `move_cost` 的**逐格期望值**已移到 `effect/cell_tests.rs::terrain_move_costs_are_pinned_per_tile`。
     ///
-    /// 这条断言的作用是防止"顺手填值"——数值口径属 GAME.md（待定），
-    /// 一旦有人在这里填了非 1.0，必须同时改本条断言，从而无法悄悄改平衡。
-    #[test]
-    fn move_cost_is_still_a_reserved_slot() {
-        for props in TILE_PROPS {
-            assert_eq!(
-                props.move_cost, 1.0,
-                "{:?} 的 move_cost 在 H4 阶段必须保持预留值 1.0",
-                props.tile
-            );
-        }
-    }
-
+    /// 这里原本是 `move_cost_is_still_a_reserved_slot`，断言"全表恒为 1.0"——那是 H4
+    /// "只碰形状、不填值"阶段的产物。C5 给浅水填了真实代价之后，"全 1.0"不再是正确断言，
+    /// 而**逐格期望表**才是（它同时钉住"别的格没被顺手改"）。保留两个副本只会让改一个漏一个，
+    /// 所以这里只留指针。
+    ///
     /// 判别值就是 H4 之前手写 `Serialize` 里那组数（0..=10）。
     ///
     /// 表的"分解"就是把这组数搬进 `id` 列，所以这里逐值钉住迁移前的结果：
