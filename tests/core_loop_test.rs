@@ -10,7 +10,7 @@
 //!
 //! 渲染不在本轮范围：`render-api` 的消费验证属于 REFACTOR §11 Phase G（presentation/tui）。
 
-use bevy_ecs::prelude::{Component, Entity, With, World};
+use bevy_ecs::prelude::{Component, Entity, With, Without, World};
 use ecs_core::components::{ActionTimer, Active, Health, Idle, Position};
 use ecs_core::effect::{CellEffectAt, CellEffects};
 use ecs_core::entity_cls::{Monster, Player, Stairs};
@@ -448,6 +448,61 @@ fn mud_doubles_the_player_move_av_in_the_real_world() {
         (mud_av - plain_av * 2.0).abs() < 1e-9,
         "泥潭必须让移动 AV 恰好翻倍：平地 {plain_av} / 泥潭 {mud_av}"
     );
+}
+
+// ── 主循环：占用图必须与 Position 一致 ────────────────
+
+/// **回归测试**：`apply_player_command` 返回之后，占用图必须与所有实体的 `Position` 一致。
+///
+/// 这条是被自动试玩抓出来的（`examples/playthrough.rs`）：`apply_player_command` 末尾原本
+/// 还会再跑一次 `ActionPocSchedule`（注释说是"为下一轮准备"），但那一次会真的 **Tick + 执行**
+/// ——怪物因此移动，而 `rebuild_occupancy_system` 在结算调度里，**不会跟着跑**。
+/// 于是每条玩家命令之后占用图都陈旧一帧，后果是：
+///
+/// - 玩家撞不进、也打不到某个怪物（占用图说那格是空的 → 攻击退化成移动 → 又因对角穿墙被拒）
+///   → 实测被卡死：400 条命令拒绝 395 条、HP 一直满、0 击杀；
+/// - 直线方向更糟：玩家会直接**走进**怪物那一格（`execute_move` 只查占用图）。
+///
+/// 修法是删掉那次尾随调度（下一轮开始时本来就会生成+仲裁）。
+#[test]
+fn occupancy_matches_positions_after_each_player_command() {
+    let mut world = new_game(2026);
+
+    for step in 0..24 {
+        // 先朝一个可走方向走；不行就换方向；再不行就等待。
+        let pos = player_pos(&world);
+        let mut moved = false;
+        let dirs = [(1, 0), (0, 1), (-1, 0), (0, -1), (1, 1), (-1, -1)];
+        for k in 0..dirs.len() {
+            let (dx, dy) = dirs[(k + step) % dirs.len()];
+            if apply_player_command(&mut world, PlayerCommand::Move { dx, dy }) {
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            apply_player_command(&mut world, PlayerCommand::Wait);
+        }
+        if world.resource::<TurnManager>().game_over {
+            break;
+        }
+        let _ = pos;
+
+        // 一致性：每个带 Position 的实体（楼梯除外）都必须出现在占用图里。
+        let rows: Vec<(Entity, (usize, usize))> = {
+            let mut query = world.query_filtered::<(Entity, &Position), Without<Stairs>>();
+            query.iter(&world).map(|(e, p)| (e, p.to_tuple())).collect()
+        };
+        for (entity, pos) in rows {
+            let registered = world
+                .resource::<ecs_core::OccupancyMap>()
+                .entity_at(pos.0, pos.1);
+            assert!(
+                registered.is_some(),
+                "第 {step} 步：{pos:?} 上的实体 {entity:?} 不在占用图里（占用图陈旧）"
+            );
+        }
+    }
 }
 
 // ── C3 内容：中毒的结算顺序 ──────────────────────────

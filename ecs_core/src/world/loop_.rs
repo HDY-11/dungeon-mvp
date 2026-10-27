@@ -79,8 +79,6 @@ pub fn apply_player_command(world: &mut World, command: PlayerCommand) -> bool {
     }
 
     advance_until_player_acted(world);
-    // 为下一轮准备：本轮结束后再跑一次行动链路，让怪物拿到新行动。
-    world.run_schedule(ActionPocSchedule);
     true
 }
 
