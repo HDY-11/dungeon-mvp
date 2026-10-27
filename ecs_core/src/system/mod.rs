@@ -71,7 +71,8 @@ pub fn update_events_system(
 /// `insert_core_resources` 会把它注册到 `World`；调用方可通过
 /// `world.get_schedule_mut(CoreSettleSchedule)` 在前后插入自己的系统。
 pub fn build_core_schedule() -> Schedule {
-    let mut schedule = Schedule::new(CoreSettleSchedule);
+    // `core_schedule`（而不是 `Schedule::new`）：构建时强制无歧义，见 `schedule.rs`。
+    let mut schedule = crate::schedule::core_schedule(CoreSettleSchedule);
     schedule.add_systems(
         (
             combat::resolve_attack_system,

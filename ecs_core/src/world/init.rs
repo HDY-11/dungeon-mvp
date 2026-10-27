@@ -371,7 +371,8 @@ pub fn spawn_monsters_system(
 // ── 初始化调度 ───────────────────────────────────────
 
 pub fn build_init_schedule() -> Schedule {
-    let mut schedule = Schedule::new(CoreInitSchedule);
+    // `core_schedule`（而不是 `Schedule::new`）：构建时强制无歧义，见 `schedule.rs`。
+    let mut schedule = crate::schedule::core_schedule(CoreInitSchedule);
     schedule.add_systems(
         (
             generate_map_system,

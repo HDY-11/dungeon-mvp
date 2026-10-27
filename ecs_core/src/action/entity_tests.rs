@@ -14,6 +14,90 @@ use bevy_ecs::system::RunSystemOnce;
 /// 一个 actor 同时只能有一个 `ActiveAction`；违反即为实现 bug。
 const MAX_ACTIONS_PER_ACTOR: usize = 1;
 
+/// 授予顺序必须是**显式排序**（按 `(priority, bits)` 升序），不能是 `HashMap` 的迭代顺序。
+///
+/// 这条守的是个跨进程才显形的属性：`HashMap` 的 `RandomState` **每进程种子不同**，
+/// 所以"迭代顺序"在同一进程里恒定、在两次运行之间却可能不同——单进程测试永远看不见
+/// 它，所以这里退一步**钉顺序规则本身**。
+///
+/// 8 个条目让"哈希顺序恰好等于排序顺序"的概率降到 1/8!（≈2.5e-5），
+/// 因此任何人删掉 `ordered_grants` 里的那次排序，这条几乎必然失败。
+#[test]
+fn grant_order_is_sorted_by_priority_then_action_bits() {
+    let mut world = World::new();
+    let mut winners: HashMap<Entity, (Entity, i32, u64)> = HashMap::new();
+    let mut key_of: HashMap<Entity, (i32, u64)> = HashMap::new();
+
+    for i in 0..8i32 {
+        let actor = world.spawn_empty().id();
+        let action = world.spawn_empty().id();
+        // 优先级交错（-100 / 0 / 100），bits 反向：插入顺序与目标顺序故意不一致。
+        let priority = (i % 3) * 100 - 100;
+        let bits = 1000 - i as u64;
+        winners.insert(actor, (action, priority, bits));
+        key_of.insert(actor, (priority, bits));
+    }
+
+    let actual: Vec<(i32, u64)> = ordered_grants(&winners)
+        .iter()
+        .map(|(actor, _)| key_of[actor])
+        .collect();
+    let mut expected: Vec<(i32, u64)> = key_of.values().copied().collect();
+    expected.sort_unstable();
+    assert_eq!(actual, expected, "授予顺序必须按 (priority, bits) 升序");
+
+    // 若本进程的哈希顺序恰好不等于排序结果，再直接断言"不是哈希顺序"。
+    let hash_order: Vec<(i32, u64)> = winners.keys().map(|actor| key_of[actor]).collect();
+    if hash_order != expected {
+        assert_ne!(actual, hash_order, "授予顺序不得是哈希迭代顺序");
+    }
+}
+
+/// 同一场景跑两次，仲裁结果逐项相同（进程内的自洽性——跨进程那半靠未来的种子扫描）。
+#[test]
+fn arbitration_is_repeatable_within_a_process() {
+    fn run() -> Vec<(Entity, bool)> {
+        let (world, actors) = {
+            let (mut world, _player) = single_tile_scene();
+            world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
+            let actors: Vec<Entity> = (0..3)
+                .map(|i| poc_actor(&mut world, (10 + i, 10)))
+                .collect();
+            (world, actors)
+        };
+        let mut world = world;
+        for (i, actor) in actors.iter().enumerate() {
+            for (j, priority) in [-100, 0, 100].into_iter().enumerate() {
+                world.spawn((
+                    ActionOf(*actor),
+                    ActionPriority(priority),
+                    ActionSource::Ai,
+                    ActionTimer {
+                        remaining_av: (i * 3 + j) as f64,
+                    },
+                    Wander,
+                    Candidate,
+                ));
+            }
+        }
+        world.run_schedule(crate::schedule::ActionPocSchedule);
+        let mut granted: Vec<(Entity, bool)> = world
+            .query::<(Entity, Has<ActiveAction>)>()
+            .iter(&world)
+            .filter(|(_, active)| *active)
+            .collect();
+        granted.sort_unstable();
+        granted
+    }
+
+    let first = run();
+    let second = run();
+    assert_eq!(
+        first, second,
+        "同一输入两次仲裁必须给出相同结果（顺序与归属都不许漂）"
+    );
+}
+
 /// 测试世界 + 注册 PoC 调度（`insert_core_resources` 只注册 init/settle 两条）。
 fn poc_world() -> (World, Entity) {
     let (mut world, player) = single_tile_scene();
@@ -2206,11 +2290,20 @@ fn parameterized_move_executor_coexists_with_settle_systems() {
 
     // 把参数化执行器**追加**到既有的 core 结算调度里（不新建、不替换调度）：
     // 执行器必须能与 FOV / 占用图 / 事件更新等系统挂在一起而不冲突。
+    //
+    // `.before(update_events_system)` 不是装饰：`action_completion_system` 读终态事件，
+    // 而 `update_events_system` 在结算末尾交换事件缓冲——**跑在它后面就等于读不到本轮事件**
+    // （事件已被丢弃，`EventReader` 游标也被推过）。这是把 `ambiguity_detection` 提到
+    // `LogLevel::Error` 之后抓到的第一处隐性顺序依赖：两者访问冲突，但此前没人声明顺序。
     world
         .resource_mut::<Schedules>()
         .get_mut(CoreSettleSchedule)
         .expect("core 结算调度已注册")
-        .add_systems((execute_move_system, ApplyDeferred, action_completion_system).chain());
+        .add_systems(
+            (execute_move_system, ApplyDeferred, action_completion_system)
+                .chain()
+                .before(crate::system::update_events_system),
+        );
     world.run_schedule(CoreSettleSchedule);
 
     assert_eq!(

@@ -668,7 +668,8 @@ pub fn player_action_generation_system(
 ///   调用方随后看到的 `player_is_busy == false` 只是「已经做完了」，
 ///   无法区分「命令被拒绝」（本文件第一版就踩了这个坑）。
 pub fn build_player_mount_schedule() -> Schedule {
-    let mut schedule = Schedule::new(PlayerMountSchedule);
+    // `core_schedule`（而不是 `Schedule::new`）：构建时强制无歧义，见 `schedule.rs`。
+    let mut schedule = crate::schedule::core_schedule(PlayerMountSchedule);
     schedule.add_systems(
         (
             player_action_generation_system,
@@ -686,6 +687,19 @@ pub fn build_player_mount_schedule() -> Schedule {
 ///
 /// 比较器是 `(ActionPriority, action_entity.to_bits())` 的**全序**：不含随机数。
 /// 同优先级时 entity bits 小者胜出，保证结果可复现（REFACTOR.md §3.4）。
+///
+/// # 发命令的顺序也必须确定（Phase H11 后的确定性修补）
+///
+/// 两个循环（授予、回收）都**不能**用 `HashMap` 的迭代顺序：
+/// `std::collections::HashMap` 的 `RandomState` 每进程种子不同，所以同一世界在两次进程里
+/// 迭代顺序可能不同 → 命令发出顺序不同 → `insert(ActiveAction)` 造成的 **archetype 创建
+/// 顺序**不同 → 之后所有系统对这些 archetype 的**查询迭代顺序**不同 → 若有系统在迭代中
+/// 消费 `GameRng`（`execute_wander_system` 逐只取随机方向），随机流的分配就变了。
+/// 回收循环同理：`despawn` 顺序决定实体 id 的复用顺序，进而改变未来的 `to_bits()`，
+/// 而 `to_bits()` 正是仲裁的平局打破键。
+///
+/// 最终**状态**本身与顺序无关（每条命令作用在不同实体上），所以这类洞在单进程内、
+/// 在现有测试里都不会显形——只在跨进程对比同一颗种子时才看得见。
 pub fn action_arbitration_system(
     mut commands: Commands,
     candidates: Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>,
@@ -722,19 +736,35 @@ pub fn action_arbitration_system(
         }
     }
 
-    for (actor, (winner, ..)) in &winners {
-        commands
-            .entity(*winner)
-            .remove::<Candidate>()
-            .insert(ActiveAction);
-        let mut actor_cmd = commands.entity(*actor);
+    for (actor, winner) in ordered_grants(&winners) {
+        commands.entity(winner).remove::<Candidate>().insert(ActiveAction);
+        let mut actor_cmd = commands.entity(actor);
         actor_cmd.remove::<Idle>();
         actor_cmd.remove::<Failure>();
         actor_cmd.insert(Active);
     }
+    // 回收顺序同样显式化：见函数文档（despawn 顺序影响实体 id 复用 → 影响 `to_bits()`）。
+    losers.sort_unstable_by_key(|action| action.to_bits());
     for loser in losers {
         commands.entity(loser).despawn();
     }
+}
+
+/// 授予顺序：按 `(priority, action bits)` **升序**——与仲裁键同序，且与哈希迭代顺序无关。
+///
+/// 抽成独立函数只为一件事：让"顺序规则"能被单测钉住。系统内联排序的话，
+/// "这里要不要排序"就只剩注释在守（而注释不会失败）。
+fn ordered_grants(winners: &HashMap<Entity, (Entity, i32, u64)>) -> Vec<(Entity, Entity)> {
+    let mut grants: Vec<(Entity, Entity, i32, u64)> = winners
+        .iter()
+        .map(|(actor, (action, priority, bits))| (*actor, *action, *priority, *bits))
+        .collect();
+    // bits 唯一，所以这是严格全序（`sort_unstable` 的稳定性不构成依赖）。
+    grants.sort_unstable_by_key(|&(_, _, priority, bits)| (priority, bits));
+    grants
+        .into_iter()
+        .map(|(actor, action, ..)| (actor, action))
+        .collect()
 }
 
 // ── Tick ─────────────────────────────────────────────
@@ -1278,7 +1308,7 @@ pub enum ActionPhase {
 /// 读候选；不把命令落盘，仲裁会看到空世界（Phase C 的 `.chain()` 已包含这一点，
 /// 分组后必须逐处保留）。
 pub fn build_action_poc_schedule() -> Schedule {
-    let mut schedule = Schedule::new(ActionPocSchedule);
+    let mut schedule = crate::schedule::core_schedule(ActionPocSchedule);
     schedule.add_systems(
         (
             (

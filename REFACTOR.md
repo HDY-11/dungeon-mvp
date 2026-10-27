@@ -33,9 +33,10 @@
 | H8 | 规则修正器求值侧（`rules/modifier.rs`：来源桶 / 两类位 / 过滤 / 折叠） | DsnE10 | `389e460` |
 | H9 | 格子属性统一读取入口（`effect::cell_attributes`）+ 格子效果的格索引（`CellEffects`，照 `OccupancyMap` 每轮重建）+ `move_cost` 接线 | DsnE13、ECS27 | 与 H11 同一提交 |
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
+| D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **121 passed**；`cargo test --workspace`
-28 目标 **345 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **125 passed**；`cargo test --workspace`
+28 目标 **349 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

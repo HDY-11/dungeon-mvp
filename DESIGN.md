@@ -676,6 +676,16 @@ LESSONS LECS22（扩展点判据）。
 - 地图生成对 `(MapSeed, FloorNumber)` 必须确定；改生成算法 = 改同 seed 地图，
   需要 DESIGN 记录 + golden seed 测试。
 - 消费随机数的系统必须显式排序（Bevy 系统顺序默认未指定）。
+- **凡是"一次处理一批实体"的地方，顺序必须由显式排序键给出，不得依赖容器迭代顺序。**
+  `std::collections::HashMap` 的 `RandomState` **每个进程种子不同**，所以同一个世界在两次
+  运行里迭代顺序可能不同 → 命令发出顺序不同 → archetype 创建顺序不同 → 之后各系统的
+  **查询迭代顺序**不同 → 若其中任何人消费 `GameRng`，随机流分配就变了。
+  当前已知落点：`action_arbitration_system` 的授予与回收两个循环（`ordered_grants` +
+  `losers.sort_unstable_by_key`）。
+- **Schedule 构建强制无歧义**：core 的四个 Schedule 一律经 `schedule::core_schedule()` 构建，
+  它把 bevy 的 `ambiguity_detection` 从默认的 `Ignore` 提到 **`Error`**——"访问冲突但顺序
+  未声明"的系统对会在构建期（即每个测试的第一句）直接失败。这条护栏上线时立刻抓到一处
+  真实隐性依赖（`action_completion_system` 读终态事件 vs `update_events_system` 交换缓冲）。
 
 **④ 显示数据不属于领域**
 

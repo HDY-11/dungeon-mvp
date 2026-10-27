@@ -109,4 +109,5 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS36 | `Ready` 的清理散落多处：只有 `execute_move_system` 显式清理 | `ecs_core/src/action/entity.rs` | ECS35 |
 | ECS41 | 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出） | DsnE12 / ECS30 / ECS42 |
 | ECS42 | 级联语义相反的两类效果用两个关系类型分开：`EffectOf`（级联）/ `EquippedBy`（不级联） | `ecs_core/src/effect/ownership.rs`（新） | DsnE12 |
+| ECS44 | 确定性：仲裁的授予/回收顺序改为**显式排序**（`HashMap` 迭代顺序每进程种子不同 → 同种子可能不同结果）；四个 Schedule 经 `core_schedule()` 构建并强制 `ambiguity_detection = Error` | `ecs_core/src/action/entity.rs`（`ordered_grants` / `losers.sort`）、`ecs_core/src/schedule.rs`（`core_schedule`） | DsnX17 ③ / DsnE8 |
 
