@@ -81,6 +81,9 @@ pub fn build_core_schedule() -> Schedule {
             // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
             crate::effect::poison_tick_system,
             crate::effect::poison_apply_system,
+            // 拾取放在中毒之后、死亡判定之前：捡到的东西当轮就生效，而"踩在物品上死掉"
+            // 的边界不值得单独定义（本轮的物品没有任何死亡相关效果）。
+            crate::item::pickup_system,
             death::check_death_system,
             experience::apply_exp_system,
             perception::fov_system,

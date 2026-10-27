@@ -335,6 +335,32 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
         entities.push(view);
     }
 
+    // 地面物品（C4）：物品用 `GroundItemAt` 而不是 `Position`（否则会挡住格子），
+    // 所以它们不在上面的 `Position` 查询里，得单独扫一遍。
+    {
+        let mut query = world.query::<(Entity, &ecs_core::GroundItemAt, &ecs_core::GroundItem)>();
+        let items: Vec<(Entity, (usize, usize), ecs_core::ItemKind)> = query
+            .iter(world)
+            .map(|(entity, at, item)| (entity, at.to_tuple(), item.kind))
+            .collect();
+        for (entity, (x, y), kind) in items {
+            if x >= width || y >= height {
+                continue;
+            }
+            let discoverable = explored.contains(&(x, y));
+            entities.push(
+                EntityView::new(
+                    EntityId::from_bits(entity.to_bits()),
+                    (x as i32, y as i32),
+                    crate::catalog::map_item(kind),
+                )
+                .with_name(kind.name())
+                .with_layer(VisualLayer::Item)
+                .with_visibility(discoverable, false),
+            );
+        }
+    }
+
     // 稳定排序：同一帧内实体的顺序不该随 ECS 内部迭代顺序变化，
     // 否则 golden 测试会随机失败，后端也可能出现"同格两个实体交替闪烁"。
     // `EntityId` 不是 `Ord`（它只是装配层用的稳定标识），所以按 bits 排序。

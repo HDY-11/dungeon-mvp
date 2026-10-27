@@ -415,6 +415,47 @@ pub fn spawn_cell_effects_system(
     log::info!("生成泥潭: {placed} 格（尝试 {attempts} 次）");
 }
 
+// ── 物品内容（C4） ───────────────────────────────────
+
+/// 在可行走格上放一件装备（当前只有踏水靴）。
+///
+/// 为什么要真的躺在地上而不是"开局直接给"：那样验证不到 `EquippedBy` 双关系与
+/// "装备授予的效果需要实例化"这条缝——而那两样是我们花设计成本换来的。
+/// 掉落表没有迁移，所以这里只放**一件**，且位置由 `(MapSeed, 楼层)` 派生。
+pub fn spawn_ground_items_system(
+    mut commands: Commands,
+    map: Res<Map>,
+    player_spawn: Res<PlayerSpawn>,
+    stairs_pos: Res<StairsPos>,
+    cell_effects: Query<&crate::effect::CellEffectAt>,
+    map_seed: Res<MapSeed>,
+    floor: Res<FloorNumber>,
+) {
+    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(4321);
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+
+    // 不放在出生点、楼梯、泥潭上：靴子是用来对付泥潭的，叠在泥潭里会被误读成"泥潭的装饰"。
+    let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];
+    taken.extend(cell_effects.iter().map(|at| at.to_tuple()));
+
+    let mut attempts = 0usize;
+    while attempts < 400 {
+        attempts += 1;
+        let x = rng.random_range(1..MAP_WIDTH - 1);
+        let y = rng.random_range(1..MAP_HEIGHT - 1);
+        if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
+            continue;
+        }
+        commands.spawn((
+            crate::item::GroundItemAt::new(x, y),
+            crate::item::GroundItem::new(crate::item::ItemKind::TrailBoots),
+        ));
+        log::info!("放置地面物品: 踏水靴 @ ({x},{y})");
+        return;
+    }
+    log::warn!("没有找到合适的位置放地面物品（地图过于拥挤）");
+}
+
 // ── 初始化调度 ───────────────────────────────────────
 
 pub fn build_init_schedule() -> Schedule {
@@ -427,6 +468,8 @@ pub fn build_init_schedule() -> Schedule {
             spawn_stairs_system,
             // 泥潭要避开出生点与楼梯，所以排在两者之后、怪物之前。
             spawn_cell_effects_system,
+            // 地面物品要避开泥潭，所以排在泥潭之后。
+            spawn_ground_items_system,
             spawn_monsters_system,
             fov_system,
             update_map_memory_system,

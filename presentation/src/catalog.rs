@@ -65,6 +65,18 @@ pub fn cell_effect_key(move_cost: f64) -> Option<VisualKey> {
     (1.5..2.5).contains(&move_cost).then_some(VisualKey::Effect(EFFECT_MUD))
 }
 
+// ── 物品外观（C4 起） ────────────────────────────────
+
+/// 踏水靴的语义编号。**后端契约编号**，同 [`EFFECT_MUD`]：只能末尾追加。
+pub const ITEM_TRAIL_BOOTS: u32 = 0;
+
+/// 物品 → 语义 key。
+pub fn map_item(kind: ecs_core::ItemKind) -> VisualKey {
+    match kind {
+        ecs_core::ItemKind::TrailBoots => VisualKey::Item(ITEM_TRAIL_BOOTS),
+    }
+}
+
 /// 怪物种类的稳定编号。
 pub fn monster_kind_id(kind: ecs_core::MonsterKindId) -> u16 {
     use ecs_core::MonsterKindId as K;

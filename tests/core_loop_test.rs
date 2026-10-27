@@ -479,3 +479,78 @@ fn poison_damage_kills_in_the_same_round() {
         "中毒伤害必须在同一轮触发死亡（tick 必须在 check_death 之前）"
     );
 }
+
+// ── C4 内容：捡到装备后泥潭对它无效 ──────────────────
+
+/// **C4 的协同验收**：捡起踏水靴之后，泥潭不再让玩家变慢。
+///
+/// 这条串起三段彼此独立的机制：地面物品（`GroundItemAt`）→ 拾取与装备关系
+/// （`EquippedBy`）→ 装备授予的效果实例化成 `EffectOf` 子实体 → 求值层丢掉
+/// `Terrain` 桶。任何一段没接上，AV 都会仍然是两倍。
+#[test]
+fn picking_up_the_boots_cancels_the_mud_penalty() {
+    let mut world = new_game(2026);
+    clear_actors(&mut world);
+    ecs_core::system::run_settle_systems(&mut world);
+
+    let mud_target = {
+        let cells: Vec<(usize, usize)> = {
+            let mut query = world.query::<&CellEffectAt>();
+            query.iter(&world).map(|at| at.to_tuple()).collect()
+        };
+        cells
+            .into_iter()
+            .find(|pos| find_walkable_step(&world, *pos).is_some())
+            .expect("需要一格带可走邻格的泥潭")
+    };
+
+    // 没靴子：泥潭让 AV 翻倍。
+    let plain_av = {
+        let map = world.resource::<Map>();
+        let mut found = None;
+        for (y, row) in map.tiles.iter().enumerate() {
+            for (x, tile) in row.iter().enumerate() {
+                if tile.walkable()
+                    && world.resource::<CellEffects>().entity_at(x, y).is_none()
+                    && find_walkable_step(&world, (x, y)).is_some()
+                {
+                    found = Some((x, y));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        move_av_at(&mut world, found.expect("地图上必须有普通地板"))
+    };
+    let mud_av_before = move_av_at(&mut world, mud_target);
+    assert!(
+        (mud_av_before - plain_av * 2.0).abs() < 1e-9,
+        "前提：没靴子时泥潭必须让 AV 翻倍"
+    );
+
+    // 把靴子挪到玩家脚下，跑一轮结算 → 拾取并装备。
+    let player = player_entity(&world);
+    let item = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::GroundItem>>();
+        query.iter(&world).next().expect("开局必须放了一件地面物品")
+    };
+    let player_pos = player_pos(&world);
+    world
+        .entity_mut(item)
+        .insert(ecs_core::GroundItemAt::new(player_pos.0, player_pos.1));
+    ecs_core::system::run_settle_systems(&mut world);
+
+    assert!(
+        world.get::<ecs_core::EquippedItems>(player).is_some(),
+        "踩上去之后必须真的装备了"
+    );
+
+    // 有靴子：同一格泥潭不再减速。
+    let mud_av_after = move_av_at(&mut world, mud_target);
+    assert!(
+        (mud_av_after - plain_av).abs() < 1e-9,
+        "捡到踏水靴后泥潭必须失效：平地 {plain_av} / 泥潭 {mud_av_after}"
+    );
+}
