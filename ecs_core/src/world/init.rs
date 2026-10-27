@@ -115,6 +115,8 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
     let max_mp = max_mp_for(1, 8.0);
     (
         Player,
+        // 占格是一种能力（`Blocks`）：玩家挡住格子。楼梯不挂它，所以仍可被站上去。
+        Blocks,
         Position::new(pos.0, pos.1),
         Health::new(max_hp),
         Magic::new(max_mp),
@@ -328,6 +330,7 @@ fn monster_base_bundle(
     let stats = template.stats(floor);
     (
         Monster,
+        Blocks,
         template.kind,
         Position::new(pos.0, pos.1),
         stats.health,

@@ -868,9 +868,10 @@ pub fn execute_wander_system(
 
         match moved_position(&movement.map, &movement.occupancy, *position, dx, dy) {
             Some(next) => {
-                /// 认领目标格：同一回合内第二个想进这格的 actor 会看到它已被占（ISSUES ECS45）。
-            claims.claim(next.x, next.y);
-            commands.entity(actor).insert(Position::new(next.x, next.y));
+                // 抢不到这一格就不动：同一回合内别人先认领了（ISSUES ECS45）。
+                if claims.claim(next.x, next.y) {
+                    commands.entity(actor).insert(Position::new(next.x, next.y));
+                }
                 log::debug!(
                     "PoC 游荡: actor={actor:?} 方向=({dx},{dy}) → ({},{})",
                     next.x,
@@ -990,7 +991,7 @@ pub fn execute_flee_system(
         match best {
             Some(next) => {
                 if claims.claim(next.x, next.y)
-                && let Ok(mut position) = positions.get_mut(actor)
+                    && let Ok(mut position) = positions.get_mut(actor)
                 {
                     position.x = next.x;
                     position.y = next.y;
@@ -1090,6 +1091,7 @@ pub fn execute_chase_system(
             } else if let Some((nx, ny)) =
                 astar(self_position, (tx, ty), &movement.map.tiles, Some(&movement.occupancy))
                     .and_then(|path| path.first().copied())
+                && claims.claim(nx, ny)
                 && let Ok(mut position) = positions.get_mut(actor)
             {
                 position.x = nx;
@@ -1183,6 +1185,7 @@ pub fn execute_move_system(
     mut actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
     mut actors: Query<&mut Position>,
     movement: MovementContext,
+    mut claims: ResMut<crate::resources::RoundClaims>,
     mut events: ActionEvents,
 ) {
     use crate::action::execution::movement::moved_position;

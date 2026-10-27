@@ -246,6 +246,19 @@ pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
 
 // ── 行动状态组件 ─────────────────────────────────────
 
+/// 这个实体**占格**：别人不能走进它所在的格子。
+///
+/// 占用图只登记带 `Blocks` 的实体（`rebuild_occupancy_system`），所以
+/// "站在格子上"与"占住格子"从此是**两件事**：
+/// - 怪物 / 玩家：挂 `Blocks`（并同时有 `Position`）；
+/// - 楼梯：有 `Position` 但**不挂** `Blocks`——它仍可以被站上去（G31），
+///   而这一条以前是占用图里写死的一个 `if stairs.is_some() { continue }`。
+///
+/// **漏挂的后果是静默的**（穿人 / 被穿，不报错），因此生成侧集中挂载，
+/// 并由 `world/init_tests.rs` 断言"每个 actor 都有 `Blocks`"。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Blocks;
+
 /// 没有行动，等待决策。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Idle;

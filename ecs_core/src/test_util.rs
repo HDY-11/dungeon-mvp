@@ -149,6 +149,7 @@ pub fn spawn_test_actor(
 ) -> Entity {
     world
         .spawn((
+            Blocks,
             Position::new(pos.0, pos.1),
             Health::new(hp),
             Attack(attack),

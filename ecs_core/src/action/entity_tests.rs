@@ -932,7 +932,9 @@ fn attack_action_fails_when_target_is_far() {
 fn player_move_into_non_monster_occupant_is_rejected() {
     let (mut world, player) = player_move_scene((10, 10));
     // 用一个没有 Monster 标记的实体占住目标格。
-    let obstacle = world.spawn((Position::new(11, 10), Health::new(10.0))).id();
+    let obstacle = world
+        .spawn((crate::components::Blocks, Position::new(11, 10), Health::new(10.0)))
+        .id();
     crate::system::run_settle_systems(&mut world);
     assert!(
         world.resource::<OccupancyMap>().is_occupied(11, 10),
