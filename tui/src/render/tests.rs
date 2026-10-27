@@ -307,7 +307,12 @@ fn full_frame_renders_without_panicking_and_shows_all_panels() {
 
     assert!(text.contains("DungeonMVP"), "标题应当出现");
     assert!(text.contains("状态"), "侧栏标题应当出现");
-    assert!(text.contains("Debug"), "调试面板应当出现");
+    // 调试面板在**没有调试输出时高度为 0**（SYN9：80×30 下它白占 7 行）。
+    // 这里传的是 `None`，所以它**不该**出现——出现才是 bug。
+    assert!(
+        !text.contains("Debug"),
+        "没有调试输出时不应给 Debug 面板留位置（SYN9）"
+    );
     assert!(text.contains('@'), "玩家 glyph 应当出现");
     assert!(text.contains("HP"), "状态栏应当有 HP");
 }

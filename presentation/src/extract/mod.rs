@@ -272,6 +272,16 @@ fn overlay_cell_effects(world: &mut World, view: &mut MapView, width: usize, hei
 fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> {
     let (width, height) = config.world_size();
     let explored = collect_explored(world);
+    // 玩家**当前看得见**的格子。怪物必须严格按它可见（SYN5：此前这条判据写错，
+    // 导致所有怪物恒不可见，战斗系统对玩家完全不可感知）。
+    let seen: std::collections::HashSet<(usize, usize)> = {
+        let mut query = world.query_filtered::<&Viewshed, With<Player>>();
+        query
+            .iter(world)
+            .next()
+            .map(|viewshed| viewshed.visible_tiles.iter().copied().collect())
+            .unwrap_or_default()
+    };
 
     let mut query = world.query::<(
         Entity,
@@ -315,10 +325,16 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
             "未知".to_string()
         };
 
-        // 楼梯一旦被发现就应当画出来（它是导航目标，不该只在视野内可见）。
-        // 怪物则严格按视野：看不见就不画，避免"隔着墙看到怪物"。
+        // 可见性**按实体类型分别裁定**：
+        // - 楼梯是导航目标：探索过就画（否则玩家连往哪走都不知道，SYN7）；
+        // - 其它实体（怪物）严格按当前视野：看不见就不画，避免"隔着墙看到怪物"。
+        // 旧代码把这两条合成一句 `is_stairs && explored`，等价于"只有楼梯可见"。
         let is_stairs = is_stairs.is_some();
-        let visible = is_stairs && explored.contains(&(x, y));
+        let visible = if is_stairs {
+            explored.contains(&(x, y))
+        } else {
+            seen.contains(&(x, y))
+        };
 
         let mut view = EntityView::new(
             EntityId::from_bits(entity.to_bits()),
@@ -466,8 +482,41 @@ fn build_hud(world: &mut World) -> HudView {
             .unwrap_or_default(),
         attack: attack.map(|a| a.0 as f32).unwrap_or_default(),
         defense: defense.map(|d| d.0 as f32).unwrap_or_default(),
-        extra_lines: player_status_lines(world),
+        extra_lines: {
+            let mut lines = goal_line(world);
+            lines.extend(player_status_lines(world));
+            lines
+        },
     }
+}
+
+/// "这一层该干什么"（ISSUES SYN7）：楼梯发现与否。
+///
+/// 在此之前玩家对目标**零信息**——楼梯探索过才画，而视野只有 10 格，
+/// 于是开局完全不知道该往哪走。这里只给"发现/未发现"，不剧透坐标式导航。
+fn goal_line(world: &mut World) -> Vec<render_api::UiTextLine> {
+    let stairs_pos = {
+        let mut query = world.query_filtered::<&Position, With<Stairs>>();
+        query.iter(world).next().map(Position::to_tuple)
+    };
+    let Some((sx, sy)) = stairs_pos else {
+        return vec![render_api::UiTextLine::plain("目标：本层没有楼梯")];
+    };
+    let explored = world
+        .get_resource::<ecs_core::MapMemory>()
+        .is_some_and(|memory| {
+            memory
+                .explored
+                .get(sy)
+                .and_then(|row| row.get(sx))
+                .copied()
+                .unwrap_or(false)
+        });
+    vec![render_api::UiTextLine::plain(if explored {
+        format!("目标：楼梯已发现 ({sx}, {sy})")
+    } else {
+        "目标：楼梯未发现 —— 向未探索处走".to_string()
+    })]
 }
 
 /// 玩家的状态行（C3 起：中毒）。挂在 `HudView::extra_lines` 上，由后端渲染。
@@ -491,9 +540,12 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
     let mut lines = Vec::new();
     for effect in effects {
         if let Some(poison) = world.get::<ecs_core::Poison>(effect) {
+            // 中毒按 **AV** 计时（ISSUES ECS46），所以这里显示"还剩几次发作 + 下一次的 AV"，
+            // 不显示"回合"——回合是玩家概念，而毒的时间轴是世界时间。
             lines.push(render_api::UiTextLine::plain(format!(
-                "中毒 {} 回合",
-                poison.rounds_left
+                "中毒 还剩 {} 次（下一次 {:.0} AV）",
+                poison.ticks_left,
+                poison.remaining_av.max(0.0)
             )));
         }
     }
@@ -524,7 +576,17 @@ fn build_log(world: &mut World, config: &ExtractConfig) -> Vec<LogLine> {
         .rev()
         .take(config.log_lines)
         .rev()
-        .map(|message| LogLine::new(map_log_level(message.level), message.text.clone()))
+        .map(|message| {
+            // 合并过的重复消息在文本里带计数（ISSUES SYN8）：中毒这类高频消息
+            // 不再一条条挤占日志区。**不改进 render-api 契约**——`LogLine` 只有
+            // level+text，聚合是"怎么显示"的问题，属呈现层。
+            let text = if message.repeat > 1 {
+                format!("{} (×{})", message.text, message.repeat)
+            } else {
+                message.text.clone()
+            };
+            LogLine::new(map_log_level(message.level), text)
+        })
         .collect()
 }
 

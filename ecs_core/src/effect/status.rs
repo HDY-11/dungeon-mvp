@@ -25,11 +25,18 @@ use crate::monster::MonsterKindId;
 use crate::resources::{EventLog, EventMessage};
 use bevy_ecs::prelude::*;
 
-/// 每回合中毒伤害。[⃞试调] 内容参数（数值口径属 GAME.md Gm5）。
-pub const POISON_DAMAGE_PER_ROUND: f64 = 2.0;
+/// 两次中毒发作之间隔多少 **AV**。[⃞试调] 内容参数（数值口径属 GAME.md Gm5）。
+///
+/// 用 AV 而不是"轮次"：玩家一次行动会跨若干个世界轮，按轮次计时会让
+/// "毒多久"随场上怪物数量漂移（ISSUES ECS46）。参考 GAME.md Gm5 的旧口径
+/// "1000 AV ≈ 3 次行动"，400 AV 大约相当于 1.5 次玩家移动。
+pub const POISON_TICK_AV: f64 = 400.0;
 
-/// 中毒持续回合数。[⃞试调]
-pub const POISON_ROUNDS: u32 = 3;
+/// 一共发作几次。[⃞试调]
+pub const POISON_TICKS: u32 = 3;
+
+/// 每次发作伤害。[⃞试调] 不吃防御（毒不是攻击）。
+pub const POISON_DAMAGE_PER_TICK: f64 = 3.0;
 
 /// 中毒状态。挂在**效果实体**上（经 [`EffectOf`] 归属到受害者）。
 ///
@@ -37,17 +44,27 @@ pub const POISON_ROUNDS: u32 = 3;
 /// 也让存档不需要冻结时钟口径。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Poison {
-    pub damage_per_round: f64,
-    pub rounds_left: u32,
+    /// 距离下一次发作还剩多少 AV（按世界时钟扣减，不是按轮次）。
+    pub remaining_av: f64,
+    /// 还剩几次发作。
+    pub ticks_left: u32,
+    /// 每次发作的伤害。
+    pub damage_per_tick: f64,
 }
 
 impl Poison {
     /// 一剂标准中毒（内容参数见本模块常量）。
     pub fn standard() -> Self {
         Self {
-            damage_per_round: POISON_DAMAGE_PER_ROUND,
-            rounds_left: POISON_ROUNDS,
+            remaining_av: POISON_TICK_AV,
+            ticks_left: POISON_TICKS,
+            damage_per_tick: POISON_DAMAGE_PER_TICK,
         }
+    }
+
+    /// 还剩多少 AV 才会失效（HUD/测试用）。
+    pub fn total_remaining_av(&self) -> f64 {
+        (self.ticks_left.saturating_sub(1) as f64) * POISON_TICK_AV + self.remaining_av.max(0.0)
     }
 }
 
@@ -92,7 +109,9 @@ pub fn poison_apply_system(
         match already {
             Some(effect) => {
                 if let Ok(mut poison) = poisons.get_mut(effect) {
-                    poison.rounds_left = poison.rounds_left.max(POISON_ROUNDS);
+                    // 刷新 = 重新计时、回满次数（不叠层：叠层会让多只蝎子的伤害呈平方增长）。
+                    poison.ticks_left = POISON_TICKS;
+                    poison.remaining_av = poison.remaining_av.min(POISON_TICK_AV);
                 }
             }
             None => {
@@ -110,28 +129,40 @@ pub fn poison_apply_system(
 /// 这正是"两个关系类型分开"（ECS42）要的语义：状态效果**应该**跟着人一起消失。
 pub fn poison_tick_system(
     mut commands: Commands,
+    clock: Res<crate::resources::WorldClock>,
     mut poisons: Query<(Entity, &mut Poison, &EffectOf)>,
     mut healths: Query<&mut Health>,
     names: Query<&EntityName>,
     mut event_log: ResMut<EventLog>,
 ) {
+    // 按**世界时间**推进：这一轮走了多少 AV，毒就少多少 AV。
+    let step = clock.last_step_av;
+    if step <= 0.0 {
+        return;
+    }
+
     for (effect, mut poison, owner) in &mut poisons {
         let victim = owner.parent();
-        let damage = poison.damage_per_round;
+        poison.remaining_av -= step;
 
-        if let Ok(mut health) = healths.get_mut(victim) {
-            *health = health.damage(damage);
-            let name = names
-                .get(victim)
-                .map(|name| name.0.as_str())
-                .unwrap_or("目标");
-            event_log.push(EventMessage::combat(format!(
-                "{name} 受到 {damage:.0} 点中毒伤害"
-            )));
+        // 可能一轮跨过多个发作点（例如玩家做了一次很长的行动）。
+        while poison.remaining_av <= 0.0 && poison.ticks_left > 0 {
+            let damage = poison.damage_per_tick;
+            if let Ok(mut health) = healths.get_mut(victim) {
+                *health = health.damage(damage);
+                let name = names
+                    .get(victim)
+                    .map(|name| name.0.as_str())
+                    .unwrap_or("目标");
+                event_log.push(EventMessage::combat(format!(
+                    "{name} 受到 {damage:.0} 点中毒伤害"
+                )));
+            }
+            poison.ticks_left -= 1;
+            poison.remaining_av += POISON_TICK_AV;
         }
 
-        poison.rounds_left = poison.rounds_left.saturating_sub(1);
-        if poison.rounds_left == 0 {
+        if poison.ticks_left == 0 {
             commands.entity(effect).despawn();
             log::debug!("中毒消退: victim={victim:?}");
         }

@@ -37,7 +37,8 @@ pub mod status;
 mod ownership;
 
 pub use status::{
-    POISON_DAMAGE_PER_ROUND, POISON_ROUNDS, Poison, poison_apply_system, poison_tick_system,
+    POISON_DAMAGE_PER_TICK, POISON_TICK_AV, POISON_TICKS, Poison, poison_apply_system,
+    poison_tick_system,
 };
 
 pub use cell::{

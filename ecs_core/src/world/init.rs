@@ -66,6 +66,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(crate::effect::CellEffects::new());
     world.insert_resource(EventLog::new());
     world.insert_resource(TurnManager::new());
+    // AV 时间轴：状态效果按它计时（ISSUES ECS46）。
+    world.insert_resource(crate::resources::WorldClock::default());
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
     // 玩家行动请求：action 实体链路的输入口（C2 起）。旧链路的同名资源
@@ -299,7 +301,14 @@ fn generate_monster_population(
         }
     }
 
-    while positions.len() > max_count {
+    // **按区间取目标值**（ISSUES ECS47）：此前只裁到上限，而密度层产出远多于上限，
+    // 于是"6–12 只"实际永远是 12 只——下限从未生效，"稀薄楼层"不可能出现。
+    let target = if max_count > min_count {
+        min_count + rng.random_range(0..=(max_count - min_count))
+    } else {
+        min_count
+    };
+    while positions.len() > target {
         let idx = rng.random_range(0..positions.len());
         positions.swap_remove(idx);
     }
@@ -376,6 +385,12 @@ const MUD_PATCHES: usize = 6;
 /// 泥潭的移动代价倍率：**处于**这一格时速度减半 → AV 翻倍。[⃞试调]
 const MUD_MOVE_COST: f64 = 2.0;
 
+/// 泥潭撒在出生点周围多少格以内。[⃞试调] 见 `spawn_cell_effects_system` 的理由。
+const MUD_SPAWN_RADIUS: usize = 8;
+
+/// 地面物品撒在出生点周围多少格以内。[⃞试调]
+const ITEM_SPAWN_RADIUS: usize = 10;
+
 /// 在可行走格上洒若干泥潭（格子效果实体，见 `effect/cell.rs`）。
 ///
 /// 为什么是"洒几格"而不是"改地形表"：泥潭**不是一种地形**，它是"这一格发生了另外的
@@ -398,10 +413,19 @@ pub fn spawn_cell_effects_system(
     let mut placed = 0usize;
     let mut attempts = 0usize;
     // 上限 400 次尝试：地图拥挤时宁可少洒，也不要在生成阶段死循环。
+    //
+    // **撒在出生点附近**（ISSUES ECS47）：全图随机时 6 格 / 4800 可行走格 ≈ 0.1%，
+    // 实测 6 局里只踩到 3 回合 —— 内容加了等于没加。半径 8 保证开局几步就能遇到。
     while placed < MUD_PATCHES && attempts < 400 {
         attempts += 1;
-        let x = rng.random_range(1..MAP_WIDTH - 1);
-        let y = rng.random_range(1..MAP_HEIGHT - 1);
+        let x = rng.random_range(
+            player_spawn.0.0.saturating_sub(MUD_SPAWN_RADIUS)
+                ..=(player_spawn.0.0 + MUD_SPAWN_RADIUS).min(MAP_WIDTH - 2),
+        );
+        let y = rng.random_range(
+            player_spawn.0.1.saturating_sub(MUD_SPAWN_RADIUS)
+                ..=(player_spawn.0.1 + MUD_SPAWN_RADIUS).min(MAP_HEIGHT - 2),
+        );
         if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
             continue;
         }
@@ -441,8 +465,14 @@ pub fn spawn_ground_items_system(
     let mut attempts = 0usize;
     while attempts < 400 {
         attempts += 1;
-        let x = rng.random_range(1..MAP_WIDTH - 1);
-        let y = rng.random_range(1..MAP_HEIGHT - 1);
+        let x = rng.random_range(
+            player_spawn.0.0.saturating_sub(ITEM_SPAWN_RADIUS)
+                ..=(player_spawn.0.0 + ITEM_SPAWN_RADIUS).min(MAP_WIDTH - 2),
+        );
+        let y = rng.random_range(
+            player_spawn.0.1.saturating_sub(ITEM_SPAWN_RADIUS)
+                ..=(player_spawn.0.1 + ITEM_SPAWN_RADIUS).min(MAP_HEIGHT - 2),
+        );
         if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
             continue;
         }

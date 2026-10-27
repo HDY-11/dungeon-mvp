@@ -573,7 +573,14 @@ pub fn player_action_generation_system(
     monsters: Query<(), With<Monster>>,
     movement: MovementContext,
     effects: EffectContext,
+    mut event_log: ResMut<crate::resources::EventLog>,
 ) {
+    // 被拒绝时给玩家一句话（ISSUES SYN6）：此前三条拒绝路径都只写 `log::debug`，
+    // 玩家看不到任何反馈，无法区分"撞墙""被挡住""卡住了"。
+    // 连续重复会被 `EventLog::push` 合并成 (×N)（SYN8）。
+    fn refuse(log: &mut crate::resources::EventLog, reason: &str) {
+        log.push(crate::resources::EventMessage::system(reason));
+    }
     let Some(command) = request.command.take() else {
         return;
     };
@@ -589,6 +596,7 @@ pub fn player_action_generation_system(
             let (nx, ny) = position.offset(dx, dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {
                 log::debug!("玩家移动越界，拒绝请求: ({dx},{dy})");
+                refuse(&mut event_log, "那边是墙外，走不过去");
                 return;
             }
             if let Some(occupant) = movement.occupancy.entity_at(nx, ny) {
@@ -601,6 +609,7 @@ pub fn player_action_generation_system(
                     )
                 } else {
                     log::debug!("玩家移动目标被非怪物占用，拒绝请求: ({nx},{ny})");
+                    refuse(&mut event_log, "那里有东西挡着");
                     return;
                 }
             } else if crate::action::execution::movement::moved_position(
@@ -609,6 +618,7 @@ pub fn player_action_generation_system(
             .is_none()
             {
                 log::debug!("玩家移动非法，拒绝请求: ({dx},{dy})");
+                refuse(&mut event_log, "那边过不去");
                 return;
             } else {
                 (
@@ -785,6 +795,13 @@ pub fn active_action_timer_delta(world: &mut World) -> f64 {
 /// 推进所有 `ActiveAction` 的计时器；归零者加 `Ready`（执行门禁）。
 pub fn tick_action_timers_system(world: &mut World) {
     let delta = active_action_timer_delta(world);
+
+    // 把"这一轮推进了多少 AV"记到世界时钟上：状态效果按 AV 计时（ISSUES ECS46），
+    // 不能按"结算了多少轮"计——一次玩家行动会跨好几个世界轮。
+    if let Some(mut clock) = world.get_resource_mut::<crate::resources::WorldClock>() {
+        clock.last_step_av = delta;
+        clock.total_av += delta;
+    }
 
     let mut ready_actions = Vec::new();
     {

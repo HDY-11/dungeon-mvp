@@ -11,125 +11,6 @@
 
 ## 待处理
 
-<!-- &SYN5  怪物永远不渲染：presentation 的 visible 公式把非楼梯实体一律算成不可见 -->
-### SYN5 — 怪物从不显示在屏幕上：`visible` 公式只对楼梯成立 🔴
-
-**现象（用眼睛玩才发现）：** 整局游戏里**屏幕上看不到任何怪物**，但攻击日志正常
-（"对变异蝎子造成 5 点伤害"）。玩家体验是"看不见的东西贴脸打我"——或反过来以为
-"怪物能远程攻击"。两条猜疑都指向这里。
-
-**根因：** `presentation/src/extract/mod.rs:321`：
-```rust
-let visible = is_stairs && explored.contains(&(x, y));
-```
-这条公式里**怪物分支永远是 `false`**：不是"怪物看不见"，而是"只有楼梯能看见"。
-注释写的意图（"楼梯探索后可见、怪物严格按视野"）与实现不符——怪物那一半根本没写。
-
-**影响：** 🔴 高 — 战斗系统对玩家**完全不可感知**：谁在追我、有几个、在哪个方向，全都看不到。
-这是"能不能玩"的问题，不是"好不好玩"。
-
-**位置：** `presentation/src/extract/mod.rs`（`build_entities`）、消费方
-`tui/src/render/mod.rs::visible_entity_at`（过滤 `entity.visible`）。
-
-**连带问题：已有测试是空转的。** `presentation` 的
-`monsters_outside_viewshed_are_not_rendered`（"视野外的怪物不得出现"）在怪物恒不可见的前提下
-**永远通过**——它守的是一条永真的命题。修这个 bug 时必须同时把它改成
-"**视野内的**怪物必须可见且被渲染"，否则等于用一条死测试换另一条。
-
-**修法：** 按实体类型分别算可见性：
-- 楼梯：`explored`（导航目标，探索过就画）；
-- 怪物：`Viewshed::visible_tiles` 命中（严格按视野）；
-- 地面物品：同楼梯口径（`explored`）。
-<!-- &/SYN5 -->
-
----
-
-<!-- &SYN6  移动被拒没有任何反馈：玩家无法区分"没按到""被挡住""卡住了" -->
-### SYN6 — 命令被拒绝时完全没有反馈 🟠
-
-**现象（自己玩）：** 连按 4 次 `l`，只走了 2 步，另 2 次被静默丢弃。日志区没有任何提示，
-画面也没有抖动/提示音之类的替代。玩家的合理推断只有两个："按键丢了"或"游戏卡了"。
-
-**根因：** `ecs_core::world_loop::apply_player_command` 在命令被拒时直接 `return false`，
-除了 `log::debug!`（进 `log` 宏的调试通道，不是游戏内 `EventLog`）之外没有任何输出。
-上层 `App::handle` 把 `false` 返回给调用方，但 `main.rs` 不使用返回值。
-
-**影响：** 🟠 高（体感） — 回合制游戏里"为什么这一下没动"是玩家最需要立刻知道的信息。
-撞墙、被怪物挡住、目标格被别的实体占用，三种原因现在完全无法区分。
-
-**位置：** `ecs_core/src/world/loop_.rs`（`apply_player_command`）、
-`ecs_core/src/action/entity.rs`（`player_action_generation_system` 的各条 `return`）。
-
-**修法方向：** 让拒绝**带原因**（往 `EventLog` 推一条 `info` 级消息："前面是墙"/"那里有东西"），
-或至少让 `App` 把拒绝反馈到 HUD 的一行提示。注意与 SYN8（日志刷屏）一起做限流。
-<!-- &/SYN6 -->
-
----
-
-<!-- &SYN7  没有目标指示：楼梯只在探索后才可见，且无方向提示 -->
-### SYN7 — 开局没有任何"这一层该干什么"的指示 🟠
-
-**现象（自己玩）：** 屏幕上只有 `@`、`.`、`#`、`*`、`!`。楼梯在视野外（探索过才画），
-没有小地图、没有方向箭头、没有"找到楼梯"之类的提示。右侧只有操作说明。
-玩家不知道往哪走，也不知道走了有没有进展。
-
-**根因：** 楼梯的可见性口径是"探索过才画"（`SYN5` 同一段代码），而探索范围只有
-`Viewshed`（10 格）。也就是说**开局玩家对目标零信息**。这是设计缺口，不是 bug。
-
-**影响：** 🟠 中高 — 探索类游戏的核心驱动是"知道有目标、不知道在哪"。现在前半句缺失。
-
-**位置：** `presentation/src/extract/mod.rs`（HUD/地图）、`tui/src/render/mod.rs`（侧栏）。
-
-**修法方向（三选一或组合）：**
-1. 楼梯**始终**在已探索区域内高亮（现状）+ 在 HUD 顶部显示"楼梯：未发现/已发现"；
-2. 增加一个极简方向提示（"楼梯大致在东北方"）——信息量小但足以驱动探索；
-3. 小地图（`explored` 位图缩略）——工作量大，但一次解决方向感。
-<!-- &/SYN7 -->
-
----
-
-<!-- &SYN8  日志单通道 + 固定上限：中毒刷屏把关键信息挤出去 -->
-### SYN8 — 战斗日志单通道且无分级：中毒刷屏挤掉关键信息 🟡
-
-**现象（死亡前那一屏）：** 日志区 11 行里 10 行是"冒险者 受到 2 点中毒伤害"，
-而"变异蝎子 倒下了"、"你捡起了踏水靴"这类**一次性、重要**的信息被挤到看不见。
-
-**根因：** 三个因素叠加：
-1. `EventLog` 只有一个 `messages: Vec`（无频道），上限 50 且 `remove(0)` 淘汰最旧；
-2. 中毒**每次 tick 都推一条**（一个玩家回合 2–3 条，见 `ECS46`）；
-3. `tui` 的日志区固定取最近 12 行渲染，没有按等级过滤/折叠。
-
-**影响：** 🟡 中高 — 信息都在，但玩家读不到该读的那条。与 `SYN7` 同源：都是"反馈被噪声淹没"。
-
-**位置：** `ecs_core/src/resources.rs`（`EventLog`）、`ecs_core/src/effect/status.rs`
-（中毒推日志）、`presentation/src/extract/mod.rs`（取 12 行）、`tui/src/render/mod.rs`（渲染）。
-
-**修法方向：** ① 同一来源的重复消息按回合聚合（"中毒：-6"）；② 或给日志加频道/等级过滤，
-战斗噪声与关键事件分栏。**注意**：先修 `ECS46`（中毒时间轴）会自然大幅减少条数。
-<!-- &/SYN8 -->
-
----
-
-<!-- &SYN9  呈现细节：泥潭符号语义冲突 + Debug 面板空占屏幕 -->
-### SYN9 — 呈现细节：泥潭用了 `*`（传统上是物品）、Debug 面板空占 7 行 🟢
-
-**现象（自己玩）：**
-1. 泥潭画成 `*`。在 roguelike 惯例里 `*` 多是"宝石/光源/物品"，而地面特征一般用
-   `~`/`,`/`"` 一类。文本模式下颜色是唯一区分手段（泥潭橙、物品沙黄），色弱或配色不同时
-   两者会混。靴子用 `!`（传统=药水/物品）则符合惯例。
-2. 80×30 终端下，`Debug` 面板占 7 行且**整块空白**，地图因此只有 20 行高。约 23% 屏幕浪费。
-
-**影响：** 🟢 低 — 不影响可玩性，但影响判读速度与信息密度。
-
-**位置：** `presentation/src/catalog.rs`（`EFFECT_MUD` 的 key 选择）、
-`tui/src/catalog.rs`（`effect_glyph`）、`tui/src/render/mod.rs`（`frame_areas` 的 Debug 区）。
-
-**修法方向：** 泥潭换 `"`/`≈` 一类"地面"符号；Debug 面板改为**仅在有内容时占位**，
-或并入状态栏（现在它是全项目唯一一处"固定占屏的空白"）。
-<!-- &/SYN9 -->
-
----
-
 <!-- &SYN2  事件帧模式 Deferred；触发条件是出现需要玩家中途反应的能力 -->
 ### SYN2 — 事件帧模式（Deferred — 触发条件达成时重新评估）
 
@@ -201,4 +82,8 @@ let visible = is_stairs && explored.contains(&(x, y));
 | SYN9 | SL 刷掉落漏洞：RNG 状态不持久化，读档重放随机序列 | `dungeon-core/src/resources.rs`（GameRng）、`dungeon-action/src/execute.rs`（handle_kill）、`dungeon-world/src/persist.rs` |  |
 | SYN11 | 主循环空闲 sleep 1ms 导致有限机型 CPU 满载 | `src/main.rs:88` |  |
 <!-- &/SYN4 -->
-
+| SYN5 | 怪物从不渲染：`visible = is_stairs && explored` 把所有非楼梯实体判成不可见 | `presentation/src/extract/mod.rs`（按实体类型分别裁定）+ `presentation/src/extract/tests.rs`（新增正向断言） | —
+| SYN6 | 命令被拒零反馈：三条拒绝路径只写 `log::debug`，玩家无法区分撞墙/被挡/卡住 | `ecs_core/src/action/entity.rs`（`player_action_generation_system` 推 EventLog） | — 
+| SYN7 | 开局无目标指示：HUD 增加「目标：楼梯已发现/未发现」 | `presentation/src/extract/mod.rs`（`goal_line`） | — 
+| SYN8 | 日志刷屏：`EventMessage.repeat` + `EventLog::push` 合并连续相同消息，呈现层显示 `(×N)` | `ecs_core/src/resources.rs`、`presentation/src/extract/mod.rs` | ECS46
+| SYN9 | 泥潭 `*` 语义冲突 + Debug 面板空占 7 行（改为无内容时高度 0） | `tui/src/render/mod.rs`（`frame_areas_with_debug`） | —

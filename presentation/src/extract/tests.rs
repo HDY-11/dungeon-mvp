@@ -152,6 +152,55 @@ fn entities_exclude_player_and_include_stairs_once_explored() {
     drop(world);
 }
 
+/// **视野内的怪物必须可见且能画出来**（SYN5 的正面断言）。
+///
+/// 这条与下面的"视野外不可见"成对：只有两条都在，才说明可见性判据**按实体类型分别裁定**。
+/// 此前 `visible = is_stairs && explored`，怪物恒不可见——而当时那条"视野外不可见"的测试
+/// 在一个永真命题上通过，等于没测。
+#[test]
+fn monsters_inside_the_viewshed_are_visible() {
+    let mut world = new_game(2026);
+    // 把一只怪物搬到玩家身边（视野内）。
+    let player = {
+        let mut q = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        q.iter(&world).next().expect("有玩家")
+    };
+    let player_pos = *world.get::<ecs_core::Position>(player).expect("玩家有位置");
+    let monster = {
+        let mut q = world.query_filtered::<Entity, With<ecs_core::Monster>>();
+        q.iter(&world).next().expect("有怪物")
+    };
+    let adjacent = ecs_core::Position::new(player_pos.x, player_pos.y).offset(1, 0);
+    {
+        let mut position = world.get_mut::<ecs_core::Position>(monster).expect("怪物有位置");
+        position.x = adjacent.0;
+        position.y = adjacent.1;
+    }
+    // 让视野覆盖到它（直接给玩家一个足够大的视野，避免依赖地图几何）。
+    if let Some(mut viewshed) = world.get_mut::<ecs_core::Viewshed>(player) {
+        viewshed.visible_tiles.push(adjacent);
+        viewshed.visible_tiles.push((player_pos.x, player_pos.y));
+    }
+
+    let config = ExtractConfig::default().with_viewport(40, 20);
+    let frame = extract_scene_frame(&mut world, &config, &PageStack::new(), 1);
+
+    // 按**位置**找那一只：帧里所有怪物都在（可见性只是标记），
+    // 直接找第一只 `Monster` 会拿到别的怪物。
+    let view = frame
+        .entities
+        .iter()
+        .find(|entity| {
+            matches!(entity.visual, VisualKey::Monster(_))
+                && entity.position == (adjacent.0 as i32, adjacent.1 as i32)
+        })
+        .expect("视野内的怪物必须出现在帧里");
+    assert!(
+        view.visible,
+        "视野内的怪物必须标为 visible，否则 tui 不会画它（SYN5）"
+    );
+}
+
 /// 视野外的怪物不得出现在帧里（防止"隔着墙看到怪物"）。
 #[test]
 fn monsters_outside_viewshed_are_not_rendered() {

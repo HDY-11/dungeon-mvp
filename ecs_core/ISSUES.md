@@ -11,40 +11,7 @@
 
 ## 待处理
 
-<!-- &ECS47  内容密度与数值：怪物数恒为上限、泥潭与靴子在生存期内几乎遇不到 -->
-### ECS47 — 内容密度与数值：怪物数**恒为上限**，泥潭/靴子几乎遇不到 🟡
 
-**现象（自动试玩 6 个种子）：**
-
-| 指标 | GAME.md 的说法 | 实测 |
-|---|---|---|
-| F1 怪物数 | `2×楼层+4 ~ 4×楼层+8`（= 6–12） | **6/6 种子都是 12**（= 上限） |
-| 泥潭格被踩到 | 6 格 / 层 | 6 局共 **3 回合**（只有 1 局踩到） |
-| 浅水格被踩到 | — | **0 回合** |
-| 踏水靴被捡到 | 1 件 / 层 | **0 次** |
-
-**根因（两条，都在内容侧、都不在架构侧）：**
-1. **怪物数恒为上限**：`generate_monster_population` 先用噪声密度层铺一遍（阈值
-   `max(0.38 - 楼层×0.012, 0.15)`，F1 是 0.368，密度层产出远多于 12 格），再做元胞扩散，
-   最后 `while positions.len() > max_count` 裁到上限。所以**下限永远不生效**，
-   "稀薄的楼层"在这套生成器里不可能出现。
-2. **新内容遇不到**：6 格泥潭 / 4800 可行走格 ≈ **0.1%** 密度，位置又与出生点无关；
-   而玩家存活期中位数只有十几回合（见 `ECS46`），根本走不到。靴子同理（随机撒在
-   500+ 可行走格之一）。
-
-**影响：** 🟡 中 — 内容是"加了但看不见"。这一轮内容验证的价值被密度与生存期抵消了。
-
-**位置：** `ecs_core/src/world/init.rs`（`generate_monster_population` 的裁剪段、
-`spawn_cell_effects_system`、`spawn_ground_items_system`）、GAME.md Gm8/Gm10
-
-**修法方向（数值属 GAME.md，需用户定）：**
-1. 怪物数：把上限从"裁到上限"改成"**按楼层取区间内的目标值**"（例如 `min + rng×(max-min)`），
-   让 6–12 真的变成分布；
-2. 泥潭/靴子：改成**相对位置**放置（出生点附近 / 通往楼梯的路上），而不是全图随机；
-   或提高密度到"每屏 1–2 个"的量级。
-<!-- &/ECS47 -->
-
----
 
 <!-- &ECS45  同一轮内两个移动可抢同一格：占用图是每轮快照，不是移动时立即占位 -->
 ### ECS45 — 同一轮内多个移动可以抢同一格：两只怪叠在一起、互相卡死 🟡
@@ -75,32 +42,7 @@
 
 ---
 
-<!-- &ECS46  中毒按"结算轮次"计时，与 GAME Gm5 的 AV 时间轴口径不一致 -->
-### ECS46 — 状态效果按"结算轮次"计时，与 GAME.md 的 AV 时间轴口径不一致 🟠
 
-**问题：** `poison_tick_system` 在**每轮结算**扣一次血。但玩家的一次行动会跨越若干个世界轮
-（`advance_until_player_acted` 跑到玩家行动完成为止），所以：
-
-- 实测每个玩家回合 tick **2–3 次**（自动试玩：12–14 次 tick 落在 4–6 个回合里）；
-- 33 HP 的一局里毒贡献 24–28 点伤害，**是主要死因**（近战每下只有 1–2 点）；
-- tick 次数取决于场上怪物数量与各自 AV → **"毒多久"随怪物密度漂移**，无设计支撑。
-
-而 GAME.md Gm5 写的是 AV 时间轴（"持续 1000 AV ≈ 3 次行动"），实现与文档是两套口径。
-
-**影响：** 🟠 高（体感） — 现版本玩家几乎必死于毒；而"毒"在玩家感知里应是持续压制而非主要杀伤。
-
-**位置：** `ecs_core/src/effect/status.rs`（`poison_tick_system`）、
-`ecs_core/src/system/mod.rs`（挂在 `CoreSettleSchedule`）、`ecs_core/src/balance.rs`、GAME.md Gm5
-
-**修法方向（待定）：**
-1. **AV 时间轴**：效果带 `remaining_av`，每轮按推进的时间扣减，归零发作一次并重置
-   → 与 Gm5 一致、与"世界时间"同构。代价：要把"本轮推进了多少 AV"从 tick 系统传出来。
-2. **按行动触发**：受害者行动完成时 tick 一次。简单，但"毒"与 AV 脱钩。
-
-**为什么不当场改：** 这是"状态效果的时间单位"口径选择（RULE §八 ③），直接决定战斗手感。
-<!-- &/ECS46 -->
-
----
 
 <!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
 ### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
@@ -201,4 +143,5 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS41 | 效果/装备挂到 actor 名下时，`ChildOf` 既不安全也不够用 | `ecs_core/src/action/ownership.rs`（新）、`ecs_core/src/action/mod.rs`（转出） | DsnE12 / ECS30 / ECS42 |
 | ECS42 | 级联语义相反的两类效果用两个关系类型分开：`EffectOf`（级联）/ `EquippedBy`（不级联） | `ecs_core/src/effect/ownership.rs`（新） | DsnE12 |
 | ECS44 | 确定性：仲裁的授予/回收顺序改为**显式排序**（`HashMap` 迭代顺序每进程种子不同 → 同种子可能不同结果）；四个 Schedule 经 `core_schedule()` 构建并强制 `ambiguity_detection = Error` | `ecs_core/src/action/entity.rs`（`ordered_grants` / `losers.sort`）、`ecs_core/src/schedule.rs`（`core_schedule`） | DsnX17 ③ / DsnE8 |
-
+| ECS46 | 状态效果改按 **AV 时间轴**计时（`WorldClock`）：中毒不再随"结算轮次/怪物密度"漂移 | `ecs_core/src/effect/status.rs`、`resources.rs`（`WorldClock`）、`action/entity.rs`（tick 推进时钟） | GAME.md Gm5
+| ECS47 | 怪物数按区间取目标值（不再恒为上限）；泥潭/地面物品改为撒在出生点附近 | `ecs_core/src/world/init.rs`（`MUD_SPAWN_RADIUS` / `ITEM_SPAWN_RADIUS`） | GAME.md Gm8/Gm10

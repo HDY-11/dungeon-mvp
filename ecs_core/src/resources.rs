@@ -107,6 +107,20 @@ impl Default for MapMemory {
     }
 }
 
+/// 世界时钟：**AV 时间轴**。
+///
+/// 状态效果（中毒等）按它计时，而不是按"结算了多少轮"（ISSUES ECS46）——
+/// 玩家的一次行动会跨越若干个世界轮，用轮次计时会让"毒多久"随场上怪物数量漂移。
+///
+/// 只在 `tick_action_timers_system` 里推进：那一轮推进了多少 AV，就是这一轮的时间流逝。
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct WorldClock {
+    /// 累计推进的 AV（单调递增，可用于"效果从何时开始"之类的查询）。
+    pub total_av: f64,
+    /// 上一轮推进了多少 AV（`0` = 本轮没有行动到点，时间没走）。
+    pub last_step_av: f64,
+}
+
 /// 最后看到的实体位置。实体离开视野后保留记忆，直到再次看见或实体销毁。
 #[derive(Resource, Default)]
 pub struct VisibleMemory {
@@ -172,23 +186,28 @@ pub enum EventLevel {
 pub struct EventMessage {
     pub level: EventLevel,
     pub text: String,
+    /// 同一条消息连续出现了几次（>1 时后端显示 `(×N)`）。
+    ///
+    /// 为什么要合并：中毒每个发作点推一条，一次玩家行动可能推 2–3 条，
+    /// 直接把"变异蝎子倒下了""你捡起了踏水靴"这类一次性信息挤出日志区（ISSUES SYN8）。
+    pub repeat: u32,
 }
 
 impl EventMessage {
     pub fn combat(text: impl Into<String>) -> Self {
-        Self { level: EventLevel::Combat, text: text.into() }
+        Self { level: EventLevel::Combat, text: text.into(), repeat: 1 }
     }
     pub fn item(text: impl Into<String>) -> Self {
-        Self { level: EventLevel::Item, text: text.into() }
+        Self { level: EventLevel::Item, text: text.into(), repeat: 1 }
     }
     pub fn skill(text: impl Into<String>) -> Self {
-        Self { level: EventLevel::Skill, text: text.into() }
+        Self { level: EventLevel::Skill, text: text.into(), repeat: 1 }
     }
     pub fn system(text: impl Into<String>) -> Self {
-        Self { level: EventLevel::System, text: text.into() }
+        Self { level: EventLevel::System, text: text.into(), repeat: 1 }
     }
     pub fn danger(text: impl Into<String>) -> Self {
-        Self { level: EventLevel::Danger, text: text.into() }
+        Self { level: EventLevel::Danger, text: text.into(), repeat: 1 }
     }
 }
 
@@ -204,6 +223,14 @@ impl EventLog {
     }
 
     pub fn push(&mut self, msg: EventMessage) {
+        // 连续相同的消息合并成一条并计数，而不是一条条堆进日志（ISSUES SYN8）。
+        if let Some(last) = self.messages.last_mut()
+            && last.level == msg.level
+            && last.text == msg.text
+        {
+            last.repeat = last.repeat.saturating_add(1);
+            return;
+        }
         self.messages.push(msg);
         if self.messages.len() > self.max {
             self.messages.remove(0);

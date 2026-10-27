@@ -208,18 +208,19 @@ mod tests {
     /// A2：撞墙时命令不被接受，位置保持不变。
     #[test]
     fn player_move_blocked_by_wall() {
-        let mut world = new_game(12);
-        crate::test_util::player_entity(&world).expect("新游戏必须有玩家");
+        // 用**受控场景**（唯一地板 + 四周围墙），而不是在真实地图里找"某个被挡的方向"：
+        // 后者会把"被怪物占着"也算成"被挡"，而那种情况会走成攻击（命令**应被接受**）。
+        // 内容轮调整怪物数量时这条测试曾因此误报——判定口径混了两件事。
+        let (mut world, _player) = crate::test_util::single_tile_scene();
         let start = player_pos(&world);
-        let Some((dx, dy)) = find_blocked_step(&world, start) else {
-            panic!("seed=12 出生点周围必须有阻挡方向: {start:?}");
-        };
 
-        assert!(
-            !apply_player_command(&mut world, PlayerCommand::Move { dx, dy }),
-            "被墙/占用/越界挡住的方向不得被接受"
-        );
-        assert_eq!(player_pos(&world), start, "被挡住的移动不得改变位置");
+        for (dx, dy) in [(0, -1), (0, 1), (-1, 0), (1, 0), (1, 1)] {
+            assert!(
+                !apply_player_command(&mut world, PlayerCommand::Move { dx, dy }),
+                "撞墙方向 ({dx},{dy}) 不得被接受"
+            );
+            assert_eq!(player_pos(&world), start, "撞墙不得改变位置");
+        }
     }
 
     /// A2：越界方向返回 `false`，位置不变；顺带验证唯一地板 + 四周围墙的最小场景。

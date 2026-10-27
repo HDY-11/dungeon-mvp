@@ -106,13 +106,16 @@ fn attack_applies_damage_once() {
     );
 
     // 日志也应当是两条，不是四条。
-    let damage_lines = world
+    // 注意：`EventLog::push` 会把**连续相同**的消息合并成一条并计数（ISSUES SYN8），
+    // 所以这里统计的是"伤害事件次数"（repeat 求和），不是行数——行数会因为合并而少。
+    let damage_events: u32 = world
         .resource::<EventLog>()
         .messages
         .iter()
         .filter(|m| m.text.contains("点伤害"))
-        .count();
-    assert_eq!(damage_lines, 2, "两次攻击应当只产生两条伤害日志");
+        .map(|m| m.repeat)
+        .sum();
+    assert_eq!(damage_events, 2, "两次攻击应当只结算两次伤害（不多不少）");
 }
 
 /// A4：怪物死亡 → despawn → 经验进入玩家 → 跨阈值升级并重算 HP/MP 上限。

@@ -51,8 +51,13 @@ pub struct FrameAreas {
 
 /// 计算区块划分。**这是布局的唯一权威**——渲染与相机都从这里取。
 pub fn frame_areas(area: Rect) -> FrameAreas {
+    frame_areas_with_debug(area, DEBUG_PANEL_HEIGHT)
+}
+
+/// 同 [`frame_areas`]，但调试面板高度可传 0 —— **没有调试输出时不要把屏幕留空**（SYN9）。
+fn frame_areas_with_debug(area: Rect, debug_height: u16) -> FrameAreas {
     let [main, debug] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(DEBUG_PANEL_HEIGHT)]).areas(area);
+        Layout::vertical([Constraint::Min(0), Constraint::Length(debug_height)]).areas(area);
     let [map, side] = Layout::horizontal([
         Constraint::Percentage(60),
         Constraint::Min(SIDE_PANEL_MIN_WIDTH),
@@ -80,7 +85,12 @@ pub fn map_viewport(area: Rect) -> (u16, u16) {
 
 /// 画一整帧。
 pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Option<&DevLogBuffer>) {
-    let areas = frame_areas(terminal_frame.area());
+    // 调试面板只在**真的有调试输出**时占地方：否则 80×30 下它白占 7 行（SYN9）。
+    let has_debug = dev_log.is_some_and(|buffer| !buffer.lines.is_empty());
+    let areas = frame_areas_with_debug(
+        terminal_frame.area(),
+        if has_debug { DEBUG_PANEL_HEIGHT } else { 0 },
+    );
 
     match &scene.ui {
         // 背包页是全屏页（Dsn21），其余页面叠加在游戏画面上。
@@ -108,7 +118,9 @@ pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Opt
         }
     }
 
-    render_debug_panel(terminal_frame, areas.debug, dev_log);
+    if has_debug {
+        render_debug_panel(terminal_frame, areas.debug, dev_log);
+    }
 }
 
 /// 画地图。

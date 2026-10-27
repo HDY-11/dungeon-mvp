@@ -518,14 +518,17 @@ fn poison_damage_kills_in_the_same_round() {
     clear_actors(&mut world);
     let player = player_entity(&world);
 
-    // 一剂必死的毒：1 回合、伤害远超血量上限。
+    // 一剂必死的毒：下一次发作就够致命，且时间已经到点。
     world.spawn((
         ecs_core::EffectOf(player),
         ecs_core::Poison {
-            damage_per_round: 10_000.0,
-            rounds_left: 1,
+            remaining_av: 0.0,
+            ticks_left: 1,
+            damage_per_tick: 10_000.0,
         },
     ));
+    // 中毒按 AV 计时（ECS46）：先让世界时间走一步，tick 才会发作。
+    world.resource_mut::<ecs_core::WorldClock>().last_step_av = 100.0;
 
     ecs_core::system::run_settle_systems(&mut world);
 
