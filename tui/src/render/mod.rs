@@ -236,6 +236,16 @@ fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
     let area = frame_areas(full).side;
     let mut lines = Vec::new();
 
+    // 死亡提示必须排在最前：日志会把后面的行挤出面板（实测日志满 12 行时
+    // "你死了" 被裁掉，玩家只看到血条变 0 却没有任何说明）。
+    if scene.game_over {
+        lines.push(Line::from(Span::styled(
+            "你死了。按 q 退出。",
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+    }
+
     lines.push(Line::from(format!("楼层：{}", scene.hud.floor)));
     if !scene.hud.map_kind.is_empty() {
         lines.push(Line::from(format!("地图类型：{}", scene.hud.map_kind)));
@@ -310,12 +320,7 @@ fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    if scene.game_over {
-        lines.push(Line::from(Span::styled(
-            "你死了。按 q 退出。",
-            Style::default().fg(Color::Red),
-        )));
-    }
+    // 死亡提示已移到面板顶部（避免被日志挤出可视区）。
 
     let block = Block::default().borders(Borders::ALL).title("状态");
     frame.render_widget(
@@ -335,7 +340,9 @@ fn render_look_overlay(frame: &mut Frame, full: Rect, look: &render_api::LookVie
     )));
     match &look.tile {
         Some(tile) => {
-            lines.push(Line::from(format!("地形：{}", tile.name)));
+            // 名称由后端目录决定（显示数据归后端），不用 `TileInfo.name`：
+            // 那份字段是 presentation 从 `{:?}` 生成的占位，会把 `Tile(1)` 打给玩家。
+            lines.push(Line::from(format!("地形：{}", crate::catalog::describe(tile.visual))));
             lines.push(Line::from(format!(
                 "可见：{}    已探索：{}",
                 yes_no(tile.visible),

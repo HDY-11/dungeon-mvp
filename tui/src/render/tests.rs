@@ -387,6 +387,30 @@ fn game_over_notice_is_shown() {
     assert!(text.contains("你死了"), "应当提示玩家已死");
 }
 
+/// **死亡提示不能被日志挤出面板**（用眼睛玩才发现的问题）。
+///
+/// 实测：日志区排在死亡提示之前，日志满 12 行时"你死了"被裁到面板外，
+/// 玩家只看到血条归零却没有任何说明。这条测试把"日志满 + 已死"这个最坏情况钉住。
+#[test]
+fn death_notice_survives_a_full_log() {
+    let mut scene = base_scene();
+    scene.game_over = true;
+    scene.log = (0..40)
+        .map(|i| render_api::LogLine::new(render_api::LogLevel::Combat, format!("噪声日志 {i}")))
+        .collect();
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+
+    let text = buffer_text_compact(&terminal);
+    assert!(
+        text.contains("你死了"),
+        "日志满 12 行时死亡提示仍必须在面板内可见"
+    );
+}
+
 /// 日志按等级上色（颜色来自 catalog，不散在渲染代码里）。
 #[test]
 fn log_lines_use_catalog_colors() {

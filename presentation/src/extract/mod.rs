@@ -497,6 +497,21 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
             )));
         }
     }
+    // 已装备的东西：玩家必须能看出"我现在带着什么"，否则捡到装备等于没发生
+    // （实测：捡到踏水靴后 HUD 毫无变化，玩家无法判断自己是否变快了）。
+    if let Some(items) = world.get::<ecs_core::EquippedItems>(player) {
+        let names: Vec<String> = items
+            .iter()
+            .filter_map(|item| world.get::<ecs_core::GroundItem>(item))
+            .map(|item| item.kind.name().to_string())
+            .collect();
+        if !names.is_empty() {
+            lines.push(render_api::UiTextLine::plain(format!(
+                "装备：{}",
+                names.join("、")
+            )));
+        }
+    }
     lines
 }
 

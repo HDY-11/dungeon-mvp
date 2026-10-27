@@ -347,3 +347,73 @@ mod tests {
         }
     }
 }
+
+
+// ── 名称（Look 页等 UI 文本） ────────────────────────
+
+/// 语义 key 的**人类可读名称**。
+///
+/// 放在后端而不是 presentation：名称是**显示数据**，与 glyph/颜色同源（DESIGN DsnX17 ④）。
+/// presentation 只回答"这是什么 key"，后端回答"它长什么样、叫什么"。
+/// Look 页此前直接把 `{:?}` 打给玩家（`地形：Tile(1)`），就是这条分层没落实的结果。
+pub fn describe(key: VisualKey) -> String {
+    match key {
+        VisualKey::Tile(id) => tile_name(id).to_string(),
+        VisualKey::Effect(id) => effect_name(id).to_string(),
+        VisualKey::Item(id) => item_name(id).to_string(),
+        VisualKey::Monster(id) => monster_name(id).to_string(),
+        VisualKey::Player => "冒险者".to_string(),
+        VisualKey::Stairs => "楼梯".to_string(),
+        VisualKey::UiIcon(_) => "图标".to_string(),
+        VisualKey::Unknown(_) => "未知".to_string(),
+    }
+}
+
+/// 地形名称（编号与 `TuiCatalog::tile_glyph` 同源：`Tile` 的 serde 判别值）。
+pub fn tile_name(id: u16) -> &'static str {
+    match id {
+        0 => "墙壁",
+        1 => "地板",
+        2 => "浅水",
+        3 => "深水",
+        4 => "钟乳石",
+        5 => "菌丝",
+        6 => "蘑菇丛",
+        7 => "垂藤",
+        8 => "沙地",
+        9 => "海草",
+        10 => "珊瑚礁",
+        _ => "未知地形",
+    }
+}
+
+/// 格子效果名称（编号见 `presentation::catalog::EFFECT_MUD`）。
+pub fn effect_name(id: u16) -> &'static str {
+    match id {
+        0 => "泥沼（移动变慢）",
+        _ => "未知效果",
+    }
+}
+
+/// 怪物名称（编号与 `TuiCatalog::monster_glyph` 同源：`MonsterKindId` 的声明顺序）。
+pub fn monster_name(id: u16) -> &'static str {
+    match id {
+        0 => "老鼠",
+        1 => "变异蝎子",
+        2 => "哥布林",
+        3 => "孢子怪",
+        4 => "蘑菇傀儡",
+        5 => "洞穴鱼",
+        6 => "洞穴蟹",
+        7 => "深鳗",
+        _ => "未知怪物",
+    }
+}
+
+/// 物品名称（编号见 `presentation::catalog::ITEM_TRAIL_BOOTS`）。
+pub fn item_name(id: u32) -> &'static str {
+    match id {
+        0 => "踏水靴（无视地形减速）",
+        _ => "未知物品",
+    }
+}
