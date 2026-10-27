@@ -368,6 +368,53 @@ pub fn spawn_monsters_system(
     }
 }
 
+// ── 格子效果内容（C2） ───────────────────────────────
+
+/// 每层泥潭数量。[⃞试调] 内容参数（数值口径属 GAME.md）。
+const MUD_PATCHES: usize = 6;
+
+/// 泥潭的移动代价倍率：**处于**这一格时速度减半 → AV 翻倍。[⃞试调]
+const MUD_MOVE_COST: f64 = 2.0;
+
+/// 在可行走格上洒若干泥潭（格子效果实体，见 `effect/cell.rs`）。
+///
+/// 为什么是"洒几格"而不是"改地形表"：泥潭**不是一种地形**，它是"这一格发生了另外的
+/// 事"（DsnE12 第 2 条）。所以它是效果实体 + 格索引，`TILE_PROPS` 一行都不用动。
+///
+/// 避开出生点与楼梯，且**同格不重复**——格索引是"一格一个效果实体"，重复登记会让
+/// 前一个不可达（维护系统会告警，但内容侧不该制造这种局面）。
+pub fn spawn_cell_effects_system(
+    mut commands: Commands,
+    map: Res<Map>,
+    player_spawn: Res<PlayerSpawn>,
+    stairs_pos: Res<StairsPos>,
+    map_seed: Res<MapSeed>,
+    floor: Res<FloorNumber>,
+) {
+    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(1234);
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+
+    let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];
+    let mut placed = 0usize;
+    let mut attempts = 0usize;
+    // 上限 400 次尝试：地图拥挤时宁可少洒，也不要在生成阶段死循环。
+    while placed < MUD_PATCHES && attempts < 400 {
+        attempts += 1;
+        let x = rng.random_range(1..MAP_WIDTH - 1);
+        let y = rng.random_range(1..MAP_HEIGHT - 1);
+        if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
+            continue;
+        }
+        taken.push((x, y));
+        commands.spawn((
+            crate::effect::CellEffectAt::new(x, y),
+            crate::effect::CellMoveCost::new(MUD_MOVE_COST),
+        ));
+        placed += 1;
+    }
+    log::info!("生成泥潭: {placed} 格（尝试 {attempts} 次）");
+}
+
 // ── 初始化调度 ───────────────────────────────────────
 
 pub fn build_init_schedule() -> Schedule {
@@ -378,11 +425,16 @@ pub fn build_init_schedule() -> Schedule {
             generate_map_system,
             spawn_player_system,
             spawn_stairs_system,
+            // 泥潭要避开出生点与楼梯，所以排在两者之后、怪物之前。
+            spawn_cell_effects_system,
             spawn_monsters_system,
             fov_system,
             update_map_memory_system,
             update_visible_memory_system,
             rebuild_occupancy_system,
+            // 格索引也要在初始化末尾重建一次：否则开局那一帧的格子效果是"未登记"的
+            // （`CellEffects` 是派生数据，初始化和每轮结算各维护一次）。
+            crate::effect::rebuild_cell_effects_system,
         )
             .chain(),
     );
@@ -394,3 +446,7 @@ pub fn run_initialization(world: &mut World, map_seed: u64) {
     insert_core_resources(world, WorldInitConfig { map_seed });
     world.run_schedule(CoreInitSchedule);
 }
+
+#[cfg(test)]
+#[path = "init_tests.rs"]
+mod tests;

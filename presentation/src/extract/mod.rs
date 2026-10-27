@@ -196,6 +196,9 @@ fn build_map_view(world: &mut World, config: &ExtractConfig) -> MapView {
         }
     }
 
+    // 格子效果：覆盖地形外观（"这一格怎么了"比"它下面的地板"更重要）。
+    overlay_cell_effects(world, &mut view, width, height);
+
     // 探索位图：`MapMemory` 是定长 [[bool; W]; H]，越界索引要按实际尺寸夹。
     if let Some(memory) = world.get_resource::<MapMemory>() {
         for y in 0..height.min(memory.explored.len()) {
@@ -221,6 +224,44 @@ fn build_map_view(world: &mut World, config: &ExtractConfig) -> MapView {
     }
 
     view
+}
+
+/// 把格子效果画在地形之上（C2 起）。
+///
+/// **为什么覆盖而不是另起一层**：`MapView` 每格只有一个 `VisualKey`，而玩家必须能看见
+/// "这一格会让我变慢"——否则减速就是一次无声的惩罚。地形本身仍在 `ecs_core::Map` 里可查，
+/// 视觉只是有优先级的一层（`TileInfo` 这类"看这一格"的接口仍然读地形）。
+///
+/// 只画**已知**效果：`catalog::cell_effect_key` 认不出的保持地形外观，不画成通用 `*`
+/// ——"一个不知道是什么的符号"比不画更糟。
+fn overlay_cell_effects(world: &mut World, view: &mut MapView, width: usize, height: usize) {
+    let positions: Vec<(usize, usize, Entity)> = {
+        let Some(index) = world.get_resource::<ecs_core::CellEffects>() else {
+            return;
+        };
+        let mut out = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                if let Some(entity) = index.entity_at(x, y) {
+                    out.push((x, y, entity));
+                }
+            }
+        }
+        out
+    };
+    if positions.is_empty() {
+        return;
+    }
+
+    let mut costs = world.query::<&ecs_core::CellMoveCost>();
+    for (x, y, entity) in positions {
+        let Ok(cost) = costs.get(world, entity) else {
+            continue;
+        };
+        if let Some(key) = crate::catalog::cell_effect_key(cost.move_cost) {
+            view.set_tile(x, y, key);
+        }
+    }
 }
 
 /// 构造实体视图。

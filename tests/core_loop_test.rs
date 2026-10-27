@@ -11,11 +11,12 @@
 //! 渲染不在本轮范围：`render-api` 的消费验证属于 REFACTOR §11 Phase G（presentation/tui）。
 
 use bevy_ecs::prelude::{Component, Entity, With, World};
-use ecs_core::components::{Health, Position};
+use ecs_core::components::{ActionTimer, Active, Health, Idle, Position};
+use ecs_core::effect::{CellEffectAt, CellEffects};
 use ecs_core::entity_cls::{Monster, Player, Stairs};
 use ecs_core::map::{Map, Tile, MAP_HEIGHT, MAP_WIDTH};
 use ecs_core::world_loop::{apply_player_command, new_game, player_alive, request_quit};
-use ecs_core::{PlayerCommand, TurnManager};
+use ecs_core::{PlayerActionRequest, PlayerCommand, TurnManager};
 
 /// 找一个“相邻、在界内、可走、且没被占用”的方向。
 fn find_walkable_step(world: &World, pos: (usize, usize)) -> Option<(isize, isize)> {
@@ -355,5 +356,96 @@ fn player_death_ends_the_game() {
     assert!(
         !apply_player_command(&mut world, PlayerCommand::Wait),
         "游戏结束后不得再接受命令"
+    );
+}
+
+// ── C2 内容：泥潭格在真实世界里真的让玩家变慢 ──────────
+
+/// 把玩家挪到 `pos`，量一次移动行动的 AV（不推进世界，只跑挂载调度）。
+fn move_av_at(world: &mut World, pos: (usize, usize)) -> f64 {
+    let player = player_entity(world);
+
+    // 清掉上一次的行动，让 `Without<Active>` 通过。
+    let stale: Vec<Entity> = {
+        let mut query =
+            world.query_filtered::<Entity, With<ecs_core::action::entity::ActiveAction>>();
+        query.iter(world).collect()
+    };
+    for action in stale {
+        world.despawn(action);
+    }
+    world.entity_mut(player).remove::<Active>().insert(Idle);
+
+    // 挪人 + 重建占用图（移动判定会读占用）。
+    {
+        let mut position = world.get_mut::<Position>(player).expect("玩家有位置");
+        position.x = pos.0;
+        position.y = pos.1;
+    }
+    ecs_core::system::run_settle_systems(world);
+
+    let step = find_walkable_step(world, player_pos(world)).expect("周围必须有可走方向");
+    world.resource_mut::<PlayerActionRequest>().command = Some(PlayerCommand::Move {
+        dx: step.0,
+        dy: step.1,
+    });
+    world.run_schedule(ecs_core::PlayerMountSchedule);
+
+    let avs: Vec<f64> = {
+        let mut query = world.query::<&ActionTimer>();
+        query.iter(world).map(|timer| timer.remaining_av).collect()
+    };
+    assert_eq!(avs.len(), 1, "一次挂载必须恰好产出一个行动（位置 {pos:?}）");
+    avs[0]
+}
+
+/// **C2 的协同验收**：初始化洒下的泥潭，必须能在真实世界里让玩家变慢一倍。
+///
+/// 这条串起了四段彼此独立的代码：`spawn_cell_effects_system`（内容）→
+/// `CellEffects`（每轮重建的索引）→ `EffectContext::collect`（收桶）→
+/// `SpeedRule::action_av_ignoring`（规则）。任何一段接错，AV 都不会是两倍。
+#[test]
+fn mud_doubles_the_player_move_av_in_the_real_world() {
+    let mut world = new_game(2026);
+    // 清场：泥潭测试不关心怪物会不会走进那一格。
+    clear_actors(&mut world);
+    ecs_core::system::run_settle_systems(&mut world);
+
+    // 选一格泥潭、一格普通地板（都要有可走邻格）。
+    let mud: Vec<(usize, usize)> = {
+        let mut query = world.query::<&CellEffectAt>();
+        query.iter(&world).map(|at| at.to_tuple()).collect()
+    };
+    let mud_target = mud
+        .into_iter()
+        .find(|pos| find_walkable_step(&world, *pos).is_some())
+        .expect("至少要有一格带可走邻格的泥潭");
+
+    let plain_target = {
+        let map = world.resource::<Map>();
+        let mut found = None;
+        for (y, row) in map.tiles.iter().enumerate() {
+            for (x, tile) in row.iter().enumerate() {
+                if tile.walkable()
+                    && world.resource::<CellEffects>().entity_at(x, y).is_none()
+                    && find_walkable_step(&world, (x, y)).is_some()
+                {
+                    found = Some((x, y));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        found.expect("地图上必须有普通地板")
+    };
+
+    let plain_av = move_av_at(&mut world, plain_target);
+    let mud_av = move_av_at(&mut world, mud_target);
+
+    assert!(
+        (mud_av - plain_av * 2.0).abs() < 1e-9,
+        "泥潭必须让移动 AV 恰好翻倍：平地 {plain_av} / 泥潭 {mud_av}"
     );
 }

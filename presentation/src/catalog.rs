@@ -46,6 +46,25 @@ pub fn map_monster_kind(kind: ecs_core::MonsterKindId) -> VisualKey {
     VisualKey::Monster(monster_kind_id(kind))
 }
 
+// ── 格子效果外观（C2 起） ────────────────────────────
+
+/// 泥潭的语义编号。**这是后端契约编号**（`tui::TuiCatalog` 按它给 glyph/颜色），
+/// 同 [`tile_id`]：只能末尾追加，不能重排。
+pub const EFFECT_MUD: u16 = 0;
+
+/// 一格的移动代价倍率 → 语义 key（`None` = 没有专属外观，回落到地形）。
+///
+/// **按规则数据判定，不新增显示字段**：显示数据不进领域（DESIGN DsnX17 ④），
+/// 而"这一格有多贵"本来就是领域事实。代价是"泥潭"这个名字只存在于本 crate 与
+/// GAME.md 的内容说明里——领域层只知道"这一格的代价倍率是 2.0"。
+///
+/// **已知局限**：区间判定无法区分"同为 2.0 倍的两种效果"。等真的出现第二个落在这个
+/// 区间的效果时，正确做法是给效果加**领域身份**（`Mud` 之类的标记组件），而不是把
+/// 区间调得更窄——那只是把冲突推迟到某个更小的数上。本注释就是那个改动点。
+pub fn cell_effect_key(move_cost: f64) -> Option<VisualKey> {
+    (1.5..2.5).contains(&move_cost).then_some(VisualKey::Effect(EFFECT_MUD))
+}
+
 /// 怪物种类的稳定编号。
 pub fn monster_kind_id(kind: ecs_core::MonsterKindId) -> u16 {
     use ecs_core::MonsterKindId as K;

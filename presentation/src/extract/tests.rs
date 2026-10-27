@@ -20,8 +20,7 @@ fn frame_for(seed: u64, pages: &PageStack) -> (World, SceneFrame) {
 
 /// 一帧提取出来的基本形状：地图填满、玩家在、HUD 就绪、相机可用。
 #[test]
-fn frame_has_map_player_hud_and_valid_camera() {
-    let (world, frame) = frame_for(11, &PageStack::new());
+fn frame_has_map_player_hud_and_valid_camera() {    let (world, frame) = frame_for(11, &PageStack::new());
 
     assert_eq!(frame.revision, 1);
     assert!(frame.is_ready(), "初始化后的世界必须产出可渲染的帧");
@@ -299,4 +298,42 @@ fn log_level_mapping_covers_every_core_level() {
     for (core_level, expected) in cases {
         assert_eq!(map_log_level(core_level), expected, "{core_level:?}");
     }
+}
+
+/// **C2：泥潭必须看得见。**
+///
+/// 减速如果不可见，就是一次无声的惩罚——玩家会以为"我按了键但没动"。
+/// 这条断言把"领域数据（`CellMoveCost`）→ 语义 key"这条链路钉住：
+/// 只要 `overlay_cell_effects` 不再覆盖地形，它立刻失败。
+#[test]
+fn mud_cells_are_drawn_as_an_effect_overlay() {
+    let mut world = new_game(2026);
+    let mud: Vec<(usize, usize)> = {
+        let mut query = world.query::<&ecs_core::CellEffectAt>();
+        query.iter(&world).map(|at| at.to_tuple()).collect()
+    };
+    assert!(!mud.is_empty(), "F1 应当有泥潭（内容没上线，这条测试就没意义）");
+
+    let config = ExtractConfig::default().with_viewport(40, 20);
+    let frame = extract_scene_frame(&mut world, &config, &PageStack::new(), 1);
+
+    for (x, y) in &mud {
+        assert_eq!(
+            frame.map.tile(*x, *y),
+            Some(VisualKey::Effect(crate::catalog::EFFECT_MUD)),
+            "({x},{y}) 的泥潭没有画出来：玩家看不到减速，等于隐形惩罚"
+        );
+    }
+
+    // 对照：没有效果的格子仍然是地形外观（别把整张图都盖掉）。
+    let plain = (0..frame.map.len()).find(|idx| {
+        let (x, y) = (idx % frame.map.width, idx / frame.map.width);
+        !mud.contains(&(x, y)) && frame.map.tile(x, y).is_some()
+    });
+    let idx = plain.expect("地图上必须有普通格");
+    let (px, py) = (idx % frame.map.width, idx / frame.map.width);
+    assert!(
+        !matches!(frame.map.tile(px, py), Some(VisualKey::Effect(_))),
+        "没有效果的格子不得被画成效果"
+    );
 }
