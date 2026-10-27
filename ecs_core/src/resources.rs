@@ -107,6 +107,56 @@ impl Default for MapMemory {
     }
 }
 
+/// **本回合已被认领的格子**（ISSUES ECS45）。
+///
+/// `OccupancyMap` 是"每轮结算末尾重建"的派生快照，所以**一个回合内部**它落后于真实位置：
+/// 同一轮里两个 actor 先后走向同一格，读到的都是"这格是空的"→ 两个实体叠在一格。
+///
+/// 这里补一层**批内预留**：移动执行时先把目标格认领掉，`clear()` 在每轮结算末尾
+/// （跟着 `rebuild_occupancy_system`）归零。它不改"占用图是派生数据"这条性质
+/// （DsnE2），只是让批内的检查能看到"这一格本回合已经被占了"。
+#[derive(Resource)]
+pub struct RoundClaims {
+    cells: [[bool; MAP_WIDTH]; MAP_HEIGHT],
+}
+
+impl RoundClaims {
+    pub fn new() -> Self {
+        Self {
+            cells: [[false; MAP_WIDTH]; MAP_HEIGHT],
+        }
+    }
+
+    pub fn is_claimed(&self, x: usize, y: usize) -> bool {
+        if x >= MAP_WIDTH || y >= MAP_HEIGHT {
+            return true;
+        }
+        self.cells[y][x]
+    }
+
+    /// 认领一格；返回 `false` 表示**本回合已被别人认领**（调用方应放弃这一步）。
+    pub fn claim(&mut self, x: usize, y: usize) -> bool {
+        if x >= MAP_WIDTH || y >= MAP_HEIGHT {
+            return false;
+        }
+        if self.cells[y][x] {
+            return false;
+        }
+        self.cells[y][x] = true;
+        true
+    }
+
+    pub fn clear(&mut self) {
+        self.cells = [[false; MAP_WIDTH]; MAP_HEIGHT];
+    }
+}
+
+impl Default for RoundClaims {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 世界时钟：**AV 时间轴**。
 ///
 /// 状态效果（中毒等）按它计时，而不是按"结算了多少轮"（ISSUES ECS46）——

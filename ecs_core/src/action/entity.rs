@@ -838,6 +838,7 @@ pub fn execute_wander_system(
     actors: Query<&Position>,
     movement: MovementContext,
     mut events: ActionEvents,
+    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     use crate::action::execution::movement::moved_position;
 
@@ -867,7 +868,9 @@ pub fn execute_wander_system(
 
         match moved_position(&movement.map, &movement.occupancy, *position, dx, dy) {
             Some(next) => {
-                commands.entity(actor).insert(Position::new(next.x, next.y));
+                /// 认领目标格：同一回合内第二个想进这格的 actor 会看到它已被占（ISSUES ECS45）。
+            claims.claim(next.x, next.y);
+            commands.entity(actor).insert(Position::new(next.x, next.y));
                 log::debug!(
                     "PoC 游荡: actor={actor:?} 方向=({dx},{dy}) → ({},{})",
                     next.x,
@@ -924,6 +927,7 @@ pub fn execute_flee_system(
     movement: MovementContext,
     mut intents: EventWriter<AttackIntentEvent>,
     mut events: ActionEvents,
+    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
@@ -985,7 +989,9 @@ pub fn execute_flee_system(
 
         match best {
             Some(next) => {
-                if let Ok(mut position) = positions.get_mut(actor) {
+                if claims.claim(next.x, next.y)
+                && let Ok(mut position) = positions.get_mut(actor)
+                {
                     position.x = next.x;
                     position.y = next.y;
                 }
@@ -1032,6 +1038,7 @@ pub fn execute_chase_system(
     actions: Query<ReadyActionEntity, ReadyAction<Chase>>,
     mut intents: EventWriter<AttackIntentEvent>,
     mut events: ActionEvents,
+    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     use crate::spatial::pathfinding::astar;
 

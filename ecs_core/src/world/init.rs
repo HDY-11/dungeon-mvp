@@ -68,6 +68,7 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(TurnManager::new());
     // AV 时间轴：状态效果按它计时（ISSUES ECS46）。
     world.insert_resource(crate::resources::WorldClock::default());
+    world.insert_resource(crate::resources::RoundClaims::new());
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
     // 玩家行动请求：action 实体链路的输入口（C2 起）。旧链路的同名资源
