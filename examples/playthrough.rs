@@ -460,9 +460,13 @@ fn occupancy_mismatches(world: &mut World) -> Vec<String> {
         .collect();
 
     let mut out = Vec::new();
+    // 统计"同格实体数"时**排除楼梯**：楼梯格本来就允许被站上去（G31），
+    // 把它算进来会让每一次"怪物路过楼梯"都报假警（本模块的这一版就踩过）。
     let mut seen: BTreeMap<(usize, usize), usize> = BTreeMap::new();
-    for (_, pos, _, _) in &rows {
-        *seen.entry(*pos).or_insert(0) += 1;
+    for (_, pos, is_stairs, _) in &rows {
+        if !is_stairs {
+            *seen.entry(*pos).or_insert(0) += 1;
+        }
     }
     for (entity, pos, _, role) in rows {
         if role == "楼梯" {
@@ -472,8 +476,46 @@ fn occupancy_mismatches(world: &mut World) -> Vec<String> {
             out.push(format!(
                 "{pos:?} 有多个实体共用同一格（{entity:?} 角色={role}）"
             ));
+            if std::env::var("PROBE").is_ok() {
+                let mut q2 = world.query::<(
+                    Entity,
+                    &Position,
+                    Has<Monster>,
+                    Has<Player>,
+                    Has<ecs_core::Stairs>,
+                    Has<ecs_core::Blocks>,
+                )>();
+                let rows: Vec<String> = q2
+                    .iter(world)
+                    .filter(|(_, p, ..)| p.to_tuple() == pos)
+                    .map(|(e, _, m, pl, st, blk)| {
+                        format!("{e:?} monster={m} player={pl} stairs={st} blocks={blk}")
+                    })
+                    .collect();
+                out.push(format!("PROBE {pos:?} 实体={rows:?}"));
+            }
         }
         {
+            let mut probe_rows: Option<String> = None;
+            // 探针：把该格上所有实体连同组件面打出来（定位 ECS45 用）。
+            if std::env::var("PROBE").is_ok() {
+                let mut q2 = world.query::<(
+                    Entity,
+                    &Position,
+                    Has<Monster>,
+                    Has<Player>,
+                    Has<ecs_core::Stairs>,
+                    Has<ecs_core::Blocks>,
+                )>();
+                let rows: Vec<String> = q2
+                    .iter(world)
+                    .filter(|(_, p, ..)| p.to_tuple() == pos)
+                    .map(|(e, _, m, pl, st, blk)| {
+                        format!("{e:?} monster={m} player={pl} stairs={st} blocks={blk}")
+                    })
+                    .collect();
+                probe_rows = Some(format!("PROBE {pos:?} 实体={rows:?}"));
+            }
             let occ = world.resource::<ecs_core::OccupancyMap>();
             let raw = if pos.1 < ecs_core::MAP_HEIGHT && pos.0 < ecs_core::MAP_WIDTH {
                 Some(occ.cells[pos.1][pos.0])
@@ -486,6 +528,9 @@ fn occupancy_mismatches(world: &mut World) -> Vec<String> {
                 out.push(format!(
                     "{pos:?} 上的实体 {entity:?}（角色={role}）查不到；raw={raw:?} api={via_api:?} 全图登记={total}"
                 ));
+                if let Some(rows) = probe_rows {
+                    out.push(rows);
+                }
             }
         }
         if out.len() >= 3 {

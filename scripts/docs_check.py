@@ -150,6 +150,26 @@ def main() -> int:
                 "（PowerShell 5.1 会按 GBK 解析中文注释而报语法错）"
             )
 
+    # ---- 「谁写 Position」：结构保证而不是约定（ISSUES ECS45） ----
+    # 移动写过两次都修不净，根因是四条路径各自写 Position。现在唯一写入点是
+    # `action/execution/apply_move.rs`；生成期 spawn 在 `world/init.rs`。
+    # 这条检查把"只有一个地方能写"从约定变成门禁。
+    position_write = re.compile(r"\bposition\.x\s*=|\bposition\.y\s*=|insert\(Position::new")
+    allowed = {
+        "ecs_core/src/action/execution/apply_move.rs",
+        "ecs_core/src/world/init.rs",
+    }
+    for p in sorted((ROOT / "ecs_core" / "src").rglob("*.rs")):
+        rel = p.relative_to(ROOT).as_posix()
+        if rel in allowed or rel.endswith("_tests.rs") or "/tests" in rel:
+            continue
+        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if position_write.search(line) and "docs-check:ignore" not in line:
+                fails.append(
+                    f"{rel}:{lineno}  写 Position 只允许在 {sorted(allowed)}"
+                    "（ISSUES ECS45：唯一写入点）"
+                )
+
     # ---- 状态/代价欠账（只报告） ----
     for name in ("DESIGN.md", "ecs_core/DESIGN.md"):
         p = ROOT / name

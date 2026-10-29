@@ -13,48 +13,6 @@
 
 
 
-<!-- &ECS45  同一轮内两个移动可抢同一格：占用图是每轮快照，不是移动时立即占位 -->
-### ECS45 — 同一轮内多个移动可以抢同一格：两只怪叠在一起、互相卡死 🟡
-
-**问题：** `OccupancyMap` 只在结算调度末尾**整轮重建**（`rebuild_occupancy_system`），
-而移动在 `ActionPocSchedule` 的 Execute 阶段执行。同一轮里若两个 actor 先后走向同一格，
-**两者读到的都是"这格是空的"** → 都成功 → 两个实体共用一格。重建后占用图只能记下其中一个
-（`cells[y][x]` 是 `Option<Entity>`）。
-
-**证据（自动试玩 `examples/playthrough.rs`）：** seed 2 在 t1 出现两只怪同处 `(49,39)`，
-并**一直叠到 t17**；seed 7 在 `(43,24)` 同样叠住。叠住的两只怪互相占掉出口，原地僵持十几回合。
-
-**影响：** 🟡 中高 — 单看日志完全看不出来（不报错、不崩溃），表现为"怪物行为变钝"。
-它还是"攻击退化成走路"的同源问题：玩家走向怪物时若那格在同一轮内刚被别的怪走进，
-玩家会直接走进去站在同一格上。
-
-**位置：** `ecs_core/src/system/occupancy.rs`、`ecs_core/src/action/execution/movement.rs`
-（`can_move_to` 只读快照）、`ecs_core/src/action/entity.rs`（`execute_move_system`）
-
-**修法方向（待定，两条都动一致性契约）：**
-1. **移动时立即占位**：`execute_move_system` 成功后同步写占用图。代价：占用图不再是纯派生数据
-   （DsnE2 的"整轮重建"承诺要重新定义）。
-2. **回合内预留表**：执行阶段维护"本回合已占用格"集合，`can_move_to` 同时查它，结算时清空。
-   代价：多一个瞬态结构，但保留"占用图是派生数据"的性质。
-
-**本轮进展（部分修复，问题未闭合）：** 已加 `RoundClaims`（批内预留）+ 入口守卫，
-但复测仍复现——而且**所有复现都发生在本层的楼梯格上**（seed 1 `(50,44)`、seed 11 `(20,22)`，
-正是各自的楼梯坐标）。这指向一个此前没注意的机制：
-
-> `rebuild_occupancy_system` **跳过 Stairs**（楼梯占格但可站上去，G31），
-> 所以**楼梯格是唯一不受占用图保护的格子**。一旦某个执行器绕过了占用图检查
-> （或两个 actor 在同一轮先后进入），楼梯格就是唯一能叠住的地方。
-
-下一步应该顺着这条线查：① 楼梯格是否需要额外的"至多一个 actor"约束；
-② 我的守卫是否覆盖了 chase/wander 两条路径（本轮只补到 move/flee 的位置）。
-
-**为什么不当场改：** 两条都改变既有约定（DESIGN DsnE2），属换道；按 RULE §八 ③ 判定权在用户。
-<!-- &/ECS45 -->
-
----
-
-
-
 <!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
 ### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
 
@@ -156,3 +114,4 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS44 | 确定性：仲裁的授予/回收顺序改为**显式排序**（`HashMap` 迭代顺序每进程种子不同 → 同种子可能不同结果）；四个 Schedule 经 `core_schedule()` 构建并强制 `ambiguity_detection = Error` | `ecs_core/src/action/entity.rs`（`ordered_grants` / `losers.sort`）、`ecs_core/src/schedule.rs`（`core_schedule`） | DsnX17 ③ / DsnE8 |
 | ECS46 | 状态效果改按 **AV 时间轴**计时（`WorldClock`）：中毒不再随"结算轮次/怪物密度"漂移 | `ecs_core/src/effect/status.rs`、`resources.rs`（`WorldClock`）、`action/entity.rs`（tick 推进时钟） | GAME.md Gm5
 | ECS47 | 怪物数按区间取目标值（不再恒为上限）；泥潭/地面物品改为撒在出生点附近 | `ecs_core/src/world/init.rs`（`MUD_SPAWN_RADIUS` / `ITEM_SPAWN_RADIUS`） | GAME.md Gm8/Gm10
+| ECS45 | 同一轮内两个移动抢同一格 → 移动改为「意图 → 判定 → 唯一写入点」，规则纯函数 + `apply_move_system` 唯一写 `Position`（写穿占用图） | `ecs_core/src/action/execution/{apply_move,movement}.rs`、`action/entity.rs`（四个执行器改发 `MoveRequest`）、`system/occupancy.rs`（占格改用 `Blocks`） | DsnE14 / DsnE2 / LECS23 |

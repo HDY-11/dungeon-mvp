@@ -68,7 +68,6 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(TurnManager::new());
     // AV 时间轴：状态效果按它计时（ISSUES ECS46）。
     world.insert_resource(crate::resources::WorldClock::default());
-    world.insert_resource(crate::resources::RoundClaims::new());
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
     // 玩家行动请求：action 实体链路的输入口（C2 起）。旧链路的同名资源
@@ -81,6 +80,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
+    // 移动意图（ISSUES ECS45）：执行器只发意图，唯一写入点在 `apply_move_system`。
+    world.insert_resource(bevy_ecs::event::Events::<crate::action::execution::MoveRequest>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());

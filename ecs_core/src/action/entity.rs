@@ -832,16 +832,12 @@ pub fn tick_action_timers_system(world: &mut World) {
 /// （保证 RNG 步数与旧实现同序），只有合法时才改 `Position`；被挡也算行动完成
 /// （游荡本来就是随机试探）。
 pub fn execute_wander_system(
-    mut commands: Commands,
     mut rng: ResMut<GameRng>,
     actions: Query<ReadyActionEntity, ReadyAction<Wander>>,
     actors: Query<&Position>,
-    movement: MovementContext,
+    mut moves: EventWriter<crate::action::execution::MoveRequest>,
     mut events: ActionEvents,
-    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
-    use crate::action::execution::movement::moved_position;
-
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
         (0, 1),
@@ -866,22 +862,10 @@ pub fn execute_wander_system(
             (rng.random_range(0, DIRECTIONS.len() as u64) as usize).min(DIRECTIONS.len() - 1);
         let (dx, dy) = DIRECTIONS[index];
 
-        match moved_position(&movement.map, &movement.occupancy, *position, dx, dy) {
-            Some(next) => {
-                // 抢不到这一格就不动：同一回合内别人先认领了（ISSUES ECS45）。
-                if claims.claim(next.x, next.y) {
-                    commands.entity(actor).insert(Position::new(next.x, next.y));
-                }
-                log::debug!(
-                    "PoC 游荡: actor={actor:?} 方向=({dx},{dy}) → ({},{})",
-                    next.x,
-                    next.y
-                );
-            }
-            None => {
-                log::debug!("PoC 游荡: actor={actor:?} 方向=({dx},{dy}) 被挡，原地不动");
-            }
-        }
+        // 只发**意图**：能不能走由 `apply_move_system` 判定（唯一写位置的地方）。
+        // 游荡本来就是随机试探，被挡也算这一步做完。
+        let _ = position;
+        moves.write(crate::action::execution::MoveRequest::new(actor, dx, dy));
         events.succeed(action, actor);
     }
 }
@@ -921,14 +905,14 @@ pub fn execute_wait_system(
 #[allow(clippy::too_many_arguments)]
 pub fn execute_flee_system(
     actions: Query<ReadyActionEntity, ReadyAction<Flee>>,
-    mut positions: Query<&mut Position>,
+    positions: Query<&Position>,
     healths: Query<&Health>,
     viewsheds: Query<&Viewshed>,
     player: Query<Entity, With<Player>>,
     movement: MovementContext,
     mut intents: EventWriter<AttackIntentEvent>,
+    mut moves: EventWriter<crate::action::execution::MoveRequest>,
     mut events: ActionEvents,
-    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
@@ -967,7 +951,7 @@ pub fn execute_flee_system(
         };
         let player_tile = Position::new(player_position.0, player_position.1);
 
-        let mut best: Option<Position> = None;
+        let mut best: Option<(Position, isize, isize)> = None;
         let mut best_distance = 0usize;
         for (dx, dy) in DIRECTIONS {
             if crate::action::execution::movement::can_move_to(
@@ -983,19 +967,15 @@ pub fn execute_flee_system(
                 let distance = candidate.manhattan(player_tile);
                 if distance > best_distance {
                     best_distance = distance;
-                    best = Some(candidate);
+                    best = Some((candidate, dx, dy));
                 }
             }
         }
 
         match best {
-            Some(next) => {
-                if claims.claim(next.x, next.y)
-                    && let Ok(mut position) = positions.get_mut(actor)
-                {
-                    position.x = next.x;
-                    position.y = next.y;
-                }
+            Some((_, dx, dy)) => {
+                // 只发意图；`plan_step` 的最终判定在 `apply_move_system` 里做。
+                moves.write(crate::action::execution::MoveRequest::new(actor, dx, dy));
             }
             None => {
                 // 无路可逃：相邻且看得见玩家就反咬一口（与旧实现一致）。
@@ -1031,15 +1011,15 @@ pub fn execute_flee_system(
 /// 追击总是以成功结束（保活通过就算这一步做完），与旧实现一致。
 #[allow(clippy::too_many_arguments)]
 pub fn execute_chase_system(
-    mut positions: Query<&mut Position>,
+    positions: Query<&Position>,
     viewsheds: Query<&Viewshed>,
     mut last_known: Query<&mut LastKnownPlayerPos>,
     player: Query<Entity, With<Player>>,
     movement: MovementContext,
     actions: Query<ReadyActionEntity, ReadyAction<Chase>>,
     mut intents: EventWriter<AttackIntentEvent>,
+    mut moves: EventWriter<crate::action::execution::MoveRequest>,
     mut events: ActionEvents,
-    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     use crate::spatial::pathfinding::astar;
 
@@ -1091,11 +1071,13 @@ pub fn execute_chase_system(
             } else if let Some((nx, ny)) =
                 astar(self_position, (tx, ty), &movement.map.tiles, Some(&movement.occupancy))
                     .and_then(|path| path.first().copied())
-                && claims.claim(nx, ny)
-                && let Ok(mut position) = positions.get_mut(actor)
             {
-                position.x = nx;
-                position.y = ny;
+                // A* 只用来选**方向**；能否落脚由 `apply_move_system` 统一判定。
+                moves.write(crate::action::execution::MoveRequest::new(
+                    actor,
+                    nx as isize - self_position.0 as isize,
+                    ny as isize - self_position.1 as isize,
+                ));
             }
 
             // 不可见且已抵达最后已知位置附近 → 记忆失效。
@@ -1182,47 +1164,48 @@ pub fn execute_basic_attack_system(
 /// H1 之后这里也**不再需要 `Commands`**：`Ready` 清理与终态事件都由
 /// [`ActionEvents`] 的终态出口一并负责，执行器不再自己回收实体。
 pub fn execute_move_system(
-    mut actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
-    mut actors: Query<&mut Position>,
+    actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
+    actors: Query<&Position>,
     movement: MovementContext,
-    mut claims: ResMut<crate::resources::RoundClaims>,
+    mut moves: EventWriter<crate::action::execution::MoveRequest>,
     mut events: ActionEvents,
 ) {
     use crate::action::execution::movement::moved_position;
 
-    for (action, child_of, action_move) in &mut actions {
+    for (action, child_of, action_move) in &actions {
         let actor = child_of.parent();
-        let Ok(mut position) = actors.get_mut(actor) else {
+        let Ok(position) = actors.get(actor) else {
             // actor 已消失：这个 action 没有可回转的对象，直接失败收场。
             events.fail(action, actor);
             continue;
         };
 
-        let moved = moved_position(&movement.map, &movement.occupancy, *position, action_move.dx, action_move.dy);
-        match moved {
-            Some(next) => {
-                position.x = next.x;
-                position.y = next.y;
-                log::debug!(
-                    "PoC 移动: actor={actor:?} 方向=({},{}) → ({},{})",
-                    action_move.dx,
-                    action_move.dy,
-                    next.x,
-                    next.y
-                );
-            }
-            None => {
-                log::debug!(
-                    "PoC 移动: actor={actor:?} 方向=({},{}) 被挡，原地不动",
-                    action_move.dx,
-                    action_move.dy
-                );
-            }
-        }
+        // 判定在这里只用于决定**行动的成功/失败**（行动生命周期归执行器）；
+        // **写位置**一律交给 `apply_move_system`（唯一出口，ISSUES ECS45）。
+        // 两次判定不是重复：执行器问"这一步该算成功吗"，应用系统问"现在能落下去吗"
+        // ——后者读到的是同一回合里已被前一个请求写穿的最新占位。
+        let allowed = moved_position(
+            &movement.map,
+            &movement.occupancy,
+            *position,
+            action_move.dx,
+            action_move.dy,
+        )
+        .is_some();
 
-        if moved.is_some() {
+        if allowed {
+            moves.write(crate::action::execution::MoveRequest::new(
+                actor,
+                action_move.dx,
+                action_move.dy,
+            ));
             events.succeed(action, actor);
         } else {
+            log::debug!(
+                "PoC 移动: actor={actor:?} 方向=({},{}) 被挡，原地不动",
+                action_move.dx,
+                action_move.dy
+            );
             events.fail(action, actor);
         }
     }
@@ -1365,6 +1348,9 @@ pub fn build_action_poc_schedule() -> Schedule {
                     execute_chase_system,
                     execute_flee_system,
                     execute_wander_system,
+                    // **移动的唯一写入点**：上面四个执行器只发 `MoveRequest`，
+                    // 判定 + 写 `Position` + 写穿占用图都在这里（ISSUES ECS45）。
+                    crate::action::execution::apply_move_system,
                 )
                     .chain()
                     .in_set(ActionPhase::Execute),

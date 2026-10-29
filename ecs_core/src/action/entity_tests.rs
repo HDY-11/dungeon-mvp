@@ -11,6 +11,26 @@ use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_
 use crate::world_loop::apply_player_command;
 use bevy_ecs::system::RunSystemOnce;
 
+/// 执行器**只发移动意图**；跑完之后必须再跑一次应用系统，`Position` 才会真的变。
+///
+/// ECS45 之后"写 `Position`"只有 [`crate::action::execution::apply_move_system`] 一处，
+/// 所以任何断言"移动了没有"的测试都要显式补这一步——这也让测试与真实链路同序
+/// （执行器 → 应用系统，见 `ActionPhase::Execute` 的链）。
+fn apply_pending_moves(world: &mut World) {
+    // 裸 `World::new()` 造的测试没有注册事件资源：那不是"移动"的测试，直接跳过。
+    if world
+        .get_resource::<bevy_ecs::event::Events<crate::action::execution::MoveRequest>>()
+        .is_none()
+    {
+        return;
+    }
+    let _ = world.run_system_once(crate::action::execution::apply_move_system);
+    // `run_system_once` 每次都新建系统、`EventReader` 游标从 0 开始，会把**历史**意图
+    // 也再应用一遍。生产里每轮 `update_events_system` 会清空缓冲，测试里要显式模拟这一步，
+    // 否则同一个意图被重复应用（实测：本该走一格的角色走了五格）。
+    world.resource_mut::<bevy_ecs::event::Events<crate::action::execution::MoveRequest>>().clear();
+}
+
 /// 一个 actor 同时只能有一个 `ActiveAction`；违反即为实现 bug。
 const MAX_ACTIONS_PER_ACTOR: usize = 1;
 
@@ -621,6 +641,7 @@ fn wait_action_succeeds_and_returns_actor_to_idle() {
     let wait = run_wait_candidate(&mut world, monster);
     let _ = world.run_system_once(tick_action_timers_system);
     let _ = world.run_system_once(execute_wait_system);
+    apply_pending_moves(&mut world);
 
     assert!(
         world.get::<Idle>(monster).is_none(),
@@ -860,6 +881,7 @@ fn attack_action_emits_intent_and_damage_resolves_once() {
     // 只跑执行器：应当恰好发一个 AttackIntentEvent，且不动血量。
     let _ = world.run_system_once(tick_action_timers_system);
     let _ = world.run_system_once(execute_basic_attack_system);
+    apply_pending_moves(&mut world);
     assert_eq!(
         world.resource::<Events<AttackIntentEvent>>().len(),
         1,
@@ -913,6 +935,7 @@ fn attack_action_fails_when_target_is_far() {
     }
     let _ = world.run_system_once(tick_action_timers_system);
     let _ = world.run_system_once(execute_basic_attack_system);
+    apply_pending_moves(&mut world);
     world.run_schedule(ActionPocSchedule);
 
     assert!(
@@ -1082,6 +1105,7 @@ fn wander_action_consumes_exactly_one_random_step() {
         let rng_before = world.resource::<GameRng>().steps;
 
         let _ = world.run_system_once(execute_wander_system);
+        apply_pending_moves(&mut world);
 
         let after = world.get::<Position>(actor).unwrap().to_tuple();
         assert_eq!(
@@ -1127,6 +1151,7 @@ fn wander_blocked_still_succeeds() {
     world.entity_mut(actor).remove::<Idle>().insert(Active);
 
     let _ = world.run_system_once(execute_wander_system);
+    apply_pending_moves(&mut world);
 
     assert_eq!(
         world.get::<Position>(actor).unwrap().to_tuple(),
@@ -1242,6 +1267,7 @@ fn chase_action_three_outcome_contracts() {
         mount_ready_chase(&mut world, monster);
 
         let _ = world.run_system_once(execute_chase_system);
+        apply_pending_moves(&mut world);
         world_run_completion_only(&mut world);
 
         let after = world.get::<Position>(monster).unwrap().to_tuple();
@@ -1303,6 +1329,7 @@ fn chase_adjacent_visible_declares_attack() {
     mount_ready_chase(&mut world, monster);
 
     let _ = world.run_system_once(execute_chase_system);
+    apply_pending_moves(&mut world);
 
     assert_eq!(
         world.get::<Position>(monster).unwrap().to_tuple(),
@@ -1367,6 +1394,7 @@ fn chase_clears_memory_when_reaching_last_known_position() {
     mount_ready_chase(&mut world, monster);
 
     let _ = world.run_system_once(execute_chase_system);
+    apply_pending_moves(&mut world);
 
     assert_eq!(
         world
@@ -1394,6 +1422,7 @@ fn idle_and_failure_are_mutually_exclusive() {
     let action = mount_ready_chase(&mut world, monster);
 
     let _ = world.run_system_once(execute_chase_system);
+    apply_pending_moves(&mut world);
     assert!(
         world.get::<Idle>(monster).is_none(),
         "执行器发失败事件前不得改动状态"
@@ -1423,6 +1452,7 @@ fn idle_and_failure_are_mutually_exclusive() {
         .id();
 
     let _ = world.run_system_once(execute_wait_system);
+    apply_pending_moves(&mut world);
     world_run_completion_only(&mut world);
     assert!(world.get::<Idle>(monster).is_some(), "成功后必须回 Idle");
     assert!(
@@ -1449,6 +1479,7 @@ fn run_system_once_skips_system_when_param_validation_fails() {
     world.insert_resource(Map::new());
     world.insert_resource(OccupancyMap::new());
     let result = world.run_system_once(execute_chase_system);
+    apply_pending_moves(&mut world);
     assert!(
         result.is_err(),
         "查询无法初始化时 run_system_once 必须返回 Err（而不是静默成功）"
@@ -1550,6 +1581,7 @@ fn flee_action_four_outcome_contracts() {
             flee_parity_scene(51, player_tile, monster_tile, 0.10, true);
         mount_ready_flee(&mut world, monster);
         let _ = world.run_system_once(execute_flee_system);
+        apply_pending_moves(&mut world);
         let after = world.get::<Position>(monster).unwrap().to_tuple();
         assert!(
             Position::new(after.0, after.1).manhattan(Position::new(player_tile.0, player_tile.1))
@@ -1570,6 +1602,7 @@ fn flee_action_four_outcome_contracts() {
             flee_parity_scene(51, player_tile, monster_tile, 0.50, true);
         mount_ready_flee(&mut world, monster);
         let _ = world.run_system_once(execute_flee_system);
+        apply_pending_moves(&mut world);
         world_run_completion_only(&mut world);
         assert!(
             world.get::<Failure>(monster).is_some(),
@@ -1613,6 +1646,7 @@ fn flee_action_four_outcome_contracts() {
         world.resource_mut::<Events<AttackIntentEvent>>().update();
         mount_ready_flee(&mut world, monster);
         let _ = world.run_system_once(execute_flee_system);
+        apply_pending_moves(&mut world);
 
         // 可见性必须真的是本情形设定的那个：`set_visibility` 在场景构建里调用过，
         // 但这里再断言一次，避免「两个情形其实跑成了同一个」这类静默错误。
@@ -1698,11 +1732,17 @@ fn run_one_action_roundtrip(world: &mut World, action: Entity) {
     world.resource_mut::<Events<ActionFailedEvent>>().clear();
 
     let _ = world.run_system_once(execute_wait_system);
+    apply_pending_moves(world);
     let _ = world.run_system_once(execute_move_system);
+    apply_pending_moves(world);
     let _ = world.run_system_once(execute_basic_attack_system);
+    apply_pending_moves(world);
     let _ = world.run_system_once(execute_chase_system);
+    apply_pending_moves(world);
     let _ = world.run_system_once(execute_flee_system);
+    apply_pending_moves(world);
     let _ = world.run_system_once(execute_wander_system);
+    apply_pending_moves(world);
 
     let emitted = world.resource::<Events<ActionSucceededEvent>>().len()
         + world.resource::<Events<ActionFailedEvent>>().len();
@@ -1796,6 +1836,7 @@ fn parity_basic_attack_scenario() {
     // 执行器只发意图。
     let _ = world.run_system_once(tick_action_timers_system);
     let _ = world.run_system_once(execute_basic_attack_system);
+    apply_pending_moves(&mut world);
     assert_eq!(
         world.resource::<Events<AttackIntentEvent>>().len(),
         1,
@@ -2153,113 +2194,15 @@ fn action_phases_keep_their_total_order_and_execute_group_is_open() {
     );
 }
 
-// ── 参数化执行器与旧 `World` 执行器的 parity ─────────────
+// ── 执行器与结算系统的共存 ───────────────────────────
 
-/// 构造「actor + action 实体（Move，已 Ready）」，返回 `(world, actor, action, observer)`。
+/// 移动的"两条实现一致性"测试已随旧 `World` 版执行器一起删除：
+/// `movement::execute_move(&mut World, ..)` 是 Phase B 的迁移期产物，ECS45 之后
+/// **写 `Position` 只有一处**（`execution/apply_move.rs`），不再存在"两套执行器"需要对称验证。
+/// 新的等价物是 `apply_move_tests`（唯一写入点）+ `movement_tests`（纯规则）。
 ///
-/// `observer` 是观察者的 Entity id：它占据某个格子，用来让「被占用」与「空闲」
-/// 两种情形落在同一个 actor 位置上。
-fn move_parity_scene(
-    actor_pos: (usize, usize),
-    observer_pos: Option<(usize, usize)>,
-    dx: isize,
-    dy: isize,
-) -> (World, Entity, Entity, Option<Entity>) {
-    let (mut world, _player) = single_tile_scene();
-    // 全平地：越界之外全是可走格，便于隔离「占用」这一个变量。
-    world.resource_mut::<Map>().tiles = [[Tile::Floor; MAP_WIDTH]; MAP_HEIGHT];
-
-    let actor = spawn_test_monster(
-        &mut world,
-        crate::monster::MonsterKindId::Rat,
-        actor_pos,
-        10.0,
-        4.0,
-    );
-    let observer = observer_pos.map(|pos| {
-        spawn_test_monster(
-            &mut world,
-            crate::monster::MonsterKindId::Goblin,
-            pos,
-            10.0,
-            4.0,
-        )
-    });
-    crate::system::run_settle_systems(&mut world);
-
-    let action = world
-        .spawn((
-            ActionOf(actor),
-            ActionPriority(PRIORITY_WANDER),
-            ActionSource::Ai,
-            ActionTimer { remaining_av: 0.0 },
-            Move { dx, dy },
-            ActiveAction,
-            Ready,
-        ))
-        .id();
-    world.entity_mut(actor).remove::<Idle>().insert(Active);
-
-    (world, actor, action, observer)
-}
-
-/// 参数化执行器（`entity::execute_move_system`）与旧 `World` 执行器
-/// （`movement::execute_move`）在同样场景下必须给出同样的结果。
-///
-/// 覆盖三情形：合法移动、目标格被占用、越界。比较的是
-/// 「actor 最终位置 + 是否有 `ActionSucceeded` 事件 + 是否成功」。
-#[test]
-fn parameterized_move_matches_world_based_move() {
-    use crate::action::execution::movement::execute_move as world_based_move;
-    use crate::events::ActionSucceededEvent;
-    use bevy_ecs::event::Events;
-
-    /// 一个对照情形：名字 + actor 起点 + 可选的占位实体位置 + 移动方向。
-    type MoveCase = (&'static str, (usize, usize), Option<(usize, usize)>, (isize, isize));
-
-    let cases: [MoveCase; 4] = [
-        ("合法", (10, 10), None, (1, 0)),
-        ("对角合法", (10, 10), None, (1, 1)),
-        ("目标被占用", (10, 10), Some((11, 10)), (1, 0)),
-        ("越界", (0, 0), None, (-1, 0)),
-    ];
-
-    for (name, actor_pos, observer_pos, (dx, dy)) in cases {
-        // A：旧的 &mut World 执行器。
-        let (mut world_a, actor_a, _action_a, _obs_a) =
-            move_parity_scene(actor_pos, observer_pos, dx, dy);
-        let moved_a = world_based_move(&mut world_a, actor_a, dx, dy);
-        let pos_a = world_a.get::<Position>(actor_a).unwrap().to_tuple();
-
-        // B：新的参数化执行器（只跑这一个系统）。
-        let (mut world_b, actor_b, action_b, _obs_b) =
-            move_parity_scene(actor_pos, observer_pos, dx, dy);
-        let _ = world_b.run_system_once(execute_move_system);
-        let pos_b = world_b.get::<Position>(actor_b).unwrap().to_tuple();
-        let succeeded_b = !world_b
-            .resource::<Events<ActionSucceededEvent>>()
-            .is_empty();
-
-        assert_eq!(
-            pos_a, pos_b,
-            "情形「{name}」位置不一致：{pos_a:?} vs {pos_b:?}"
-        );
-        assert_eq!(
-            moved_a, succeeded_b,
-            "情形「{name}」成功判定不一致：World 版 {moved_a} vs 参数化版 {succeeded_b}"
-        );
-        assert!(
-            world_b.get_entity(action_b).is_ok(),
-            "参数化执行器不得回收 action 实体（那是 completion 的职责）"
-        );
-        assert!(
-            world_b.get::<Ready>(action_b).is_none(),
-            "参数化执行器必须清掉 Ready，避免同一行动被执行两次"
-        );
-    }
-}
-
-/// 参数化执行器不再是 exclusive：能与 `core` 既有结算系统挂在**同一条调度**里。
+/// 下面这条测试守的是另一件事：参数化执行器不再是 exclusive，能与 `core` 既有结算系统
+/// 挂在**同一条调度**里。
 ///
 /// `Schedule::initialize`（首次运行时触发）会做组件访问冲突检查——如果执行器真的
 /// 与世界独占型访问冲突，这里会直接 panic。同时顺带验证两者都照常工作：
@@ -2302,9 +2245,19 @@ fn parameterized_move_executor_coexists_with_settle_systems() {
         .get_mut(CoreSettleSchedule)
         .expect("core 结算调度已注册")
         .add_systems(
-            (execute_move_system, ApplyDeferred, action_completion_system)
+            (
+                execute_move_system,
+                ApplyDeferred,
+                // ECS45 之后执行器只发意图，移动由应用系统落地。
+                crate::action::execution::apply_move_system,
+                action_completion_system,
+            )
                 .chain()
-                .before(crate::system::update_events_system),
+                // 整组排在结算链路**最前面**（结算链路自身是 `.chain()`，所以"在头部之前"
+                // 就等于"在所有结算系统之前"）。不这么写，`apply_move_system` 与
+                // `resolve_attack_system`/`poison_*` 都写 `EventLog`，会被
+                // `ambiguity_detection = Error` 判为歧义——这正是那道护栏的用途。
+                .before(crate::system::combat::resolve_attack_system),
         );
     world.run_schedule(CoreSettleSchedule);
 

@@ -16,11 +16,8 @@ use bevy_ecs::prelude::*;
 pub fn rebuild_occupancy_system(
     entities: Query<(Entity, &Position), With<Blocks>>,
     mut occupancy: ResMut<OccupancyMap>,
-    mut claims: ResMut<crate::resources::RoundClaims>,
 ) {
     occupancy.clear();
-    // 回合边界：批内预留（ISSUES ECS45）归零。
-    claims.clear();
     for (entity, pos) in entities.iter() {
         occupancy.set(pos.x, pos.y, entity);
     }

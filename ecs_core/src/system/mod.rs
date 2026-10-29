@@ -57,6 +57,7 @@ pub fn update_events_system(
     mut level_up_events: ResMut<Events<LevelUpEvent>>,
     mut action_succeeded: ResMut<Events<ActionSucceededEvent>>,
     mut action_failed: ResMut<Events<ActionFailedEvent>>,
+    mut move_requests: ResMut<Events<crate::action::execution::MoveRequest>>,
 ) {
     attack_intents.update();
     attack_events.update();
@@ -64,6 +65,7 @@ pub fn update_events_system(
     level_up_events.update();
     action_succeeded.update();
     action_failed.update();
+    move_requests.update();
 }
 
 /// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。
