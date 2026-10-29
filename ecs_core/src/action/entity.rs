@@ -108,21 +108,27 @@ type AiActorData = (Entity, Option<&'static MoveSpeed>, &'static Position);
 /// （ISSUES ECS30 / ECS41）。
 type CandidateAction = (Entity, &'static ActionPriority, &'static ActionOf);
 
-/// 已到期（`Ready`）的行动实体，按具体行动类型 `A` 过滤。
+/// 校验阶段的范围：**该 actor 名下某种行动**，到点与否都要看（ISSUES ECS43）。
 ///
-/// 只能在「filter 恰好就是 `(With<ActiveAction>, With<Ready>, With<A>)`」时直接当
-/// `Query` 的 filter 用；需要再叠一个 filter 时自己写元组。
+/// 这里**刻意不带** `With<Ready>`：保活检查必须覆盖"排队中"的行动，否则失效的行动会一直
+/// 占住 actor 唯一的 `ActiveAction` 槽位、让它空转。要不要为它**定案**由校验器自己用
+/// [`ActionEntry`] 里的 `Has<Ready>` 决定——两件事的范围不同，所以过滤器只能管前一件。
+pub(crate) type PendingAction<A> = (With<ActiveAction>, With<A>);
+
+/// 校验器读的行动数据：实体 id + 归属 + **是否已到点**。
 ///
-/// 校验器（`action::validation`）全都用它：**"到期且是某行动"这个口径只有一份**，
-/// 少写一个 `With<Ready>` 就会让校验器提前替还没到点的行动做判定。
-pub(crate) type ReadyAction<A> = (With<ActiveAction>, With<Ready>, With<A>);
+/// `Has<Ready>` 是校验器唯一需要区分的两件事：
+///
+/// - **保活**（"还该做吗"）对**所有**待执行行动生效——到点与否都查；
+/// - **定案**（"落在哪 / 打谁" + **预留格子**）只对**到点**的行动做。
+///   提前定案没有意义：落点在被兑现之前可能已经过期，而预留还会白占一格。
+///
+/// 分开之后，`GameRng` 的消耗时机也不变：只有游荡的**定案**取随机方向，而它仍只在
+/// 到点那一轮发生（"提前取随机数"会让同一颗种子的整局结果漂移）。
+pub(crate) type ActionEntry = (Entity, &'static ActionOf, Has<Ready>);
 
-/// 到期行动的数据：实体 id + 归属。
-pub(crate) type ReadyActionEntity = (Entity, &'static ActionOf);
-
-/// 带 payload 的到期行动（`Move` / `BasicAttack`）。
-pub(crate) type ReadyActionPayload<A> = (Entity, &'static ActionOf, &'static A);
-
+/// 带 payload 的同上（`Move` / `BasicAttack`）。
+pub(crate) type ActionEntryPayload<A> = (Entity, &'static ActionOf, &'static A, Has<Ready>);
 
 /// 行动终态的**唯一出口**：执行器只能经它结束一个行动。
 ///

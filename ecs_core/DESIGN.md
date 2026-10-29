@@ -282,7 +282,7 @@ wander_decision_system ─┘
 **原编号：** `DsnE7`（迁移前）
 <!-- &/DsnE7 -->
 
-<!-- &DsnE8  行动=actor 瞬态子实体；AV 走倍率；终态单一出口；保活覆盖缺口=ECS43 -->
+<!-- &DsnE8  行动=actor 瞬态子实体；AV 走倍率；终态单一出口；保活覆盖全部待执行行动 -->
 ### DsnE8 行动系统：设计哲学 + 行动即实体 + 速度组件
 
 > **行动系统的唯一权威条目**（2026-09 合并了原 DsnE4）。
@@ -299,9 +299,12 @@ wander_decision_system ─┘
 
 **事件驱动推进：** 每轮只推进「最小正 AV」，而不是固定帧 tick。
 
-**保活检查：** 生成时检查一次条件，且**必须对所有待执行行动持续生效**——失效的行动会继续
+**保活检查：** 生成时检查一次条件，且**对所有待执行行动持续生效**——失效的行动会继续
 占着 actor 唯一的 `ActiveAction` 槽位，让 actor 空转若干回合。
-**现状只在执行前检查（每个执行器各一份）→ 这是缺口，见 ISSUES ECS43。**
+**已落地（2026-09，ISSUES ECS43）**：保活在 `ActionPhase::Validate` 里，对**所有**待执行行动
+（`PendingAction<A>`，不带 `With<Ready>`）每轮扫一遍，失效即刻取消；**定案**（选方向 + 预留格子）
+仍只对**到点**的行动做——提前定案会拿到过期的落点，还会白占一格。生成条件与保活条件用**滞回**
+的两个阈值（逃跑 0.25 进 / 0.30 出），所以不会"生成 → 立刻取消 → 再生成"。
 
 **优先级仲裁：** 每个行动自带 `ActionPriority`（越小越优先：Flee 200 > Chase 100 >
 Wander 50 > Wait 0），比较器是 `(ActionPriority, entity.to_bits())` 的**全序**，不含随机数。
@@ -391,10 +394,10 @@ Wander 50 > Wait 0），比较器是 `(ActionPriority, entity.to_bits())` 的**�
 
 **关联：** DsnE9（伤害输入形状）/ DsnE10（修正器求值侧）/ DsnE12（效果实体与归属关系）
 | DESIGN DsnX17（冻结清单）/ DsnX18（路线表）
-| ISSUES ECS41（`ChildOf` → 专用关系）、ECS43（保活覆盖范围，未闭合）
+| ISSUES ECS41（`ChildOf` → 专用关系）、ECS43（保活覆盖范围，**已闭合**：见上文「保活检查」）
 | LESSONS LECS3（Bundle 上限）、LECS22（扩展点判据）、LSYN20（测试依赖执行顺序）
 
-**状态：** 已定 — ①② 与 H1/H3 均已落地；**唯一未闭合的设计缺口是保活检查的覆盖范围（ECS43）**。
+**状态：** 已定 — ①②、H1/H3 与保活覆盖范围（ECS43，2026-09）均已落地。
 
 **原编号：** `DsnE8`（迁移前）
 <!-- &/DsnE8 -->
@@ -800,8 +803,9 @@ owner 系统按 DsnE12 第 4 条届时一并加）。
 ```text
 Generate → Arbitrate → Tick → [Validate] ──▶ Execute → Complete
                                   │              │
-          每个行动一个校验器：定案      一个通用落地器：只写结果
-          "落在哪 / 打谁 / 还该做吗"     （写 Position / 发攻击意图）
+          每个行动一个校验器：      一个通用落地器：只写结果
+          保活（所有排队中的行动）  （写 Position / 发攻击意图）
+          + 定案（只对到点的行动）
           并**立刻预留**目标格（串行，所以可靠）
 ```
 
@@ -809,6 +813,10 @@ Generate → Arbitrate → Tick → [Validate] ──▶ Execute → Complete
   （`validate_move_system` / `validate_basic_attack_system` / `validate_chase_system` /
   `validate_flee_system` / `validate_wander_system`）。它做两件事：**定案**
   （`MoveTarget` / `AttackTarget` / 什么都不加 = 原地）和**预留**（`occupancy.set`）。
+- **一个校验器管两件范围不同的事**（ISSUES ECS43）：**保活**（"还该做吗"）对**所有**待执行
+  行动生效——包括还在排队、AV 没归零的；**定案 + 预留**只对**到点**的行动做。所以查询过滤器
+  是 `PendingAction<A>`（不带 `With<Ready>`），"到没到点"由数据里的 `Has<Ready>` 决定。
+  提前定案会拿到过期落点、白占一格；而保活提前生效正是这个阶段存在的另一半理由。
 - **落地只有一处**：`action/settle.rs::settle_action_system` 是全项目唯一写 `Position` 的
   系统（另一个写入点是生成期出生点），由 `docs_check.py` 的"写 Position 白名单"在门禁里
   强制。它**不判定**：没有 `MoveTarget` 就没有移动。
@@ -873,8 +881,13 @@ ECS45 的第一次修法是"唯一写入点 + 写穿占用图"。它**解决了*
      所以任何"跨版本的整局指纹"（种子 → 结果）都会变，跨版本对比只能比**不变式**，不能比
      输出。两组 fuzz 的不变式（占用图与 `Position` 一致 / HP 边界 / 空闲玩家不留
      `ActiveAction` 子实体）在改动前后都是"异常：无"。
+6. **保活放开到排队中的行动（ECS43）后，行动顺序会再变一次**：失效的排队行动现在会被
+   **提前**取消，actor 立刻回到 `Idle`/`Failure` 并可以在下一轮重新生成候选，而不是拖到
+   到点才失败。实测 6 颗种子里有 1 颗（400 回合）因此整局走向不同，其余 5 颗没触发
+   （普通怪物的 AV 决定"排队窗口"只有一两轮，条件很少在窗口里翻转）。
+   这也是为什么这条必须由用户拍板（RULE §八 ③）：它是玩家可见的行为改动，而不是重构。
 
-**关联：** ISSUES ECS45（同轮抢格）/ ECS43（保活有了天然落点）| DsnE2（占用图：占格能力 + 回合内写穿）| DsnE8（行动子系统）| DsnE15（写入者清单）| `LECS23` / `LECS24`
+**关联：** ISSUES ECS45（同轮抢格）/ ECS43（保活对所有待执行行动生效）| DsnE2（占用图：占格能力 + 回合内写穿）| DsnE8（行动子系统）| DsnE15（写入者清单）| `LECS23` / `LECS24`
 
 **状态：** 已定 — 已落地（`action/validation.rs` 校验器 + `action/settle.rs` 唯一落地；
 `execution/apply_move.rs` 与 `MoveRequest` 已删除）。

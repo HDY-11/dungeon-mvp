@@ -50,23 +50,36 @@ fn clear_events(world: &mut World) {
         .clear();
 }
 
-/// 在 `actor` 名下挂一个**已到期**的行动实体（`ActiveAction + Ready` + 行动标记）。
+/// 在 `actor` 名下挂一个行动实体，`ready` 决定它是否已到点。
 ///
-/// 直接造"到点"状态而不是跑生成/仲裁/tick：这一层测的是校验器，不是调度。
-fn mount_ready<B: Bundle>(world: &mut World, actor: Entity, action: B) -> Entity {
-    let entity = world
-        .spawn((
-            ActionOf(actor),
-            ActionPriority(0),
-            ActionSource::Ai,
-            ActionTimer { remaining_av: 0.0 },
-            ActiveAction,
-            Ready,
-            action,
-        ))
-        .id();
+/// 直接造"到点 / 排队中"状态而不是跑生成/仲裁/tick：这一层测的是校验器，不是调度。
+fn mount_action<B: Bundle>(world: &mut World, actor: Entity, action: B, ready: bool) -> Entity {
+    let mut entity = world.spawn((
+        ActionOf(actor),
+        ActionPriority(0),
+        ActionSource::Ai,
+        ActionTimer {
+            remaining_av: if ready { 0.0 } else { 5.0 },
+        },
+        ActiveAction,
+        action,
+    ));
+    if ready {
+        entity.insert(Ready);
+    }
+    let entity = entity.id();
     world.entity_mut(actor).remove::<Idle>().insert(Active);
     entity
+}
+
+/// 已到点的行动（校验器会对它**定案**）。
+fn mount_ready<B: Bundle>(world: &mut World, actor: Entity, action: B) -> Entity {
+    mount_action(world, actor, action, true)
+}
+
+/// 排队中的行动（`ActiveAction` 但没有 `Ready`）：校验器只对它做**保活**。
+fn mount_queued<B: Bundle>(world: &mut World, actor: Entity, action: B) -> Entity {
+    mount_action(world, actor, action, false)
 }
 
 /// 把一只怪物放在某格（`Blocks` + `Health` + `Position` 齐备）。
@@ -553,9 +566,129 @@ fn settle_emits_the_attack_intent_for_an_attack_decision() {
     let collected: Vec<(Entity, Entity)> = cursor
         .read(&intents)
         .map(|intent| (intent.attacker, intent.target))
-        .collect();    assert_eq!(
+        .collect();
+    assert_eq!(
         collected,
         vec![(player, target)],
         "意图必须是「玩家打那只怪物」"
+    );
+}
+
+// ── 7. 保活覆盖范围：排队中的行动也要查（ISSUES ECS43） ──
+//
+// 一个行动从拿到 `ActiveAction` 到真正执行之间可能隔若干回合（`tick` 每轮只推进最小正 AV）。
+// 只在这一刻之前不查，失效的行动就会一直占住 actor 唯一的槽位，而生成系统被 `Without<Active>`
+// 挡住——actor 于是空转。下面四条分别钉住"保活生效"与"定案不提前"。
+
+/// 排队中的追击：一旦既看不见又没记忆，**立刻**取消（不等到到点）。
+#[test]
+fn a_queued_chase_is_cancelled_the_moment_it_loses_the_target() {
+    let (mut world, _player) = open_world();
+    let chaser = monster_at(&mut world, (30, 30));
+    // 没有 Viewshed、没有记忆：追击的成立条件从一开始就不满足。
+    let action = mount_queued(&mut world, chaser, Chase);
+    assert!(
+        world.get::<Ready>(action).is_none(),
+        "这条用例的前提是行动**还在排队**"
+    );
+
+    run_validators(&mut world);
+
+    assert_eq!(
+        world.resource::<Events<ActionFailedEvent>>().len(),
+        1,
+        "排队中的追击失去目标必须立刻取消（ECS43：否则空占槽位）"
+    );
+    assert!(
+        world.get::<MoveTarget>(action).is_none(),
+        "取消它，而不是替它算一步"
+    );
+}
+
+/// 排队中的逃跑：血量回到滞回退出阈值以上 → 立刻取消。
+#[test]
+fn a_queued_flee_is_cancelled_when_health_recovers() {
+    let (mut world, _player) = open_world();
+    let coward = monster_at(&mut world, (5, 10));
+    // 满血：`ratio() >= FLEE_HP_RATIO_EXIT`，逃跑的成立条件已经不在了。
+    let action = mount_queued(&mut world, coward, Flee);
+
+    run_validators(&mut world);
+
+    assert_eq!(
+        world.resource::<Events<ActionFailedEvent>>().len(),
+        1,
+        "排队中的逃跑在血量恢复后必须立刻取消"
+    );
+    assert!(world.get::<MoveTarget>(action).is_none());
+}
+
+/// 排队中的攻击：目标走开 → 立刻取消。
+#[test]
+fn a_queued_basic_attack_is_cancelled_when_the_target_walks_away() {
+    let (mut world, player) = open_world();
+    let target = monster_at(&mut world, (14, 10)); // 够不着
+    let action = mount_queued(&mut world, player, BasicAttack { target });
+
+    run_validators(&mut world);
+
+    assert_eq!(
+        world.resource::<Events<ActionFailedEvent>>().len(),
+        1,
+        "排队中的攻击在目标离开后必须立刻取消"
+    );
+    assert!(world.get::<AttackTarget>(action).is_none());
+}
+
+/// **定案与预留不提前**：排队中的行动即使仍然有效，也不许定方向、不许占格、不许取随机数。
+///
+/// 三条都很要紧：
+/// - 提前定案会拿到一个"到时候已经过期"的落点；
+/// - 提前预留会白占一格（还会挡住别人这一整轮）；
+/// - 提前取随机数会让**同一颗种子的整局结果漂移**（随机流的分配时机变了）。
+#[test]
+fn a_queued_action_is_never_decided_reserved_or_randomised() {
+    let (mut world, _player) = open_world();
+
+    // 仍然有效的排队追击（有最后已知位置，保活成立，只是还没到点）：不该定案。
+    let chaser = monster_at(&mut world, (30, 30));
+    world
+        .entity_mut(chaser)
+        .insert(LastKnownPlayerPos(Some((30, 32))));
+    let chase = mount_queued(&mut world, chaser, Chase);
+
+    // 排队中的游荡：不该取随机数、不该占格。
+    let wanderer = monster_at(&mut world, (40, 40));
+    let wander = mount_queued(&mut world, wanderer, Wander);
+
+    crate::system::run_settle_systems(&mut world);
+    clear_events(&mut world);
+    let occupied_before = occupied_cells(&world);
+    let rng_before = world.resource::<GameRng>().steps;
+
+    run_validators(&mut world);
+
+    assert!(
+        world.get::<MoveTarget>(chase).is_none(),
+        "排队中的追击不得提前定案"
+    );
+    assert!(
+        world.get::<MoveTarget>(wander).is_none(),
+        "排队中的游荡不得提前定案"
+    );
+    assert_eq!(
+        occupied_cells(&world).len(),
+        occupied_before.len(),
+        "排队中的行动不得预留格子（占用图的变化等于提前占位）"
+    );
+    assert_eq!(
+        world.resource::<GameRng>().steps,
+        rng_before,
+        "排队中的行动不得消耗随机数（否则整局随机流会漂）"
+    );
+    assert_eq!(
+        world.resource::<Events<ActionFailedEvent>>().len(),
+        0,
+        "仍然有效的排队行动不该被取消"
     );
 }

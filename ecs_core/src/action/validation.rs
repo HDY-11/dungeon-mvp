@@ -11,12 +11,29 @@
 //! | Generate | 有哪些候选？ | 只 spawn |
 //! | Arbitrate | 谁转正？ | 写 actor 行动状态 |
 //! | Tick | 谁到点了？ | 推进 AV |
-//! | **Validate** | **这一步落在哪？还该做吗？** | **判定 + 预留格子**（不写 `Position`） |
+//! | **Validate** | **还该做吗？这一步落在哪？** | **保活 + 判定 + 预留格子**（不写 `Position`） |
 //! | Execute | 落地。 | 只写结果（`Position` / 攻击意图） |
 //! | Complete | 收尾。 | 回收实体、置状态 |
 //!
 //! 好处是**职责单一且对称**：每个行动恰好一个校验器（这里）+ 一个落地动作（`settle_action_system`），
 //! 两者一一对应；而"判定"这件事在整个链路里只有这一处——**判定只有一处，落地也只有一处**。
+//!
+//! # 一个校验器管两件**范围不同**的事（ISSUES ECS43）
+//!
+//! | 事 | 对谁生效 | 为什么 |
+//! |---|---|---|
+//! | **保活**（"还该做吗"） | **所有**待执行行动（到点与否） | 一个行动从被授予 `ActiveAction` 到真正执行之间可能隔若干回合（`tick` 每轮只推进最小正 AV）。在这段等待里世界变了（目标跑远、血量回升），若只在执行前检查，失效的行动会一直占住 actor **唯一的**槽位，而生成系统被 `Without<Active>` 挡住 → actor 空转 |
+//! | **定案**（"落在哪 / 打谁" + **预留**） | 只有**到点**的行动 | 提前定案没意义（落点在被兑现前可能过期），而且会白占一格 |
+//!
+//! 所以查询过滤器是 [`PendingAction`]（不带 `With<Ready>`），是否定案由数据里的
+//! [`Has<Ready>`](ActionEntry) 决定。这也让 `GameRng` 的消耗时机保持不变：只有游荡的**定案**
+//! 取随机方向，仍只发生在到点那一轮。
+//!
+//! # 为什么保活不会让 actor 来回抖
+//!
+//! 生成条件与保活条件**故意不同阈值**（滞回）：逃跑在 `ratio < `[`FLEE_HP_RATIO`] 时生成、
+//! 在 `ratio >= `[`FLEE_HP_RATIO_EXIT`] 时取消；追击在"看得见或记得"时生成、在"既看不见又没记忆"
+//! 时取消。中间那段区间里既不重新生成也不取消，所以不会"生成 → 立刻取消 → 再生成"。
 //!
 //! # 预留：为什么判定阶段就占格
 //!
@@ -41,7 +58,8 @@
 //! - `BasicAttack`：前置条件不成立 = 失败；
 //! - `Wait`：没有校验器 = 永远成立（"没有校验器"就是"无条件有效"的表达）。
 
-use crate::action::entity::{ActionEvents, ReadyAction, ReadyActionEntity, ReadyActionPayload};
+use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionEvents, PendingAction};
+use crate::balance::FLEE_HP_RATIO_EXIT;
 use crate::combat::can_attack_positions;
 use crate::components::{
     BasicAttack, Chase, Flee, Health, LastKnownPlayerPos, Move, Position, Viewshed, Wander,
@@ -93,20 +111,13 @@ pub struct Reservation<'w> {
 }
 
 impl Reservation<'_> {
-    /// 判定 `actor` 从 `from` 向 `(dx, dy)` 走一步是否合法；合法则**立刻占住**目标格。
-    ///
-    /// 规则本身只有一份（[`plan_step`]，`movement.rs` 的纯函数），这里做的只有
-    /// "合法就写进占用图"——即把一次判定提升为一次**预留**。
-    ///
-    /// 预留记的是 **actor 自己**而不是一个占位标记：`settle_action_system` 靠
-    /// `entity_at(原地) == Some(actor)` 判断该腾哪一格，占用图因此在整轮里都自洽。
     /// 只判定、不写状态（**探针**）。
     ///
     /// 与 [`Self::step`] 分开是必要的，不是洁癖：`plan_step` 的**穿角**检查会读占用图
     /// （对角两步都要空），所以"试探时顺手预留"会让先试探的方向把自己后面的方向判死。
-    /// 逃跑要在八个方向里挑最远的那个——如果前四个方向已经占了四个格子，后四个对角方向
+    /// 逃跑要在八个方向里挑最远的那个——如果前几个方向已经占了格子，后面的对角方向
     /// 就会被自己挡出的假占用判成 `CornerCutting`，选出来的不是最远方向而是"顺序上最靠后
-    /// 的合法方向"。**试算必须无副作用**，判定与预留要分两步。
+    /// 的合法方向"。**试算必须无副作用**，判定与预留要分两步（LESSONS LECS24）。
     fn probe(&self, from: Position, dx: isize, dy: isize) -> MovePlan {
         plan_step(&self.map, &self.occupancy, from, dx, dy)
     }
@@ -140,15 +151,22 @@ impl Reservation<'_> {
 ///
 /// 被挡 → 行动**失败**（`Move` 的语义是"走到那一步"，走不到就是没做成）；
 /// 这是四个移动类行动里唯一会失败的一个，`Chase`/`Flee`/`Wander` 被挡都只算"这一步做完了"。
+///
+/// **`Move` 没有保活条件**：它的"条件"就是这一步能不能走，而那要等落地那一刻才算数
+/// ——队列期间目标格被占用并不代表到时候走不了（挡路的人可能先走开）。所以排队中的
+/// `Move` 不做任何检查（这是 ECS43 的刻意例外，不是漏了）。
 pub fn validate_move_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut events: ActionEvents,
-    actions: Query<ReadyActionPayload<Move>, ReadyAction<Move>>,
+    actions: Query<ActionEntryPayload<Move>, PendingAction<Move>>,
     actors: Query<(&Position, Has<PlayerMarker>)>,
     mut event_log: ResMut<EventLog>,
 ) {
-    for (action, child_of, action_move) in &actions {
+    for (action, child_of, action_move, ready) in &actions {
+        if !ready {
+            continue;
+        }
         let actor = child_of.parent();
         let Ok((position, is_player)) = actors.get(actor) else {
             events.fail(action, actor);
@@ -169,6 +187,9 @@ pub fn validate_move_system(
 
 /// `Chase`：保活（还看得见或有记忆）→ A\* 首步 / 相邻则攻击 / 否则原地。
 ///
+/// 保活对**所有**待执行追击生效（ECS43）：看不见又没记忆时立刻取消，不等到它到点。
+/// 定案只在到点那一轮做——A\* 是"此刻"的路径，提前算出来的首步没有意义。
+///
 /// 十个参数里 `positions`/`viewsheds`/`last_known`/`player` 语义各异且都是可变访问点，
 /// 压不进一个 `SystemParam`（同旧执行器的取舍）。
 #[allow(clippy::too_many_arguments)]
@@ -176,7 +197,7 @@ pub fn validate_chase_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut events: ActionEvents,
-    actions: Query<ReadyActionEntity, ReadyAction<Chase>>,
+    actions: Query<ActionEntry, PendingAction<Chase>>,
     positions: Query<&Position>,
     viewsheds: Query<&Viewshed>,
     mut last_known: Query<&mut LastKnownPlayerPos>,
@@ -184,7 +205,7 @@ pub fn validate_chase_system(
 ) {
     use crate::spatial::pathfinding::astar;
 
-    for (action, child_of) in &actions {
+    for (action, child_of, ready) in &actions {
         let actor = child_of.parent();
         let Ok(player_entity) = player.single() else {
             events.fail(action, actor);
@@ -204,9 +225,14 @@ pub fn validate_chase_system(
             .ok()
             .is_some_and(|viewshed| viewshed.can_see(player_position));
         let memory = last_known.get(actor).ok().and_then(|known| known.0);
-        // 保活：既看不见又没有记忆 → 这个追击不再成立。
+        // 保活：既看不见又没有记忆 → 这个追击不再成立（排队中也立刻取消）。
         if !can_see && memory.is_none() {
             events.fail(action, actor);
+            continue;
+        }
+
+        // 以下是**定案**：只对到点的那一轮做。
+        if !ready {
             continue;
         }
         if can_see && let Ok(mut known) = last_known.get_mut(actor) {
@@ -222,8 +248,13 @@ pub fn validate_chase_system(
                     // 相邻且可见：定案为攻击（伤害仍归结算链路）。
                     Decision::Attack(player_entity)
                 } else {
-                    match astar(self_position, (tx, ty), &reservation.map.tiles, Some(&reservation.occupancy))
-                        .and_then(|path| path.first().copied())
+                    match astar(
+                        self_position,
+                        (tx, ty),
+                        &reservation.map.tiles,
+                        Some(&reservation.occupancy),
+                    )
+                    .and_then(|path| path.first().copied())
                     {
                         Some((nx, ny)) => {
                             let step = (
@@ -258,12 +289,15 @@ pub fn validate_chase_system(
 }
 
 /// `Flee`：保活（仍在滞回区间）→ 最远的合法方向 / 无路可逃则反咬 / 否则原地。
+///
+/// 保活对所有待执行逃跑生效（ECS43）：血量回到 [`FLEE_HP_RATIO_EXIT`] 以上立刻取消，
+/// 不等到到点——否则一个已经不必逃的怪物会继续占着槽位。
 #[allow(clippy::too_many_arguments)]
 pub fn validate_flee_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut events: ActionEvents,
-    actions: Query<ReadyActionEntity, ReadyAction<Flee>>,
+    actions: Query<ActionEntry, PendingAction<Flee>>,
     positions: Query<&Position>,
     healths: Query<&Health>,
     viewsheds: Query<&Viewshed>,
@@ -280,15 +314,20 @@ pub fn validate_flee_system(
         (1, 1),
     ];
 
-    for (action, child_of) in &actions {
+    for (action, child_of, ready) in &actions {
         let actor = child_of.parent();
 
         // 保活：血量回到滞回退出阈值以上 → 不再逃。
         if !healths
             .get(actor)
-            .is_ok_and(|health| health.ratio() < crate::balance::FLEE_HP_RATIO_EXIT)
+            .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
         {
             events.fail(action, actor);
+            continue;
+        }
+
+        // 以下是**定案**：只对到点的那一轮做。
+        if !ready {
             continue;
         }
         let Ok(player_entity) = player.single() else {
@@ -350,12 +389,15 @@ pub fn validate_flee_system(
 /// `Wander`：随机一个方向（**消耗一次随机数**，与旧实现同序）→ 能走就定案，否则原地。
 ///
 /// 游荡被挡**不算失败**：随机试探本来就是"试了，没走成"。
+///
+/// 游荡没有保活条件（随机试探没有"还该做吗"可言），但**定案照旧只在到点那一轮**：
+/// 随机数必须等到真正要做这一步时才取，否则同一颗种子的整局结果会漂。
 pub fn validate_wander_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut rng: ResMut<GameRng>,
     mut events: ActionEvents,
-    actions: Query<ReadyActionEntity, ReadyAction<Wander>>,
+    actions: Query<ActionEntry, PendingAction<Wander>>,
     actors: Query<&Position>,
 ) {
     const DIRECTIONS: [(isize, isize); 8] = [
@@ -369,7 +411,10 @@ pub fn validate_wander_system(
         (1, 1),
     ];
 
-    for (action, child_of) in &actions {
+    for (action, child_of, ready) in &actions {
+        if !ready {
+            continue;
+        }
         let actor = child_of.parent();
         let Ok(position) = actors.get(actor) else {
             events.fail(action, actor);
@@ -388,15 +433,18 @@ pub fn validate_wander_system(
     }
 }
 
-/// `BasicAttack`：唯一的前置条件是 [`can_attack_positions`]（8 方向相邻 + 目标存活）。
+/// `BasicAttack`：前置条件是 [`can_attack_positions`]（8 方向相邻 + 目标存活）。
+///
+/// 它同时是保活条件（ECS43）：目标在排队期间走开或死掉 → 立刻取消，不等到到点。
+/// 到点且条件仍成立时才**定案**为攻击。
 pub fn validate_basic_attack_system(
     mut commands: Commands,
     mut events: ActionEvents,
-    actions: Query<ReadyActionPayload<BasicAttack>, ReadyAction<BasicAttack>>,
+    actions: Query<ActionEntryPayload<BasicAttack>, PendingAction<BasicAttack>>,
     positions: Query<&Position>,
     healths: Query<&Health>,
 ) {
-    for (action, child_of, attack) in &actions {
+    for (action, child_of, attack, ready) in &actions {
         let actor = child_of.parent();
         let ok = match (
             positions.get(actor),
@@ -409,11 +457,14 @@ pub fn validate_basic_attack_system(
             // 缺位置或缺血量 = 前置条件不成立（不是"默认允许"）。
             _ => false,
         };
-        if ok {
-            apply_decision(&mut commands.entity(action), Decision::Attack(attack.target));
-        } else {
+        if !ok {
             events.fail(action, actor);
+            continue;
         }
+        if !ready {
+            continue;
+        }
+        apply_decision(&mut commands.entity(action), Decision::Attack(attack.target));
     }
 }
 

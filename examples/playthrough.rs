@@ -14,7 +14,7 @@
 //! 判定口径：这里**不 panic**——发现异常就打一行 `!!`，让整局继续跑完，
 //! 这样一次运行能看到全部问题，而不是被第一个问题打断。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use bevy_ecs::prelude::*;
 use ecs_core::components::{ActionTimer, Active, Health, Idle, Position, Ready};
@@ -407,6 +407,36 @@ fn check_invariants(
             report
                 .anomalies
                 .push(format!("t{turn} 玩家空闲但仍有 {owned} 个 ActiveAction 子实体"));
+        }
+    }
+
+    // **全局**行动泄漏检查（不只看玩家）：每个 actor 至多一个 `ActiveAction`，
+    // 且"有 ActiveAction 的 actor 数"必须等于"处于 Active 的 actor 数"。
+    //
+    // 这条是 ECS43（保活覆盖排队中的行动）之后加的：提前取消走的是 `ActionEvents::fail`，
+    // 若 completion 没有把实体收回去，就会看到"ActiveAction 比 Active 多"——而这种泄漏
+    // 以前只有玩家路径有断言，怪物侧没人看。
+    {
+        let mut active_actors: HashSet<Entity> = HashSet::new();
+        let mut q = world.query_filtered::<Entity, With<Active>>();
+        active_actors.extend(q.iter(world));
+
+        let mut owners: HashSet<Entity> = HashSet::new();
+        let mut q = world.query::<(&ActionOf, &ActiveAction)>();
+        for (of, _) in q.iter(world) {
+            if !owners.insert(of.parent()) {
+                report
+                    .anomalies
+                    .push(format!("t{turn} 同一个 actor 名下有多个 ActiveAction"));
+            }
+        }
+
+        if active_actors != owners {
+            let only_active: Vec<Entity> = active_actors.difference(&owners).copied().collect();
+            let only_action: Vec<Entity> = owners.difference(&active_actors).copied().collect();
+            report.anomalies.push(format!(
+                "t{turn} Active 与 ActiveAction 不一致：只 Active={only_active:?} 只 ActiveAction={only_action:?}"
+            ));
         }
     }
 
