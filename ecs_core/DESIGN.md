@@ -74,9 +74,11 @@ wander_decision_system ─┘
    占用图查询是 `With<Blocks>`，楼梯只是不挂它——以前那句写死的
    `if stairs.is_some() { continue }` 已删。加一类"在格子上但不占格"的实体
    （地面物品、格子效果）不再需要发明私有位置组件去躲这条查询。
-2. **重建之外还有"移动时写穿"**：`apply_move_system` 成功移动后**立刻**写出旧格、
-   写入新格。所以占用图在**回合内部**也是准确的，而不只是回合边界上准确。
-   这条是"同一回合两个 actor 挤进同一格"（ECS45）的根治：判定与占位发生在同一次调用里。
+2. **重建之外还有"回合内写穿"**（2026-09 修订，`ActionPhase::Validate` 之后）：
+   - 校验阶段（串行）判定通过就**立刻 `occupancy.set` 预留**目标格；
+   - 落地阶段（`action/settle.rs`）把 actor 写进新格、腾出旧格。
+   所以占用图在**回合内部**也是准确的，而不只是回合边界上准确。这条是"同一回合两个
+   actor 挤进同一格"（ECS45）的根治：判定与占位仍发生在同一次调用里（判定通过=当场占住）。
 
 **背景**
 
@@ -371,6 +373,7 @@ Wander 50 > Wait 0），比较器是 `(ActionPriority, entity.to_bits())` 的**�
 | D 速度组件 | 倍率口径落地；`AV × 速度 == base_duration` 恒成立；迁移保排序由 `template_speeds_preserve_legacy_agility_ordering` 钉住 | `cff5940`… |
 | H1 终态出口 | `ActionEvents::succeed/fail` 字段私有 →「恰好一个终态事件」从约定变类型保证；变异验证（去掉 `remove::<Ready>()`）→ 7 个用例立刻失败 | `f1f6898` |
 | H3 调度分组 | `ActionPhase` 五角色（Generate/Arbitrate/Tick/Execute/Complete），加执行器 = 加一行 | `5a9ea90` |
+| M1 判定/落地分阶段 | `ActionPhase` 六角色（新增 **Validate**）；判定收进校验器（`action/validation.rs`），落地收进**一个**系统（`action/settle.rs`）；六个执行器 → 一个 | DsnE14 |
 
 #### 后续工作必须守住的不变式
 
@@ -787,53 +790,94 @@ owner 系统按 DsnE12 第 4 条届时一并加）。
 <!-- &/DsnE12 -->
 
 <!-- &DsnE13  格子身份判据：需要独立身份→实体，否则→索引；地形属性进静态表 -->
-<!-- &DsnE14  移动=意图->判定->唯一写入点；规则纯函数、写 Position 只有一个系统 -->
-### DsnE14 移动的唯一写入点：意图 → 判定 → 应用
+<!-- &DsnE14  判定一个阶段、落地一个系统：Validate 定案并预留，settle 只写结果 -->
+### DsnE14 移动的判定与落地：`ActionPhase::Validate` + 单一落地系统
 
 **决策**
 
-移动拆成三步，**只有第三步写 `Position`**：
+行动链路从五阶段扩成**六阶段**，把"判定"提成一个有名字的阶段：
 
 ```text
-execute_move / chase / flee / wander   ──MoveRequest{actor, dx, dy}──▶  apply_move_system
-（决定"这一步该算成功还是失败"）                                        （判定 + 唯一写位置 + 写穿占用图）
-                                                                              │
-                                                              plan_step（纯规则，带 BlockReason）
+Generate → Arbitrate → Tick → [Validate] ──▶ Execute → Complete
+                                  │              │
+          每个行动一个校验器：定案      一个通用落地器：只写结果
+          "落在哪 / 打谁 / 还该做吗"     （写 Position / 发攻击意图）
+          并**立刻预留**目标格（串行，所以可靠）
 ```
 
-- **规则是纯函数**：[`plan_step`] 返回 `MovePlan::Allowed(Position)` 或
-  `Blocked(BlockReason)`，四种原因（越界/墙/占用/对角穿墙）都是**数据**，
-  玩家的"为什么没动"直接由它生成，不再由各调用点各写一句。
-  `can_move_to` / `moved_position` 退化为它的 `bool` / `Option` 视图。
-- **写入只有一个系统**：`apply_move_system` 是全项目唯一写 `Position` 的地方
-  （生成期 spawn 除外），由 `docs_check.py` 的"写 Position 白名单"在门禁里强制。
+- **判定只有一处**：`action/validation.rs` 里每个行动恰好一个校验器
+  （`validate_move_system` / `validate_basic_attack_system` / `validate_chase_system` /
+  `validate_flee_system` / `validate_wander_system`）。它做两件事：**定案**
+  （`MoveTarget` / `AttackTarget` / 什么都不加 = 原地）和**预留**（`occupancy.set`）。
+- **落地只有一处**：`action/settle.rs::settle_action_system` 是全项目唯一写 `Position` 的
+  系统（另一个写入点是生成期出生点），由 `docs_check.py` 的"写 Position 白名单"在门禁里
+  强制。它**不判定**：没有 `MoveTarget` 就没有移动。
+- **六个执行器 → 一个**：判定被抽走之后，每个行动的落地动作完全同构（写位置 / 发意图 /
+  什么都不做），再拆成六份就是六份相同的代码。**扩展点搬到校验器那一侧**：
+  加一个行动 = 加一个生成器 + 加一个校验器（各一行）。
+- **规则仍是纯函数**：[`plan_step`] 返回 `MovePlan::Allowed(Position)` 或
+  `Blocked(BlockReason)`，四种原因（越界/墙/占用/对角穿墙）都是**数据**，玩家的
+  "为什么没动"直接由它生成。校验器只多做一件"合法就写进占用图"。
+- **预留的生命周期上限是一轮**：占用图每轮整轮重建，没被兑现的预留活不过这一轮。
 
-**背景与被否方案**
+**为什么"判定"必须是阶段，而不是藏在执行器里**
 
-- **被否：只把四份实现合并成一个函数（`plan_move` + `commit_move`）。** 那是把
-  "四份实现"变成"一份实现 + 四个调用点"——**统一入口靠约定**。下次再加第五条移动路径
-  照样会漏（这正是 ECS45 两次没修净的原因：每次要手工种四处守卫，形状还各不相同：
+ECS45 的第一次修法是"唯一写入点 + 写穿占用图"。它**解决了**同轮抢格，但判定仍散在四个
+执行器内部：读代码的人要钻进每一个执行器才知道"什么情况下这一步会被拒"，而这条判定被
+四个执行器各写一遍（ECS45 两次没修净的根源）。分阶段之后，"谁有权判定"与"谁有权写"各有
+一个答案，而且对称：**一个行动 = 一个校验器 + 一个落地动作**。
+
+**被否方案**
+
+- **被否：由执行器校验（判定留在 Execute 阶段）。** 那只是把"判定散在四处"从生成期挪到
+  执行期，形状不变；同轮抢格依旧依赖"执行器按顺序互相看见对方刚写的占用图"，而"为什么
+  被拒"也依然藏在系统体里。等于回到 ECS45 之前。
+- **被否：由生成器校验。** 生成与判定**不是同一时刻**：候选生成后还要仲裁、还要排 AV，
+  真正执行时世界已经变了（目标格可能已被占、目标可能已死）。生成期判定必然过期，而
+  过期判定比没有判定更危险——它看起来是对的。**判定必须贴着落地发生**。
+- **被否：只把四份判定合并成一个函数（`plan_move` + `commit_move`）。** 那是把"四份实现"
+  变成"一份实现 + 四个调用点"——**统一入口靠约定**。下次再加第五条移动路径照样会漏
+  （ECS45 两次没修净就是这个形状：每次要手工种四处守卫，写法还各不相同：
   `if claim(..)` / `if claim(..) && let ..` / `&& claim(..)` / 压根没有）。
-  改成"一个系统拥有写权"之后，漏写不是"忘了调用"，而是**根本没地方写**。
-- **被否：规则整体搬进系统。** 那样 `movement.rs` 的 5 条无 `World` 单测就没了，
-  而"规则能脱离 World 测"是 ECS28/ECS2 换来的红利（纯函数层与 ECS 层分离）。
-  所以选择**两者都要**：规则纯、写入单点。
-- **被否：保留 `RoundClaims`（批内预留表）。** 判定与写入既然在同一次调用里，
-  "检查"与"占位"之间没有窗口，第二个派生状态就没有存在理由——
-  两个派生状态收敛成一个（占用图本身，移动时写穿）。
+- **被否：规则整体搬进系统。** 那样 `movement.rs` 的 5 条无 `World` 单测就没了，而
+  "规则能脱离 World 测"是 ECS28/ECS2 换来的红利（纯函数层与 ECS 层分离）。所以选择
+  **两者都要**：规则纯、判定单阶段、落地单系统。
+- **被否：保留 `RoundClaims`（批内预留表）。** 判定发生时才占格，占用图本身就是预留表，
+  第二个派生状态没有存在理由（两个派生状态收敛成一个）。
 
 **代价**
 
-1. **多一个阶段与一份瞬态事件**（同一 tick 内完成，不影响玩家节奏）。
-2. **执行器仍在调 `plan_step`/`moved_position`**：它用这份判定决定"行动算成功还是失败"，
-   应用系统用它决定"能不能落下去"。两处不是重复——前者属于行动生命周期，后者属于状态写入；
-   但**读同一规则**是必须的，否则两处口径会漂（`the_three_entry_points_agree` 钉住这一点）。
-3. **`Position` 仍是公开组件**，"只有一个系统写"是**约定 + 门禁**，不是类型保证。
-   真正的类型保证要把 `Position` 的写权封进专用 API，成本远高于收益。
+1. **多一个阶段与两个瞬态组件**（`MoveTarget` / `AttackTarget`，同一 tick 内被消费）。
+   阶段数 5 → 6，调度里多一次 `ApplyDeferred`——这是"阶段可见"的必要代价。
+2. **校验期一个人合法占两格**（原格 + 预留格），落地才腾出原格。所以"一人一格"是对
+   **落地结果**的不变式，不是对校验中间态的不变式（断言必须写在落地之后）。
+3. **试算必须无副作用**：逃跑要在八个方向里挑最远的，而 `plan_step` 的穿角检查会读占用图，
+   所以"边试边预留"会让先试的方向把自己后面的方向判死——`Reservation` 因此拆成
+   `probe`（只判）/ `claim`（只占）两步。这是落地时**实测踩到**的（`LECS24`）。
+4. **`Position` 仍是公开组件**，"只有一个系统写"是**门禁 + 文件边界**，不是类型保证；
+   白名单窄才有意义，所以落地系统单独一个文件（`action/settle.rs`）。
+5. **单行动语义不变，整局结果会变**（这两句要分开说，否则会误以为"同种子同结果"）：
+   - **不变**：`Move` 被挡仍算失败，`Chase`/`Flee`/`Wander` 被挡仍算成功，`Wait` 没有
+     校验器就是"无条件有效"；`GameRng` 仍是每游荡行动一轮一次、顺序也在同一位置；
+     六行动 parity 套件与 13 条校验器用例原样通过。
+   - **会变**：`fuzz`（`examples/playthrough.rs`，同种子 400 回合）改动前后的输出**不再逐字
+     相同**。两个原因，都是分阶段的**目的**而非偏差：
+     1. **预留对同一轮后面的校验器可见**。以前六个执行器都是在 `Execute` 里**先各自判定、
+     最后**才由 `apply_move_system` 按顺序写入，所以它们看到的是"本轮开始时"的占用图——
+     两个怪物可以同时选中同一格，后一个在落地时被拒；现在后一个能看到前一个的预留，
+     **换一条路**而不是原地不动（`Chase`/`Flee` 因此表现更好）。
+     2. **`Move` 被同轮预订抢走时现在算失败**。旧实现是"执行器先算成功 → 落地时才被拒"，
+     结果是"行动成功但没动"；现在校验阶段就判失败（也正是
+     `the_second_claimant_of_a_cell_loses_before_anyone_moves` 钉住的那条）。
+     
+     所以任何"跨版本的整局指纹"（种子 → 结果）都会变，跨版本对比只能比**不变式**，不能比
+     输出。两组 fuzz 的不变式（占用图与 `Position` 一致 / HP 边界 / 空闲玩家不留
+     `ActiveAction` 子实体）在改动前后都是"异常：无"。
 
-**关联：** ISSUES ECS45（已修复）| DsnE2（占用图：占格能力 + 写穿）| DsnE8（行动子系统）| `LECS23`
+**关联：** ISSUES ECS45（同轮抢格）/ ECS43（保活有了天然落点）| DsnE2（占用图：占格能力 + 回合内写穿）| DsnE8（行动子系统）| DsnE15（写入者清单）| `LECS23` / `LECS24`
 
-**状态：** 已定 — 已落地（`action/execution/apply_move.rs` + 四个执行器改发意图）。
+**状态：** 已定 — 已落地（`action/validation.rs` 校验器 + `action/settle.rs` 唯一落地；
+`execution/apply_move.rs` 与 `MoveRequest` 已删除）。
 <!-- &/DsnE14 -->
 
 ---
@@ -848,11 +892,11 @@ execute_move / chase / flee / wander   ──MoveRequest{actor, dx, dy}──▶
 
 | 状态 | 写入者 | 判定 |
 |---|---|---|
-| `Position` | [`apply_move_system`]（唯一）+ 生成期 spawn | **唯一入口**，由 `docs_check.py` 白名单强制（ISSUES ECS45） |
-| `OccupancyMap` | `rebuild_occupancy_system`（每轮）+ `apply_move_system`（移动写穿） | **有意的两个**：一个是"对账"，一个是"事务内更新"；都写同一套规则（`With<Blocks>`） |
+| `Position` | `settle_action_system`（唯一）+ 生成期 spawn | **唯一入口**，由 `docs_check.py` 白名单强制（ISSUES ECS45）；白名单只有 `action/settle.rs` 与 `world/init.rs` |
+| `OccupancyMap` | `rebuild_occupancy_system`（每轮整轮重建）+ 校验阶段**预留**（`Reservation::claim`）+ 落地阶段腾旧格（`clear_at`） | **有意的三个，只有一套规则**：重建是"对账"，预留是"判定通过即占位"，腾格是"兑现预留"。三者都只认 `With<Blocks>` |
 | `Active` / `Idle` / `Failure` | `begin_action` / `finish_action`（各一份实现，共 3 个调用点） | **单一实现**：挂载（玩家）、仲裁（AI）、completion（收尾）语义必须一致 |
 | `Health` | `Health::damage(..)` 一份实现；调用点：攻击结算、中毒 tick、升级重算 | **单一实现**：三个调用点是三种**不同原因**，共用一个方法 |
-| `Ready` | `tick_action_timers_system`（置位）+ `ActionEvents::{succeed,fail}`（清理） | **有意的两个**：谁置位、谁清理各一处；执行器拿不到 `EventWriter`（H1） |
+| `Ready` | `tick_action_timers_system`（置位）+ `ActionEvents::{succeed,fail}`（清理） | **有意的两个**：谁置位、谁清理各一处；校验器/落地器都拿不到 `EventWriter`（H1） |
 | 事件缓冲 | `update_events_system`（唯一 `update()`） | **唯一入口**：新增事件必须登记进去，否则跨轮重读（I90） |
 | 运行期随机 | `GameRng` | **唯一入口**（DsnE5） |
 | 构造期随机 | `resources::derived_rng` + `DerivePurpose` | **唯一入口**，门禁强制（ISSUES ECS34） |

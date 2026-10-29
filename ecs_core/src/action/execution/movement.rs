@@ -1,11 +1,12 @@
-//! 移动规则与执行。
+//! 移动规则（纯函数）。
 //!
-//! # 分层（Phase C 起沿用，ECS45 之后**重新划线**）
+//! # 分层（Validate 阶段落地之后）
 //!
 //! | 层 | 内容 | 在哪 |
 //! |---|---|---|
 //! | **纯规则** | [`plan_step`] / [`can_move_to`] / [`moved_position`]：不碰 `World`，只吃「位置 + 方向 + 地图/占用图引用」 | 本模块 |
-//! | **判定与写入的唯一出口** | [`apply_move`](crate::action::execution::apply_move)：读 `MoveRequest`，判定后**唯一**写 `Position` 并写穿占用图 | `execution/apply_move.rs` |
+//! | **判定 + 预留** | 校验器调 [`plan_step`]，合法就立刻占住目标格 | `action::validation` |
+//! | **落地** | 把定案写进 `Position` 并腾出旧格 | `action::entity::settle_action_system` |
 //!
 //! # 为什么规则要返回"原因"而不是 `bool`
 //!
@@ -13,16 +14,15 @@
 //! 而且**只能有一个地方产生这个原因**。`can_move_to` 只是 [`plan_step`] 的
 //! `bool` 视图，保留它是因为既有调用点与测试都在用它。
 //!
-//! # 为什么"写 `Position`"必须只有一个系统
+//! # 为什么"判定"只能有一处
 //!
 //! 曾经四条移动路径（`Move` / `Chase` / `Flee` / `Wander`）各自判定、各自写
 //! `Position`、各自处理"这一格被抢了"。同一件事四份实现，形状还各不相同——
 //! 于是"同一回合两个 actor 挤进同一格"（ISSUES ECS45）修了两次都没修净：
 //! 每次都要手工种四处守卫，而漏一处就静默失效。
 //!
-//! 现在的形状与**攻击链路**一致（执行器只发 `AttackIntentEvent`，扣血只有一处）：
-//! 执行器只发 [`MoveRequest`](crate::action::execution::MoveRequest)，
-//! 由 `apply_move_system` 统一判定 + 写入 + 写穿占用图。
+//! 现在判定统一发生在 `ActionPhase::Validate`（串行阶段，所以"占住"是可靠的），
+//! 落地只剩一个系统。本模块因此不含任何系统：它只是"这一步能不能走"的**唯一答案**。
 
 use crate::components::Position;
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};

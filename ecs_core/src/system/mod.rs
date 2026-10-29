@@ -3,7 +3,7 @@
 //! 每个子模块只负责一条链路，`mod.rs` 只做模块声明与 Schedule 组装：
 //!
 //! ```text
-//! action::entity::execute_basic_attack_system   ← 行动层只声明攻击意图
+//! action::entity::settle_action_system          ← 行动层只声明攻击意图（不判定、不算伤害）
 //!     ↓ AttackIntentEvent
 //! combat::resolve_attack_system                 ← 算伤害（攻击/防御/暴击）
 //!     ↓ AttackEvent
@@ -57,7 +57,6 @@ pub fn update_events_system(
     mut level_up_events: ResMut<Events<LevelUpEvent>>,
     mut action_succeeded: ResMut<Events<ActionSucceededEvent>>,
     mut action_failed: ResMut<Events<ActionFailedEvent>>,
-    mut move_requests: ResMut<Events<crate::action::execution::MoveRequest>>,
 ) {
     attack_intents.update();
     attack_events.update();
@@ -65,7 +64,6 @@ pub fn update_events_system(
     level_up_events.update();
     action_succeeded.update();
     action_failed.update();
-    move_requests.update();
 }
 
 /// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。

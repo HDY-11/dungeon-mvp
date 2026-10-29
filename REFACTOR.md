@@ -35,12 +35,12 @@
 | H8 | 规则修正器求值侧（`rules/modifier.rs`：来源桶 / 两类位 / 过滤 / 折叠） | DsnE10 | `389e460` |
 | H9 | 格子属性统一读取入口（`effect::cell_attributes`）+ 格子效果的格索引（`CellEffects`，照 `OccupancyMap` 每轮重建）+ `move_cost` 接线 | DsnE13、ECS27 | 与 H11 同一提交 |
 | M2 | 构造期随机源收敛为单入口（`DerivePurpose` + `derived_rng`），"第二入口"审计与共享状态写入者清单（DsnE15） | DsnE5 / DsnE15 / ECS34 | 本次提交 |
-| M1 | 移动统一为「意图 → 判定 → 唯一写入点」：规则纯函数（`plan_step` 带原因）、`apply_move_system` 唯一写 `Position`、占格改用 `Blocks` 能力（ECS45） | DsnE14 / DsnE2 / LECS23 | 本次提交 |
+| M1 | 移动的判定与落地分阶段：`ActionPhase::Validate`（每行动一个校验器，定案 + **预留**目标格）+ **一个**落地系统 `settle_action_system`（唯一写 `Position`，`action/settle.rs`）；六个执行器 → 一个；占格改用 `Blocks` 能力（ECS45） | DsnE14 / DsnE2 / LECS23 / LECS24 | 本次提交 |
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **138 passed**；`cargo test --workspace`
-28 目标 **366 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **153 passed**；`cargo test --workspace`
+28 目标 **384 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
@@ -54,7 +54,7 @@
 
 | # | 任务 | 位置 | 约束 |
 |---|---|---|---|
-| H10 | 技能三层骨架（激活/委派/行为）+ **一个 dummy 技能** | 新模块 | **关键验收**：加 dummy 只改"新文件 + `ActionPhase::Execute` 一行"；超过则先修扩展点 |
+| H10 | 技能三层骨架（激活/委派/行为）+ **一个 dummy 技能** | 新模块 | **关键验收**：加 dummy 只改"新文件 + `ActionPhase::Validate` 一行 + `ActionPhase::Execute` 一行"（M1 之后行动 = 生成器 + 校验器，落地是通用的）；超过则先修扩展点 |
 | H12 / H13 / H14 | 判据成文（`LECS22`）/ 两类测试纪律 / 格子身份判据（`DsnE13`） | 文档 | 随上面几项收尾时一起落地 |
 
 ### 2.2 渲染后端（DsnX14 的 R2–R4）
@@ -69,7 +69,7 @@
 
 | # | 内容 | 为什么要确认 |
 |---|---|---|
-| ECS43 | 保活检查从"执行前各写一份"改成"每回合对所有待执行行动扫一遍"（新增 `ActionPhase::Validate`，与执行器对称） | **行为改动**：提前取消会改变 `GameRng` 消耗时序与行动顺序，六行动 parity 套件要跟着改；按 RULE §八 ③ 判定权在用户。前置（`ActionPhase`、终态单一出口）已备好 |
+| ECS43 | 保活检查从"执行前各写一份"改成"每回合对**所有**待执行行动扫一遍"：把校验器的过滤器从 `(ActiveAction, Ready)` 放开到 `ActiveAction` | **行为改动**：提前取消会改变 `GameRng` 消耗时序与行动顺序，六行动 parity 套件要跟着改；按 RULE §八 ③ 判定权在用户。前置（`ActionPhase::Validate`、每行动一个校验器、终态单一出口）**已全部备好**，只剩这一个开关 |
 
 ### 2.4 旧架构归位的取舍（已定）
 

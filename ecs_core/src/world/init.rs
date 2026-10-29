@@ -80,13 +80,11 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
-    // 移动意图（ISSUES ECS45）：执行器只发意图，唯一写入点在 `apply_move_system`。
-    world.insert_resource(bevy_ecs::event::Events::<crate::action::execution::MoveRequest>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());
     world.add_schedule(build_core_schedule());
-    // 行动链路（C7 起接进主循环）：生成 → 仲裁 → tick → 执行 → completion。
+    // 行动链路（C7 起接进主循环）：生成 → 仲裁 → tick → **校验** → 落地 → completion。
     world.add_schedule(crate::action::entity::build_action_poc_schedule());
     // 玩家行动挂载（生成 + 仲裁，不含推进）。
     world.add_schedule(crate::action::entity::build_player_mount_schedule());

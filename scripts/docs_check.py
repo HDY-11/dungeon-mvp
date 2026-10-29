@@ -151,12 +151,12 @@ def main() -> int:
             )
 
     # ---- 「谁写 Position」：结构保证而不是约定（ISSUES ECS45） ----
-    # 移动写过两次都修不净，根因是四条路径各自写 Position。现在唯一写入点是
-    # `action/execution/apply_move.rs`；生成期 spawn 在 `world/init.rs`。
-    # 这条检查把"只有一个地方能写"从约定变成门禁。
+    # 移动写过两次都修不净，根因是四条路径各自写 Position。现在落地只有一个系统
+    # （`action/settle.rs`，`ActionPhase::Execute`）；生成期 spawn 在 `world/init.rs`。
+    # 白名单窄才有意义：所以落地系统单独一个文件，不和大堆生成/仲裁代码混在一起。
     position_write = re.compile(r"\bposition\.x\s*=|\bposition\.y\s*=|insert\(Position::new")
     allowed = {
-        "ecs_core/src/action/execution/apply_move.rs",
+        "ecs_core/src/action/settle.rs",
         "ecs_core/src/world/init.rs",
     }
     for p in sorted((ROOT / "ecs_core" / "src").rglob("*.rs")):

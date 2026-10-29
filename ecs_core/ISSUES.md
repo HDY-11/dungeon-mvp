@@ -16,10 +16,11 @@
 <!-- &ECS43  保活只覆盖即将执行的行动：失效行动会占槽位让 actor 空转 -->
 ### ECS43 — 保活检查只覆盖"即将执行"的行动，待执行期间的失效检测缺失 🟡
 
-**问题：** 保活（keep-alive）目前在**每个执行器内部**各写一份，只在行动 AV 归零、轮到自己执行
-的那一刻检查：`execute_chase_system` 查"仍可见或仍有记忆"，`execute_flee_system` 查
-"血量仍在滞回区间内"。而一个行动从**仲裁授予 `ActiveAction`** 到**被执行**之间可能隔若干回合
-——`tick_action_timers_system` 每轮只推进「最小正 AV」，所以慢行动要等其他行动先到点。
+**问题：** 保活（keep-alive）原先在**每个执行器内部**各写一份，只在行动 AV 归零、轮到自己执行
+的那一刻检查：追击查"仍可见或仍有记忆"，逃跑查"血量仍在滞回区间内"（2026-09 已搬进校验器，
+见下「进展」，但**检查时机没变**）。而一个行动从**仲裁授予 `ActiveAction`** 到**被执行**之间
+可能隔若干回合——`tick_action_timers_system` 每轮只推进「最小正 AV」，所以慢行动要等其他行动
+先到点。
 
 在这段等待期内，世界会继续变化（目标跑远、血量回升、最后已知位置被清空），但**没有任何东西
 会重新检查这个行动的成立条件**。后果是一个串行的两头堵：
@@ -32,26 +33,27 @@
 行动越慢、场上行动越多，僵住越久。且它属于"设计意图与实现不一致"（DESIGN DsnE8 的设计哲学
 写明保活应持续生效，实现只在执行前），失败模式是静默（无报错、无日志）。
 
-**位置：** `ecs_core/src/action/entity.rs`（`execute_chase_system` / `execute_flee_system`
-的保活分支）、`tick_action_timers_system`、`AiActor` 过滤别名；
+**位置：** `ecs_core/src/action/entity.rs`（`validate_chase_system` / `validate_flee_system`
+的保活分支，2026-09 已从执行器搬进校验器）、`tick_action_timers_system`、`AiActor` 过滤别名；
 文档侧：DESIGN DsnE8「设计哲学 → 保活检查」、GAME.md Gm1「行动推进」/ Gm8「怪物行为」
 
-**修法形状（待确认后实现）：** 新增 `ActionPhase::Validate`，放在 `Tick` 与 `Execute` 之间，
-**每个行动一个校验系统**——与执行器对称（执行器回答"做成了吗"，校验器回答"还该做吗"）。
-一回合内对所有 `ActiveAction` 跑一遍，失效即刻发终态事件（走 `ActionEvents::fail`，
-H1 之后终态只有一个出口），执行器里的保活分支随之删除（只保留"执行瞬间的最终防线"）。
-判据是 `LECS22`：**加一个行动要改几处**——按此形状是"执行器 + 校验器"各一处，两者都在
-`ActionPhase::Execute` / `ActionPhase::Validate` 的列表里各占一行，**不引入中央 match**。
+**进展（2026-09）：前置形状已落地。** `ActionPhase::Validate` 已加进链路（`Generate →
+Arbitrate → Tick → **Validate** → Execute → Complete`），保活分支也随之从执行器搬进了校验器
+（`action/validation.rs`），终态仍走 `ActionEvents::fail`——**"每个行动一个校验器"这个形状
+已经在了**，加一类保活检查只是往校验器里加几行。
 
-**为什么不当场改：**
+**仍未完成的是"范围"，而范围是行为决策：** 现在的校验器只对 `Ready`（已到期）的行动运行，
+所以"排队等 AV 期间失效"这个原始问题**依然存在**。要修它得把校验器的过滤器从
+`(With<ActiveAction>, With<Ready>)` 放开到 `With<ActiveAction>`——那会带来两个可观察变化：
 
-1. **它是行为改动**：提前取消会改变 `GameRng` 的消耗时序与行动顺序，进而影响六行动 parity
-   套件的断言。按 RULE §八 ③，这类玩家可见行为的判定权在用户，不在 AI。
-2. 需要先决定一个口径：**"失效"与"还没轮到"的边界**——例如逃跑血量回升到 30% 以上时，
-   是立即取消（本条目主张），还是允许它做完这一步（现状）。这条口径会写进 GAME.md。
+1. 提前取消会改变 `GameRng` 消耗时序与行动顺序（六行动 parity 套件要跟着改）；
+2. "失效"与"还没轮到"的边界要定死（例如逃跑血量回升到 30% 以上时，是**立即**取消，
+   还是允许它做完这一步——现状是做完）。
 
-**关联：** DESIGN DsnE8（设计哲学 → 保活检查，已标注本缺口）/ DsnE4（已合并进 DsnE8）；
-GAME.md Gm1 / Gm8；ECS35（终态出口，H1 已修复，本条的取消路径复用它）；
+按 RULE §八 ③，这类玩家可见行为的判定权在用户。**待决策项**：要不要放开到全部 `ActiveAction`。
+
+**关联：** DESIGN DsnE8（设计哲学 → 保活检查）/ DsnE14（Validate 阶段本身就是按本条描述的形状
+落地的）；GAME.md Gm1 / Gm8；ECS35（终态出口，H1 已修复，本条的取消路径复用它）；
 REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置）。
 <!-- &/ECS43 -->
 
@@ -100,5 +102,5 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS44 | 确定性：仲裁的授予/回收顺序改为**显式排序**（`HashMap` 迭代顺序每进程种子不同 → 同种子可能不同结果）；四个 Schedule 经 `core_schedule()` 构建并强制 `ambiguity_detection = Error` | `ecs_core/src/action/entity.rs`（`ordered_grants` / `losers.sort`）、`ecs_core/src/schedule.rs`（`core_schedule`） | DsnX17 ③ / DsnE8 |
 | ECS46 | 状态效果改按 **AV 时间轴**计时（`WorldClock`）：中毒不再随"结算轮次/怪物密度"漂移 | `ecs_core/src/effect/status.rs`、`resources.rs`（`WorldClock`）、`action/entity.rs`（tick 推进时钟） | GAME.md Gm5
 | ECS47 | 怪物数按区间取目标值（不再恒为上限）；泥潭/地面物品改为撒在出生点附近 | `ecs_core/src/world/init.rs`（`MUD_SPAWN_RADIUS` / `ITEM_SPAWN_RADIUS`） | GAME.md Gm8/Gm10
-| ECS45 | 同一轮内两个移动抢同一格 → 移动改为「意图 → 判定 → 唯一写入点」，规则纯函数 + `apply_move_system` 唯一写 `Position`（写穿占用图） | `ecs_core/src/action/execution/{apply_move,movement}.rs`、`action/entity.rs`（四个执行器改发 `MoveRequest`）、`system/occupancy.rs`（占格改用 `Blocks`） | DsnE14 / DsnE2 / LECS23 |
+| ECS45 | 同一轮内两个移动抢同一格 → 判定搬进 `ActionPhase::Validate`（串行、判定通过即**预留**目标格），落地收进**一个**系统 `settle_action_system`（唯一写 `Position`）；六个执行器 → 一个 | `ecs_core/src/action/{validation,settle}.rs`（新）、`system/occupancy.rs`（占格改用 `Blocks`）；中间形态 `execution/apply_move.rs` 已删除 | DsnE14 / DsnE2 / LECS23 / LECS24 |
 | ECS34 | 构造期随机源收敛为单一入口：`DerivePurpose` + `derived_rng`（四种用途的偏移集中、只能追加），golden 断言 + 门禁禁止第二处 `SmallRng::seed_from_u64` | `ecs_core/src/resources.rs`（新）、`world/init.rs`（四处改走入口）、`scripts/docs_check.py` | DsnE5 / DsnE15 |

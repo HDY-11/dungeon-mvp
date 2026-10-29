@@ -1,8 +1,8 @@
 //! 伤害结算与扣血。
 //!
-//! 攻击**执行**系统在 `action::entity::execute_basic_attack_system`：它只声明
-//! 「谁打谁」（`AttackIntentEvent`），不算伤害、不扣血。这里负责把意图变成结果，
-//! 于是「伤害只结算一次」这件事只有一个地方需要保证（I90）。
+//! 攻击的**落地**在 `action::entity::settle_action_system`（校验阶段已定下
+//! `AttackTarget`）：它只声明「谁打谁」（`AttackIntentEvent`），不算伤害、不扣血。
+//! 这里负责把意图变成结果，于是「伤害只结算一次」这件事只有一个地方需要保证（I90）。
 
 use crate::combat::compute_melee_damage;
 use crate::components::*;

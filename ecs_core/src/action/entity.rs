@@ -9,7 +9,9 @@
 //!     ↓
 //! Tick（推进 ActiveAction 的 ActionTimer，归零加 Ready）
 //!     ↓
-//! Execution（每个行动一个专用 query 系统，零中央 match；只发事件）
+//! Validate（每个行动一个校验器：**定案 + 预留格子**，不写 Position）
+//!     ↓ ApplyDeferred（MoveTarget / AttackTarget 落盘）
+//! Execution（**一个**通用落地器，零中央 match；只写结果）
 //!     ↓ ActionSucceeded / ActionFailedEvent
 //! Completion（唯一 despawn action 实体 + 回转 actor `Idle` / `Failure` 的系统）
 //! ```
@@ -35,9 +37,10 @@
 
 use crate::action::generation::player::PlayerCommand;
 use crate::action::ownership::ActionOf;
+use crate::action::settle::settle_action_system;
 use crate::balance::{
-    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, FLEE_HP_RATIO_EXIT, UNARMED_ATTACK_DURATION,
-    WAIT_DURATION, WANDER_DURATION, action_av,
+    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION,
+    WANDER_DURATION, action_av,
 };
 use crate::components::{
     ActionTimer, Active, AttackSpeed, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
@@ -45,9 +48,9 @@ use crate::components::{
     Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
-use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
+use crate::events::{ActionFailedEvent, ActionSucceededEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
-use crate::resources::{GameRng, OccupancyMap};
+use crate::resources::OccupancyMap;
 use crate::effect::EffectContext;
 use crate::rules::{EffectSource, Modifier, apply_modifiers};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
@@ -107,15 +110,19 @@ type CandidateAction = (Entity, &'static ActionPriority, &'static ActionOf);
 
 /// 已到期（`Ready`）的行动实体，按具体行动类型 `A` 过滤。
 ///
-/// 只能在「filter 恰好就是 `(With<ActiveAction>, With<Ready>)`」时直接当
-/// `Query` 的 filter 用；需要再叠一个 filter 时用 [`ReadyActionWith`]。
-type ReadyAction<A> = (With<ActiveAction>, With<Ready>, With<A>);
+/// 只能在「filter 恰好就是 `(With<ActiveAction>, With<Ready>, With<A>)`」时直接当
+/// `Query` 的 filter 用；需要再叠一个 filter 时自己写元组。
+///
+/// 校验器（`action::validation`）全都用它：**"到期且是某行动"这个口径只有一份**，
+/// 少写一个 `With<Ready>` 就会让校验器提前替还没到点的行动做判定。
+pub(crate) type ReadyAction<A> = (With<ActiveAction>, With<Ready>, With<A>);
 
 /// 到期行动的数据：实体 id + 归属。
-type ReadyActionEntity = (Entity, &'static ActionOf);
+pub(crate) type ReadyActionEntity = (Entity, &'static ActionOf);
 
 /// 带 payload 的到期行动（`Move` / `BasicAttack`）。
-type ReadyActionPayload<A> = (Entity, &'static ActionOf, &'static A);
+pub(crate) type ReadyActionPayload<A> = (Entity, &'static ActionOf, &'static A);
+
 
 /// 行动终态的**唯一出口**：执行器只能经它结束一个行动。
 ///
@@ -733,7 +740,7 @@ pub fn build_player_mount_schedule() -> Schedule {
 /// `std::collections::HashMap` 的 `RandomState` 每进程种子不同，所以同一世界在两次进程里
 /// 迭代顺序可能不同 → 命令发出顺序不同 → `insert(ActiveAction)` 造成的 **archetype 创建
 /// 顺序**不同 → 之后所有系统对这些 archetype 的**查询迭代顺序**不同 → 若有系统在迭代中
-/// 消费 `GameRng`（`execute_wander_system` 逐只取随机方向），随机流的分配就变了。
+/// x，随机流的分配就变了。
 /// 回收循环同理：`despawn` 顺序决定实体 id 的复用顺序，进而改变未来的 `to_bits()`，
 /// 而 `to_bits()` 正是仲裁的平局打破键。
 ///
@@ -848,396 +855,6 @@ pub fn tick_action_timers_system(world: &mut World) {
     }
 }
 
-// ── 执行系统 ─────────────────────────────────────────
-//
-// 每个行动一个专用 query，执行层零中央 match。执行系统只发事件：
-// **不 despawn action 实体、不写 actor 的 `Idle`/`Failure`**——那是 completion 的事。
-
-/// 执行到期的 `Wander`：随机选一个 8 方向走一步；被挡/越界则原地不动。
-///
-/// 与旧 `execution::execute_wander_system` 行为一致：随机方向**照常消耗随机数**
-/// （保证 RNG 步数与旧实现同序），只有合法时才改 `Position`；被挡也算行动完成
-/// （游荡本来就是随机试探）。
-pub fn execute_wander_system(
-    mut rng: ResMut<GameRng>,
-    actions: Query<ReadyActionEntity, ReadyAction<Wander>>,
-    actors: Query<&Position>,
-    mut moves: EventWriter<crate::action::execution::MoveRequest>,
-    mut events: ActionEvents,
-) {
-    const DIRECTIONS: [(isize, isize); 8] = [
-        (0, -1),
-        (0, 1),
-        (-1, 0),
-        (1, 0),
-        (-1, -1),
-        (1, -1),
-        (-1, 1),
-        (1, 1),
-    ];
-
-    for (action, child_of) in &actions {
-        let actor = child_of.parent();
-        let Ok(position) = actors.get(actor) else {
-            // actor 已消失：这个 action 没有可回转的对象，直接失败收场
-            // （终态出口顺带清 `Ready`，实体交给 completion 回收）。
-            events.fail(action, actor);
-            continue;
-        };
-
-        let index =
-            (rng.random_range(0, DIRECTIONS.len() as u64) as usize).min(DIRECTIONS.len() - 1);
-        let (dx, dy) = DIRECTIONS[index];
-
-        // 只发**意图**：能不能走由 `apply_move_system` 判定（唯一写位置的地方）。
-        // 游荡本来就是随机试探，被挡也算这一步做完。
-        let _ = position;
-        moves.write(crate::action::execution::MoveRequest::new(actor, dx, dy));
-        events.succeed(action, actor);
-    }
-}
-
-/// 执行到期的 `Wait`（C1）：什么都不做，直接算完成。
-///
-/// 等价旧 `execution::execute_wait_system` 的语义：**无条件成功**——
-/// 回合照常推进（AV 已经付过），actor 回到 `Idle`。
-///
-/// `Ready` 由 [`ActionEvents::succeed`] 统一清掉（H1），实体仍由 completion 回收：
-/// 「执行器不得回收实体」这条分层约束（见 [`execute_move_system`]）在 `Wait` 上同样成立。
-pub fn execute_wait_system(
-    actions: Query<ReadyActionEntity, ReadyAction<Wait>>,
-    mut events: ActionEvents,
-) {
-    for (action, child_of) in &actions {
-        let actor = child_of.parent();
-        log::debug!("PoC 等待: actor={actor:?}（action={action:?}）");
-        events.succeed(action, actor);
-    }
-}
-
-/// 执行到期的 `Flee`（C6）：与旧 `execution::execute_flee_system` 逐条对齐。
-///
-/// 1. **保活**：仍处于逃跑滞回区间（`Health.ratio() < FLEE_HP_RATIO_EXIT`），
-///    否则 `ActionFailedEvent`；
-/// 2. 在 8 个方向里选**合法且曼哈顿距离玩家最远**的落点（严格 `>` 比较，
-///    平局保留方向表里更靠前的那个——顺序与原实现一致）；
-/// 3. 有可逃方向 → 走过去；全被堵住时，若**相邻且可见**则改为声明攻击
-///    （顶到墙角也要反咬一口），否则原地不动；
-/// 4. 逃跑总是以成功结束。
-///
-/// 参数偏多（8 个）是 ECS 系统的固有形状：每个 `Query`/`Res`/`EventWriter` 都是
-/// 一个**类型不同**的入参，无法折成 DTO 而不丢查询语义（对比 `execute_chase_system`
-/// 用 `MovementContext` + `ActionEvents` 把 12 个压到 7 个——压缩到这里就压不动了：
-/// `positions`/`healths`/`viewsheds` 都是 `Query`，语义各异且都是可变访问点）。
-#[allow(clippy::too_many_arguments)]
-pub fn execute_flee_system(
-    actions: Query<ReadyActionEntity, ReadyAction<Flee>>,
-    positions: Query<&Position>,
-    healths: Query<&Health>,
-    viewsheds: Query<&Viewshed>,
-    player: Query<Entity, With<Player>>,
-    movement: MovementContext,
-    mut intents: EventWriter<AttackIntentEvent>,
-    mut moves: EventWriter<crate::action::execution::MoveRequest>,
-    mut events: ActionEvents,
-) {
-    const DIRECTIONS: [(isize, isize); 8] = [
-        (0, -1),
-        (0, 1),
-        (-1, 0),
-        (1, 0),
-        (-1, -1),
-        (1, -1),
-        (-1, 1),
-        (1, 1),
-    ];
-
-    for (action, child_of) in &actions {
-        let actor = child_of.parent();
-
-        // 保活：滞回退出阈值。
-        if !healths
-            .get(actor)
-            .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
-        {
-            events.fail(action, actor);
-            continue;
-        }
-
-        let Ok(player_entity) = player.single() else {
-            events.fail(action, actor);
-            continue;
-        };
-        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            events.fail(action, actor);
-            continue;
-        };
-        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            events.fail(action, actor);
-            continue;
-        };
-        let player_tile = Position::new(player_position.0, player_position.1);
-
-        let mut best: Option<(Position, isize, isize)> = None;
-        let mut best_distance = 0usize;
-        for (dx, dy) in DIRECTIONS {
-            if crate::action::execution::movement::can_move_to(
-                &movement.map,
-                &movement.occupancy,
-                self_position.0,
-                self_position.1,
-                dx,
-                dy,
-            ) {
-                let (nx, ny) = Position::new(self_position.0, self_position.1).offset(dx, dy);
-                let candidate = Position::new(nx, ny);
-                let distance = candidate.manhattan(player_tile);
-                if distance > best_distance {
-                    best_distance = distance;
-                    best = Some((candidate, dx, dy));
-                }
-            }
-        }
-
-        match best {
-            Some((_, dx, dy)) => {
-                // 只发意图；`plan_step` 的最终判定在 `apply_move_system` 里做。
-                moves.write(crate::action::execution::MoveRequest::new(actor, dx, dy));
-            }
-            None => {
-                // 无路可逃：相邻且看得见玩家就反咬一口（与旧实现一致）。
-                let near = Position::new(self_position.0, self_position.1).is_near(player_tile);
-                let sees = viewsheds
-                    .get(actor)
-                    .ok()
-                    .is_some_and(|viewshed| viewshed.can_see(player_position));
-                if near && sees {
-                    intents.write(AttackIntentEvent {
-                        attacker: actor,
-                        target: player_entity,
-                    });
-                }
-            }
-        }
-
-        log::debug!("PoC 逃跑: actor={actor:?} action={action:?}");
-        events.succeed(action, actor);
-    }
-}
-
-/// 执行到期的 `Chase`（C5）：与旧 `execution::execute_chase_system` 逐条对齐。
-///
-/// 1. **保活**：仍可见玩家，或仍有最后已知位置；否则 `ActionFailedEvent`；
-/// 2. 可见时把玩家当前位置写入 `LastKnownPlayerPos`（执行器的合法写入之一，
-///    旧实现同样在这里写）；
-/// 3. 目标 = 可见时玩家实时位置，否则最后已知位置；
-/// 4. 可见且相邻 → 写 `AttackIntentEvent`（伤害仍归结算链路）；
-///    否则 A* 走一步（`astar(..., Some(occupancy))`，与旧实现同一调用口径）；
-/// 5. 不可见且已抵达最后已知位置（切比雪夫 ≤2）→ 清空 `LastKnownPlayerPos`。
-///
-/// 追击总是以成功结束（保活通过就算这一步做完），与旧实现一致。
-#[allow(clippy::too_many_arguments)]
-pub fn execute_chase_system(
-    positions: Query<&Position>,
-    viewsheds: Query<&Viewshed>,
-    mut last_known: Query<&mut LastKnownPlayerPos>,
-    player: Query<Entity, With<Player>>,
-    movement: MovementContext,
-    actions: Query<ReadyActionEntity, ReadyAction<Chase>>,
-    mut intents: EventWriter<AttackIntentEvent>,
-    mut moves: EventWriter<crate::action::execution::MoveRequest>,
-    mut events: ActionEvents,
-) {
-    use crate::spatial::pathfinding::astar;
-
-    for (action, child_of) in &actions {
-        let actor = child_of.parent();
-
-        let Ok(player_entity) = player.single() else {
-            events.fail(action, actor);
-            continue;
-        };
-        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            events.fail(action, actor);
-            continue;
-        };
-        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
-            events.fail(action, actor);
-            continue;
-        };
-
-        let can_see = viewsheds
-            .get(actor)
-            .ok()
-            .is_some_and(|viewshed| viewshed.can_see(player_position));
-        let memory = last_known.get(actor).ok().and_then(|known| known.0);
-        // 保活：既看不见又没有记忆 → 行动失败。
-        if !can_see && memory.is_none() {
-            events.fail(action, actor);
-            continue;
-        }
-
-        if can_see && let Ok(mut known) = last_known.get_mut(actor) {
-            known.0 = Some(player_position);
-        }
-
-        let target = if can_see {
-            Some(player_position)
-        } else {
-            memory
-        };
-        if let Some((tx, ty)) = target {
-            let self_tile = Position::new(self_position.0, self_position.1);
-            let target_tile = Position::new(tx, ty);
-            if can_see && self_tile.is_near(target_tile) {
-                // 相邻且可见：声明攻击，伤害交给结算链路。
-                intents.write(AttackIntentEvent {
-                    attacker: actor,
-                    target: player_entity,
-                });
-            } else if let Some((nx, ny)) =
-                astar(self_position, (tx, ty), &movement.map.tiles, Some(&movement.occupancy))
-                    .and_then(|path| path.first().copied())
-            {
-                // A* 只用来选**方向**；能否落脚由 `apply_move_system` 统一判定。
-                moves.write(crate::action::execution::MoveRequest::new(
-                    actor,
-                    nx as isize - self_position.0 as isize,
-                    ny as isize - self_position.1 as isize,
-                ));
-            }
-
-            // 不可见且已抵达最后已知位置附近 → 记忆失效。
-            if !can_see
-                && let Ok(mut known) = last_known.get_mut(actor)
-                && let Some((kx, ky)) = known.0
-                && self_position.0.abs_diff(kx) <= 2
-                && self_position.1.abs_diff(ky) <= 2
-            {
-                known.0 = None;
-            }
-        }
-
-        log::debug!("PoC 追击: actor={actor:?} action={action:?} can_see={can_see}");
-        events.succeed(action, actor);
-    }
-}
-
-/// 执行到期的 `BasicAttack { target }`（C3）：保活检查 → 发 `AttackIntentEvent`。
-///
-/// 与旧 `execution::execute_basic_attack_system` **完全同语义**：
-///
-/// - 保活检查用 [`crate::combat::can_attack`]（8 方向相邻 + 目标存活）；
-/// - 通过 → 写 `AttackIntentEvent`（伤害仍由结算链路 `resolve_attack_system` →
-///   `apply_damage_system` → `check_death_system` 负责，执行器不算伤害）；
-/// - 不通过 → `ActionFailedEvent`（等价旧的 `finish_action_failure`）。
-///
-/// 因此攻击的「只结算一次」保证（I90）不受迁移影响：执行器依旧只发一次意图。
-pub fn execute_basic_attack_system(
-    actions: Query<ReadyActionPayload<BasicAttack>, (With<ActiveAction>, With<Ready>)>,
-    positions: Query<&Position>,
-    healths: Query<&Health>,
-    mut intents: EventWriter<AttackIntentEvent>,
-    mut events: ActionEvents,
-) {
-    for (action, child_of, attack) in &actions {
-        let actor = child_of.parent();
-        let target = attack.target;
-
-        let ok = positions
-            .get(actor)
-            .ok()
-            .zip(positions.get(target).ok())
-            .zip(healths.get(target).ok())
-            .is_some_and(|((attacker_position, target_position), target_health)| {
-                crate::combat::can_attack_positions(
-                    *attacker_position,
-                    *target_position,
-                    target_health,
-                )
-            });
-
-        log::debug!(
-            "PoC 攻击保活检查: attacker={actor:?} target={target:?} ok={ok} action={action:?}"
-        );
-        if !ok {
-            events.fail(action, actor);
-            continue;
-        }
-
-        intents.write(AttackIntentEvent {
-            attacker: actor,
-            target,
-        });
-        events.succeed(action, actor);
-    }
-}
-
-/// 执行到期的 `Move { dx, dy }`：**参数化普通系统**（不再独占 `&mut World`）。
-///
-/// 为什么这样写是安全的（Phase B 时这里曾是 exclusive，属过度保守）：
-///
-/// - 驱动实体是 **action 实体**（`ActiveAction + Ready + Move` 都在它身上），
-///   [`ActionOf`] 只作**读**，用来拿 actor id；
-/// - 被写的是**另一个实体**的 `Position`，因此 `Query<&mut Position>` 的
-///   per-entity 唯一可变访问没有被违反；
-/// - 规则由纯函数 [`crate::action::execution::movement::moved_position`] 提供，
-///   不需要 `World` 句柄。
-///
-/// 之前必须 exclusive，唯一原因是复用了 `movement::execute_move(&mut World, ...)`
-/// ——那个签名把「读资源 + 读组件 + 写组件」揉进一次 `&mut World` 调用。
-/// 抽取纯规则后这个约束自动消失，A41 的边界随之收窄。
-///
-/// H1 之后这里也**不再需要 `Commands`**：`Ready` 清理与终态事件都由
-/// [`ActionEvents`] 的终态出口一并负责，执行器不再自己回收实体。
-pub fn execute_move_system(
-    actions: Query<ReadyActionPayload<Move>, (With<ActiveAction>, With<Ready>)>,
-    actors: Query<&Position>,
-    movement: MovementContext,
-    mut moves: EventWriter<crate::action::execution::MoveRequest>,
-    mut events: ActionEvents,
-) {
-    use crate::action::execution::movement::moved_position;
-
-    for (action, child_of, action_move) in &actions {
-        let actor = child_of.parent();
-        let Ok(position) = actors.get(actor) else {
-            // actor 已消失：这个 action 没有可回转的对象，直接失败收场。
-            events.fail(action, actor);
-            continue;
-        };
-
-        // 判定在这里只用于决定**行动的成功/失败**（行动生命周期归执行器）；
-        // **写位置**一律交给 `apply_move_system`（唯一出口，ISSUES ECS45）。
-        // 两次判定不是重复：执行器问"这一步该算成功吗"，应用系统问"现在能落下去吗"
-        // ——后者读到的是同一回合里已被前一个请求写穿的最新占位。
-        let allowed = moved_position(
-            &movement.map,
-            &movement.occupancy,
-            *position,
-            action_move.dx,
-            action_move.dy,
-        )
-        .is_some();
-
-        if allowed {
-            moves.write(crate::action::execution::MoveRequest::new(
-                actor,
-                action_move.dx,
-                action_move.dy,
-            ));
-            events.succeed(action, actor);
-        } else {
-            log::debug!(
-                "PoC 移动: actor={actor:?} 方向=({},{}) 被挡，原地不动",
-                action_move.dx,
-                action_move.dy
-            );
-            events.fail(action, actor);
-        }
-    }
-}
-
 // ── Completion ───────────────────────────────────────
 
 /// 消费 `ActionSucceeded` / `ActionFailedEvent`：despawn action 实体，actor 回 `Idle`/`Failure`。
@@ -1313,7 +930,12 @@ pub enum ActionPhase {
     Arbitrate,
     /// 推进 `ActiveAction` 的 `ActionTimer`，归零加 `Ready`。
     Tick,
-    /// 按行动类型执行的专用系统集合（零中央 match）。
+    /// **定案 + 预留**：每个行动一个校验器，决定"落在哪 / 打谁 / 还该做吗"，
+    /// 并把目标格立刻占住（串行阶段，所以同一轮不会有人抢同一格）。
+    ///
+    /// 没有校验器 = 永远有效（`Wait` 就是这样）。
+    Validate,
+    /// 落地：把上一阶段定下的结果写进世界，**不再判定**。
     Execute,
     /// 回收 action 实体并把 actor 转回 `Idle` / `Failure`。
     Complete,
@@ -1360,20 +982,22 @@ pub fn build_action_poc_schedule() -> Schedule {
                 ApplyDeferred,
                 // ---- Tick ----
                 tick_action_timers_system.in_set(ActionPhase::Tick),
-                // ---- Execute：每个行动一个专用系统，加行动只改这一段 ----
+                // 校验阶段写的组件（`MoveTarget`/`AttackTarget`）要先落盘，执行器才看得到。
+                ApplyDeferred,
+                // ---- Validate：定案 + 预留。加一个行动只改这一段（外加它自己的生成器） ----
                 (
-                    execute_wait_system,
-                    execute_move_system,
-                    execute_basic_attack_system,
-                    execute_chase_system,
-                    execute_flee_system,
-                    execute_wander_system,
-                    // **移动的唯一写入点**：上面四个执行器只发 `MoveRequest`，
-                    // 判定 + 写 `Position` + 写穿占用图都在这里（ISSUES ECS45）。
-                    crate::action::execution::apply_move_system,
+                    crate::action::validation::validate_move_system,
+                    crate::action::validation::validate_basic_attack_system,
+                    crate::action::validation::validate_chase_system,
+                    crate::action::validation::validate_flee_system,
+                    crate::action::validation::validate_wander_system,
                 )
                     .chain()
-                    .in_set(ActionPhase::Execute),
+                    .in_set(ActionPhase::Validate),
+                // 校验器用 Commands 挂 `MoveTarget` / `AttackTarget`，执行器要用。
+                ApplyDeferred,
+                // ---- Execute：一个通用落地器（判定已在上一阶段完成） ----
+                settle_action_system.in_set(ActionPhase::Execute),
                 // completion 要读到执行器写的终态事件。
                 ApplyDeferred,
                 // ---- Complete ----

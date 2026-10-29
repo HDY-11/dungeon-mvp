@@ -34,5 +34,7 @@ pub fn on_stairs(world: &World) -> bool {
 //   得到与调度里那份不同的占用图，而且**没有任何报错**。
 //
 // 这是"第二入口"的典型：同一个职责两个实现，其中一个还是过期的。
-// 已删除；占用图只能由 `system::occupancy::rebuild_occupancy_system` 与
-// `action::execution::apply_move_system`（写穿）维护。
+// 已删除。现在占用图只有三个写入口，且都不可替代：
+// `system::occupancy::rebuild_occupancy_system`（每轮整轮重建）、
+// `action::validation`（校验阶段**预留**目标格）、
+// `action::entity::settle_action_system`（落地时腾出旧格）。
