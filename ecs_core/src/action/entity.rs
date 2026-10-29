@@ -165,6 +165,37 @@ pub struct MovementContext<'w> {
     pub occupancy: Res<'w, OccupancyMap>,
 }
 
+// ── actor 行动状态的唯一实现 ──────────────────────────
+//
+// `Active` / `Idle` / `Failure` 构成 actor 的行动状态机。**只有下面两个函数允许改它们**，
+// 三处调用点（玩家挂载、AI 仲裁、completion）共享同一份实现——
+// 以前"挂载"和"仲裁"各自手写同一组三行，改一处漏一处就是状态机不一致
+// （`ActionPhase::Arbitrate` 的注释还曾写着"唯一写 actor 行动状态的系统"，与事实不符）。
+
+/// actor **开始**一个行动：清 `Idle`/`Failure`、置 `Active`。
+///
+/// 调用点：[`player_action_generation_system`]（玩家路径不参与 AI 仲裁）与
+/// [`action_arbitration_system`]（AI 候选转正）。两处语义必须完全一致。
+fn begin_action(actor_cmd: &mut EntityCommands) {
+    actor_cmd.remove::<Idle>();
+    actor_cmd.remove::<Failure>();
+    actor_cmd.insert(Active);
+}
+
+/// actor **结束**一个行动：清 `Active`，按结果置 `Idle` / `Failure`。
+///
+/// 唯一调用点：completion（终态出口）。
+fn finish_action(actor_cmd: &mut EntityCommands, succeeded: bool) {
+    actor_cmd.remove::<Active>();
+    if succeeded {
+        actor_cmd.remove::<Failure>();
+        actor_cmd.insert(Idle);
+    } else {
+        actor_cmd.remove::<Idle>();
+        actor_cmd.insert(Failure);
+    }
+}
+
 // ── 优先级表（REFACTOR.md §3.5） ──────────────────────
 //
 // 仲裁取**最小** `(ActionPriority, to_bits())`，所以优先级越高 = 数值越小。
@@ -662,9 +693,7 @@ pub fn player_action_generation_system(
     }
 
     let mut player_cmd = commands.entity(player);
-    player_cmd.remove::<Idle>();
-    player_cmd.remove::<Failure>();
-    player_cmd.insert(Active);
+    begin_action(&mut player_cmd);
     log::debug!("玩家行动已挂载: {action:?} player={player:?}");
 }
 
@@ -749,9 +778,7 @@ pub fn action_arbitration_system(
     for (actor, winner) in ordered_grants(&winners) {
         commands.entity(winner).remove::<Candidate>().insert(ActiveAction);
         let mut actor_cmd = commands.entity(actor);
-        actor_cmd.remove::<Idle>();
-        actor_cmd.remove::<Failure>();
-        actor_cmd.insert(Active);
+        begin_action(&mut actor_cmd);
     }
     // 回收顺序同样显式化：见函数文档（despawn 顺序影响实体 id 复用 → 影响 `to_bits()`）。
     losers.sort_unstable_by_key(|action| action.to_bits());
@@ -1251,18 +1278,11 @@ pub fn action_completion_system(
         }
 
         if let Ok(mut actor_cmd) = commands.get_entity(actor) {
-            actor_cmd.remove::<Active>();
+            // 行动状态的收尾只有一处实现（见 `finish_action`）：清 `Active`/计时器/`Ready`，
+            // 并把 `Idle` 与 `Failure` 置成互斥的两个状态。
+            finish_action(&mut actor_cmd, is_success);
             actor_cmd.remove::<ActionTimer>();
             actor_cmd.remove::<Ready>();
-            // `Idle` 与 `Failure` 互斥：必须显式清掉另一个再插入，
-            // 否则 actor 会同时持有两者（旧 `finish_action_success/failure` 也是这样清的）。
-            if is_success {
-                actor_cmd.remove::<Failure>();
-                actor_cmd.insert(Idle);
-            } else {
-                actor_cmd.remove::<Idle>();
-                actor_cmd.insert(Failure);
-            }
         }
     }
 }

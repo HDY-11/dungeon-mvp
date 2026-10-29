@@ -13,20 +13,6 @@
 
 
 
-<!-- &ECS34  怪物生成用 SmallRng：与"唯一随机源"决策并存两套状态 -->
-### ECS34 — 怪物生成用 `SmallRng` 而非 `GameRng`，与"唯一随机源"决策并存两套状态 🟡
-
-**问题：** `spawn_monsters_system` 用 `rand::rngs::SmallRng::seed_from_u64(seed)`，其中 `seed` 是 `MapSeed` 按楼层派生。严格说这落在 `DsnE5`（"统一走 `GameRng` **或基于 `MapSeed` 的派生 RNG**"）的第二种形态内，**当前确定性是成立的**；但它与 `GameRng` 是**两套独立状态**，而 `GameRng` 的 `state`/`steps` 是回放与存档的基础。若将来该派生种子的算法变动，同 `(seed, floor)` 的怪物布局会改变，而这类改动**不会体现在 `GameRng.steps` 上**。
-
-**影响：** 🟡 中 — 不立即致命，但新增的生成/掉落类系统会继续复制这一先例，形成"第二随机源"惯例，削弱回放与 SL 防护的可验证性。
-
-**位置：** `ecs_core/src/world/init.rs:346`
-
-**备注：** **待 H5 处置**（该轮只记录、不改代码）。处置二选一：① 统一到 `GameRng`；② 明确把它记为"派生 RNG"的合法例外，并加断言钉住"同 `(seed, floor)` 布局不变"。
-<!-- &/ECS34 -->
-
----
-
 <!-- &ECS43  保活只覆盖即将执行的行动：失效行动会占槽位让 actor 空转 -->
 ### ECS43 — 保活检查只覆盖"即将执行"的行动，待执行期间的失效检测缺失 🟡
 
@@ -115,3 +101,4 @@ REFACTOR §1（Phase H1/H3 提供了 Phase 分组与终态出口这两块前置�
 | ECS46 | 状态效果改按 **AV 时间轴**计时（`WorldClock`）：中毒不再随"结算轮次/怪物密度"漂移 | `ecs_core/src/effect/status.rs`、`resources.rs`（`WorldClock`）、`action/entity.rs`（tick 推进时钟） | GAME.md Gm5
 | ECS47 | 怪物数按区间取目标值（不再恒为上限）；泥潭/地面物品改为撒在出生点附近 | `ecs_core/src/world/init.rs`（`MUD_SPAWN_RADIUS` / `ITEM_SPAWN_RADIUS`） | GAME.md Gm8/Gm10
 | ECS45 | 同一轮内两个移动抢同一格 → 移动改为「意图 → 判定 → 唯一写入点」，规则纯函数 + `apply_move_system` 唯一写 `Position`（写穿占用图） | `ecs_core/src/action/execution/{apply_move,movement}.rs`、`action/entity.rs`（四个执行器改发 `MoveRequest`）、`system/occupancy.rs`（占格改用 `Blocks`） | DsnE14 / DsnE2 / LECS23 |
+| ECS34 | 构造期随机源收敛为单一入口：`DerivePurpose` + `derived_rng`（四种用途的偏移集中、只能追加），golden 断言 + 门禁禁止第二处 `SmallRng::seed_from_u64` | `ecs_core/src/resources.rs`（新）、`world/init.rs`（四处改走入口）、`scripts/docs_check.py` | DsnE5 / DsnE15 |

@@ -34,6 +34,7 @@
 | H7 | 生成权重归位：`spawn: &'static [SpawnWeightFor]` 进模板，`spawn.rs` 三层 `match` → 一次查表 | DsnE6、ECS32 | 与 H6 同一提交 |
 | H8 | 规则修正器求值侧（`rules/modifier.rs`：来源桶 / 两类位 / 过滤 / 折叠） | DsnE10 | `389e460` |
 | H9 | 格子属性统一读取入口（`effect::cell_attributes`）+ 格子效果的格索引（`CellEffects`，照 `OccupancyMap` 每轮重建）+ `move_cost` 接线 | DsnE13、ECS27 | 与 H11 同一提交 |
+| M2 | 构造期随机源收敛为单入口（`DerivePurpose` + `derived_rng`），"第二入口"审计与共享状态写入者清单（DsnE15） | DsnE5 / DsnE15 / ECS34 | 本次提交 |
 | M1 | 移动统一为「意图 → 判定 → 唯一写入点」：规则纯函数（`plan_step` 带原因）、`apply_move_system` 唯一写 `Position`、占格改用 `Blocks` 能力（ECS45） | DsnE14 / DsnE2 / LECS23 | 本次提交 |
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |

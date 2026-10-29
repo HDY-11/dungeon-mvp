@@ -107,6 +107,57 @@ impl Default for MapMemory {
     }
 }
 
+/// 派生 RNG 的**用途**：世界构造期每种用途拿一条独立的确定性随机流。
+///
+/// # 为什么世界构造期用派生 RNG，而不是 `GameRng`
+///
+/// `GameRng` 的 `state`/`steps` 是**回放与存档**的基础（DESIGN DsnX17 ③），它是
+/// "游戏进行中"的随机源。而世界构造（地图 / 楼梯 / 怪物 / 泥潭 / 物品）发生在
+/// **开局那一刻**，由 `(MapSeed, 楼层)` 完全决定——把它塞进 `GameRng` 只会让
+/// "世界长什么样"与"玩家怎么打"共用一条流，改动任一方都会平移另一方。
+///
+/// 所以 DsnE5 的"唯一随机源"是**两种合法形态**：运行期 `GameRng`，构造期派生 RNG。
+/// 代价是派生种子不出现在 `GameRng.steps` 里（ISSUES ECS34），因此这里做了两件事：
+///
+/// 1. **唯一派生入口**：[`derived_rng`]，偏移集中在本枚举（以前是四处的
+///    `wrapping_add(777/999/1234/4321)`，散在各系统里，改一处无人知道）；
+/// 2. **偏移只能追加**：改值或重排会让同种子世界整体变化，`world/init_tests.rs`
+///    的 golden 断言会立刻失败。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivePurpose {
+    /// 楼梯落点（含连接通道的挖掘）。
+    Stairs,
+    /// 怪物种群（密度层 + 元胞扩散 + 逐只选种）。
+    Monsters,
+    /// 格子效果（泥潭）。
+    CellEffects,
+    /// 地面物品。
+    GroundItems,
+}
+
+impl DerivePurpose {
+    /// 该用途的种子偏移。**只能末尾追加；改值 = 改同种子世界。**
+    const fn offset(self) -> u64 {
+        match self {
+            DerivePurpose::Stairs => 777,
+            DerivePurpose::Monsters => 999,
+            DerivePurpose::CellEffects => 1234,
+            DerivePurpose::GroundItems => 4321,
+        }
+    }
+}
+
+/// **构造期的唯一随机源入口**：`(MapSeed, 楼层)` + 用途 → 确定性随机流。
+///
+/// 与 [`GameRng`] 的分工见 [`DerivePurpose`]。除本函数外，`ecs_core` 里不应再有
+/// `SmallRng::seed_from_u64`（`docs_check.py` 会拦），唯一的例外是地图生成内部
+/// 为了"子阶段互不干扰"而用同一 seed 重建的局部流。
+pub fn derived_rng(map_seed: u64, floor: u32, purpose: DerivePurpose) -> rand::rngs::SmallRng {
+    use rand::SeedableRng;
+    let base = crate::world::init::map_seed_for_floor(map_seed, floor);
+    rand::rngs::SmallRng::seed_from_u64(base.wrapping_add(purpose.offset()))
+}
+
 /// 世界时钟：**AV 时间轴**。
 ///
 /// 状态效果（中毒等）按它计时，而不是按"结算了多少轮"（ISSUES ECS46）——

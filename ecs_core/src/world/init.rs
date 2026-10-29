@@ -25,7 +25,7 @@ use crate::system::{
     update_visible_memory_system,
 };
 use bevy_ecs::prelude::*;
-use rand::{Rng, RngExt, SeedableRng};
+use rand::{Rng, RngExt};
 
 /// 初始化配置。`run_initialization` 会先插入该资源。
 #[derive(Resource, Debug, Clone, Copy)]
@@ -205,8 +205,11 @@ pub fn spawn_stairs_system(
     map_seed: Res<MapSeed>,
     floor: Res<FloorNumber>,
 ) {
-    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(777);
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+    let mut rng = crate::resources::derived_rng(
+        map_seed.0,
+        floor.0,
+        crate::resources::DerivePurpose::Stairs,
+    );
 
     let pos = pick_stair_pos(&map, player_spawn.0, &mut rng);
     ensure_connection_between(&mut map, &mut rng, player_spawn.0, pos);
@@ -358,8 +361,11 @@ pub fn spawn_monsters_system(
     floor: Res<FloorNumber>,
 ) {
     let kind = map_kind_for(map_seed.0, floor.0);
-    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(999);
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+    let mut rng = crate::resources::derived_rng(
+        map_seed.0,
+        floor.0,
+        crate::resources::DerivePurpose::Monsters,
+    );
     let exclude = [player_spawn.0, stairs_pos.0];
 
     let population = generate_monster_population(kind, &map.tiles, floor.0, &mut rng, &exclude);
@@ -411,8 +417,11 @@ pub fn spawn_cell_effects_system(
     map_seed: Res<MapSeed>,
     floor: Res<FloorNumber>,
 ) {
-    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(1234);
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+    let mut rng = crate::resources::derived_rng(
+        map_seed.0,
+        floor.0,
+        crate::resources::DerivePurpose::CellEffects,
+    );
 
     let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];
     let mut placed = 0usize;
@@ -460,8 +469,11 @@ pub fn spawn_ground_items_system(
     map_seed: Res<MapSeed>,
     floor: Res<FloorNumber>,
 ) {
-    let seed = map_seed_for_floor(map_seed.0, floor.0).wrapping_add(4321);
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+    let mut rng = crate::resources::derived_rng(
+        map_seed.0,
+        floor.0,
+        crate::resources::DerivePurpose::GroundItems,
+    );
 
     // 不放在出生点、楼梯、泥潭上：靴子是用来对付泥潭的，叠在泥潭里会被误读成"泥潭的装饰"。
     let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];

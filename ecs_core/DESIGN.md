@@ -23,7 +23,7 @@
 | 主题 | 条目 |
 |---|---|
 | 调度与并行 | DsnE1 |
-| 移动与写入权 | DsnE14 |
+| 移动与写入权 | DsnE14 · DsnE15 |
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
 | 空间与地图 | DsnE2 · DsnE3 · DsnE7 · DsnE13 |
@@ -130,7 +130,26 @@ wander_decision_system ─┘
 
 **决策**
 
-`GameRng` 成为唯一随机源。所有随机操作（仲裁、暴击、游荡、掉落、地图生成）统一走 `GameRng` 或基于 `MapSeed` 的派生 RNG。
+`GameRng` 成为**运行期**唯一随机源。所有随机操作统一走两种形态之一：
+
+| 形态 | 用在哪 | 入口 | 是否进 `GameRng.steps` |
+|---|---|---|---|
+| `GameRng` | 游戏进行中（仲裁、暴击、游荡、掉落） | `ResMut<GameRng>` | ✅ |
+| **派生 RNG** | **世界构造期**（地图 / 楼梯 / 怪物种群 / 格子效果 / 地面物品） | `resources::derived_rng(seed, floor, DerivePurpose)` | ❌（由 `(seed,floor)` 决定） |
+
+**2026-09 修订（ISSUES ECS34）：** 派生 RNG 从"默许的第二种写法"变成**受管的一种形态**：
+
+1. **唯一入口**：所有派生种子集中在 `DerivePurpose` 枚举里，四种用途各一个偏移
+   （以前是 `init.rs` 里四处 `wrapping_add(777/999/1234/4321)`，改一处无人知道）；
+2. **偏移是契约**：只能追加、不能改值或重排——`derive_purpose_offsets_are_pinned` 与
+   `world_layout_is_pinned_for_a_known_seed` 钉住；
+3. **门禁**：`docs_check.py` 禁止 `ecs_core` 里出现第二处 `SmallRng::seed_from_u64`
+   （唯一例外是 `map_gen.rs` 内部为"子阶段互不干扰"重建的局部流，那是地图算法的实现细节）。
+
+为什么世界构造**不**走 `GameRng`：`GameRng` 的 `state`/`steps` 是回放与存档的基础
+（DsnX17 ③），它是"游戏进行中"的流；把构造塞进去会让"世界长什么样"与"玩家怎么打"
+共用一条链，改动任一方都会平移另一方。代价是派生种子不出现在 `steps` 里——
+所以用上面 2、3 两条把"改动必须显式"补回来。
 
 **背景**
 
@@ -816,6 +835,47 @@ execute_move / chase / flee / wander   ──MoveRequest{actor, dx, dy}──▶
 
 **状态：** 已定 — 已落地（`action/execution/apply_move.rs` + 四个执行器改发意图）。
 <!-- &/DsnE14 -->
+
+---
+
+<!-- &DsnE15  共享状态的写入者清单：哪些是唯一入口、哪些是有意的多写者 -->
+### DsnE15 共享状态的写入者清单（"第二入口"审计）
+
+**决策**
+
+对每一个"会被多个系统改"的状态，**要么只有一个入口，要么在文档里写清为什么可以有多个**。
+这张表就是那个"写清"：
+
+| 状态 | 写入者 | 判定 |
+|---|---|---|
+| `Position` | [`apply_move_system`]（唯一）+ 生成期 spawn | **唯一入口**，由 `docs_check.py` 白名单强制（ISSUES ECS45） |
+| `OccupancyMap` | `rebuild_occupancy_system`（每轮）+ `apply_move_system`（移动写穿） | **有意的两个**：一个是"对账"，一个是"事务内更新"；都写同一套规则（`With<Blocks>`） |
+| `Active` / `Idle` / `Failure` | `begin_action` / `finish_action`（各一份实现，共 3 个调用点） | **单一实现**：挂载（玩家）、仲裁（AI）、completion（收尾）语义必须一致 |
+| `Health` | `Health::damage(..)` 一份实现；调用点：攻击结算、中毒 tick、升级重算 | **单一实现**：三个调用点是三种**不同原因**，共用一个方法 |
+| `Ready` | `tick_action_timers_system`（置位）+ `ActionEvents::{succeed,fail}`（清理） | **有意的两个**：谁置位、谁清理各一处；执行器拿不到 `EventWriter`（H1） |
+| 事件缓冲 | `update_events_system`（唯一 `update()`） | **唯一入口**：新增事件必须登记进去，否则跨轮重读（I90） |
+| 运行期随机 | `GameRng` | **唯一入口**（DsnE5） |
+| 构造期随机 | `resources::derived_rng` + `DerivePurpose` | **唯一入口**，门禁强制（ISSUES ECS34） |
+| `EventLog` | 多处（战斗/中毒/拾取/系统提示） | **有意的多写者**：日志天生多源；靠 `EventMessage.repeat` 合并重复 |
+
+**本次审计删掉的一处**：`world/query.rs` 曾有两个 **World 版辅助函数**
+`rebuild_occupancy(&mut World)` 与 `update_visible_memory(&mut World)`——Phase B 的产物，
+被同名系统取代后一直没删。它们**没有调用者**，而且 `rebuild_occupancy` 用的是
+**旧的占格规则**（`Option<&Stairs>` 过滤）：一旦有人顺手调用，就会得到与调度里
+不同的占用图，且**没有任何报错**。这就是"第二入口"的典型形态——
+同一个职责两份实现，其中一份还是过期的。已删除。
+
+**判据（写新系统时自问）**
+
+1. 这个状态是**单一真相**还是**派生数据**？派生数据允许多个写入者，但必须共用一套规则。
+2. 如果有多份实现：**它们是否会在某天分叉？** 会分叉就必须收敛成一份实现
+   （哪怕调用点仍是多个），或者收敛成一个入口 + 门禁。
+3. 收敛之后加**门禁**：约定会在某次重构里被打破，白名单不会。
+
+**关联：** ISSUES ECS45 / ECS34 / ECS35（终态出口）| DsnE14（移动单入口）| DsnE5（随机源）| DsnE2（占用图）
+
+**状态：** 已定 — 清单与两处收敛均已落地；`Position` 与派生 RNG 各有门禁。
+<!-- &/DsnE15 -->
 
 ---
 

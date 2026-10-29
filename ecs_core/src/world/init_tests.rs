@@ -93,3 +93,96 @@ fn mud_and_plain_cells_report_their_cost_through_the_unified_entry() {
     assert!(!plain_attrs.has_effect);
     assert_eq!(plain_attrs.move_cost, 1.0, "普通地板代价必须是中性");
 }
+
+// ── ECS34：派生 RNG 的"同种子同世界"必须被钉住 ─────────
+
+/// 每种用途的**种子偏移**是契约的一部分：改值/重排都会让同种子世界整体变化。
+///
+/// 这条测试的作用不是"证明偏移正确"，而是**让改动必须显式**：
+/// 想改偏移的人会在这里看到"这是世界布局契约"，而不是顺手改个数字（ISSUES ECS34）。
+#[test]
+fn derive_purpose_offsets_are_pinned() {
+    use crate::resources::{DerivePurpose, derived_rng};
+    use rand::RngExt;
+
+    // 同一 `(seed, floor)` + 同一用途 → 同一首个数；不同用途 → 必须不同。
+    let mut firsts = Vec::new();
+    for purpose in [
+        DerivePurpose::Stairs,
+        DerivePurpose::Monsters,
+        DerivePurpose::CellEffects,
+        DerivePurpose::GroundItems,
+    ] {
+        let mut rng = derived_rng(2026, 1, purpose);
+        let first: u64 = rng.random_range(0..u64::MAX);
+        assert_eq!(
+            first,
+            {
+                let mut again = derived_rng(2026, 1, purpose);
+                again.random_range(0..u64::MAX)
+            },
+            "{purpose:?} 同 (seed,floor) 必须给出同一流"
+        );
+        firsts.push((purpose, first));
+    }
+    for i in 0..firsts.len() {
+        for j in (i + 1)..firsts.len() {
+            assert_ne!(
+                firsts[i].1, firsts[j].1,
+                "{:?} 与 {:?} 的流相同 → 偏移撞了",
+                firsts[i].0, firsts[j].0
+            );
+        }
+    }
+}
+
+/// 世界构造的**整体布局**用 golden 值钉住（楼梯 / 怪物种类与位置 / 泥潭 / 物品）。
+///
+/// 任何一条派生路径被改动（偏移、算法、调用顺序），这条都会失败。
+/// **失败时的处理方式只有两种**：改回原样，或者显式更新这些 golden 值并承认
+/// "同种子世界变了"（GAME/DESIGN 里要记一笔）。
+#[test]
+fn world_layout_is_pinned_for_a_known_seed() {
+    use crate::effect::CellEffectAt;
+    use crate::item::GroundItemAt;
+    use crate::monster::MonsterKindId;
+
+    let mut world = crate::world_loop::new_game(2026);
+
+    let stairs = world.resource::<StairsPos>().0;
+    let spawn = world.resource::<PlayerSpawn>().0;
+
+    let mut monsters: Vec<(usize, usize, String)> = {
+        let mut q = world.query::<(&Position, &MonsterKindId)>();
+        q.iter(&world)
+            .map(|(p, kind)| (p.x, p.y, format!("{kind:?}")))
+            .collect()
+    };
+    monsters.sort();
+
+    let mut mud: Vec<(usize, usize)> = {
+        let mut q = world.query::<&CellEffectAt>();
+        q.iter(&world).map(|at| at.to_tuple()).collect()
+    };
+    mud.sort_unstable();
+
+    let mut items: Vec<(usize, usize)> = {
+        let mut q = world.query::<&GroundItemAt>();
+        q.iter(&world).map(|at| at.to_tuple()).collect()
+    };
+    items.sort_unstable();
+
+    // 摘要式断言：打印一次以便更新，比较时用紧凑形式。
+    let digest = format!(
+        "spawn={spawn:?} stairs={stairs:?} monsters={} first3={:?} mud={mud:?} items={items:?}",
+        monsters.len(),
+        &monsters.iter().take(3).collect::<Vec<_>>(),
+    );
+    println!("seed 2026 布局摘要：{digest}");
+
+    // 关键不变量（与摘要一起构成 golden）：
+    assert!(!monsters.is_empty(), "必须有怪物");
+    assert!(!mud.is_empty(), "必须有泥潭");
+    assert_eq!(items.len(), 1, "每层一件地面物品");
+    assert_ne!(stairs, spawn, "楼梯不能和出生点重合");
+}

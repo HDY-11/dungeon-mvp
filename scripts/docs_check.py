@@ -170,6 +170,25 @@ def main() -> int:
                     "（ISSUES ECS45：唯一写入点）"
                 )
 
+    # ---- 「构造期随机源」只有一个入口（ISSUES ECS34） ----
+    # 世界构造的派生 RNG 必须都经过 `resources::derived_rng`（偏移集中在一个枚举里）。
+    # 例外：`map_gen.rs` 内部为了让子阶段互不干扰，会用同一 seed 重建局部流——那是
+    # 地图算法自身的实现细节，不构成第二个"入口"。
+    seed_from_u64_allowed = {
+        "ecs_core/src/resources.rs",      # derived_rng 本体
+        "ecs_core/src/map/map_gen.rs",    # 地图算法内部的子阶段流
+    }
+    for p in sorted((ROOT / "ecs_core" / "src").rglob("*.rs")):
+        rel = p.relative_to(ROOT).as_posix()
+        if rel in seed_from_u64_allowed or rel.endswith("_tests.rs") or "/tests" in rel:
+            continue
+        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if "seed_from_u64" in line and "docs-check:ignore" not in line:
+                fails.append(
+                    f"{rel}:{lineno}  派生 RNG 必须走 `resources::derived_rng`"
+                    "（ISSUES ECS34：构造期随机源只有一个入口）"
+                )
+
     # ---- 状态/代价欠账（只报告） ----
     for name in ("DESIGN.md", "ecs_core/DESIGN.md"):
         p = ROOT / name
