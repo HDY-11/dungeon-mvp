@@ -351,15 +351,18 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
         entities.push(view);
     }
 
-    // 地面物品（C4）：物品用 `GroundItemAt` 而不是 `Position`（否则会挡住格子），
+    // 地面物品：物品用 `GroundItemAt` 而不是 `Position`（否则会挡住格子），
     // 所以它们不在上面的 `Position` 查询里，得单独扫一遍。
+    //
+    // 名字与外观都从**注册表**读（`ItemStack::def()`）：物品编号是权威，
+    // 这里不维护第二份"哪件物品长什么样"。
     {
         let mut query = world.query::<(Entity, &ecs_core::GroundItemAt, &ecs_core::GroundItem)>();
-        let items: Vec<(Entity, (usize, usize), ecs_core::ItemKind)> = query
+        let items: Vec<(Entity, (usize, usize), ecs_core::ItemStack)> = query
             .iter(world)
-            .map(|(entity, at, item)| (entity, at.to_tuple(), item.kind))
+            .map(|(entity, at, item)| (entity, at.to_tuple(), item.stack))
             .collect();
-        for (entity, (x, y), kind) in items {
+        for (entity, (x, y), stack) in items {
             if x >= width || y >= height {
                 continue;
             }
@@ -368,9 +371,9 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
                 EntityView::new(
                     EntityId::from_bits(entity.to_bits()),
                     (x as i32, y as i32),
-                    crate::catalog::map_item(kind),
+                    crate::catalog::map_item(stack.id),
                 )
-                .with_name(kind.name())
+                .with_name(stack.label())
                 .with_layer(VisualLayer::Item)
                 .with_visibility(discoverable, false),
             );
@@ -551,17 +554,27 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
     }
     // 已装备的东西：玩家必须能看出"我现在带着什么"，否则捡到装备等于没发生
     // （实测：捡到踏水靴后 HUD 毫无变化，玩家无法判断自己是否变快了）。
+    //
+    // 按槽位分组显示（Gm4 的四个槽位）：只列名字的话，"主手换了还是副手换了"看不出来。
     if let Some(items) = world.get::<ecs_core::EquippedItems>(player) {
-        let names: Vec<String> = items
+        let mut names: Vec<(&'static str, String)> = items
             .iter()
-            .filter_map(|item| world.get::<ecs_core::GroundItem>(item))
-            .map(|item| item.kind.name().to_string())
+            .filter_map(|item| world.get::<ecs_core::EquippedItem>(item))
+            .map(|item| (item.slot.name(), item.def().name.to_string()))
             .collect();
+        // 稳定顺序：槽位顺序固定，不随关系列表的插入顺序漂。
+        names.sort_by_key(|(slot, _)| {
+            ecs_core::EquipSlot::ALL
+                .iter()
+                .position(|candidate| candidate.name() == *slot)
+        });
         if !names.is_empty() {
-            lines.push(render_api::UiTextLine::plain(format!(
-                "装备：{}",
-                names.join("、")
-            )));
+            let joined = names
+                .iter()
+                .map(|(slot, name)| format!("{slot}:{name}"))
+                .collect::<Vec<_>>()
+                .join("、");
+            lines.push(render_api::UiTextLine::plain(format!("装备：{joined}")));
         }
     }
     lines

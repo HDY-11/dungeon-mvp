@@ -65,16 +65,19 @@ pub fn cell_effect_key(move_cost: f64) -> Option<VisualKey> {
     (1.5..2.5).contains(&move_cost).then_some(VisualKey::Effect(EFFECT_MUD))
 }
 
-// ── 物品外观（C4 起） ────────────────────────────────
-
-/// 踏水靴的语义编号。**后端契约编号**，同 [`EFFECT_MUD`]：只能末尾追加。
-pub const ITEM_TRAIL_BOOTS: u32 = 0;
+// ── 物品外观（C4 起；物品系统落地后改为按 ItemId） ────
 
 /// 物品 → 语义 key。
-pub fn map_item(kind: ecs_core::ItemKind) -> VisualKey {
-    match kind {
-        ecs_core::ItemKind::TrailBoots => VisualKey::Item(ITEM_TRAIL_BOOTS),
-    }
+///
+/// **物品编号本身就是契约**（GAME.md Gm7 的表格）：`ecs_core::ItemId` 是 0/1/2/3、
+/// 10–14、18–32、40 这样留号的稳定编号，所以这里直接透传成 `VisualKey::Item(u32)`，
+/// 不再维护"哪种物品对应哪个外观编号"的第二张表——那张表正是"只有一件物品"时
+/// 才写得起的形状，物品一多必然与注册表分叉。
+///
+/// 外观（字符/颜色/名字）由后端按编号查自己的表：`tui` 不认识 `ecs_core`，
+/// 这是 `DsnX14` 的边界要求。
+pub fn map_item(id: ecs_core::ItemId) -> VisualKey {
+    VisualKey::Item(u32::from(id.0))
 }
 
 /// 怪物种类的稳定编号。

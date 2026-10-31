@@ -20,7 +20,8 @@
 use crate::effect::cell::{
     CellAttributes, CellEffects, CellMoveCost, cell_attributes, cell_speed_modifier,
 };
-use crate::effect::{IgnoresSource, OwnedEffects};
+use crate::effect::{EffectModifier, EquippedItems, IgnoresSource, OwnedEffects};
+use crate::item::EquippedItem;
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::rules::{EffectSource, Modifier};
 use bevy_ecs::prelude::*;
@@ -32,7 +33,7 @@ use bevy_ecs::system::SystemParam;
 /// 调用方直接构造：`SpeedModifiers { actor: &c.actor, cell: &c.cell }`。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CollectedModifiers {
-    /// actor 自带的修正（装备 / 状态）。**本轮恒空**：最小闭环的 actor 侧是"无视"，不是修正。
+    /// actor 自带的修正：**装备**（按 `EquippedBy` 关系读注册表）+ 状态效果（`EffectOf` 实体）。
     pub actor: Vec<Modifier>,
     /// 脚下这一格带来的修正（`Terrain` 桶）。
     pub cell: Vec<Modifier>,
@@ -47,7 +48,7 @@ impl CollectedModifiers {
     }
 }
 
-/// 效果/格子的**只读世界视图**：一张 `SystemParam` 顶替四个查询参数。
+/// 效果/格子的**只读世界视图**：一张 `SystemParam` 顶替五个查询参数。
 ///
 /// 单独抽出来是为了让每个生成系统只多一行 `effects.collect(..)`，
 /// 而不是各自重复"查关系 → 查子实体 → 查格索引 → 查地形"四步
@@ -59,6 +60,13 @@ pub struct EffectContext<'w, 's> {
     owned: Query<'w, 's, &'static OwnedEffects>,
     ignores: Query<'w, 's, &'static IgnoresSource>,
     cell_costs: Query<'w, 's, &'static CellMoveCost>,
+    equipped: Query<'w, 's, &'static EquippedItems>,
+    equipped_items: Query<'w, 's, &'static EquippedItem>,
+    /// 效果实体身上的修正（将来的 buff：`(EffectOf(actor), Modifier)`）。
+    ///
+    /// 现在**没有生产者**（中毒只按 AV 掉血，不给修正），但读取口先就位：
+    /// 于是"加一条 buff"只写数据，不必再改求值侧（LECS22 的"加第 N 个改几处"= 0）。
+    effect_modifiers: Query<'w, 's, &'static EffectModifier>,
 }
 
 impl EffectContext<'_, '_> {
@@ -82,22 +90,78 @@ impl EffectContext<'_, '_> {
 
     /// actor 名下的效果声明的"无视来源"（去重；求值第 ③ 步的 `ignored`）。
     ///
-    /// 只读 `EffectOf` 那一组（`OwnedEffects`）：装备走 `EquippedBy`，
-    /// 因此"装备提供的无视"要由装备的 owner 系统把它转成一条效果再收进来——
-    /// 这条缝故意留着不做（物品系统未迁移，见 REFACTOR §2.2 R2）。
+    /// 两个来源都要读，因为它们走的是**两条不同**的归属关系（ECS42 定案）：
+    /// - `EffectOf` 实体（状态效果）：自己带 [`IgnoresSource`]；
+    /// - `EquippedBy` 实体（装备）：无视声明写在**注册表**那一行（`ItemDef::ignores`），
+    ///   所以这里查的是物品定义，而不是"装备名下有个效果实体"。
     fn ignored_sources(&self, actor: Entity) -> Vec<EffectSource> {
         let mut ignored = Vec::new();
-        let Ok(owned) = self.owned.get(actor) else {
-            return ignored;
-        };
-        for effect in owned.iter() {
-            if let Ok(ignore) = self.ignores.get(effect)
-                && !ignored.contains(&ignore.0)
-            {
-                ignored.push(ignore.0);
+        if let Ok(owned) = self.owned.get(actor) {
+            for effect in owned.iter() {
+                if let Ok(ignore) = self.ignores.get(effect)
+                    && !ignored.contains(&ignore.0)
+                {
+                    ignored.push(ignore.0);
+                }
+            }
+        }
+        for def in self.equipped_defs(actor) {
+            for source in def.ignores() {
+                if !ignored.contains(source) {
+                    ignored.push(*source);
+                }
             }
         }
         ignored
+    }
+
+    /// actor 已装备物品的**定义**（顺着 `EquippedBy` → `EquippedItem` → 注册表）。
+    fn equipped_defs(&self, actor: Entity) -> impl Iterator<Item = &'static crate::item::ItemDef> {
+        let entities: Vec<Entity> = self
+            .equipped
+            .get(actor)
+            .map(|list| list.iter().collect())
+            .unwrap_or_default();
+        entities
+            .into_iter()
+            .filter_map(move |entity| self.equipped_items.get(entity).ok().map(|item| item.def()))
+    }
+
+    /// actor 自带的修正（装备 + 状态效果）。**不含脚下这一格**。
+    ///
+    /// 攻击/防御这类"与格子无关"的数值用它；速度用 [`Self::collect`]。
+    pub fn collect_actor(&self, actor: Entity) -> Vec<Modifier> {
+        let mut mods = Vec::new();
+        if let Ok(owned) = self.owned.get(actor) {
+            for effect in owned.iter() {
+                if let Ok(modifier) = self.effect_modifiers.get(effect) {
+                    mods.push(modifier.0);
+                }
+            }
+        }
+        for def in self.equipped_defs(actor) {
+            mods.extend_from_slice(def.modifiers());
+        }
+        mods
+    }
+
+    /// 主手武器的攻击耗时（毫秒）；没装备武器时 `None`（用空手基准）。
+    ///
+    /// GAME.md Gm7「武器攻速」：`AV = 武器 speed ÷ 攻击速度`。武器覆盖的是**基础耗时**，
+    /// 不是速度——所以石锤与匕首的区别在于"每一击要多久"，而不是"速度倍率多少"。
+    pub fn main_hand_weapon_speed(&self, actor: Entity) -> Option<f64> {
+        let entities: Vec<Entity> = self
+            .equipped
+            .get(actor)
+            .map(|list| list.iter().collect())
+            .unwrap_or_default();
+        entities.into_iter().find_map(|entity| {
+            let item = self.equipped_items.get(entity).ok()?;
+            if item.slot != crate::item::EquipSlot::MainHand {
+                return None;
+            }
+            item.def().weapon_speed_ms
+        })
     }
 
     /// 收桶：脚下这一格的修正 + actor 自带的修正 + 忽略表。
@@ -105,7 +169,7 @@ impl EffectContext<'_, '_> {
         let attributes = self.attributes_at_position(cell);
         let cell_modifiers = cell_speed_modifier(&attributes).into_iter().collect();
         CollectedModifiers {
-            actor: Vec::new(),
+            actor: self.collect_actor(actor),
             cell: cell_modifiers,
             ignored: self.ignored_sources(actor),
         }

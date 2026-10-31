@@ -13,4 +13,6 @@ pub mod damage;
 pub mod modifier;
 
 pub use damage::{CritProfile, MeleeBreakdown, MeleeInput, melee};
-pub use modifier::{EffectSource, Modifier, ModifierOutcome, apply_modifiers, evaluate_modifiers};
+pub use modifier::{
+    EffectSource, Modifier, ModifierOutcome, Stat, apply_modifiers, evaluate_modifiers, for_stat,
+};

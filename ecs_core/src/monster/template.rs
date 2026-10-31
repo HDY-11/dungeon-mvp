@@ -11,9 +11,11 @@
 //! 于是"加一只怪"= 加一条常量 + 在种类池里排一次位（`monster/spawn.rs`），
 //! 而不是改三个文件（Phase H6/H7，ISSUES ECS32）。
 //!
-//! **掉落表不迁**：物品未迁移，字段等到物品系统落地再加。
+//! 第 4 件事是 [MonsterTemplate::loot]（掉落表）：数据住在 item/loot.rs 旁边的物种表里，
+//! 这里只持有切片——与本文件其余字段一样，&'static 数据、零运行期查找。
 
 use crate::components::*;
+use crate::item::{ItemId, LootEntry};
 use crate::map::MapKind;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -186,6 +188,8 @@ pub struct MonsterTemplate {
     pub abilities: &'static [Ability],
     /// 该物种在各**地图类型**下的出现权重；缺席 = 该地图不生成它。
     pub spawn: &'static [SpawnWeightFor],
+    /// 死亡时的掉落表（GAME.md Gm7）。空列表 = 不掉东西。
+    pub loot: &'static [LootEntry],
 }
 
 /// 由模板生成的实体数值。
@@ -246,6 +250,85 @@ impl MonsterTemplate {
     }
 }
 
+// ── 掉落表用到的物品编号 ─────────────────────────────
+//
+// 单独起短名字只为一件事：掉落表要能一眼读出"这只怪掉什么"，
+// 而不是满屏 `ItemId(10)` 让人回头查表。编号与 `item/registry.rs` 一一对应
+// （`loot_tables_reference_registered_items` 会在测试里核对这一点）。
+const ITEM_RAW_FLESH: ItemId = ItemId(10);
+const ITEM_RAG: ItemId = ItemId(11);
+const ITEM_STICK: ItemId = ItemId(12);
+const ITEM_FANG: ItemId = ItemId(13);
+const ITEM_CARAPACE: ItemId = ItemId(14);
+const ITEM_PEBBLE: ItemId = ItemId(18);
+const ITEM_HAMMER: ItemId = ItemId(23);
+const ITEM_DAGGER: ItemId = ItemId(24);
+const ITEM_MUSHROOM: ItemId = ItemId(25);
+const ITEM_MOSS: ItemId = ItemId(26);
+const ITEM_SPORE_SAC: ItemId = ItemId(27);
+const ITEM_SHELL: ItemId = ItemId(28);
+const ITEM_PEARL: ItemId = ItemId(29);
+const ITEM_FISH_BONE: ItemId = ItemId(30);
+const ITEM_EEL_SKIN: ItemId = ItemId(31);
+const ITEM_SEAWEED: ItemId = ItemId(32);
+
+// ── 掉落表（GAME.md Gm7「掉落表」） ───────────────────
+//
+// 每条独立掷一次概率，所以"必掉 + 概率"可以同时成立。
+// 哥布林身上那 12% 的武器与 5% 的模板碎片是"装备来源"——没有它们，
+// 装备系统就只能靠地上随机刷的几件，玩家感受不到"打怪能换装"。
+
+/// 老鼠：只有肉。
+const RAT_LOOT: &[LootEntry] = &[LootEntry::always(ITEM_RAW_FLESH, 1, 2)];
+
+/// 蝎子：肉 + 甲壳（甲片模板的材料）。
+const SCORPION_LOOT: &[LootEntry] = &[
+    LootEntry::always(ITEM_RAW_FLESH, 1, 2),
+    LootEntry::always(ITEM_CARAPACE, 1, 2),
+];
+
+/// 哥布林：最富的杂兵——材料、石子、两把武器。
+const GOBLIN_LOOT: &[LootEntry] = &[
+    LootEntry::always(ITEM_RAW_FLESH, 1, 3),
+    LootEntry::maybe(ITEM_RAG, 0.60, 1, 1),
+    LootEntry::maybe(ITEM_STICK, 0.40, 1, 1),
+    LootEntry::maybe(ITEM_FANG, 0.30, 1, 1),
+    LootEntry::maybe(ITEM_PEBBLE, 0.60, 1, 2),
+    LootEntry::maybe(ITEM_HAMMER, 0.12, 1, 1),
+    LootEntry::maybe(ITEM_DAGGER, 0.12, 1, 1),
+];
+
+/// 孢子怪：蘑菇与苔藓。
+const SPORELING_LOOT: &[LootEntry] = &[
+    LootEntry::maybe(ITEM_MUSHROOM, 0.60, 1, 2),
+    LootEntry::maybe(ITEM_MOSS, 0.40, 1, 1),
+];
+
+/// 蘑菇傀儡：苔藓必掉，孢子囊稀有。
+const MUSHROOM_GOLEM_LOOT: &[LootEntry] = &[
+    LootEntry::maybe(ITEM_MOSS, 0.80, 1, 1),
+    LootEntry::maybe(ITEM_SPORE_SAC, 0.30, 1, 1),
+    LootEntry::maybe(ITEM_MUSHROOM, 0.30, 1, 2),
+];
+
+/// 洞穴鱼：鱼骨与海藻。
+const CAVE_FISH_LOOT: &[LootEntry] = &[
+    LootEntry::maybe(ITEM_FISH_BONE, 0.60, 1, 1),
+    LootEntry::maybe(ITEM_SEAWEED, 0.30, 1, 1),
+];
+
+/// 洞穴蟹：贝壳常见，珍珠稀有。
+const CAVE_CRAB_LOOT: &[LootEntry] = &[
+    LootEntry::maybe(ITEM_SHELL, 0.80, 1, 1),
+    LootEntry::maybe(ITEM_PEARL, 0.10, 1, 1),
+];
+
+/// 深鳗：鳗皮与海藻。
+const DEEP_EEL_LOOT: &[LootEntry] = &[
+    LootEntry::maybe(ITEM_EEL_SKIN, 0.60, 1, 1),
+    LootEntry::maybe(ITEM_SEAWEED, 0.40, 1, 1),
+];
+
 const RAT: MonsterTemplate = MonsterTemplate {
     kind: MonsterKindId::Rat,
     glyph: 'r',
@@ -276,6 +359,7 @@ const RAT: MonsterTemplate = MonsterTemplate {
             weight: SpawnWeight::falling(12.0, -1.0, 0.5),
         },
     ],
+    loot: RAT_LOOT,
 };
 
 const SCORPION: MonsterTemplate = MonsterTemplate {
@@ -308,6 +392,7 @@ const SCORPION: MonsterTemplate = MonsterTemplate {
             weight: SpawnWeight::rising(8.0, 0.5, 20.0),
         },
     ],
+    loot: SCORPION_LOOT,
 };
 
 const GOBLIN: MonsterTemplate = MonsterTemplate {
@@ -341,6 +426,7 @@ const GOBLIN: MonsterTemplate = MonsterTemplate {
             weight: SpawnWeight::rising(5.0, 1.5, 30.0),
         },
     ],
+    loot: GOBLIN_LOOT,
 };
 
 const SPORELING: MonsterTemplate = MonsterTemplate {
@@ -367,6 +453,7 @@ const SPORELING: MonsterTemplate = MonsterTemplate {
         map_kind: MapKind::LushCavern,
         weight: SpawnWeight::falling(30.0, -2.0, 0.5),
     }],
+    loot: SPORELING_LOOT,
 };
 
 const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
@@ -393,6 +480,7 @@ const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
         map_kind: MapKind::LushCavern,
         weight: SpawnWeight::rising(5.0, 2.5, 40.0),
     }],
+    loot: MUSHROOM_GOLEM_LOOT,
 };
 
 const CAVE_FISH: MonsterTemplate = MonsterTemplate {
@@ -419,6 +507,7 @@ const CAVE_FISH: MonsterTemplate = MonsterTemplate {
         map_kind: MapKind::Undersea,
         weight: SpawnWeight::falling(30.0, -2.0, 0.5),
     }],
+    loot: CAVE_FISH_LOOT,
 };
 
 const CAVE_CRAB: MonsterTemplate = MonsterTemplate {
@@ -445,6 +534,7 @@ const CAVE_CRAB: MonsterTemplate = MonsterTemplate {
         map_kind: MapKind::Undersea,
         weight: SpawnWeight::rising(12.0, 1.5, 35.0),
     }],
+    loot: CAVE_CRAB_LOOT,
 };
 
 const DEEP_EEL: MonsterTemplate = MonsterTemplate {
@@ -471,6 +561,7 @@ const DEEP_EEL: MonsterTemplate = MonsterTemplate {
         map_kind: MapKind::Undersea,
         weight: SpawnWeight::rising(8.0, 2.0, 35.0),
     }],
+    loot: DEEP_EEL_LOOT,
 };
 
 pub fn monster_template(kind: MonsterKindId) -> &'static MonsterTemplate {

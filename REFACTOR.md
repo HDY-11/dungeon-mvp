@@ -37,11 +37,12 @@
 | M2 | 构造期随机源收敛为单入口（`DerivePurpose` + `derived_rng`），"第二入口"审计与共享状态写入者清单（DsnE15） | DsnE5 / DsnE15 / ECS34 | 本次提交 |
 | M1 | 移动的判定与落地分阶段：`ActionPhase::Validate`（每行动一个校验器，定案 + **预留**目标格）+ **一个**落地系统 `settle_action_system`（唯一写 `Position`，`action/settle.rs`）；六个执行器 → 一个；占格改用 `Blocks` 能力（ECS45） | DsnE14 / DsnE2 / LECS23 / LECS24 | 本次提交 |
 | M3 | 保活覆盖**所有**待执行行动：校验器过滤器放开到 `PendingAction<A>`，失效即刻取消；定案/预留仍只对到点行动（ECS43，用户拍板"立即取消"） | DsnE8 / DsnE14 / ECS43 | 本次提交 |
+| M4 | **物品系统规则层**：静态注册表（21 行）+ 堆叠背包 + 四个装备槽 + 怪物掉落表（8 张）+ 消耗品 + 地面刷新；修正器补 `Stat` 维度，装备加成进伤害链路与攻击耗时 | DsnE16 / DsnE10 / DsnE12 | 本次提交 |
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **157 passed**；`cargo test --workspace`
-28 目标 **388 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **203 passed**；`cargo test --workspace`
+28 目标 **434 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

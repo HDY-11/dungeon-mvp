@@ -70,7 +70,14 @@ struct Report {
     poison_ticks: usize,
     mud_turns: usize,
     water_turns: usize,
-    boots_turn: Option<usize>,
+    /// 第一次「地面物品变少」的回合（= 有东西被捡起来了）。
+    first_pickup_turn: Option<usize>,
+    /// 背包里最多装过几件（物品系统：拾取路由是否真的在跑）。
+    bag_peak: usize,
+    /// 装备槽最多填过几个（0..=4）。
+    equipped_peak: usize,
+    /// 死亡掉落累计件数。
+    loot_drops: usize,
     logged_lines: usize,
     anomalies: Vec<String>,
 }
@@ -86,7 +93,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         let mut q = world.query::<&CellEffectAt>();
         query_count(&mut q, &world)
     };
-    let boots_start = count::<GroundItem>(&mut world);
+    let items_start = count::<GroundItem>(&mut world);
+    // 上一回合的地面物品数：拾取 = 这个数变少（掉落会让它变多，所以只能比相邻两回合）。
+    let mut items_prev = items_start;
 
     let stair = world
         .query_filtered::<&Position, With<ecs_core::Stairs>>()
@@ -96,7 +105,7 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
 
     println!("=== seed {seed} ===");
     println!(
-        "开局：楼层 {} / 地图 {} / 怪物 {} 只 / 泥潭 {mud_cells} 格 / 地面物品 {boots_start} 件 / 楼梯 {:?}",
+        "开局：楼层 {} / 地图 {} / 怪物 {} 只 / 泥潭 {mud_cells} 格 / 地面物品 {items_start} 件 / 楼梯 {:?}",
         world.resource::<ecs_core::FloorNumber>().0,
         format!("{:?}", ecs_core::map_kind_for(seed, 1)),
         monsters_at_start,
@@ -227,8 +236,23 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         }
         last_kinds = kinds_now;
 
-        if report.boots_turn.is_none() && count::<GroundItem>(&mut world) < boots_start {
-            report.boots_turn = Some(turn);
+        // 物品系统覆盖：地面物品变少说明有拾取；背包/装备槽的最多值说明路由真的在跑。
+        {
+            let items_now = count::<GroundItem>(&mut world);
+            if report.first_pickup_turn.is_none() && items_now < items_prev {
+                report.first_pickup_turn = Some(turn);
+            }
+            items_prev = items_now;
+            let bag = world
+                .get::<ecs_core::Inventory>(player)
+                .map(ecs_core::Inventory::used)
+                .unwrap_or(0);
+            report.bag_peak = report.bag_peak.max(bag);
+            let slots = world
+                .get::<ecs_core::EquippedItems>(player)
+                .map(ecs_core::EquippedItems::len)
+                .unwrap_or(0);
+            report.equipped_peak = report.equipped_peak.max(slots);
         }
 
         // ── 不变量检查（不 panic，只记录） ──────────────
@@ -261,9 +285,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         }
     );
     println!(
-        "覆盖：泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 捡到靴子 {:?} / 日志行 {}",
+        "覆盖：泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 首次拾取 {:?} / 背包峰值 {} / 装备槽峰值 {}/4 / 日志行 {}",
         report.mud_turns, report.water_turns, report.poison_turns, report.poison_ticks,
-        report.boots_turn, report.logged_lines,
+        report.first_pickup_turn, report.bag_peak, report.equipped_peak, report.logged_lines,
     );
     let dist = kinds(&mut world);
     println!(

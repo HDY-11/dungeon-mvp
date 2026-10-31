@@ -34,7 +34,26 @@
 //! 若装备也用它，玩家在"击杀带装备的怪物"这条路径上**永远**拿不到战利品，
 //! 而且没有任何报错（ISSUES ECS42 的失败模式）。
 
+use crate::rules::Modifier;
 use bevy_ecs::prelude::*;
+
+/// 一条**修正**挂在效果实体上（buff/debuff 的载体）。
+///
+/// 为什么包一层而不是让 `rules::Modifier` 直接 `derive(Component)`：`rules` 是纯函数层
+/// （无 `World`、无 bevy 依赖，`LECS2` 的红利），让它认识 ECS 就等于把纯层拖进框架。
+/// 这一层包装与 [`IgnoresSource`](crate::effect::IgnoresSource) 同形：
+/// **规则层的数据结构 + 效果层的组件壳**。
+///
+/// 一件效果实体带**一条**修正：`Modifier` 的两个位描述的是"同一项数值的加与乘"，
+/// 不同项（攻击 vs 速度）本就是两条独立的修正，各占一个实体最直白。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct EffectModifier(pub Modifier);
+
+impl EffectModifier {
+    pub const fn new(modifier: Modifier) -> Self {
+        Self(modifier)
+    }
+}
 
 /// 效果实体 → 它的拥有者 actor。
 ///

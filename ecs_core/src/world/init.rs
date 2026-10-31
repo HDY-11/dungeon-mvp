@@ -143,6 +143,9 @@ pub fn spawn_player_system(mut commands: Commands, map: Res<Map>, mut spawn: Res
         .spawn(player_base_bundle(pos))
         .insert(Viewshed::new(10))
         .insert(AttackName("斩击".into()))
+        // 背包：物品系统的落地容器（12 个元素的上限见 `player_base_bundle` 的注释，
+        // 所以背包与能力标记都走第二次 `insert`）。
+        .insert(crate::item::Inventory::new())
         .insert(CanMove)
         .insert(CanWait)
         .insert(CanBasicAttack)
@@ -451,13 +454,32 @@ pub fn spawn_cell_effects_system(
     log::info!("生成泥潭: {placed} 格（尝试 {attempts} 次）");
 }
 
-// ── 物品内容（C4） ───────────────────────────────────
+// ── 物品内容（C4 → 物品系统落地） ─────────────────────
 
-/// 在可行走格上放一件装备（当前只有踏水靴）。
+/// 本层地面物品的**池子**：装备 + 消耗品。
 ///
-/// 为什么要真的躺在地上而不是"开局直接给"：那样验证不到 `EquippedBy` 双关系与
-/// "装备授予的效果需要实例化"这条缝——而那两样是我们花设计成本换来的。
-/// 掉落表没有迁移，所以这里只放**一件**，且位置由 `(MapSeed, 楼层)` 派生。
+/// 材料（血肉/布/牙/壳…）故意**不在**池子里：它们只能从怪物掉落来。
+/// 这样"刷图"与"打怪"各有自己的产出，而不是两个渠道发同一种东西
+/// （否则玩家没有理由打怪，而装备系统又会退化成"在地上捡"）。
+const GROUND_ITEM_POOL: &[crate::item::ItemId] = &[
+    crate::item::ItemId(0),  // 锈铁剑
+    crate::item::ItemId(1),  // 木盾
+    crate::item::ItemId(2),  // 皮甲
+    crate::item::ItemId(3),  // 攻击戒指
+    crate::item::ItemId(23), // 石锤
+    crate::item::ItemId(24), // 匕首
+    crate::item::ItemId(40), // 踏水靴（C4/C5 的内容）
+    crate::item::ItemId(25), // 蘑菇
+    crate::item::ItemId(32), // 海藻
+];
+
+/// 在地上撒本层的地面物品：`1–3` 件池子里的东西 + `1–3` 堆石子（GAME.md Gm7「地面刷新」）。
+///
+/// 位置由 `(MapSeed, 楼层)` 派生（`DerivePurpose::GroundItems`），所以同一颗种子的第 N 层
+/// 永远是同一批东西、同一批位置——存档只存玩家状态，不存地面物品（DsnX17 的确定性口径）。
+///
+/// 为什么不放在出生点/楼梯/泥潭上：踩上去就会捡，放在这些格子上等于"开局白送"
+/// 或者让泥潭变成"靴子的装饰"。
 pub fn spawn_ground_items_system(
     mut commands: Commands,
     map: Res<Map>,
@@ -473,32 +495,53 @@ pub fn spawn_ground_items_system(
         crate::resources::DerivePurpose::GroundItems,
     );
 
-    // 不放在出生点、楼梯、泥潭上：靴子是用来对付泥潭的，叠在泥潭里会被误读成"泥潭的装饰"。
     let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];
     taken.extend(cell_effects.iter().map(|at| at.to_tuple()));
 
-    let mut attempts = 0usize;
-    while attempts < 400 {
-        attempts += 1;
-        let x = rng.random_range(
-            player_spawn.0.0.saturating_sub(ITEM_SPAWN_RADIUS)
-                ..=(player_spawn.0.0 + ITEM_SPAWN_RADIUS).min(MAP_WIDTH - 2),
-        );
-        let y = rng.random_range(
-            player_spawn.0.1.saturating_sub(ITEM_SPAWN_RADIUS)
-                ..=(player_spawn.0.1 + ITEM_SPAWN_RADIUS).min(MAP_HEIGHT - 2),
-        );
-        if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
-            continue;
+    // 掷一次"这一层放什么"：池子里的 1–3 件 + 石子 1–3 堆。
+    let pool_count = rng.random_range(1u64..=3);
+    let mut batch: Vec<(crate::item::ItemId, u32)> = Vec::new();
+    for _ in 0..pool_count {
+        let index = rng.random_range(0..GROUND_ITEM_POOL.len() as u64) as usize;
+        batch.push((GROUND_ITEM_POOL[index], 1));
+    }
+    let pebbles = rng.random_range(1u64..=3);
+    for _ in 0..pebbles {
+        batch.push((crate::item::ItemId(18), 1));
+    }
+
+    let mut placed = 0usize;
+    for (id, count) in batch {
+        // 每件物品各找一格：最多试 200 次，地图太挤就放弃这一件（不 panic）。
+        let mut spot = None;
+        for _ in 0..200 {
+            let x = rng.random_range(
+                player_spawn.0.0.saturating_sub(ITEM_SPAWN_RADIUS)
+                    ..=(player_spawn.0.0 + ITEM_SPAWN_RADIUS).min(MAP_WIDTH - 2),
+            );
+            let y = rng.random_range(
+                player_spawn.0.1.saturating_sub(ITEM_SPAWN_RADIUS)
+                    ..=(player_spawn.0.1 + ITEM_SPAWN_RADIUS).min(MAP_HEIGHT - 2),
+            );
+            if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
+                continue;
+            }
+            spot = Some((x, y));
+            break;
         }
+        let Some((x, y)) = spot else {
+            log::warn!("没有找到合适的位置放 {:?}（地图过于拥挤）", id);
+            continue;
+        };
+        taken.push((x, y));
         commands.spawn((
             crate::item::GroundItemAt::new(x, y),
-            crate::item::GroundItem::new(crate::item::ItemKind::TrailBoots),
+            crate::item::GroundItem::of(id, count),
         ));
-        log::info!("放置地面物品: 踏水靴 @ ({x},{y})");
-        return;
+        placed += 1;
+        log::info!("放置地面物品: {} @ ({x},{y})", id.def().name);
     }
-    log::warn!("没有找到合适的位置放地面物品（地图过于拥挤）");
+    log::info!("地面物品: {placed} 件");
 }
 
 // ── 初始化调度 ───────────────────────────────────────

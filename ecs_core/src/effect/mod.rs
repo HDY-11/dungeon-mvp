@@ -46,7 +46,7 @@ pub use cell::{
     rebuild_cell_effects_system, speed_multiplier_for, tile_at,
 };
 pub use collect::{CollectedModifiers, EffectContext};
-pub use ownership::{EffectOf, EquippedBy, EquippedItems, OwnedEffects};
+pub use ownership::{EffectModifier, EffectOf, EquippedBy, EquippedItems, OwnedEffects};
 
 use crate::rules::EffectSource;
 use bevy_ecs::prelude::*;

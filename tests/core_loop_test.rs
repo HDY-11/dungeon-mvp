@@ -588,16 +588,18 @@ fn picking_up_the_boots_cancels_the_mud_penalty() {
         "前提：没靴子时泥潭必须让 AV 翻倍"
     );
 
-    // 把靴子挪到玩家脚下，跑一轮结算 → 拾取并装备。
+    // 把一双靴子放到玩家脚下，跑一轮结算 → 拾取并装备。
+    //
+    // **显式 spawn 而不是"捡起地图上第一件地面物品"**：地面物品现在是按层随机
+    // 从池子里发的（装备/消耗品/石子），第一件是什么取决于种子；而这条件用例要
+    // 验的是"装备生效"，不是"这一层刷了什么"。顺手也覆盖了拾取路由：
+    // 槽位空 → 直接穿。
     let player = player_entity(&world);
-    let item = {
-        let mut query = world.query_filtered::<Entity, With<ecs_core::GroundItem>>();
-        query.iter(&world).next().expect("开局必须放了一件地面物品")
-    };
     let player_pos = player_pos(&world);
-    world
-        .entity_mut(item)
-        .insert(ecs_core::GroundItemAt::new(player_pos.0, player_pos.1));
+    world.spawn((
+        ecs_core::GroundItemAt::new(player_pos.0, player_pos.1),
+        ecs_core::GroundItem::of(ecs_core::ItemId(40), 1), // 踏水靴
+    ));
     ecs_core::system::run_settle_systems(&mut world);
 
     assert!(

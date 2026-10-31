@@ -187,6 +187,7 @@ pub fn cell_speed_modifier(attributes: &CellAttributes) -> Option<crate::rules::
         return None;
     }
     Some(crate::rules::Modifier::scaled(
+        crate::rules::Stat::MoveSpeed,
         crate::rules::EffectSource::Terrain,
         multiplier,
     ))
