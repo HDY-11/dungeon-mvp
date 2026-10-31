@@ -178,6 +178,54 @@ fn collect_reads_cell_and_actor_sides_separately() {
     assert!(collected.actor.is_empty(), "本轮没有 actor 侧修正效果");
 }
 
+/// **buff 的读取通路**（Gm5 的前置验收）：一条状态效果实体就是 `EffectOf + EffectModifier`，
+/// 它的修正会进 `actor` 桶，并被同一条折叠逻辑算出有效值。
+///
+/// 这条用例是"加一条 buff 只写数据、不改求值侧"的可执行证据：测试里没有给伤害规则
+/// 加任何分支，也没有新的组件类型语义——只是往世界里 spawn 了一个实体。
+#[test]
+fn a_status_effect_entity_contributes_to_the_actor_bucket() {
+    use crate::rules::{Modifier, Stat, apply_modifiers};
+
+    let (mut world, player) = player_scene();
+    // 一个"狂暴"：攻击 +7、来自状态效果（Gm5 的数值）。
+    let buff = world
+        .spawn((
+            EffectOf(player),
+            EffectModifier::new(Modifier::delta(Stat::Attack, EffectSource::Status, 7.0)),
+        ))
+        .id();
+    world.run_schedule(crate::schedule::CoreSettleSchedule);
+
+    let position = world
+        .get::<Position>(player)
+        .expect("玩家必须有 Position")
+        .to_tuple();
+    let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
+    let actor_mods = system.get_mut(&mut world).collect_actor(player);
+
+    assert_eq!(actor_mods.len(), 1, "一条效果实体贡献一条修正");
+    assert_eq!(
+        apply_modifiers(Stat::Attack, 8.0, &actor_mods, &[]),
+        15.0,
+        "有效攻击 = 基础 8 + 狂暴 7"
+    );
+    // 关键：这条修正**不会**漏进速度（`Stat` 维度的作用）。
+    assert_eq!(
+        apply_modifiers(Stat::MoveSpeed, 1.25, &actor_mods, &[]),
+        1.25,
+        "攻击类 buff 不得改移速"
+    );
+
+    // 效果实体消失 → 加成消失（不需要任何"清理"代码，靠的是 `EffectOf` 级联）。
+    world.despawn(buff);
+    let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
+    assert!(
+        system.get_mut(&mut world).collect_actor(player).is_empty(),
+        "效果实体一旦消失，加成必须同步消失"
+    );
+}
+
 /// 越界格子按"不可走"读，而不是 panic 或返回可走。
 #[test]
 fn out_of_bounds_cell_is_never_walkable() {
