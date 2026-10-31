@@ -13,4 +13,11 @@ pub enum PlayerCommand {
     Move { dx: isize, dy: isize },
     /// 原地等待一回合。
     Wait,
+    /// 下楼（站在楼梯上时才有意义）。
+    ///
+    /// **它不是行动**：没有 AV、不产生 action 实体——换层是世界的重组，不是某个 actor
+    /// 做了一件事。所以 [`crate::world_loop::apply_player_command`] 在挂载行动之前就把它
+    /// 拦下来交给 [`crate::world::floor::descend`]；生成系统里那个分支只作防御
+    /// （真收到就记一条错误，而不是静默当成 `Wait`）。
+    Descend,
 }

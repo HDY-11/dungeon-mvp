@@ -168,6 +168,10 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                 Key::PageUp => direction(1, -1),
                 Key::PageDown => direction(1, 1),
                 Key::Char('.') | Key::Space => InputOutcome::Command(PlayerCommand::Wait),
+                // 下楼：站在楼梯上按 `>`（Roguelike 惯例）。**不检查脚下是不是楼梯**——
+                // 那属于规则（`world::floor::descend` 会拒绝并给玩家一句话），
+                // 输入层只负责"这个键是什么意思"。
+                Key::Char('>') => InputOutcome::Command(PlayerCommand::Descend),
                 _ => InputOutcome::Ignored,
             }
         }

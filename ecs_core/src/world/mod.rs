@@ -1,8 +1,10 @@
 //! 世界生命周期：初始化、查询与主循环装配。
 
+pub mod floor;
 pub mod init;
 pub mod query;
 
+pub use floor::*;
 pub use init::*;
 pub use query::*;
 

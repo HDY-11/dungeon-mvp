@@ -76,8 +76,8 @@ struct Report {
     bag_peak: usize,
     /// 装备槽最多填过几个（0..=4）。
     equipped_peak: usize,
-    /// 死亡掉落累计件数。
-    loot_drops: usize,
+    /// 下楼成功次数（楼层推进是否真的在跑）。
+    descends: usize,
     logged_lines: usize,
     anomalies: Vec<String>,
 }
@@ -166,6 +166,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         // ── 决策 ────────────────────────────────────────
         let (command, why) = choose_command(&world, player, pos, turn);
         let accepted = apply_player_command(&mut world, command);
+        if accepted && command == PlayerCommand::Descend {
+            report.descends += 1;
+        }
         report.commands += 1;
         if accepted {
             report.accepted += 1;
@@ -285,7 +288,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         }
     );
     println!(
-        "覆盖：泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 首次拾取 {:?} / 背包峰值 {} / 装备槽峰值 {}/4 / 日志行 {}",
+        "覆盖：到达第 {} 层（下楼 {} 次）/ 泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 首次拾取 {:?} / 背包峰值 {} / 装备槽峰值 {}/4 / 日志行 {}",
+        world.resource::<ecs_core::FloorNumber>().0,
+        report.descends,
         report.mud_turns, report.water_turns, report.poison_turns, report.poison_ticks,
         report.first_pickup_turn, report.bag_peak, report.equipped_peak, report.logged_lines,
     );
@@ -316,6 +321,32 @@ fn choose_command(
     let hp = health_of(world, player);
     let nearest = nearest_monster(world, pos);
 
+    // 站在楼梯上 → 下楼（多层的可玩性/确定性检查：换层后世界必须干净）。
+    if on_stairs(world, pos) {
+        return (PlayerCommand::Descend, "下楼");
+    }
+
+    // 后半程专门演练"下楼"：否则策略一直在追怪，多层内容根本跑不到。
+    // 只做两件事——贴脸就打、否则 A* 走向楼梯。
+    if turn >= 80 {
+        if let Some((mpos, dist)) = nearest
+            && dist <= 1
+        {
+            return (
+                PlayerCommand::Move {
+                    dx: (mpos.0 as isize) - (pos.0 as isize),
+                    dy: (mpos.1 as isize) - (pos.1 as isize),
+                },
+                "相邻攻击",
+            );
+        }
+        if let Some(stair) = stairs_pos(world)
+            && let Some((dx, dy)) = path_step(world, pos, stair)
+        {
+            return (PlayerCommand::Move { dx, dy }, "走向楼梯");
+        }
+    }
+
     if let Some((mpos, dist)) = nearest {
         // 相邻（含对角）：打。
         if dist <= 1 {
@@ -343,6 +374,19 @@ fn choose_command(
         }
     }
 
+    // 没有近处活怪时朝楼梯走：这样"清完一片 → 下楼"这条路径真的会被跑到
+    // （否则随机游走几乎不可能正好踩到楼梯上，多层内容等于没测）。
+    // 阈值用 10 而不是"完全没怪"：一层有 7–11 只怪，等全清完往往已经没有回合了。
+    //
+    // 走向楼梯**用 A\***（而不是贪心）：贪心在墙面前会原地抖，永远到不了对角线方向的楼梯。
+    let far_from_monsters = nearest.is_none_or(|(_, dist)| dist > 10);
+    if far_from_monsters
+        && let Some(stair) = stairs_pos(world)
+        && let Some((dx, dy)) = path_step(world, pos, stair)
+    {
+        return (PlayerCommand::Move { dx, dy }, "走向楼梯");
+    }
+
     // 每 7 步等一次，采样"等待"这条路径（它是 AV 固定、不吃速度的那一类）。
     if turn % 7 == 3 {
         return (PlayerCommand::Wait, "采样等待");
@@ -358,6 +402,33 @@ fn choose_command(
         }
     }
     (PlayerCommand::Wait, "无路可走")
+}
+
+/// 玩家是否站在楼梯上（下楼的前提）。
+fn on_stairs(world: &World, pos: (usize, usize)) -> bool {
+    stairs_pos(world).is_some_and(|stairs| stairs == pos)
+}
+
+/// 楼梯所在格。
+fn stairs_pos(world: &World) -> Option<(usize, usize)> {
+    let mut query = world.try_query_filtered::<&Position, With<ecs_core::Stairs>>()?;
+    query.iter(world).next().map(Position::to_tuple)
+}
+
+/// 朝目标走的第一步（A\* 首步转成方向）；没有路时 `None`。
+fn path_step(
+    world: &World,
+    from: (usize, usize),
+    to: (usize, usize),
+) -> Option<(isize, isize)> {
+    let map = world.resource::<Map>();
+    let occupancy = world.resource::<ecs_core::OccupancyMap>();
+    let path = ecs_core::spatial::pathfinding::astar(from, to, &map.tiles, Some(occupancy))?;
+    let (nx, ny) = *path.first()?;
+    Some((
+        nx as isize - from.0 as isize,
+        ny as isize - from.1 as isize,
+    ))
 }
 
 fn nearest_monster(world: &World, pos: (usize, usize)) -> Option<((usize, usize), usize)> {

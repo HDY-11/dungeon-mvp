@@ -636,6 +636,14 @@ pub fn player_action_generation_system(
 
     let (action, rule, duration) = match command {
         PlayerCommand::Wait => (PlayerAction::Wait, SpeedRule::Fixed, WAIT_DURATION),
+        // 下楼在 `apply_player_command` 里就被拦走了（它不是行动）。真走到这里说明
+        // 有人绕过那个入口塞了命令进来——记一条错误并按"没做成"处理，而不是
+        // 静默当成 `Wait`（那会让"按了 > 却没下楼"变成一个查不到的迷）。
+        PlayerCommand::Descend => {
+            log::error!("下楼命令不该进入行动生成：它没有行动实体");
+            refuse(&mut event_log, "下楼要在楼梯上按 >");
+            return;
+        }
         PlayerCommand::Move { dx, dy } => {
             let (nx, ny) = position.offset(dx, dy);
             if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {

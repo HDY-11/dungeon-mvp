@@ -72,6 +72,17 @@ fn wait_keys_map_to_wait() {
     }
 }
 
+/// 下楼键：`>` 翻译成 `Descend`，**输入层不检查脚下有没有楼梯**（那是规则的事）。
+#[test]
+fn the_greater_than_key_means_descend() {
+    let input = ctx(PageKind::Game);
+    assert_eq!(
+        map_input_event(key(Key::Char('>')), &input).command(),
+        Some(PlayerCommand::Descend),
+        "> 应当是下楼"
+    );
+}
+
 /// 退出：游戏页按 `Esc` / `q` 打开确认对话框，而**不是**直接退出。
 #[test]
 fn quit_keys_open_a_confirmation_dialog() {

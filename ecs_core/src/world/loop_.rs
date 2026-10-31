@@ -67,6 +67,13 @@ pub fn apply_player_command(world: &mut World, command: PlayerCommand) -> bool {
         return false;
     }
 
+    // 下楼不是行动：没有 AV、不产生 action 实体，直接换层。
+    // 拦在挂载之前还有一个好处——`descend` 的"玩家不在行动中"前置条件与这里的
+    // `player_is_busy` 判定是同一件事，不会出现两条口径。
+    if command == PlayerCommand::Descend {
+        return crate::world::floor::descend(world);
+    }
+
     log::debug!("玩家命令: {command:?}");
     // 先单独挂载玩家行动（生成 + 仲裁，不含推进）：这样「命令被接受」的判定
     // 与「本轮是否已经执行完」不会混在一起——本次迁移踩过这个坑。

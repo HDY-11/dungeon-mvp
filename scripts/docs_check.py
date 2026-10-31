@@ -151,13 +151,18 @@ def main() -> int:
             )
 
     # ---- 「谁写 Position」：结构保证而不是约定（ISSUES ECS45） ----
-    # 移动写过两次都修不净，根因是四条路径各自写 Position。现在落地只有一个系统
-    # （`action/settle.rs`，`ActionPhase::Execute`）；生成期 spawn 在 `world/init.rs`。
+    # 移动写过两次都修不净，根因是四条路径各自写 Position。现在分成两类写入者：
+    #
+    # - **运行期**：只有 `action/settle.rs`（`ActionPhase::Execute` 的落地器）；
+    # - **构造期**：`world/init.rs`（出生点）与 `world/floor.rs`（换层时把玩家搬到新出生点，
+    #   见 DsnE17）。这两处不参与移动仲裁——它们决定"玩家出现在哪一格"，不是"玩家走到哪"。
+    #
     # 白名单窄才有意义：所以落地系统单独一个文件，不和大堆生成/仲裁代码混在一起。
     position_write = re.compile(r"\bposition\.x\s*=|\bposition\.y\s*=|insert\(Position::new")
     allowed = {
         "ecs_core/src/action/settle.rs",
         "ecs_core/src/world/init.rs",
+        "ecs_core/src/world/floor.rs",
     }
     for p in sorted((ROOT / "ecs_core" / "src").rglob("*.rs")):
         rel = p.relative_to(ROOT).as_posix()
