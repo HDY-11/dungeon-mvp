@@ -22,7 +22,7 @@ use ecs_core::entity_cls::{Monster, Player};
 use ecs_core::map::Map;
 use ecs_core::world_loop::{apply_player_command, new_game};
 use ecs_core::{
-    ActionOf, ActiveAction, CellEffectAt, CellMoveCost, GroundItem, GroundItemAt, MonsterKindId,
+    ActionOf, ActiveAction, CellEffectAt, CellMoveCost, GroundItemAt, Item, MonsterKindId,
     Poison, PlayerCommand, TurnManager,
 };
 
@@ -93,7 +93,7 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         let mut q = world.query::<&CellEffectAt>();
         query_count(&mut q, &world)
     };
-    let items_start = count::<GroundItem>(&mut world);
+    let items_start = count::<Item>(&mut world);
     // 上一回合的地面物品数：拾取 = 这个数变少（掉落会让它变多，所以只能比相邻两回合）。
     let mut items_prev = items_start;
 
@@ -241,7 +241,7 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
 
         // 物品系统覆盖：地面物品变少说明有拾取；背包/装备槽的最多值说明路由真的在跑。
         {
-            let items_now = count::<GroundItem>(&mut world);
+            let items_now = count::<Item>(&mut world);
             if report.first_pickup_turn.is_none() && items_now < items_prev {
                 report.first_pickup_turn = Some(turn);
             }

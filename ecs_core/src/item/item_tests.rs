@@ -35,7 +35,11 @@ fn open_world() -> (World, Entity) {
 /// 在某一格放一件东西。
 fn place(world: &mut World, pos: (usize, usize), id: ItemId, count: u32) -> Entity {
     world
-        .spawn((GroundItemAt::new(pos.0, pos.1), GroundItem::of(id, count)))
+        .spawn((
+            Item::new(id),
+            Amount::new(count),
+            GroundItemAt::new(pos.0, pos.1),
+        ))
         .id()
 }
 
@@ -172,8 +176,8 @@ fn using_one_of_a_pile_leaves_the_rest_on_the_ground() {
     pickup(&mut world);
 
     let remaining = world
-        .get::<GroundItem>(pile)
-        .map(|ground| ground.stack.count)
+        .get::<Amount>(pile)
+        .map(|amount| amount.0)
         .expect("剩下的蘑菇必须还在地上");
     assert_eq!(remaining, 2, "吃一个、剩两个");
 }
@@ -355,10 +359,10 @@ fn a_dead_monster_drops_loot_on_its_cell() {
 
     assert!(world.get_entity(rat).is_err(), "死者必须被回收");
     let drops: Vec<((usize, usize), ItemId, u32)> = {
-        let mut query = world.query::<(&GroundItemAt, &GroundItem)>();
+        let mut query = world.query::<(&GroundItemAt, &Item, &Amount)>();
         query
             .iter(&world)
-            .map(|(at, item)| (at.to_tuple(), item.stack.id, item.stack.count))
+            .map(|(at, item, amount)| (at.to_tuple(), item.id, amount.0))
             .collect()
     };
     assert!(!drops.is_empty(), "老鼠必掉血肉");
@@ -377,7 +381,7 @@ fn the_players_death_does_not_drop_loot() {
 
     let _ = world.run_system_once(crate::system::death::check_death_system);
 
-    let mut query = world.query::<&GroundItem>();
+    let mut query = world.query_filtered::<&Item, With<GroundItemAt>>();
     assert_eq!(query.iter(&world).count(), 0, "玩家死亡不该掉东西");
     assert!(
         world.resource::<crate::resources::TurnManager>().game_over,

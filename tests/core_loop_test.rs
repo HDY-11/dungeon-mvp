@@ -598,7 +598,8 @@ fn picking_up_the_boots_cancels_the_mud_penalty() {
     let player_pos = player_pos(&world);
     world.spawn((
         ecs_core::GroundItemAt::new(player_pos.0, player_pos.1),
-        ecs_core::GroundItem::of(ecs_core::ItemId(40), 1), // 踏水靴
+        ecs_core::Item::new(ecs_core::ItemId(40)), // 踏水靴
+        ecs_core::Amount::new(1),
     ));
     ecs_core::system::run_settle_systems(&mut world);
 

@@ -15,7 +15,7 @@
 use crate::components::*;
 use crate::entity_cls::Player;
 use crate::events::DeathEvent;
-use crate::item::{GroundItem, GroundItemAt, roll_loot};
+use crate::item::{roll_loot, spawn_ground_item};
 use crate::monster::MonsterKindId;
 use crate::resources::{EventLog, EventMessage, GameRng, TurnManager};
 use bevy_ecs::prelude::*;
@@ -71,10 +71,7 @@ pub fn check_death_system(
         if let (Some(kind), Some(position)) = (kind, position) {
             let table = crate::monster::monster_template(*kind).loot;
             for (item, count) in roll_loot(table, &mut rng) {
-                commands.spawn((
-                    GroundItemAt::new(position.x, position.y),
-                    GroundItem::of(item, count),
-                ));
+                spawn_ground_item(&mut commands, item, count, (position.x, position.y));
             }
         }
 

@@ -142,7 +142,7 @@ fn despawn_floor_contents(world: &mut World) {
         doomed.extend(query.iter(world));
     }
     {
-        let mut query = world.query_filtered::<Entity, With<crate::item::GroundItem>>();
+        let mut query = world.query_filtered::<Entity, With<crate::item::GroundItemAt>>();
         doomed.extend(query.iter(world));
     }
     {

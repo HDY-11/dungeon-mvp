@@ -354,15 +354,16 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
     // 地面物品：物品用 `GroundItemAt` 而不是 `Position`（否则会挡住格子），
     // 所以它们不在上面的 `Position` 查询里，得单独扫一遍。
     //
-    // 名字与外观都从**注册表**读（`ItemStack::def()`）：物品编号是权威，
+    // 名字与外观都从**注册表**读（`Item::def()`）：物品编号是权威，
     // 这里不维护第二份"哪件物品长什么样"。
     {
-        let mut query = world.query::<(Entity, &ecs_core::GroundItemAt, &ecs_core::GroundItem)>();
-        let items: Vec<(Entity, (usize, usize), ecs_core::ItemStack)> = query
+        let mut query =
+            world.query::<(Entity, &ecs_core::GroundItemAt, &ecs_core::Item, &ecs_core::Amount)>();
+        let items: Vec<(Entity, (usize, usize), ecs_core::ItemId, u32)> = query
             .iter(world)
-            .map(|(entity, at, item)| (entity, at.to_tuple(), item.stack))
+            .map(|(entity, at, item, amount)| (entity, at.to_tuple(), item.id, amount.0))
             .collect();
-        for (entity, (x, y), stack) in items {
+        for (entity, (x, y), id, count) in items {
             if x >= width || y >= height {
                 continue;
             }
@@ -371,9 +372,9 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
                 EntityView::new(
                     EntityId::from_bits(entity.to_bits()),
                     (x as i32, y as i32),
-                    crate::catalog::map_item(stack.id),
+                    crate::catalog::map_item(id),
                 )
-                .with_name(stack.label())
+                .with_name(item_label(id, count))
                 .with_layer(VisualLayer::Item)
                 .with_visibility(discoverable, false),
             );
@@ -619,3 +620,16 @@ fn map_log_level(level: ecs_core::EventLevel) -> LogLevel {
 
 #[cfg(test)]
 mod tests;
+
+/// 地面物品的显示名：`锈铁剑` / `生物血肉 ×3`。
+///
+/// 从注册表读名字（物品编号是权威），数量来自 `Amount`——**不在渲染层拼业务规则**，
+/// 只是把两段数据念出来。
+fn item_label(id: ecs_core::ItemId, count: u32) -> String {
+    let name = id.def().name;
+    if count > 1 {
+        format!("{name} ×{count}")
+    } else {
+        name.to_string()
+    }
+}

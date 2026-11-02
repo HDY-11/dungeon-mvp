@@ -7,7 +7,7 @@
 //!    "新的一层"里看见上一层的怪物——或者更糟：站在上一层的楼梯上。
 
 use super::*;
-use crate::item::{GroundItem, GroundItemAt, Inventory, ItemId};
+use crate::item::{GroundItemAt, Inventory, ItemId};
 use crate::monster::MonsterKindId;
 use crate::resources::OccupancyMap;
 use crate::test_util::player_entity;
@@ -30,7 +30,7 @@ fn monster_count(world: &mut World) -> usize {
 }
 
 fn item_count(world: &mut World) -> usize {
-    let mut query = world.query_filtered::<Entity, With<GroundItem>>();
+    let mut query = world.query_filtered::<Entity, With<GroundItemAt>>();
     query.iter(world).count()
 }
 

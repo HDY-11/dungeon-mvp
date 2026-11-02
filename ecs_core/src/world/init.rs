@@ -534,10 +534,7 @@ pub fn spawn_ground_items_system(
             continue;
         };
         taken.push((x, y));
-        commands.spawn((
-            crate::item::GroundItemAt::new(x, y),
-            crate::item::GroundItem::of(id, count),
-        ));
+        crate::item::spawn_ground_item(&mut commands, id, count, (x, y));
         placed += 1;
         log::info!("放置地面物品: {} @ ({x},{y})", id.def().name);
     }
