@@ -31,43 +31,11 @@
 //!
 //! 第 2 步是可选的（很多物品只由模板/配方产出）。**不需要**改任何系统。
 
-use crate::item::container::ItemTag;
+use crate::item::container::{ContainerDef, ItemTag, TRAVELER_PACK};
+
+/// 旅者行囊的编号（初始化时给玩家挂一件，DsnE18）。
+pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 use crate::rules::{Modifier, Stat, EffectSource};
-
-/// 装备槽位（GAME.md Gm4「装备槽位」）。
-///
-/// 顺序即**冲突规则**：一个槽位只能有一件装备。四个槽位是设计（内容层面），
-/// 加第五个槽位要同时回答"它和已有的怎么互斥"。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EquipSlot {
-    /// 主手：武器。攻击力的主要来源，也决定攻击耗时。
-    MainHand,
-    /// 副手：盾牌/投掷物。
-    OffHand,
-    /// 防具：盔甲，提供防御。
-    Armor,
-    /// 戒指：属性加成。
-    Ring,
-}
-
-impl EquipSlot {
-    /// 全部槽位（UI 与测试按这个顺序枚举，别用 `match` 里手写的顺序）。
-    pub const ALL: [EquipSlot; 4] = [
-        EquipSlot::MainHand,
-        EquipSlot::OffHand,
-        EquipSlot::Armor,
-        EquipSlot::Ring,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            EquipSlot::MainHand => "主手",
-            EquipSlot::OffHand => "副手",
-            EquipSlot::Armor => "防具",
-            EquipSlot::Ring => "戒指",
-        }
-    }
-}
 
 /// 消耗品的效果（GAME.md Gm7「消耗品」）。
 ///
@@ -98,9 +66,8 @@ impl ConsumeEffect {
 /// 在规则层看起来完全一样。
 #[derive(Debug, Clone, Copy)]
 pub enum ItemKind {
-    /// 可装备：槽位 + 它带来的修正 + 它无视的来源桶（踏水靴用得上后者）。
+    /// 可装备：**部位由 `tags` 决定**（DsnE18），这里只写它带来的修正与无视的来源桶。
     Equipment {
-        slot: EquipSlot,
         modifiers: &'static [Modifier],
         ignores: &'static [EffectSource],
     },
@@ -108,6 +75,11 @@ pub enum ItemKind {
     Consumable(ConsumeEffect),
     /// 材料：只是合成原料，没有直接效果。
     Material,
+    /// 容器类：这件物品**自己是一个容器**（行囊、背包…）。
+    ///
+    /// 生成实体时除了 `Item + Amount` 还会挂上 [`Container`](crate::item::Container)；
+    /// 布局来自这里（静态表），所以"行囊有几格"是内容，不是代码。
+    Pack(&'static ContainerDef),
 }
 
 /// 武器攻速（毫秒）：`AV = 武器 speed ÷ 攻击速度`（GAME.md Gm7「武器攻速」）。
@@ -145,10 +117,15 @@ impl ItemDef {
         self.max_stack > 1
     }
 
-    /// 装备槽位；非装备为 `None`。
-    pub const fn equip_slot(&self) -> Option<EquipSlot> {
+    /// 是不是可装备物品（"能进哪个部位"看 [`ItemDef::tags`] 与 `BODY` 的槽位）。
+    pub const fn is_equipment(&self) -> bool {
+        matches!(self.kind, ItemKind::Equipment { .. })
+    }
+
+    /// 这件物品自带容器布局（行囊类）；否则 `None`。
+    pub const fn container_def(&self) -> Option<&'static ContainerDef> {
         match self.kind {
-            ItemKind::Equipment { slot, .. } => Some(slot),
+            ItemKind::Pack(def) => Some(def),
             _ => None,
         }
     }
@@ -221,6 +198,9 @@ const SHIELD_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::
 const ARMOR_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::Equipment, 4.0)];
 /// 攻击戒指：攻击 +2。
 const RING_MODS: &[Modifier] = &[Modifier::delta(Stat::Attack, EffectSource::Equipment, 2.0)];
+/// 皮帽：防御 +1（头部装备，取值属内容）。
+const HAT_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::Equipment, 1.0)];
+
 /// 踏水靴：移动速度 +0，但**无视地形**那一桶（C4/C5 的内容，泥潭与浅水的代价对它无效）。
 const BOOTS_MODS: &[Modifier] = &[];
 
@@ -237,7 +217,6 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "一把生锈的铁剑。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::MainHand,
             modifiers: SWORD_MODS,
             ignores: &[],
         },
@@ -250,7 +229,6 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "简陋的木盾。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::OffHand,
             modifiers: SHIELD_MODS,
             ignores: &[],
         },
@@ -263,7 +241,6 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "轻便皮甲。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::Armor,
             modifiers: ARMOR_MODS,
             ignores: &[],
         },
@@ -276,11 +253,22 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "攻击之戒。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::Ring,
             modifiers: RING_MODS,
             ignores: &[],
         },
         tags: &[ItemTag::Ring],
+        weapon_speed_ms: None,
+    },
+    ItemDef {
+        id: ItemId(4),
+        name: "皮帽",
+        desc: "缝得粗糙的皮帽。聊胜于无。",
+        max_stack: 1,
+        kind: ItemKind::Equipment {
+            modifiers: HAT_MODS,
+            ignores: &[],
+        },
+        tags: &[ItemTag::Head],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -343,7 +331,6 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "沉重的石制战锤，挥舞缓慢但势大力沉。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::MainHand,
             modifiers: HAMMER_MODS,
             ignores: &[],
         },
@@ -356,7 +343,6 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "轻巧的短刃，出手极快但伤害有限。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::MainHand,
             modifiers: DAGGER_MODS,
             ignores: &[],
         },
@@ -441,11 +427,19 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "鞋底刻着水纹的旧靴子。走泥潭与浅水如履平地。",
         max_stack: 1,
         kind: ItemKind::Equipment {
-            slot: EquipSlot::Armor,
             modifiers: BOOTS_MODS,
             ignores: &[EffectSource::Terrain],
         },
         tags: &[ItemTag::Feet],
+        weapon_speed_ms: None,
+    },
+    ItemDef {
+        id: ItemId(41),
+        name: "旅者行囊",
+        desc: "用了很多年的粗布行囊，能塞下不少东西。",
+        max_stack: 1,
+        kind: ItemKind::Pack(&TRAVELER_PACK),
+        tags: &[ItemTag::Pack],
         weapon_speed_ms: None,
     },
 ];

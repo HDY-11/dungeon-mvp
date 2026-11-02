@@ -17,6 +17,7 @@ fn every_item_row_matches_game_doc() {
         (1, "木盾"),
         (2, "皮甲"),
         (3, "攻击戒指"),
+        (4, "皮帽"),
         (10, "生物血肉"),
         (11, "破布"),
         (12, "坚硬木棍"),
@@ -35,6 +36,7 @@ fn every_item_row_matches_game_doc() {
         (32, "海藻"),
         // 不在 GAME.md 号段里的内容轮产物：踏水靴（C4/C5）。
         (40, "踏水靴"),
+        (41, "旅者行囊"),
     ];
 
     assert_eq!(ITEMS.len(), doc_ids.len(), "表里有未登记的行（或漏了行）");
@@ -65,18 +67,24 @@ fn every_item_id_resolves() {
     assert!(!ItemId(9999).exists());
 }
 
-/// 装备的堆叠恒为 1、非装备恒 > 1：这条不是洁癖，`Inventory::try_add` 依赖它
-/// （`max_stack == 1` 时一格一件，装备因此不会被"并进别的堆"）。
+/// 单件物品（堆叠上限 1）只能是**装备**或**容器**；其余物品必须可堆叠。
+///
+/// 容器一个槽位放一个实体，装备与行囊因此不会被"并进别的堆"；材料/消耗品则必须能堆，
+/// 否则背包会被一串 ×1 塞满（Gm7 的 `max_stack` 说的就是这件事）。
 #[test]
-fn equipment_never_stacks_and_other_items_do() {
+fn single_items_are_equipment_or_containers() {
     for def in ITEMS {
-        if def.equip_slot().is_some() {
-            assert_eq!(def.max_stack, 1, "{} 是装备，堆叠上限必须为 1", def.name);
-            assert!(!def.is_stackable());
-        } else {
+        if def.max_stack == 1 {
             assert!(
-                def.is_stackable(),
-                "{} 不是装备，堆叠上限应当 > 1（否则它永远一格一件）",
+                def.is_equipment() || def.container_def().is_some(),
+                "{} 是单件物品，但既不是装备也不是容器",
+                def.name
+            );
+        } else {
+            assert!(!def.is_equipment(), "{} 是装备，必须一件一格", def.name);
+            assert!(
+                def.container_def().is_none(),
+                "{} 是容器，必须一件一格",
                 def.name
             );
         }
@@ -87,7 +95,7 @@ fn equipment_never_stacks_and_other_items_do() {
 #[test]
 fn only_main_hand_weapons_carry_a_swing_speed() {
     for def in ITEMS {
-        let is_weapon = def.equip_slot() == Some(EquipSlot::MainHand);
+        let is_weapon = def.tags.contains(&crate::item::ItemTag::Weapon);
         assert_eq!(
             def.weapon_speed_ms.is_some(),
             is_weapon,
@@ -101,16 +109,19 @@ fn only_main_hand_weapons_carry_a_swing_speed() {
     assert_eq!(ItemId(23).def().weapon_speed_ms, Some(450.0), "石锤 450ms");
 }
 
-/// 四条装备槽位**都至少有一件**能穿的装备：否则玩家会遇到"这个槽位永远是空的"。
+/// 身体每个部位**都至少有一件**能穿的装备：否则玩家会遇到"这个部位永远是空的"。
+///
+/// 这条与 `every_equippable_item_fits_exactly_one_body_slot`（正向）互补：
+/// 一个防"物品穿不上"，一个防"部位没内容"。
 #[test]
-fn every_equipment_slot_has_at_least_one_item() {
-    for slot in EquipSlot::ALL {
+fn every_body_slot_has_something_that_fits() {
+    use crate::item::container::BODY;
+
+    for slot in BODY.slots {
         assert!(
-            ITEMS
-                .iter()
-                .any(|def| def.equip_slot() == Some(slot)),
-            "{:?} 没有任何可装备物品",
-            slot
+            ITEMS.iter().any(|def| slot.accept.accepts(def.tags)),
+            "部位「{}」没有任何物品穿得进去",
+            slot.name
         );
     }
 }
@@ -122,22 +133,27 @@ fn every_equipment_slot_has_at_least_one_item() {
 #[test]
 fn equipment_modifiers_target_the_right_stat() {
     for def in ITEMS {
-        let Some(slot) = def.equip_slot() else {
+        if !def.is_equipment() {
             continue;
-        };
+        }
+        // 部位决定该加什么：手/戒指加攻击，其余部位加防御（踏水靴只无视、不加数值）。
+        let offensive = def
+            .tags
+            .iter()
+            .any(|tag| matches!(tag, crate::item::ItemTag::Weapon | crate::item::ItemTag::Ring));
         for modifier in def.modifiers() {
-            let expected = match slot {
-                EquipSlot::MainHand | EquipSlot::Ring => crate::rules::Stat::Attack,
-                EquipSlot::OffHand | EquipSlot::Armor => crate::rules::Stat::Defense,
+            let expected = if offensive {
+                crate::rules::Stat::Attack
+            } else {
+                crate::rules::Stat::Defense
             };
-            // 踏水靴是唯一例外：它不加数值，只无视地形那一桶。
             if !def.ignores().is_empty() {
                 continue;
             }
             assert_eq!(
                 modifier.stat, expected,
-                "{}（{:?}）的修正作用在 {:?}，与槽位不符",
-                def.name, slot, modifier.stat
+                "{}（tags={:?}）的修正作用在 {:?}，与部位不符",
+                def.name, def.tags, modifier.stat
             );
             assert_eq!(
                 modifier.source,
@@ -183,7 +199,8 @@ fn consumable_values_match_the_design_doc() {
 #[test]
 fn trail_boots_only_ignore_the_terrain_bucket() {
     let boots = ItemId(40).def();
-    assert_eq!(boots.equip_slot(), Some(EquipSlot::Armor));
+    assert!(boots.is_equipment());
+    assert_eq!(boots.tags, &[crate::item::ItemTag::Feet]);
     assert!(boots.modifiers().is_empty(), "踏水靴不该加任何数值");
     assert_eq!(
         boots.ignores(),
@@ -216,7 +233,7 @@ fn every_equippable_item_fits_exactly_one_body_slot() {
             .filter(|slot| slot.accept.accepts(def.tags))
             .map(|slot| slot.name)
             .collect();
-        if def.equip_slot().is_some() {
+        if !def.tags.is_empty() {
             assert_eq!(
                 fits.len(),
                 1,
@@ -227,7 +244,7 @@ fn every_equippable_item_fits_exactly_one_body_slot() {
         } else {
             assert!(
                 fits.is_empty(),
-                "{} 不是装备，却能被部位 {fits:?} 接受",
+                "{} 没有可装位标签，却能被部位 {fits:?} 接受",
                 def.name
             );
         }

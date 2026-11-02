@@ -139,13 +139,25 @@ pub fn spawn_player_system(mut commands: Commands, map: Res<Map>, mut spawn: Res
     spawn.0 = pos;
     log::info!("玩家出生: {pos:?}");
 
+    // 身体 = 容器（DsnE18）：部位槽位里放装备，其中「背包」槽位由**一件物品**（旅者行囊）占着。
+    // 行囊自己带一个 `Container`（12 格无过滤），于是"背包也是容器"不是特例。
+    let mut body = crate::item::Container::new(&crate::item::BODY);
+    let pack = crate::item::spawn_item(&mut commands, crate::item::TRAVELER_PACK_ITEM, 1);
+    if let Err(error) = body.insert(
+        crate::item::pack_slot_index(),
+        pack,
+        &[crate::item::ItemTag::Pack],
+    ) {
+        // 布局表与物品标签不一致是**编码错误**：出生时就要炸出来，而不是玩到一半发现没背包。
+        panic!("身体没有能装背包的槽位：{error:?}");
+    }
+
     commands
         .spawn(player_base_bundle(pos))
         .insert(Viewshed::new(10))
         .insert(AttackName("斩击".into()))
-        // 背包：物品系统的落地容器（12 个元素的上限见 `player_base_bundle` 的注释，
-        // 所以背包与能力标记都走第二次 `insert`）。
-        .insert(crate::item::Inventory::new())
+        // 身体容器（含行囊）单独 `insert`：`player_base_bundle` 受 15 元组上限约束。
+        .insert(body)
         .insert(CanMove)
         .insert(CanWait)
         .insert(CanBasicAttack)

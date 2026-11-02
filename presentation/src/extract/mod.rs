@@ -553,26 +553,27 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
             )));
         }
     }
-    // 已装备的东西：玩家必须能看出"我现在带着什么"，否则捡到装备等于没发生
+    // 身上带着什么：玩家必须能看出"我现在穿着/背着什么"，否则捡到装备等于没发生
     // （实测：捡到踏水靴后 HUD 毫无变化，玩家无法判断自己是否变快了）。
     //
-    // 按槽位分组显示（Gm4 的四个槽位）：只列名字的话，"主手换了还是副手换了"看不出来。
-    if let Some(items) = world.get::<ecs_core::EquippedItems>(player) {
-        let mut names: Vec<(&'static str, String)> = items
-            .iter()
-            .filter_map(|item| world.get::<ecs_core::EquippedItem>(item))
-            .map(|item| (item.slot.name(), item.def().name.to_string()))
-            .collect();
-        // 稳定顺序：槽位顺序固定，不随关系列表的插入顺序漂。
-        names.sort_by_key(|(slot, _)| {
-            ecs_core::EquipSlot::ALL
+    // 读**身体容器**的槽位（DsnE18）：槽位名来自布局表，物品名来自注册表——
+    // 渲染层不维护"哪个部位穿了什么"的第二份真相。
+    if let Some(body) = world.get::<ecs_core::Container>(player) {
+        let mut worn: Vec<(usize, &'static str, String)> = Vec::new();
+        for (index, occupant) in body.iter() {
+            let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+                continue;
+            };
+            // 只报"穿在身上的"，行囊里的东西是背包页的事。
+            if !item.def().is_equipment() {
+                continue;
+            }
+            worn.push((index, body.def().slots[index].name, item.def().name.to_string()));
+        }
+        if !worn.is_empty() {
+            let joined = worn
                 .iter()
-                .position(|candidate| candidate.name() == *slot)
-        });
-        if !names.is_empty() {
-            let joined = names
-                .iter()
-                .map(|(slot, name)| format!("{slot}:{name}"))
+                .map(|(_, slot, name)| format!("{slot}:{name}"))
                 .collect::<Vec<_>>()
                 .join("、");
             lines.push(render_api::UiTextLine::plain(format!("装备：{joined}")));

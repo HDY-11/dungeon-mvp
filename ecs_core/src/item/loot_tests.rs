@@ -170,7 +170,7 @@ fn at_least_one_species_drops_equipment() {
         monster_template(*kind)
             .loot
             .iter()
-            .any(|entry| entry.item.def().equip_slot().is_some())
+            .any(|entry| entry.item.def().is_equipment())
     });
     assert!(drops_equipment, "没有任何物种掉装备——装备只能在地上捡");
 }

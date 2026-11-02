@@ -604,7 +604,9 @@ fn picking_up_the_boots_cancels_the_mud_penalty() {
     ecs_core::system::run_settle_systems(&mut world);
 
     assert!(
-        world.get::<ecs_core::EquippedItems>(player).is_some(),
+        world
+            .get::<ecs_core::Container>(player)
+            .is_some_and(|body| body.used() > 1),
         "踩上去之后必须真的装备了"
     );
 

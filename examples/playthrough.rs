@@ -241,19 +241,32 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
 
         // 物品系统覆盖：地面物品变少说明有拾取；背包/装备槽的最多值说明路由真的在跑。
         {
-            let items_now = count::<Item>(&mut world);
-            if report.first_pickup_turn.is_none() && items_now < items_prev {
+            let items_now = count_ground_items(&mut world);
+            // 第 0 回合的基线还没有可比对象（背包/身体在初始化里就装好了），从第 1 回合开始比。
+            if turn > 0 && report.first_pickup_turn.is_none() && items_now < items_prev {
                 report.first_pickup_turn = Some(turn);
             }
             items_prev = items_now;
+            // 行囊占用：身体「背包」槽里那件容器用了几格。
             let bag = world
-                .get::<ecs_core::Inventory>(player)
-                .map(ecs_core::Inventory::used)
+                .get::<ecs_core::Container>(player)
+                .and_then(|body| body.slot(ecs_core::item::pack_slot_index()))
+                .and_then(|pack| world.get::<ecs_core::Container>(pack))
+                .map(ecs_core::Container::used)
                 .unwrap_or(0);
             report.bag_peak = report.bag_peak.max(bag);
+            // 穿在身上的件数：身体槽位里**装备类**物品的个数。
             let slots = world
-                .get::<ecs_core::EquippedItems>(player)
-                .map(ecs_core::EquippedItems::len)
+                .get::<ecs_core::Container>(player)
+                .map(|body| {
+                    body.iter()
+                        .filter(|(_, occupant)| {
+                            world
+                                .get::<ecs_core::Item>(*occupant)
+                                .is_some_and(|item| item.def().is_equipment())
+                        })
+                        .count()
+                })
                 .unwrap_or(0);
             report.equipped_peak = report.equipped_peak.max(slots);
         }
@@ -288,11 +301,11 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         }
     );
     println!(
-        "覆盖：到达第 {} 层（下楼 {} 次）/ 泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 首次拾取 {:?} / 背包峰值 {} / 装备槽峰值 {}/4 / 日志行 {}",
+        "覆盖：到达第 {} 层（下楼 {} 次）/ 泥潭 {} 回合 / 浅水 {} 回合 / 中毒 {} 回合（{} 次 tick）/ 首次拾取 {:?} / 背包峰值 {} / 装备槽峰值 {}/{} / 日志行 {}",
         world.resource::<ecs_core::FloorNumber>().0,
         report.descends,
         report.mud_turns, report.water_turns, report.poison_turns, report.poison_ticks,
-        report.first_pickup_turn, report.bag_peak, report.equipped_peak, report.logged_lines,
+        report.first_pickup_turn, report.bag_peak, report.equipped_peak, ecs_core::item::BODY.len(), report.logged_lines,
     );
     let dist = kinds(&mut world);
     println!(
@@ -312,6 +325,11 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
 
 // ── 动作策略 ────────────────────────────────────────────
 
+/// 地上的物品实体数（有 `GroundItemAt` 的那些；容器里的也是 `Item`，不能混算）。
+fn count_ground_items(world: &mut World) -> usize {
+    let mut query = world.query_filtered::<Entity, With<ecs_core::GroundItemAt>>();
+    query.iter(world).count()
+}
 fn choose_command(
     world: &World,
     player: Entity,

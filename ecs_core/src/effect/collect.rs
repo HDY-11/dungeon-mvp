@@ -20,8 +20,8 @@
 use crate::effect::cell::{
     CellAttributes, CellEffects, CellMoveCost, cell_attributes, cell_speed_modifier,
 };
-use crate::effect::{EffectModifier, EquippedItems, IgnoresSource, OwnedEffects};
-use crate::item::EquippedItem;
+use crate::effect::{EffectModifier, IgnoresSource, OwnedEffects};
+use crate::item::{Container, Item, ItemTag};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::rules::{EffectSource, Modifier};
 use bevy_ecs::prelude::*;
@@ -60,8 +60,8 @@ pub struct EffectContext<'w, 's> {
     owned: Query<'w, 's, &'static OwnedEffects>,
     ignores: Query<'w, 's, &'static IgnoresSource>,
     cell_costs: Query<'w, 's, &'static CellMoveCost>,
-    equipped: Query<'w, 's, &'static EquippedItems>,
-    equipped_items: Query<'w, 's, &'static EquippedItem>,
+    equipped: Query<'w, 's, &'static Container>,
+    equipped_items: Query<'w, 's, &'static Item>,
     /// 效果实体身上的修正（将来的 buff：`(EffectOf(actor), Modifier)`）。
     ///
     /// 现在**没有生产者**（中毒只按 AV 掉血，不给修正），但读取口先就位：
@@ -115,16 +115,22 @@ impl EffectContext<'_, '_> {
         ignored
     }
 
-    /// actor 已装备物品的**定义**（顺着 `EquippedBy` → `EquippedItem` → 注册表）。
-    fn equipped_defs(&self, actor: Entity) -> impl Iterator<Item = &'static crate::item::ItemDef> {
-        let entities: Vec<Entity> = self
-            .equipped
-            .get(actor)
-            .map(|list| list.iter().collect())
-            .unwrap_or_default();
-        entities
-            .into_iter()
-            .filter_map(move |entity| self.equipped_items.get(entity).ok().map(|item| item.def()))
+    /// actor **身体槽位**里那些物品的定义（DsnE18：装备就是身体容器里的物品）。
+    ///
+    /// 走"身体容器 → 槽位 → 物品实体 → 注册表"这条链，不读任何副本：
+    /// 于是"卸下装备"只是把物品移出槽位，加成自动消失，不需要清理派生状态。
+    fn equipped_defs(&self, actor: Entity) -> Vec<&'static crate::item::ItemDef> {
+        let Ok(body) = self.equipped.get(actor) else {
+            return Vec::new();
+        };
+        body.iter()
+            .filter_map(|(_, occupant)| {
+                self.equipped_items
+                    .get(occupant)
+                    .ok()
+                    .map(|item| item.def())
+            })
+            .collect()
     }
 
     /// actor 自带的修正（装备 + 状态效果）。**不含脚下这一格**。
@@ -150,18 +156,10 @@ impl EffectContext<'_, '_> {
     /// GAME.md Gm7「武器攻速」：`AV = 武器 speed ÷ 攻击速度`。武器覆盖的是**基础耗时**，
     /// 不是速度——所以石锤与匕首的区别在于"每一击要多久"，而不是"速度倍率多少"。
     pub fn main_hand_weapon_speed(&self, actor: Entity) -> Option<f64> {
-        let entities: Vec<Entity> = self
-            .equipped
-            .get(actor)
-            .map(|list| list.iter().collect())
-            .unwrap_or_default();
-        entities.into_iter().find_map(|entity| {
-            let item = self.equipped_items.get(entity).ok()?;
-            if item.slot != crate::item::EquipSlot::MainHand {
-                return None;
-            }
-            item.def().weapon_speed_ms
-        })
+        self.equipped_defs(actor)
+            .into_iter()
+            .find(|def| def.tags.contains(&ItemTag::Weapon))
+            .and_then(|def| def.weapon_speed_ms)
     }
 
     /// 收桶：脚下这一格的修正 + actor 自带的修正 + 忽略表。

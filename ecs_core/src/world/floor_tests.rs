@@ -7,7 +7,7 @@
 //!    "新的一层"里看见上一层的怪物——或者更糟：站在上一层的楼梯上。
 
 use super::*;
-use crate::item::{GroundItemAt, Inventory, ItemId};
+use crate::item::{GroundItemAt, ItemId};
 use crate::monster::MonsterKindId;
 use crate::resources::OccupancyMap;
 use crate::test_util::player_entity;
@@ -103,17 +103,44 @@ fn descending_keeps_the_player_and_its_belongings() {
     let mut world = new_game(2026);
     let player = player_entity(&world).expect("开局必须有玩家");
 
-    // 给玩家一点可识别的东西：等级 + 背包里的一堆材料 + 一件穿着的装备。
+    // 给玩家一点可识别的东西：等级 + 行囊里的一堆材料 + 身体主手槽里的剑。
     world.entity_mut(player).insert(Level(7));
-    world
-        .get_mut::<Inventory>(player)
-        .expect("玩家有背包")
-        .try_add(ItemId(10), 5);
-    let sword = world.spawn((
-        crate::effect::EquippedBy(player),
-        crate::item::EquippedItem::new(crate::item::EquipSlot::MainHand, ItemId(0)),
-    ));
-    let sword = sword.id();
+    // 行囊：身体「背包」槽里的那一件（先读出来，再动容器，避免同时借用 World）。
+    let pack_entity = crate::world::query::player_entity(&world)
+        .and_then(|_| world.get::<crate::item::Container>(player))
+        .and_then(|body| body.slot(crate::item::pack_slot_index()))
+        .expect("玩家身上必须有行囊");
+    let sword = world
+        .spawn((
+            crate::item::Item::new(ItemId(0)),
+            crate::item::Amount::new(1),
+        ))
+        .id();
+    {
+        let mut body = world
+            .get_mut::<crate::item::Container>(player)
+            .expect("玩家有身体");
+        let index = body
+            .free_slot_for(&[crate::item::ItemTag::Weapon])
+            .expect("主手槽应当是空的");
+        body.insert(index, sword, &[crate::item::ItemTag::Weapon])
+            .expect("主手空着");
+    }
+    let flesh = world
+        .spawn((
+            crate::item::Item::new(ItemId(10)),
+            crate::item::Amount::new(5),
+        ))
+        .id();
+    {
+        let mut pack_container = world
+            .get_mut::<crate::item::Container>(pack_entity)
+            .expect("行囊是容器");
+        let index = pack_container
+            .free_slot_for(&[])
+            .expect("行囊第一个格子空着");
+        pack_container.insert(index, flesh, &[]).expect("空格");
+    }
     let health_before = {
         let health = world.get::<Health>(player).unwrap();
         (health.current, health.max)
@@ -125,15 +152,16 @@ fn descending_keeps_the_player_and_its_belongings() {
     let player_after = player_entity(&world).expect("下楼后玩家必须还在");
     assert_eq!(player_after, player, "玩家实体本身必须不变（不是重建）");
     assert_eq!(world.get::<Level>(player).map(|l| l.0), Some(7), "等级跨层保留");
-    assert_eq!(
-        world.get::<Inventory>(player).map(|inv| inv.count_of(ItemId(10))),
-        Some(5),
-        "背包内容跨层保留"
-    );
     assert!(
-        world.get_entity(sword).is_ok(),
-        "装备实体必须存活（它是玩家的子实体，不属于本层内容）"
+        world
+            .get::<crate::item::Container>(pack_entity)
+            .is_some_and(|pack| pack.contains(flesh)),
+        "行囊里的材料必须跨层保留"
     );
+    let body = world
+        .get::<crate::item::Container>(player)
+        .expect("玩家有身体");
+    assert!(body.contains(sword), "身体主手槽里的装备必须跨层保留");
     let health_after = {
         let health = world.get::<Health>(player).unwrap();
         (health.current, health.max)

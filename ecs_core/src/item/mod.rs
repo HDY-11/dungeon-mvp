@@ -1,48 +1,48 @@
-//! 物品：**一件物品 = 一个实体**（DESIGN DsnE16 / DsnE18）。
+//! 物品：**一件物品 = 一个实体**；装备/背包装在**容器**里（DESIGN DsnE16 / DsnE18）。
 //!
-//! # 为什么是实体
-//!
-//! 物品会需要**自己的数据**（耐久、附魔…）。数据堆（`(id, count)`）撑不住这件事：一旦某一堆
-//! 要记"这把剑还剩 7 点耐久"，就得给堆结构加一个可选字段，而那份字段迟早长成半个物品系统。
-//! 实体化之后，实例数据就是**这个实体上的组件**——ECS 的自然答案。
+//! # 四件事、四种存法
 //!
 //! | 部件 | 存法 | 判据 |
 //! |---|---|---|
 //! | 物品定义 | 静态表 [`registry::ITEMS`] | 数据、无中央分派 |
 //! | 物品实例 | 实体 + [`Item`] + [`Amount`] + 0..n 个实例组件 | 需要身份与实例态 |
 //! | 所在位置 | 地上挂 [`GroundItemAt`]；**进容器时必须摘掉** | 位置是"在哪"，不是"是什么" |
-//! | 装备 | 实体 + `EquippedBy` 关系 | 求值侧按关系收加成（DsnE12/E42） |
+//! | 装备 / 背包 | 都是 [`Container`]：身体（玩家身上）+ 行囊（一件物品） | 一组带过滤的槽位 |
 //!
-//! # 过渡期：背包还是数据堆
+//! # 装备 = 身体槽位里的物品
 //!
-//! 玩家的背包暂时仍是 [`Inventory`]（`(id, count)` 堆）。这是**唯一**一处"物品有两种表示"的缝：
-//! 拾取时把实体转成数据堆，因为背包页与容器化还没接上（DsnE18 的第①片）。
-//! 已有的 [`Container`] 是那片落地的形状——届时背包改成容器、实体直接移进去，
-//! 这条缝随之消失（`item_tests` 里有标注）。
+//! 没有 `EquippedBy`、没有 `EquipSlot`：**部位由 `BODY` 的槽位给出**，物品带
+//! [`ItemTag`] 说明自己能进哪类部位，两边求交。于是"穿上"= 移进身体某个槽位，
+//! "卸下"= 从槽位移出；求值侧（`effect::collect`）遍历身体槽位读物品定义。
 //!
-//! 刻意**不**让这条缝扩大：世界侧（地面、尸体、箱子）一律是实体，只有"玩家背包"是数据。
+//! 行囊是**一件物品**（`ItemKind::Pack`），被塞在身体的「背包」槽里；它自己带一个
+//! `Container`。所以"背包也是容器"不是特例，而是同一条规则的另一个实例。
+//!
+//! # 容器里没有位置
+//!
+//! 物品被收进容器时**必须去掉 `GroundItemAt`**：还带着"我在 (x,y)"就是在说谎，
+//! 而渲染抽取、拾取、存档都会按那个谎言行动。
 //!
 //! # 堆叠
 //!
-//! [`Amount`] 是"这一堆有几个"，所以"一堆血肉 ×3"是**一个实体**而不是三个；
-//! 将来进容器时，一个槽位放一个实体、槽位容量约束数量上限。
+//! [`Amount`] 是"这一堆有几个"，所以"一堆血肉 ×3"是**一个实体**；容器一个槽位放一个实体，
+//! 槽位容量（`SlotDef::capacity`）约束数量上限。
 //!
 //! # 拾取口径（背包页落地前的临时规则）
 //!
 //! | 捡到什么 | 做什么 |
 //! |---|---|
-//! | 装备且对应部位空着 | 直接穿上（旧四槽位模型；DsnE18 第①片换成身体槽位） |
+//! | 装备且对应部位空着 | 进身体槽位（= 穿上） |
+//! | 装备但部位已占 | 进行囊 |
 //! | 消耗品且对应资源未满 | **立即使用 1 个**，剩下的留在原地 |
-//! | 其他 | 进背包（按 `max_stack` 堆叠） |
-//! | 背包放不下 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
+//! | 其他 | 进行囊（先并堆、再开新格） |
+//! | 放不下 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
 
 pub mod container;
-pub mod inventory;
 pub mod loot;
 pub mod registry;
 
 use crate::components::*;
-use crate::effect::EquippedBy;
 use crate::entity_cls::Player;
 use crate::resources::{EventLog, EventMessage};
 use bevy_ecs::prelude::*;
@@ -50,9 +50,10 @@ use bevy_ecs::prelude::*;
 pub use container::{
     BODY, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
-pub use inventory::{INVENTORY_SLOTS, Inventory, ItemStack};
 pub use loot::{LootEntry, roll_loot};
-pub use registry::{ConsumeEffect, EquipSlot, ITEMS, ItemDef, ItemId, ItemKind, item_by_name};
+pub use registry::{
+    ConsumeEffect, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM, item_by_name,
+};
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
 ///
@@ -96,30 +97,10 @@ impl Amount {
     }
 }
 
-/// 一件**装备中**的物品记录：哪个部位、哪一件（旧四槽位模型，`EquippedBy` 的子实体挂它）。
-///
-/// 只记 `(slot, id)`，数值一律回注册表取——于是"卸下装备"就是 `despawn` 这个实体，
-/// 加成自动消失，不需要再去清理"它授予过什么"。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EquippedItem {
-    pub slot: EquipSlot,
-    pub id: ItemId,
-}
-
-impl EquippedItem {
-    pub const fn new(slot: EquipSlot, id: ItemId) -> Self {
-        Self { slot, id }
-    }
-
-    /// 这件装备的定义。
-    pub fn def(self) -> &'static ItemDef {
-        self.id.def()
-    }
-}
 /// 物品所在的格子。
 ///
 /// **专用组件**（不用 `Position`）：地上的东西不该被"位置 = 占格 = 会动"那一套语义牵连。
-/// 收进容器时**必须移除**它——否则这个实体在说"我既在容器里，又在 (x,y)"。
+/// 收进容器时**必须移除**它。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundItemAt {
     pub x: usize,
@@ -136,32 +117,45 @@ impl GroundItemAt {
     }
 }
 
-/// 在地上放一堆物品，返回实体。
+/// 造一件物品实体（不含位置）：`Item + Amount`，行囊类物品还会带上自己的 `Container`。
 ///
-/// "物品出现在世界里"的**唯一入口**（生成期与死亡掉落都走它）：于是"地上物品一定带
-/// `Item + Amount + GroundItemAt`"是结构保证，而不是各处的自觉。
+/// "物品出现"的**唯一入口**（地上、容器里都走它）：于是"物品实体一定带 `Item + Amount`"
+/// 与"行囊一定带 `Container`"都是结构保证。
+pub fn spawn_item(commands: &mut Commands, id: ItemId, count: u32) -> Entity {
+    let mut entity = commands.spawn((Item::new(id), Amount::new(count)));
+    if let Some(def) = id.def().container_def() {
+        entity.insert(Container::new(def));
+    }
+    entity.id()
+}
+
+/// 在地上放一堆物品，返回实体。
 pub fn spawn_ground_item(
     commands: &mut Commands,
     id: ItemId,
     count: u32,
     at: (usize, usize),
 ) -> Entity {
+    let entity = spawn_item(commands, id, count);
     commands
-        .spawn((
-            Item::new(id),
-            Amount::new(count),
-            GroundItemAt::new(at.0, at.1),
-        ))
-        .id()
+        .entity(entity)
+        .insert(GroundItemAt::new(at.0, at.1));
+    entity
 }
 
-/// 拾取系统的玩家视图：位置 + 背包 + 两条会被消耗品改的资源。
-///
-/// 抽成别名既解决 clippy::type_complexity，也让"拾取会改哪些资源"一眼可见。
+/// 身体上「背包」那一个槽位的下标（由 `BODY` 的过滤表推出，不手写常数）。
+pub fn pack_slot_index() -> usize {
+    BODY.slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ItemTag::Pack]))
+        .expect("BODY 必须有能装背包的槽位")
+}
+
+/// 玩家的身体视图：位置 + 身体容器 + 两条会被消耗品改的资源。
 type PickupPlayer = (
     Entity,
     &'static Position,
-    &'static mut Inventory,
+    &'static mut Container,
     &'static mut Health,
     Option<&'static mut Magic>,
 );
@@ -170,11 +164,12 @@ type PickupPlayer = (
 pub fn pickup_system(
     mut commands: Commands,
     mut players: Query<PickupPlayer, With<Player>>,
-    equipped: Query<(Entity, &EquippedBy, &EquippedItem)>,
+    mut others: Query<&mut Container, Without<Player>>,
+    items: Query<(&Item, &Amount)>,
     ground: Query<(Entity, &GroundItemAt, &Item, &Amount)>,
     mut event_log: ResMut<EventLog>,
 ) {
-    let Ok((player, position, mut inventory, mut health, mut magic)) = players.single_mut() else {
+    let Ok((_, position, mut body, mut health, mut magic)) = players.single_mut() else {
         return;
     };
     let here = position.to_tuple();
@@ -186,16 +181,16 @@ pub fn pickup_system(
         let def = item.def();
         let mut left = amount.0;
 
-        // ① 装备：对应部位空着就直接穿（旧四槽位模型）。
-        if let Some(slot) = def.equip_slot()
-            && !slot_is_taken(&equipped, player, slot)
+        // ① 装备：身体上对应部位空着就穿上（部位由 `tags` 求交得到）。
+        if def.is_equipment()
+            && let Some(index) = body.free_slot_for(def.tags)
         {
-            commands.entity(entity).despawn();
-            commands.spawn((EquippedBy(player), EquippedItem::new(slot, def.id)));
+            let _ = body.insert(index, entity, def.tags);
+            commands.entity(entity).remove::<GroundItemAt>();
             event_log.push(EventMessage::item(format!(
                 "你装备了{}（{}）",
                 def.name,
-                slot.name()
+                BODY.slots[index].name
             )));
             continue;
         }
@@ -213,34 +208,61 @@ pub fn pickup_system(
             continue;
         }
 
-        // ③ 其余进背包（数据堆；容器化时这里换成"把实体移进容器"）。
-        let placed = if left > 0 {
-            let overflow = inventory.try_add(def.id, left);
-            left - overflow
-        } else {
-            0
+        // ③ 其余进**行囊**：先并堆、再开新格。
+        let Some(pack_entity) = body.slot(pack_slot_index()) else {
+            event_log.push(EventMessage::system("你没有可用的行囊，东西只能留在原地"));
+            break;
         };
-        left -= placed;
+        let Ok(mut pack) = others.get_mut(pack_entity) else {
+            event_log.push(EventMessage::system("你的行囊不见了，东西只能留在原地"));
+            break;
+        };
 
-        if left == 0 {
-            commands.entity(entity).despawn();
-            if placed > 0 {
-                event_log.push(EventMessage::item(format!(
-                    "你捡起了{} ×{placed}",
-                    def.name
-                )));
-            }
-        } else if placed == 0 {
+        // 并堆：找同类且有空间的槽位。
+        let merge_target = pack.iter().find_map(|(_, occupant)| {
+            let (occupant_item, occupant_amount) = items.get(occupant).ok()?;
+            (occupant_item.id == def.id && occupant_amount.room(def) > 0)
+                .then_some((occupant, occupant_amount.0, occupant_amount.room(def)))
+        });
+        if let Some((occupant, current, room)) = merge_target {
+            let merged = room.min(left);
+            commands.entity(occupant).insert(Amount::new(current + merged));
+            left -= merged;
+        }
+        // 开新格（一堆一个实体；超过 `max_stack` 的部分继续找下一格）。
+        let mut moved_original = false;
+        while left > 0 {
+            let Some(index) = pack.free_slot_for(def.tags) else {
+                break;
+            };
+            let put = def.max_stack.min(left);
+            let holder = if put == left {
+                moved_original = true;
+                entity
+            } else {
+                spawn_item(&mut commands, def.id, put)
+            };
+            let _ = pack.insert(index, holder, def.tags);
+            left -= put;
+        }
+
+        if moved_original {
+            commands.entity(entity).remove::<GroundItemAt>();
+            event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
+        } else if left == amount.0 {
             event_log.push(EventMessage::system(format!(
-                "背包满了，{}留在了地上",
+                "行囊满了，{}留在了地上",
                 def.name
             )));
-        } else {
+        } else if left > 0 {
             commands.entity(entity).insert(Amount::new(left));
             event_log.push(EventMessage::system(format!(
-                "背包放不下全部{}，剩下的留在地上",
+                "行囊放不下全部{}，剩下的留在地上",
                 def.name
             )));
+        } else {
+            commands.entity(entity).despawn();
+            event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
         }
     }
 }
@@ -282,17 +304,6 @@ fn consume_one(
             true
         }
     }
-}
-
-/// 这个槽位是否已被占用（按 `EquippedBy` 关系查；旧四槽位模型专用）。
-fn slot_is_taken(
-    equipped: &Query<(Entity, &EquippedBy, &EquippedItem)>,
-    owner: Entity,
-    slot: EquipSlot,
-) -> bool {
-    equipped
-        .iter()
-        .any(|(_, of, item)| of.owner() == owner && item.slot == slot)
 }
 
 #[cfg(test)]
