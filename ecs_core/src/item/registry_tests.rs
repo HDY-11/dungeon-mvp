@@ -199,3 +199,38 @@ fn items_can_be_looked_up_by_name() {
     assert_eq!(item_by_name("踏水靴").map(|def| def.id), Some(ItemId(40)));
     assert!(item_by_name("不存在的物品").is_none());
 }
+
+/// **标签 × 身体槽位**的交叉校验（DsnE18）：每件可装备物品都至少有一个部位收得下，
+/// 而且**恰好**一个部位——多一个就说明标签写宽了（例如戒指也被头盔位接受）。
+///
+/// 这是 `ItemDef.tags` 与 `container::BODY` 两份内容表的唯一联系点：任何一边写错，
+/// 表现都是"这件装备永远穿不上"或"能穿在两个部位"，且都不会报错。
+#[test]
+fn every_equippable_item_fits_exactly_one_body_slot() {
+    use crate::item::container::BODY;
+
+    for def in ITEMS {
+        let fits: Vec<&str> = BODY
+            .slots
+            .iter()
+            .filter(|slot| slot.accept.accepts(def.tags))
+            .map(|slot| slot.name)
+            .collect();
+        if def.equip_slot().is_some() {
+            assert_eq!(
+                fits.len(),
+                1,
+                "{} 应当恰好能穿进一个部位，实得 {fits:?}（tags={:?}）",
+                def.name,
+                def.tags
+            );
+        } else {
+            assert!(
+                fits.is_empty(),
+                "{} 不是装备，却能被部位 {fits:?} 接受",
+                def.name
+            );
+        }
+    }
+}
+

@@ -197,10 +197,6 @@ fn a_status_effect_entity_contributes_to_the_actor_bucket() {
         .id();
     world.run_schedule(crate::schedule::CoreSettleSchedule);
 
-    let position = world
-        .get::<Position>(player)
-        .expect("玩家必须有 Position")
-        .to_tuple();
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
     let actor_mods = system.get_mut(&mut world).collect_actor(player);
 

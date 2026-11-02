@@ -35,6 +35,7 @@
 //! | 其他（材料/已满的消耗品） | 进背包 |
 //! | 背包满 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
 
+pub mod container;
 pub mod inventory;
 pub mod loot;
 pub mod registry;
@@ -45,6 +46,7 @@ use crate::entity_cls::Player;
 use crate::resources::{EventLog, EventMessage};
 use bevy_ecs::prelude::*;
 
+pub use container::{BODY, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK};
 pub use inventory::{INVENTORY_SLOTS, Inventory, ItemStack};
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{ConsumeEffect, EquipSlot, ITEMS, ItemDef, ItemId, ItemKind, item_by_name};

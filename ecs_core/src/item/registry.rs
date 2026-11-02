@@ -31,6 +31,7 @@
 //!
 //! 第 2 步是可选的（很多物品只由模板/配方产出）。**不需要**改任何系统。
 
+use crate::item::container::ItemTag;
 use crate::rules::{Modifier, Stat, EffectSource};
 
 /// 装备槽位（GAME.md Gm4「装备槽位」）。
@@ -129,6 +130,11 @@ pub struct ItemDef {
     pub max_stack: u32,
     /// 种类与效果。
     pub kind: ItemKind,
+    /// **可装位标签**（DsnE18 的过滤词汇）：这件东西能进哪些部位的槽位。
+    ///
+    /// 空 = 任何有过滤的槽位都不收（材料、消耗品、模板）。身体各部位的 `SlotAccept::Only`
+    /// 与这里求交，所以"这件物品能不能装"由两边的数据决定，规则里没有 `match`。
+    pub tags: &'static [ItemTag],
     /// 作为主手武器时的攻击耗时（毫秒）；非武器为 `None`。
     pub weapon_speed_ms: Option<f64>,
 }
@@ -235,6 +241,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: SWORD_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Weapon],
         weapon_speed_ms: Some(300.0),
     },
     ItemDef {
@@ -247,6 +254,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: SHIELD_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Shield],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -259,6 +267,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: ARMOR_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Chest],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -271,6 +280,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: RING_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Ring],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -279,6 +289,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "怪物的血肉，散发出腥臭味。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -287,6 +298,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "破烂的布料，没什么用。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -295,6 +307,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "还算结实的木棍，可以当柴烧。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -303,6 +316,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "沾满血迹的尖牙，散发出危险的气息。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -311,6 +325,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "变异蝎子的坚硬外壳。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -319,6 +334,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "边缘锋利的石块，适合投掷。",
         max_stack: 20,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -331,6 +347,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: HAMMER_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Weapon],
         weapon_speed_ms: Some(450.0),
     },
     ItemDef {
@@ -343,6 +360,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: DAGGER_MODS,
             ignores: &[],
         },
+        tags: &[ItemTag::Weapon],
         weapon_speed_ms: Some(200.0),
     },
     ItemDef {
@@ -351,6 +369,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "繁茂洞穴的荧光蘑菇。食用回复少量生命。",
         max_stack: 20,
         kind: ItemKind::Consumable(ConsumeEffect::Heal(6.0)),
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -359,6 +378,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "潮湿的苔藓，散发着泥土的气息。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -367,6 +387,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "蘑菇傀儡体内取出的孢子囊。",
         max_stack: 9,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -375,6 +396,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "地海常见的硬壳。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -383,6 +405,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "洞穴蟹体内孕育的稀有珍珠。",
         max_stack: 9,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -391,6 +414,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "洞穴鱼的骨架，细长而尖锐。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -399,6 +423,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "深鳗的皮革，湿滑坚韧。",
         max_stack: 64,
         kind: ItemKind::Material,
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -407,6 +432,7 @@ pub const ITEMS: &[ItemDef] = &[
         desc: "地海的海藻。食用回复少量法力。",
         max_stack: 20,
         kind: ItemKind::Consumable(ConsumeEffect::RestoreMagic(4.0)),
+        tags: &[],
         weapon_speed_ms: None,
     },
     ItemDef {
@@ -419,6 +445,7 @@ pub const ITEMS: &[ItemDef] = &[
             modifiers: BOOTS_MODS,
             ignores: &[EffectSource::Terrain],
         },
+        tags: &[ItemTag::Feet],
         weapon_speed_ms: None,
     },
 ];
