@@ -222,3 +222,23 @@ fn visual_text_mentions_the_category() {
     assert!(text.contains("Stairs"), "实际: {text}");
     assert!(text.contains("楼梯"), "实际: {text}");
 }
+
+/// 背包页（R2 只读版）：`e` 打开、方向键移光标、`Esc` 关闭。
+#[test]
+fn the_inventory_page_opens_moves_and_closes() {
+    let mut pages = PageStack::new();
+    assert_eq!(pages.kind(), render_api::PageKind::Game);
+
+    assert!(pages.apply(UiIntent::OpenInventory));
+    assert_eq!(pages.kind(), render_api::PageKind::Inventory);
+    assert_eq!(pages.inventory_cursor(), 0);
+
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dy: 1 }));
+    assert_eq!(pages.inventory_cursor(), 1);
+    // 向上不会走到负数（夹取下界）。
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dy: -5 }));
+    assert_eq!(pages.inventory_cursor(), 0);
+
+    assert!(pages.apply(UiIntent::ClosePage));
+    assert_eq!(pages.kind(), render_api::PageKind::Game);
+}

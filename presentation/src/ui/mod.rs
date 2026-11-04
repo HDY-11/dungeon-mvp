@@ -41,6 +41,10 @@ pub enum UiIntent {
     OpenQuitDialog,
     /// 关闭当前覆盖页。
     ClosePage,
+    /// 打开背包页。
+    OpenInventory,
+    /// 背包页移动光标（`dy` 为 ±1，或跳 7 行）。
+    MoveInventoryCursor { dy: i32 },
     /// 打开 Look 页，光标落在给定世界坐标。
     OpenLook { x: usize, y: usize },
     /// 移动 Look 光标。
@@ -59,6 +63,8 @@ pub struct PageStack {
     look_cursor: (i32, i32),
     /// 当前 `Dialog` 页是否是退出确认（决定 `Enter` 的含义）。
     quit_pending: bool,
+    /// 背包页的光标（"身体 + 行囊"拼接列表上的行号）。
+    inventory_cursor: usize,
 }
 
 impl PageStack {
@@ -67,6 +73,7 @@ impl PageStack {
             kind: PageKind::Game,
             look_cursor: (0, 0),
             quit_pending: false,
+            inventory_cursor: 0,
         }
     }
 
@@ -87,6 +94,17 @@ impl PageStack {
     }
 
     /// 打开 Look 页，光标落在给定世界坐标。
+    /// 打开背包页（光标回到第一行）。
+    pub fn open_inventory(&mut self) {
+        self.kind = PageKind::Inventory;
+        self.inventory_cursor = 0;
+    }
+
+    /// 背包页光标位置（视图构造用它）。
+    pub const fn inventory_cursor(&self) -> usize {
+        self.inventory_cursor
+    }
+
     pub fn open_look(&mut self, x: usize, y: usize) {
         self.kind = PageKind::Look;
         self.look_cursor = (x as i32, y as i32);
@@ -138,6 +156,22 @@ impl PageStack {
                 // 而不是偷偷移动一个不夹取的光标。
                 let _ = (dx, dy);
                 false
+            }
+            UiIntent::OpenInventory => {
+                self.open_inventory();
+                true
+            }
+            UiIntent::MoveInventoryCursor { dy } => {
+                // 行数由视图给出（页栈不自己数内容）；`apply` 拿不到视图，所以
+                // 这里只挪光标、不夹取——夹取发生在 `inventory_view` 里
+                // （`cursor` 超界时落在最后一栏）。刻意与 `MoveLookCursor` 不同：
+                // 背包行数是"内容"，不是"世界尺寸"，没必要把世界传进来。
+                if !matches!(self.kind, PageKind::Inventory) {
+                    return false;
+                }
+                let next = (self.inventory_cursor as i32 + dy).max(0);
+                self.inventory_cursor = next as usize;
+                true
             }
             UiIntent::ClosePage => {
                 if self.is_game() {

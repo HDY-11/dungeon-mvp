@@ -140,8 +140,98 @@ pub fn extract_scene_frame(
             .get_resource::<TurnManager>()
             .is_some_and(|turns| turns.wants_quit),
     };
-    frame.ui = pages.view(config, &frame);
+    // 背包页要读世界（身体/行囊容器），所以在这里构造而不是在 `PageStack::view` 里：
+    // 页栈只持有光标，视图每帧从世界重建，规则与界面因此不可能分叉。
+    frame.ui = match pages.kind() {
+        render_api::PageKind::Inventory => render_api::UiView::Inventory(inventory_view(
+            &*world,
+            pages.inventory_cursor(),
+        )),
+        _ => pages.view(config, &frame),
+    };
     frame
+}
+
+/// 背包页的视图（DsnE18 第①片的只读版）：**左栏身体、右栏行囊**。
+///
+/// 数据来源只有两处：身体容器（七个部位）与行囊容器（12 格）。名字一律来自注册表，
+/// 于是"界面里写了什么"与"规则里是什么"不可能分叉。
+///
+/// `cursor` 是当前选中的行号（在"身体 + 行囊"的拼接列表上），渲染层只负责把它画出来。
+pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView {
+    use render_api::{InventoryPanel, InventoryPanelView, ListItemView, ListView};
+
+    let player = player_entity_of(world);
+    let mut equipment = ListView::new("身体");
+    let mut backpack = ListView::new("行囊");
+
+    if let Some(player) = player
+        && let Some(body) = world.get::<ecs_core::Container>(player)
+    {
+            for (index, occupant) in body.iter() {
+                let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+                    continue;
+                };
+                // 行囊本身不算"穿在身上"，它在下面的行囊栏里展开。
+                if item.def().container_def().is_some() {
+                    continue;
+                }
+                let slot = body.def().slots[index].name;
+                let mut entry = ListItemView::new(format!("{slot}：{}", item.def().name));
+                if let Some(amount) = world.get::<ecs_core::Amount>(occupant)
+                    && amount.0 > 1
+                {
+                    entry = entry.with_detail(format!("×{}", amount.0));
+                }
+                equipment.items.push(entry);
+            }
+            if let Some(pack) = body
+                .slot(ecs_core::item::pack_slot_index())
+                .and_then(|pack| world.get::<ecs_core::Container>(pack))
+            {
+                for (_, occupant) in pack.iter() {
+                    let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+                        continue;
+                    };
+                    let amount = world
+                        .get::<ecs_core::Amount>(occupant)
+                        .map(|amount| amount.0)
+                        .unwrap_or(1);
+                    let label = if amount > 1 {
+                        format!("{} ×{}", item.def().name, amount)
+                    } else {
+                        item.def().name.to_string()
+                    };
+                    backpack
+                        .items
+                        .push(ListItemView::new(label).with_detail(item.def().desc));
+                }
+                backpack.footer = format!("{}/{}", pack.used(), pack.len());
+            }
+    }
+    if equipment.items.is_empty() {
+        equipment.items.push(ListItemView::new("（身上没穿东西）"));
+    }
+    if backpack.items.is_empty() {
+        backpack.items.push(ListItemView::new("（行囊是空的）"));
+    }
+
+    // 光标落在"身体 + 行囊"的拼接列表上；渲染层看到的是两个列表各自的选中项。
+    let equipment_len = equipment.items.len();
+    if cursor < equipment_len {
+        equipment.selected = cursor;
+    } else {
+        backpack.selected = cursor - equipment_len;
+    }
+
+    let mut view = render_api::InventoryView::default();
+    view.panels
+        .push(InventoryPanelView::new(InventoryPanel::Equipment, equipment));
+    view.panels
+        .push(InventoryPanelView::new(InventoryPanel::Backpack, backpack));
+    view.focus = render_api::InventoryFocus::Panel(InventoryPanel::Equipment);
+    view.footer = "↑↓ 选择    e/Esc 关闭".to_string();
+    view
 }
 
 /// 帧号自增器：装配层持有它，保证 `revision` 单调递增。
@@ -174,6 +264,11 @@ impl SceneFrameSource {
     }
 }
 
+/// 玩家实体（只读；给不持有 `&mut World` 的视图构造用）。
+fn player_entity_of(world: &World) -> Option<Entity> {
+    let mut query = world.try_query_filtered::<Entity, With<ecs_core::entity_cls::Player>>()?;
+    query.iter(world).next()
+}
 /// 玩家当前世界坐标。`?` 打开 Look 页时用它做初始光标；找不到玩家返回 `None`。
 ///
 /// 需要 `&mut World` 只为拿查询迭代器（Bevy 的 `World::query_filtered` 要求），

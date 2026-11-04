@@ -440,7 +440,8 @@ fn log_lines_use_catalog_colors() {
 #[test]
 fn unimplemented_pages_show_a_placeholder() {
     let mut scene = base_scene();
-    scene.ui = UiView::Inventory(render_api::InventoryView::default());
+    // 投掷页仍未迁移（S4），走占位分支。
+    scene.ui = UiView::ThrowSelect(render_api::ListView::new("投掷"));
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
@@ -449,7 +450,44 @@ fn unimplemented_pages_show_a_placeholder() {
 
     let text = buffer_text_compact(&terminal);
 
-    assert!(text.contains("物品系统尚未迁移"), "应当说明为何是空的");
+    assert!(text.contains("投掷系统尚未迁移"), "应当说明为何是空的");
+}
+
+/// 背包页是**真页面**：画出「身体 / 行囊」两栏与底部提示，且不再有占位文案（R2）。
+#[test]
+fn the_inventory_page_renders_two_panels() {
+    use render_api::{InventoryPanel, InventoryPanelView, InventoryView, ListView};
+
+    let mut scene = base_scene();
+    let mut equipment = ListView::new("身体");
+    equipment.items.push(render_api::ListItemView::new("主手：锈铁剑"));
+    let mut backpack = ListView::new("行囊");
+    backpack.items.push(render_api::ListItemView::new("生物血肉 ×2"));
+    let mut inventory = InventoryView::default();
+    inventory
+        .panels
+        .push(InventoryPanelView::new(InventoryPanel::Equipment, equipment));
+    inventory
+        .panels
+        .push(InventoryPanelView::new(InventoryPanel::Backpack, backpack));
+    inventory.footer = "↑↓ 选择    e/Esc 关闭".to_string();
+    scene.ui = UiView::Inventory(inventory);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+    let text = buffer_text_compact(&terminal);
+
+    assert!(text.contains("身体"), "左栏标题");
+    assert!(text.contains("行囊"), "右栏标题");
+    assert!(text.contains("主手：锈铁剑"), "装备行必须显示部位与物品名");
+    assert!(text.contains("生物血肉"), "行囊行必须显示物品名");
+    assert!(text.contains("关闭"), "底部提示（footer 画在页面最后一行）");
+    assert!(
+        !text.contains("尚未迁移"),
+        "背包页已经不是占位页了（占位文案会误导玩家）"
+    );
 }
 
 /// 空场景（首帧前）不得 panic。
