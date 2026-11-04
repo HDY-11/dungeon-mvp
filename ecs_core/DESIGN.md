@@ -27,6 +27,7 @@
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
 | 物品与装备 | DsnE16 · DsnE18 |
+| 存档与读档 | DsnE19 |
 | 楼层与推进 | DsnE17 |
 | 空间与地图 | DsnE2 · DsnE3 · DsnE7 · DsnE13 |
 | 怪物与物种 | DsnE6 |
@@ -1257,3 +1258,51 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - 验证：`cargo test -p ecs_core` 222 passed（+3 尸体用例、+1 下楼清场用例）；gate 见提交记录。
 - **仍未做**：箱类容器（等放置/交互）、实例数据（耐久等，第③片）。
 <!-- &/DsnE18 -->
+
+<!-- &DsnE19  存档 V1：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树；F5/F9 -->
+### DsnE19 存档 V1：投影式快照（seed + floor + 玩家容器树）
+
+**决策**
+
+1. **只存"重开一局后无法重算"的东西。** 地图、怪物、楼梯、地面物品、格子效果都由
+   `(map_seed, floor)` 完全决定（DsnE17 / DsnX17）——读档时重新生成，不写盘。存档因此只有
+   几百字节，也不会把生成器的中间状态变成磁盘契约。
+2. **bincode + 手写投影。** DsnX10 已定"bincode 完整快照、不做增量"；但"完整"不等于
+   `derive(Serialize)` 整个世界：世界里有 `Entity` 引用与派生资源，derive 会把它们也变成契约。
+   改用手写投影：
+
+   ```text
+   文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
+   载荷：bincode(SaveV1)
+   SaveV1 { map_seed, floor, player: PlayerSave }
+   PlayerSave { x, y, level, experience, health, magic, magic_mastery, body: [Option<ItemSave>] }
+   ItemSave   { id, count, slots: Option<[Option<ItemSave>]> }   // 容器树递归
+   ```
+
+   `Entity` 不上盘；容器槽位本身是数据（DsnE18），树直接摊平。版本放在**文件头**而不是
+   bincode 载荷里：bincode 1.3 不是自描述格式，结构一变旧档就解不出来——版本若在载荷里，
+   读旧档时永远走不到它，只能报"编码失败"。头部先读、版本先判，才能报"版本 2 不认识（当前 1）"。
+3. **不进档的东西（以及代价）。** 地面物品不入档：玩家丢在地上的东西读档后消失，地面回到
+   `(seed, floor)` 的初始内容——这是 DsnE17 的直接推论。同理，**中途存档读回的是该层初始状态**
+   （已杀的怪物会回来、已捡走的地面物品会重刷）；想要"保留中途进度"得等 V2 的地面/怪物差异段。
+   另有两个有意的取舍：**不存 `GameRng`**（读档后随机流从该层开局重来，与"一直玩下去"会分叉，
+   这也是"进层检查点"比"随时存档"更自然的另一个理由）；**生命/法力上限按值存**（当前没有
+   "重算上限"的系统；将来装备/buff 能改上限时，要么存"基础值+修正"、要么先实现单一写入者）。
+4. **load 复用初始化与下楼代码，不另写生成管线。** `new_game(map_seed)` 起世界 →
+   `FloorNumber = floor` 后走一次"重建层内容"（与 `descend` 共用的函数）→ 还原玩家与容器树。
+   任何"重建层"的修正都同时修到下楼与读档两条路径。
+5. **文件 I/O 在集成层，不在规则层。** `src/save.rs` 在根 crate（`bincode` 已是根依赖），
+   `ecs_core` 不引序列化框架；`presentation` 的键位表只表达"按键 → 游戏命令/页意图"，
+   存档是集成层能力，直接在 `App::handle` 拦 `Key::F(5)` / `Key::F(9)`。
+6. **失败要玩家看得见。** `SaveError::{Io, Encode, UnsupportedVersion, NoPlayer, Corrupt}` +
+   `describe()`，统一写 `EventLog`。失败静默 = 玩家以为存上了。
+7. **死亡状态不可存。** `game_over` 时拒绝存档，避免存出"读档即死"的档。
+
+**状态：** 实现（第③片的存档部分）。落地：`src/save.rs`（文件头 magic+version、手写投影、
+`restore_to_world` 复用 `rebuild_floor`）、`App` 的 F5/F9 接线、`tests/save_test.rs` 7 条
+（roundtrip / 楼层重建 / 版本 / magic / 未知编号 / 缺文件 / F5-F9 端到端）。实例数据（耐久等）
+未做，V2 时 `SAVE_VERSION` +1、在 `read` 里做迁移。
+**关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
+DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）|
+`ecs_core/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
+<!-- &/DsnE19 -->

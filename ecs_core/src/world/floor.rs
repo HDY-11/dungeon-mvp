@@ -66,9 +66,9 @@ pub fn descend(world: &mut World) -> bool {
     if crate::world_loop::player_is_busy(world) {
         return false;
     }
-    let Some(player) = crate::world::query::player_entity(world) else {
+    if crate::world::query::player_entity(world).is_none() {
         return false;
-    };
+    }
     if !player_on_stairs(world) {
         world
             .resource_mut::<EventLog>()
@@ -76,10 +76,7 @@ pub fn descend(world: &mut World) -> bool {
         return false;
     }
 
-    // ① 清掉本层的内容（玩家与它名下的装备/效果不动）。
-    despawn_floor_contents(world);
-
-    // ② 楼层 +1：之后所有生成系统都会按新楼层派生种子。
+    // ① 楼层 +1，之后所有生成系统都会按新楼层派生种子。
     let floor = {
         let mut floor = world.resource_mut::<FloorNumber>();
         floor.0 = floor.0.saturating_add(1);
@@ -87,7 +84,25 @@ pub fn descend(world: &mut World) -> bool {
     };
     log::info!("下楼: 进入第 {floor} 层");
 
-    // ③ 重建层内容（跳过 `spawn_player_system`：玩家已经在了）。
+    // ② 重建层内容（清旧层 + 生成新层，与读档共用，见 `rebuild_floor`）。
+    rebuild_floor(world);
+
+    world
+        .resource_mut::<EventLog>()
+        .push(EventMessage::system(format!("你走下楼梯，来到第 {floor} 层")));
+    true
+}
+
+/// 按**当前** `FloorNumber` 重建一层的内容，并把玩家放到出生点。
+///
+/// 下楼与读档共用：两者都要"换掉层内容、保留玩家"。函数自包含——先清当前层
+/// （`despawn_floor_contents`），再生成；`descend` 只负责前置条件与楼层 +1，
+/// 读档因此不需要伪造"玩家站在楼梯上"。
+pub fn rebuild_floor(world: &mut World) {
+    // 清掉当前层的内容（玩家与它名下的装备/效果不动）。放在这里而不是调用方，
+    // 读档路径（`new_game` 生成过第 1 层，再切到第 N 层）才不会把旧层实体留在新层。
+    despawn_floor_contents(world);
+
     let _ = world.run_system_once(generate_map_system);
 
     // 出生点由新地图决定；先写进资源，后面的"避开出生点"约束才看得见。
@@ -98,6 +113,11 @@ pub fn descend(world: &mut World) -> bool {
     let _ = world.run_system_once(spawn_cell_effects_system);
     let _ = world.run_system_once(spawn_ground_items_system);
     let _ = world.run_system_once(spawn_monsters_system);
+
+    let Some(player) = crate::world::query::player_entity(world) else {
+        log::warn!("重建楼层时没有玩家：跳过落位与视野重建");
+        return;
+    };
 
     // ④ 玩家落位 + 行动状态归零 + 视野记忆重置。
     if let Some(mut position) = world.get_mut::<Position>(player) {
@@ -124,11 +144,6 @@ pub fn descend(world: &mut World) -> bool {
     let _ = world.run_system_once(crate::system::update_visible_memory_system);
     let _ = world.run_system_once(crate::system::rebuild_occupancy_system);
     let _ = world.run_system_once(crate::effect::rebuild_cell_effects_system);
-
-    world
-        .resource_mut::<EventLog>()
-        .push(EventMessage::system(format!("你走下楼梯，来到第 {floor} 层")));
-    true
 }
 
 /// 清掉本层的怪物、地面物品、楼梯与格子效果。

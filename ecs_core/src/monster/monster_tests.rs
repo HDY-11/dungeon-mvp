@@ -43,6 +43,27 @@ fn every_monster_template_has_usable_speeds() {
     }
 }
 
+/// DsnE18 第②片：模板带的装备必须能全部放进一个尸体容器。
+///
+/// `check_death_system` 按模板顺序往 `CORPSE` 的格子里插；放不下时物品会被
+/// 丢弃并打日志。这条测试把"放不下"提前暴露成数据错误，而不是等某只怪
+/// 死亡时在运行时悄悄丢东西。
+#[test]
+fn every_monster_equipment_fits_in_one_corpse() {
+    let slots = crate::item::CORPSE.len();
+    for kind in ALL_KINDS {
+        let equipment = monster_template(kind).equipment;
+        assert!(
+            equipment.len() <= slots,
+            "{kind:?} 带 {} 件装备，但尸体只有 {slots} 格",
+            equipment.len()
+        );
+        for id in equipment {
+            assert!(id.exists(), "{kind:?} 的装备 {id:?} 不在注册表里");
+        }
+    }
+}
+
 /// D5：迁移映射保住了旧敏捷的**排序**——怪与怪之间的快慢关系不变。
 ///
 /// 这是「先按旧敏捷保行为」的可验证含义：新速度的排序必须与 GAME.md

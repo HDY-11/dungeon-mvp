@@ -78,7 +78,11 @@ pub fn check_death_system(
                 let item = spawn_item(&mut commands, *id, 1);
                 if corpse.insert(index, item, id.def().tags).is_err() {
                     // 布局放不下是编码错误（CORPSE 的格子数与配置不匹配）。
-                    log::warn!("尸体容器放不下 {:?}，该物品丢失", id);
+                    // 物品实体已经 spawn 了，必须一起销毁——否则它会成为
+                    // 既不在容器里、也不在 `GroundItemAt` 上的孤儿实体
+                    // （`every_item_is_either_on_the_ground_or_in_a_container` 会抓住）。
+                    log::warn!("尸体容器放不下 {id:?}，该物品丢失");
+                    commands.entity(item).despawn();
                 }
             }
             commands.spawn((

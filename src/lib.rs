@@ -33,7 +33,11 @@
 
 pub mod keys;
 
+pub mod save;
+
 pub use keys::translate_key;
+
+use std::path::Path;
 
 use bevy_ecs::prelude::World;
 use ecs_core::world_loop::{apply_player_command, new_game, request_quit};
@@ -41,7 +45,7 @@ use presentation::{
     ExtractConfig, InputOutcome, PageStack, PresentationInput, SceneFrameSource, UiIntent,
     apply_ui_intent, map_input_event,
 };
-use render_api::{InputEvent, SceneFrame};
+use render_api::{InputEvent, Key, SceneFrame};
 use tui::{DevLogBuffer, TuiPlugin};
 
 /// 装配好的游戏实例：世界 + 集成层状态 + 后端接缝。
@@ -63,8 +67,11 @@ impl App {
     /// 相机会退回世界中心——**不要**因为拿不到尺寸就 panic，那会让 resize
     /// 边界变成崩溃点。
     pub fn new(seed: u64, viewport: (u16, u16)) -> Self {
-        let mut world: World = new_game(seed);
+        Self::assemble(new_game(seed), viewport)
+    }
 
+    /// 把已建好的世界装配成 `App`（新游戏与读档共用）。
+    fn assemble(mut world: World, viewport: (u16, u16)) -> Self {
         // 集成层状态：页栈与帧号。两者都**不属于** `ecs_core`——
         // 它们是渲染/交互状态，和"世界是什么样"无关。
         world.insert_resource(PageStack::new());
@@ -79,6 +86,11 @@ impl App {
         };
         app.refresh();
         app
+    }
+
+    /// 当前视口尺寸（读档重建 `App` 时沿用）。
+    pub fn viewport(&self) -> (u16, u16) {
+        self.config.viewport
     }
 
     /// 更新视口尺寸（终端 resize 时调用）。
@@ -116,6 +128,29 @@ impl App {
     /// 返回值只为测试与日志：命令被**拒绝**时（撞墙、越界）
     /// `apply_player_command` 返回 `false`，这在本层不是错误。
     pub fn handle(&mut self, event: InputEvent) -> bool {
+        // 存档是集成层能力（DsnE19）：文件 I/O 不属于世界规则，也不进 `presentation`
+        // 的键位表。F5 存、F9 读；失败写日志让玩家看见（静默失败 = 玩家以为存上了）。
+        if let InputEvent::Key(key) = &event {
+            if key.is_press() {
+                match key.key {
+                    Key::F(5) => {
+                        let _ = self.save_to(&save::default_path());
+                        return true;
+                    }
+                    Key::F(9) => {
+                        let path = save::default_path();
+                        match self.load_from(&path) {
+                            Ok(()) => {}
+                            Err(error) => save::push_log(&mut self.world, error.describe()),
+                        }
+                        self.refresh();
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let page = self.world.resource::<PageStack>().kind();
         let player = presentation::player_position(&mut self.world).unwrap_or((0, 0));
         let input = PresentationInput::new(page, player);
@@ -125,6 +160,43 @@ impl App {
             InputOutcome::Ui(intent) => self.apply_ui(intent),
             InputOutcome::Command(command) => apply_player_command(&mut self.world, command),
         }
+    }
+
+    /// 存档到 `path`（F5）。成功/失败都会写一条世界日志。
+    pub fn save_to(&mut self, path: &Path) -> Result<(), save::SaveError> {
+        let result = if self.is_game_over() {
+            Err(save::SaveError::GameOver)
+        } else {
+            save::write(&self.world, path)
+        };
+        let message = match &result {
+            Ok(()) => {
+                let floor = self.world.resource::<ecs_core::FloorNumber>().0;
+                format!("已存档（第 {floor} 层）")
+            }
+            Err(error) => error.describe(),
+        };
+        save::push_log(&mut self.world, message);
+        self.refresh();
+        result
+    }
+
+    /// 从存档文件读一局新游戏（F9 的构造侧；测试也直接用它）。
+    pub fn load(path: &Path, viewport: (u16, u16)) -> Result<Self, save::SaveError> {
+        let save = save::read(path)?;
+        let world = save::restore_to_world(&save)?;
+        let floor = world.resource::<ecs_core::FloorNumber>().0;
+        let mut app = Self::assemble(world, viewport);
+        save::push_log(&mut app.world, format!("读档：第 {floor} 层"));
+        app.refresh();
+        Ok(app)
+    }
+
+    /// 用存档替换当前这局（F9）：成功则整局换成读出来的世界，失败世界不动。
+    pub fn load_from(&mut self, path: &Path) -> Result<(), save::SaveError> {
+        let loaded = Self::load(path, self.viewport())?;
+        *self = loaded;
+        Ok(())
     }
 
     /// 落地一个页栈意图。

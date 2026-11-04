@@ -631,6 +631,7 @@ dependencies = [
  "presentation",
  "ratatui",
  "render-api",
+ "serde",
  "sys",
  "tui",
  "utils",
