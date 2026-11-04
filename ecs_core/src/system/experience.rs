@@ -42,6 +42,12 @@ pub fn apply_exp_system(
     }
 
     for (entity, mut exp, mut level, mut health, mut magic, defense, mastery) in players.iter_mut() {
+        // 死人不吃经验（结算链是 `death → exp`，同轮里玩家可能刚被怪物打死）：
+        // 若放行，升级会把 `health.current` 回满，HUD 上出现"死了却满血"，
+        // 存档也会把尸体当活人写进盘。游戏结束后等级/经验都不该再变。
+        if !health.is_alive() {
+            continue;
+        }
         exp.add(gained);
         while exp.overflow() > 0.0 {
             exp.exp = exp.overflow();

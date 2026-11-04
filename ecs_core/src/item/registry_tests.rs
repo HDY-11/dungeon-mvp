@@ -10,8 +10,11 @@ use super::*;
 ///
 /// 这条守的是**编号与表的对应关系**：`ITEMS` 是手写的常量数组，没有东西阻止
 /// 有人把 `ItemId(25)` 写成 `ItemId(23)`——那样两行会撞号，而 `def()` 只会返回先找到的那个。
+///
+/// 注意它是**手工镜像清单**，不读 `GAME.md`（门禁也不解析文档表格，见 AUDIT-data D14）：
+/// 改内容时 GAME.md 与这张清单要一起改，单改文档不会让这条测试变红。
 #[test]
-fn every_item_row_matches_game_doc() {
+fn every_item_row_matches_the_pinned_list() {
     let doc_ids: &[(u16, &str)] = &[
         (0, "锈铁剑"),
         (1, "木盾"),
@@ -34,7 +37,7 @@ fn every_item_row_matches_game_doc() {
         (30, "鱼骨"),
         (31, "鳗皮"),
         (32, "海藻"),
-        // 不在 GAME.md 号段里的内容轮产物：踏水靴（C4/C5）。
+        // 内容轮产物（GAME.md 物品表在 2026-11 数据审计时已补录）。
         (40, "踏水靴"),
         (41, "旅者行囊"),
     ];

@@ -292,7 +292,10 @@ const SCORPION_LOOT: &[LootEntry] = &[
     LootEntry::always(ITEM_CARAPACE, 1, 2),
 ];
 
-/// 哥布林：最富的杂兵——材料、石子、两把武器。
+/// 哥布林：最富的杂兵——材料、石子、一把锤子。
+///
+/// 匕首**不在这里**：它由 `MonsterTemplate.equipment` 挂在哥布林尸体上
+/// （DsnE18 第②片）。两个来源都在时会成对掉匕首（AUDIT-data D9）。
 const GOBLIN_LOOT: &[LootEntry] = &[
     LootEntry::always(ITEM_RAW_FLESH, 1, 3),
     LootEntry::maybe(ITEM_RAG, 0.60, 1, 1),
@@ -300,7 +303,6 @@ const GOBLIN_LOOT: &[LootEntry] = &[
     LootEntry::maybe(ITEM_FANG, 0.30, 1, 1),
     LootEntry::maybe(ITEM_PEBBLE, 0.60, 1, 2),
     LootEntry::maybe(ITEM_HAMMER, 0.12, 1, 1),
-    LootEntry::maybe(ITEM_DAGGER, 0.12, 1, 1),
 ];
 
 /// 孢子怪：蘑菇与苔藓。
@@ -434,7 +436,7 @@ const GOBLIN: MonsterTemplate = MonsterTemplate {
         },
     ],
     loot: GOBLIN_LOOT,
-    equipment: &[ItemId(24)],
+    equipment: &[ITEM_DAGGER],
 };
 
 const SPORELING: MonsterTemplate = MonsterTemplate {
@@ -490,7 +492,7 @@ const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::rising(5.0, 2.5, 40.0),
     }],
     loot: MUSHROOM_GOLEM_LOOT,
-    equipment: &[ItemId(23)],
+    equipment: &[ITEM_HAMMER],
 };
 
 const CAVE_FISH: MonsterTemplate = MonsterTemplate {

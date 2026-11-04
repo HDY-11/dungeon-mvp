@@ -115,15 +115,16 @@ pub enum EffectSource {
 
 impl EffectSource {
     /// 界面/日志用的中文名（"无视某类来源"要能说清是哪一类）。
+    ///
+    /// 这里**不**用通配兜底：`#[non_exhaustive]` 只约束下游 crate，本 crate 内是穷尽匹配。
+    /// 将来新增来源桶时，编译器会在这里报"未覆盖"，正好逼着把中文名补上——
+    /// 显示层漏一个桶，比编译失败更难发现。下游 crate 加桶时仍可用自己的兜底。
     pub const fn label(self) -> &'static str {
         match self {
             EffectSource::Intrinsic => "先天",
             EffectSource::Equipment => "装备",
             EffectSource::Status => "状态",
             EffectSource::Terrain => "地形",
-            // `#[non_exhaustive]`：将来新增来源桶时，旧版本用一个中性名字兜底，
-            // 而不是让详情面板编译不过（显示层不该阻塞规则层加桶）。
-            _ => "其它",
         }
     }
 }

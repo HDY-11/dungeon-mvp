@@ -565,3 +565,61 @@ fn stepping_on_a_corpse_loots_its_contents_into_the_pack() {
             .collect::<Vec<_>>()
     );
 }
+use std::collections::HashSet;
+
+/// 一条**全世界**的不变量：每件物品要么在地上（`GroundItemAt`），
+/// 要么在某个容器槽位里——不能两边都有，也不能两边都没有。
+///
+/// 存放在哪是两条互斥的路径（`item/mod.rs` 模块文档）：拾取做"从地面摘标记、插进槽位"，
+/// 掉落做"生成实体 + 挂 GroundItemAt"。漏改一条路径就会出现"既在地上又在背包里"的
+/// 幽灵物品（同一件东西能被捡两次），或"无位置无主人"的孤儿实体。
+#[test]
+fn every_item_is_either_on_the_ground_or_in_a_container() {
+    use crate::components::Position;
+
+    let (mut world, player) = open_world();
+    // 玩家挪到与哥布林同一格：拾取系统会同时收地面战利品与尸体里的匕首。
+    world.get_mut::<Position>(player).unwrap().x = 10;
+    world.get_mut::<Position>(player).unwrap().y = 10;
+
+    // 远处留一件地面物品（不会被捡）。
+    world.spawn((
+        Item::new(ItemId(25)),
+        Amount::new(1),
+        GroundItemAt::new(40, 40),
+    ));
+    let goblin = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (10, 10),
+        10.0,
+        1.0,
+    );
+    world.get_mut::<Health>(goblin).unwrap().current = 0.0;
+    let _ = world.run_system_once(crate::system::death::check_death_system);
+    let _ = world.run_system_once(pickup_system);
+
+    let mut in_container: HashSet<bevy_ecs::entity::Entity> = HashSet::new();
+    let mut containers = world.query::<&Container>();
+    for container in containers.iter(&world) {
+        in_container.extend(container.iter().map(|(_, item)| item));
+    }
+    let ground_items: HashSet<bevy_ecs::entity::Entity> = {
+        let mut query = world.query_filtered::<bevy_ecs::entity::Entity, With<GroundItemAt>>();
+        query.iter(&world).collect()
+    };
+    let all_items: HashSet<bevy_ecs::entity::Entity> = {
+        let mut query = world.query_filtered::<bevy_ecs::entity::Entity, With<Item>>();
+        query.iter(&world).collect()
+    };
+
+    assert!(!all_items.is_empty(), "场景里必须有物品，否则这条测试没意义");
+    for item in &all_items {
+        let on_ground = ground_items.contains(item);
+        let stored = in_container.contains(item);
+        assert!(
+            on_ground != stored,
+            "物品 {item:?} 的存放方式不唯一：在地上={on_ground}、在容器里={stored}"
+        );
+    }
+}

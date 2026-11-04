@@ -22,7 +22,7 @@ use ecs_core::entity_cls::{Monster, Player};
 use ecs_core::map::Map;
 use ecs_core::world_loop::{apply_player_command, new_game};
 use ecs_core::{
-    ActionOf, ActiveAction, CellEffectAt, CellMoveCost, GroundItemAt, Item, MonsterKindId,
+    ActionOf, ActiveAction, CellEffectAt, CellMoveCost, GroundItemAt, MonsterKindId,
     Poison, PlayerCommand, TurnManager,
 };
 
@@ -93,8 +93,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         let mut q = world.query::<&CellEffectAt>();
         query_count(&mut q, &world)
     };
-    let items_start = count::<Item>(&mut world);
-    // 上一回合的地面物品数：拾取 = 这个数变少（掉落会让它变多，所以只能比相邻两回合）。
+    // 地面物品按 `GroundItemAt` 数：`Item` 实体还包括玩家行囊里的行囊本身与
+    // 尸体容器里的装备，用它会多算（AUDIT-data §三）。拾取 = 这个数变少。
+    let items_start = count_ground_items(&mut world);
     let mut items_prev = items_start;
 
     let stair = world
@@ -272,7 +273,10 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
         }
 
         // ── 不变量检查（不 panic，只记录） ──────────────
-        check_invariants(&mut report, &mut world, player, turn, pos);
+        // 位置要**在命令之后**重取：下楼会把玩家搬到新层出生点，用命令前的坐标
+        // 去查新层地图会误报"站在不可走格"（AUDIT-data §四 实测）。
+        let pos_after = player_pos(&mut world);
+        check_invariants(&mut report, &mut world, player, turn, pos_after);
 
         for m in occupancy_mismatches(&mut world) {
             let msg = format!("t{turn} 占用图不一致：{m}");
@@ -585,34 +589,39 @@ fn occupancy_mismatches(world: &mut World) -> Vec<String> {
         Option<&ecs_core::Stairs>,
         Option<&Monster>,
         Option<&Player>,
+        Option<&ecs_core::monster::Corpse>,
     )>();
     let rows: Vec<(Entity, (usize, usize), bool, String)> = q
         .iter(world)
-        .map(|(e, p, stairs, monster, is_player)| {
+        .map(|(e, p, stairs, monster, is_player, corpse)| {
             let role = if is_player.is_some() {
                 "玩家".to_string()
             } else if monster.is_some() {
                 "怪物".to_string()
+            } else if corpse.is_some() {
+                "尸体".to_string()
             } else if stairs.is_some() {
                 "楼梯".to_string()
             } else {
                 "其他".to_string()
             };
-            (e, p.to_tuple(), stairs.is_some(), role)
+            // 尸体有位置但不占格（与楼梯同）：它们不进占用图，也不该算"同格冲突"。
+            (e, p.to_tuple(), stairs.is_some() || corpse.is_some(), role)
         })
         .collect();
 
     let mut out = Vec::new();
     // 统计"同格实体数"时**排除楼梯**：楼梯格本来就允许被站上去（G31），
     // 把它算进来会让每一次"怪物路过楼梯"都报假警（本模块的这一版就踩过）。
+    // 尸体同理：它留在怪物倒下的格子，玩家可以踩上去搜刮。
     let mut seen: BTreeMap<(usize, usize), usize> = BTreeMap::new();
-    for (_, pos, is_stairs, _) in &rows {
-        if !is_stairs {
+    for (_, pos, is_transient, _) in &rows {
+        if !is_transient {
             *seen.entry(*pos).or_insert(0) += 1;
         }
     }
     for (entity, pos, _, role) in rows {
-        if role == "楼梯" {
+        if role == "楼梯" || role == "尸体" {
             continue;
         }
         if seen.get(&pos).copied().unwrap_or(0) > 1 {

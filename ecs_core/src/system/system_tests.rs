@@ -190,6 +190,48 @@ fn monster_death_rewards_exp_and_levels_up() {
     );
 }
 
+/// P1（AUDIT-data）：死亡与升级同轮结算时，尸体不得"升级回满血"。
+///
+/// 结算链顺序是 `death → exp`（`system/mod.rs`）：玩家被怪物打死与击杀怪物的
+/// 经验奖励发生在同一轮。经验系统必须跳过死人，否则升级重算 HP 上限会把
+/// `health.current` 写成满血，游戏结束画面出现"HP 38/38"的自相矛盾状态。
+#[test]
+fn a_dead_player_does_not_level_up_or_heal() {
+    let mut world = test_world();
+    fill_map(&mut world, Tile::Wall);
+    let player = spawn_test_player(&mut world, (0, 0));
+
+    // 临门一脚的经验 + 0 血：若没有存活过滤，这一轮会升到 2 级并回满。
+    {
+        let mut exp = world.get_mut::<Experience>(player).unwrap();
+        exp.exp = 99.0;
+        exp.exp_to_next = 100.0;
+    }
+    world.get_mut::<Health>(player).unwrap().current = 0.0;
+
+    world
+        .resource_mut::<Events<DeathEvent>>()
+        .send(DeathEvent {
+            entity: Entity::PLACEHOLDER,
+            reward: 50.0,
+        });
+    run_settle_systems(&mut world);
+
+    let health = world.get::<Health>(player).unwrap();
+    assert!(!health.is_alive(), "玩家应当已经死亡");
+    assert_eq!(health.current, 0.0, "死人不该借升级回血");
+    assert_eq!(world.get::<Level>(player).unwrap().0, 1, "死人不该升级");
+    assert_eq!(
+        world.get::<Experience>(player).unwrap().exp,
+        99.0,
+        "死人不该再吃经验"
+    );
+    assert!(
+        world.resource::<crate::resources::TurnManager>().game_over,
+        "玩家死亡必须置游戏结束"
+    );
+}
+
 /// A4 补充：不够升级的经验只会累加，不会改等级/HP 上限。
 #[test]
 fn experience_below_threshold_does_not_level_up() {

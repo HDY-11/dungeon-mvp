@@ -10,8 +10,8 @@
 //!
 //! 渲染不在本轮范围：`render-api` 的消费验证属于 REFACTOR §11 Phase G（presentation/tui）。
 
-use bevy_ecs::prelude::{Component, Entity, With, Without, World};
-use ecs_core::components::{ActionTimer, Active, Health, Idle, Position};
+use bevy_ecs::prelude::{Component, Entity, With, World};
+use ecs_core::components::{ActionTimer, Active, Blocks, Health, Idle, Position};
 use ecs_core::effect::{CellEffectAt, CellEffects};
 use ecs_core::entity_cls::{Monster, Player, Stairs};
 use ecs_core::map::{Map, Tile, MAP_HEIGHT, MAP_WIDTH};
@@ -488,9 +488,12 @@ fn occupancy_matches_positions_after_each_player_command() {
         }
         let _ = pos;
 
-        // 一致性：每个带 Position 的实体（楼梯除外）都必须出现在占用图里。
+        // 一致性：每个**占格实体**（`Blocks`，见 `system/occupancy.rs`）都必须出现在占用图里。
+        // 不能用"所有带 Position 的实体"当判据：楼梯、地面物品、尸体都有位置但
+        // 不该占格，否则这条回归测试会把正常内容当成占用图陈旧。
         let rows: Vec<(Entity, (usize, usize))> = {
-            let mut query = world.query_filtered::<(Entity, &Position), Without<Stairs>>();
+            let mut query =
+                world.query_filtered::<(Entity, &Position), With<Blocks>>();
             query.iter(&world).map(|(e, p)| (e, p.to_tuple())).collect()
         };
         for (entity, pos) in rows {

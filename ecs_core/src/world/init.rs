@@ -473,6 +473,10 @@ pub fn spawn_cell_effects_system(
 /// 材料（血肉/布/牙/壳…）故意**不在**池子里：它们只能从怪物掉落来。
 /// 这样"刷图"与"打怪"各有自己的产出，而不是两个渠道发同一种东西
 /// （否则玩家没有理由打怪，而装备系统又会退化成"在地上捡"）。
+///
+/// 踏水靴不在池子里：GAME.md Gm7 规定"每层 1 件"，所以它由
+/// `spawn_ground_items_system` **单独保底放一件**；留在池子里随机抽会出现
+/// "这层没有靴子"或"这层两双靴子"，与文档不符（AUDIT-data P2）。
 const GROUND_ITEM_POOL: &[crate::item::ItemId] = &[
     crate::item::ItemId(0),  // 锈铁剑
     crate::item::ItemId(1),  // 木盾
@@ -480,12 +484,14 @@ const GROUND_ITEM_POOL: &[crate::item::ItemId] = &[
     crate::item::ItemId(3),  // 攻击戒指
     crate::item::ItemId(23), // 石锤
     crate::item::ItemId(24), // 匕首
-    crate::item::ItemId(40), // 踏水靴（C4/C5 的内容）
     crate::item::ItemId(25), // 蘑菇
     crate::item::ItemId(32), // 海藻
 ];
 
-/// 在地上撒本层的地面物品：`1–3` 件池子里的东西 + `1–3` 堆石子（GAME.md Gm7「地面刷新」）。
+/// 在地上撒本层的地面物品（GAME.md Gm7「地面刷新」 + Gm10「每层物品数」）。
+///
+/// 口径（AUDIT-data P2 对齐文档）：**合计 4–8 件** =
+/// 保底 1 件踏水靴 + 池子里 2–4 件 + 1–3 堆石子。
 ///
 /// 位置由 `(MapSeed, 楼层)` 派生（`DerivePurpose::GroundItems`），所以同一颗种子的第 N 层
 /// 永远是同一批东西、同一批位置——存档只存玩家状态，不存地面物品（DsnX17 的确定性口径）。
@@ -510,9 +516,10 @@ pub fn spawn_ground_items_system(
     let mut taken: Vec<(usize, usize)> = vec![player_spawn.0, stairs_pos.0];
     taken.extend(cell_effects.iter().map(|at| at.to_tuple()));
 
-    // 掷一次"这一层放什么"：池子里的 1–3 件 + 石子 1–3 堆。
-    let pool_count = rng.random_range(1u64..=3);
-    let mut batch: Vec<(crate::item::ItemId, u32)> = Vec::new();
+    // 掷一次"这一层放什么"：踏水靴保底 1 件 + 池子 2–4 件 + 石子 1–3 堆 = 合计 4–8 件。
+    // RNG 抽取顺序固定（先池子后石子），所以同种子同层的地面内容仍然确定。
+    let mut batch: Vec<(crate::item::ItemId, u32)> = vec![(crate::item::ItemId(40), 1)];
+    let pool_count = rng.random_range(2u64..=4);
     for _ in 0..pool_count {
         let index = rng.random_range(0..GROUND_ITEM_POOL.len() as u64) as usize;
         batch.push((GROUND_ITEM_POOL[index], 1));

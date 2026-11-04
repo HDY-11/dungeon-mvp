@@ -233,16 +233,16 @@ pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView
         item_detail(world, player, target, occupant)
     });
 
-    let mut view = render_api::InventoryView::default();
-    view.title = "背包".to_string();
-    view.panels
-        .push(InventoryPanelView::new(InventoryPanel::Equipment, equipment));
-    view.panels
-        .push(InventoryPanelView::new(InventoryPanel::Backpack, backpack));
-    view.focus = render_api::InventoryFocus::Panel(InventoryPanel::Equipment);
-    view.detail = detail;
-    view.footer = "↑↓ 选择    Enter 装/卸    r 使用    d 丢弃    e/Esc 关闭".to_string();
-    view
+    render_api::InventoryView {
+        title: "背包".to_string(),
+        panels: vec![
+            InventoryPanelView::new(InventoryPanel::Equipment, equipment),
+            InventoryPanelView::new(InventoryPanel::Backpack, backpack),
+        ],
+        focus: render_api::InventoryFocus::Panel(InventoryPanel::Equipment),
+        detail,
+        footer: "↑↓ 选择    Enter 装/卸    r 使用    d 丢弃    e/Esc 关闭".to_string(),
+    }
 }
 
 /// 背包页选中行对应的**世界目标**（`Body` = 身体槽位，`Pack` = 行囊槽位）。

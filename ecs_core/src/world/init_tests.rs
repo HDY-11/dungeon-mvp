@@ -183,12 +183,13 @@ fn world_layout_is_pinned_for_a_known_seed() {
     // 关键不变量（与摘要一起构成 golden）：
     assert!(!monsters.is_empty(), "必须有怪物");
     assert!(!mud.is_empty(), "必须有泥潭");
-    // 地面物品：池子里 1–3 件 + 石子 1–3 堆（`spawn_ground_items_system`）。
+    // 地面物品：踏水靴 1 件 + 池子 2–4 件 + 石子 1–3 堆 = 合计 4–8 件
+    // （`spawn_ground_items_system`，与 GAME.md Gm10「每层物品数 4-8」一致）。
     // 不钉具体数字而是钉区间：这条用例守的是"确定性 + 每层确实发了东西"，
     // 而"这一层正好放了几件"属于内容调参，改内容不该让它红。
     assert!(
-        (2..=6).contains(&items.len()),
-        "地面物品数量应在 2–6 之间，实得 {}",
+        (4..=8).contains(&items.len()),
+        "地面物品数量应在 4–8 之间，实得 {}",
         items.len()
     );
     assert_ne!(stairs, spawn, "楼梯不能和出生点重合");
