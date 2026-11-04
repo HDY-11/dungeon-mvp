@@ -24,6 +24,10 @@ use render_api::{EntityView, SceneFrame, UiView};
 use crate::catalog::{TuiCatalog, log_color};
 use crate::state::DevLogBuffer;
 
+mod inventory;
+
+use inventory::render_inventory_page;
+
 /// 调试面板高度（终端行）。
 const DEBUG_PANEL_HEIGHT: u16 = 8;
 /// 侧栏最小宽度。
@@ -468,81 +472,6 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "是" } else { "否" }
-}
-
-/// 背包页（全屏）：身体与行囊两栏并排，底部一行提示。
-///
-/// 只画契约层给的 `InventoryView`——它已经带好"每栏有哪些行、选中哪一行"，
-/// 后端不重排内容（DsnX14：显示数据归 presentation，后端只负责画）。
-fn render_inventory_page(frame: &mut Frame, area: Rect, inventory: &render_api::InventoryView) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(inventory.title.clone())
-        .border_style(Style::default().fg(Color::Cyan));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    // 两栏等宽（奇数宽时右边少一列），中间留一列间隔。
-    let columns = inventory.panels.len().max(1) as u16;
-    let gap = 1u16;
-    let usable = inner.width.saturating_sub(gap * (columns - 1));
-    let column_width = usable / columns;
-
-    for (index, panel) in inventory.panels.iter().enumerate() {
-        let panel_area = Rect {
-            x: inner.x + index as u16 * (column_width + gap),
-            y: inner.y,
-            width: column_width,
-            height: inner.height.saturating_sub(1),
-        };
-        render_inventory_panel(frame, panel_area, panel);
-    }
-
-    let footer = Rect {
-        x: inner.x,
-        y: inner.y + inner.height.saturating_sub(1),
-        width: inner.width,
-        height: 1,
-    };
-    frame.render_widget(
-        Line::from(Span::styled(
-            inventory.footer.clone(),
-            Style::default().fg(Color::DarkGray),
-        )),
-        footer,
-    );
-}
-
-/// 一栏：标题 + 若干行（选中行反色）。
-fn render_inventory_panel(frame: &mut Frame, area: Rect, panel: &render_api::InventoryPanelView) {
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        panel.list.title.clone(),
-        Style::default().fg(Color::Yellow),
-    )));
-    for (index, item) in panel.list.items.iter().enumerate() {
-        let selected = index == panel.list.selected;
-        let mut text = item.label.clone();
-        if let Some(detail) = &item.detail {
-            text.push_str("  ");
-            text.push_str(detail);
-        }
-        let style = if selected {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
-        } else if item.disabled {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
-        lines.push(Line::from(Span::styled(text, style)));
-    }
-    if !panel.list.footer.is_empty() {
-        lines.push(Line::from(Span::styled(
-            panel.list.footer.clone(),
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-    frame.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]

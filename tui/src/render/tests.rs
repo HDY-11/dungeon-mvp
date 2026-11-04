@@ -15,10 +15,11 @@
 //! 负责，不依赖提取逻辑，契约用例（render-api 的 `tests/contract.rs`）改了之后
 //! 这些测试就是后端侧的第一道警报。
 
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use render_api::{
-    Camera2D, DialogView, EntityId, EntityView, HudView, LogLevel, LogLine, MapView, Meter,
-    SceneFrame, TileInfo, UiView, VisualKey, VisualLayer,
+    Camera2D, DetailView, DialogView, EntityId, EntityView, HudView, InventoryFocus,
+    InventoryPanel, InventoryPanelView, InventoryView, ListItemView, ListView, LogLevel, LogLine,
+    MapView, Meter, SceneFrame, TileInfo, UiTextLine, UiTextStyle, UiView, VisualKey, VisualLayer,
 };
 
 use super::*;
@@ -488,6 +489,356 @@ fn the_inventory_page_renders_two_panels() {
         !text.contains("尚未迁移"),
         "背包页已经不是占位页了（占位文案会误导玩家）"
     );
+}
+
+/// 构造一个典型背包视图：身体一栏 + 行囊一栏（带占用数与物品描述）。
+fn inventory_view() -> InventoryView {
+    let mut equipment = ListView::new("身体");
+    equipment
+        .items
+        .push(ListItemView::new("主手：锈铁剑").with_detail("×1"));
+
+    let mut backpack = ListView::new("行囊");
+    backpack
+        .items
+        .push(ListItemView::new("生物血肉 ×2").with_detail("腥臭的肉块"));
+    backpack.footer = "1/12".to_string();
+
+    InventoryView {
+        title: "背包".to_string(),
+        panels: vec![
+            InventoryPanelView::new(InventoryPanel::Equipment, equipment),
+            InventoryPanelView::new(InventoryPanel::Backpack, backpack),
+        ],
+        focus: InventoryFocus::Panel(InventoryPanel::Equipment),
+        detail: None,
+        footer: "↑↓ 选择    e/Esc 关闭".to_string(),
+    }
+}
+
+/// 把背包视图塞进场景，走真正的 [`render_frame`] 入口而不是直接调渲染函数。
+fn inventory_scene(inventory: InventoryView) -> SceneFrame {
+    let mut scene = base_scene();
+    scene.ui = UiView::Inventory(inventory);
+    scene
+}
+
+/// 带样式的详情视图：契约里 `Accent` 的行必须真的换颜色。
+fn item_detail_view() -> DetailView {
+    let mut detail = DetailView::new("物品详情");
+    detail.push_line(UiTextLine::plain("锈铁剑"));
+    detail.push_line(UiTextLine::styled("攻击 +1", UiTextStyle::Accent));
+    detail.footer = "Enter 装卸".to_string();
+    detail
+}
+
+/// 画一帧背包页并返回终端（缓冲留给测试断言格子颜色/符号）。
+fn draw_inventory(
+    inventory: InventoryView,
+    width: u16,
+    height: u16,
+) -> Terminal<TestBackend> {
+    let scene = inventory_scene(inventory);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+    terminal
+}
+
+/// 面板内区（边框内缩 1 列/行）。
+fn panel_inner(panel: Rect) -> Rect {
+    Rect {
+        x: panel.x + 1,
+        y: panel.y + 1,
+        width: panel.width.saturating_sub(2),
+        height: panel.height.saturating_sub(2),
+    }
+}
+
+/// 选中行必须按**终端列宽**铺满整行反色：中文标签后要补空格到栏尾，
+/// 只反色到字尾会让"选中"看起来像裁了一半。
+#[test]
+fn inventory_selected_row_highlights_every_column_of_the_panel() {
+    let inventory = inventory_view();
+    let terminal = draw_inventory(inventory.clone(), 80, 30);
+    let layout = super::inventory::inventory_layout(Rect::new(0, 0, 80, 30), &inventory);
+    let inner = panel_inner(layout.panels[0]);
+    let buffer = terminal.backend().buffer();
+    let row = inner.y;
+
+    // 宽字符的续格在缓冲里是空符号（背景被重置），那一格由终端用字形自己的
+    // 样式铺满，不能按普通格子断言；其余有字形的格子都必须反色。
+    for x in inner.x..inner.x + inner.width {
+        let cell = &buffer[(x, row)];
+        if cell.symbol() == " " {
+            continue;
+        }
+        assert_eq!(
+            cell.bg,
+            Color::Cyan,
+            "选中行第 {x} 列的可见字符没有反色：整行宽度必须按终端列算"
+        );
+    }
+    assert_eq!(buffer[(inner.x, row)].symbol(), "▸", "选中行要有可辨认的标记");
+    assert_eq!(buffer[(inner.x, row)].bg, Color::Cyan);
+    assert_eq!(
+        buffer[(inner.x + inner.width - 1, row)].symbol(),
+        " ",
+        "行尾应当是补出来的空格（说明按显示宽度补齐，而不是 chars().count()）"
+    );
+    assert_eq!(
+        buffer[(inner.x + inner.width - 1, row)].bg,
+        Color::Cyan,
+        "补出来的空格也必须反色，否则选中行会短一截"
+    );
+}
+
+/// 中文宽度按终端列算：全角 2 列，歧义宽度字符与空格按 1 列。
+#[test]
+fn cjk_width_is_measured_in_terminal_columns() {
+    use super::inventory::{display_width, truncate_to_width};
+
+    assert_eq!(display_width("主手：锈铁剑"), 12);
+    assert_eq!("主手：锈铁剑".chars().count(), 6, "字符数不等于列宽");
+    assert_eq!(display_width("↑↓ 选择"), 7, "箭头/空格 1 列，汉字 2 列");
+    assert_eq!(display_width("abc"), 3);
+
+    let clipped = truncate_to_width("锈铁剑", 5);
+    assert_eq!(clipped, "锈铁…", "截断必须落在字符边界并留省略号");
+    assert!(display_width(&clipped) <= 5);
+    assert_eq!(truncate_to_width("abc", 3), "abc", "放得下就不动");
+    assert_eq!(truncate_to_width("锈铁剑", 0), "", "0 列不画任何东西");
+}
+
+/// 详情从「右侧栏」到「底部区块」再到「不画」的三档降级；窄屏两栏改上下堆叠。
+#[test]
+fn inventory_layout_degrades_from_side_detail_to_stacked_without_detail() {
+    let mut inventory = inventory_view();
+    inventory.detail = Some(item_detail_view());
+
+    let wide = super::inventory::inventory_layout(Rect::new(0, 0, 120, 40), &inventory);
+    assert_eq!(wide.panels.len(), 2);
+    assert_eq!(wide.panels[0].y, wide.panels[1].y, "宽屏两栏并排");
+    assert!(
+        wide.panels[0].right() < wide.panels[1].x,
+        "两栏之间留 1 列间隔"
+    );
+    let side = wide.detail.expect("120×40 应当画右侧详情");
+    assert!(side.x > wide.panels[1].right(), "详情在行囊栏右侧");
+    assert_eq!(side.height, wide.panels[0].height, "详情与两栏同高");
+    assert!(wide.footer.is_some(), "宽屏保留底部提示行");
+
+    let medium = super::inventory::inventory_layout(Rect::new(0, 0, 80, 30), &inventory);
+    let bottom = medium.detail.expect("80×30 应当画底部详情");
+    assert!(bottom.y >= medium.panels[0].bottom(), "底部详情不压住两栏");
+    assert_eq!(bottom.width, medium.content.width, "底部详情占满可用宽度");
+
+    let narrow = super::inventory::inventory_layout(Rect::new(0, 0, 40, 30), &inventory);
+    assert_eq!(narrow.panels.len(), 2);
+    assert!(
+        narrow.panels[0].bottom() < narrow.panels[1].y,
+        "40 列放不下并排两栏，应当上下堆叠"
+    );
+    assert!(narrow.detail.is_none(), "40 列放不下详情，宁可降级也不挤");
+    assert!(
+        narrow.panels.iter().all(|rect| rect.width == 38),
+        "堆叠时两栏都占满内容宽度"
+    );
+
+    let mut empty = inventory.clone();
+    empty.detail = Some(DetailView::new("空"));
+    let layout = super::inventory::inventory_layout(Rect::new(0, 0, 120, 40), &empty);
+    assert!(layout.detail.is_none(), "lines 为空的详情不占版面");
+}
+
+/// 底部提示按「≥2 个连续空格」分组，组间画分隔符；组数是契约决定的，不写死。
+#[test]
+fn inventory_footer_groups_hint_clusters_with_separators() {
+    let mut inventory = inventory_view();
+    inventory.footer = "↑↓ 选择    Enter 装卸 · r 使用 · d 丢弃    e/Esc 关闭".to_string();
+    let terminal = draw_inventory(inventory, 80, 30);
+    let rows = buffer_rows(&terminal);
+    // 宽字符续格/普通空格在缓冲里都是空格符号，先滤掉再断言文本。
+    let footer: String = rows[rows.len() - 2]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+
+    assert!(footer.contains("选择"), "第一组提示: {footer:?}");
+    assert!(footer.contains("装卸"), "第二组提示: {footer:?}");
+    assert!(footer.contains("关闭"), "第三组提示: {footer:?}");
+    // 行首/行尾各有一个页面边框的 `│`，分隔符只数中间那段。
+    let hint = footer
+        .strip_prefix('│')
+        .and_then(|text| text.strip_suffix('│'))
+        .unwrap_or(&footer);
+    assert_eq!(
+        hint.matches('│').count(),
+        2,
+        "三组之间各一个分隔符: {footer:?}"
+    );
+}
+
+/// 详情页：标题/正文/样式/底部提示都要画，焦点边框要压在详情上。
+#[test]
+fn inventory_detail_panel_draws_lines_and_focus_border() {
+    let mut inventory = inventory_view();
+    inventory.detail = Some(item_detail_view());
+    inventory.focus = InventoryFocus::Detail;
+    let terminal = draw_inventory(inventory.clone(), 120, 40);
+    let layout = super::inventory::inventory_layout(Rect::new(0, 0, 120, 40), &inventory);
+    let detail = layout.detail.expect("120×40 应当有右侧详情");
+    let buffer = terminal.backend().buffer();
+    let middle = detail.y + detail.height / 2;
+
+    assert_eq!(
+        buffer[(detail.x, middle)].fg,
+        Color::Cyan,
+        "焦点在详情：详情边框高亮"
+    );
+    assert_ne!(
+        buffer[(layout.panels[0].x, middle)].fg,
+        Color::Cyan,
+        "非焦点栏的边框不抢焦"
+    );
+
+    let text = buffer_text_compact(&terminal);
+    assert!(text.contains("物品详情"), "详情标题");
+    assert!(text.contains("攻击+1"), "契约里的 Accent 行必须画出来");
+    assert!(text.contains("Enter装卸"), "详情底部提示");
+}
+
+/// 80×30（常见终端）的详情预算：真实详情（说明+类型+攻速+修正+部位+可装+动作）
+/// 要全部放得下。这是"底部详情占 45% 高度"这条取舍的验收点。
+#[test]
+fn inventory_detail_at_80x30_fits_typical_content() {
+    let mut inventory = inventory_view();
+    let mut detail = DetailView::new("锈铁剑");
+    for text in [
+        "剑身布满锈迹，但仍能割开血肉",
+        "类型：装备",
+        "主手攻速：1200ms",
+        "攻击 +1",
+        "移速 -5%",
+        "无视：浅水",
+        "部位：主手",
+        "可装：主手",
+    ] {
+        detail.push_line(UiTextLine::plain(text));
+    }
+    detail.footer = "Enter 卸下    d 丢弃".to_string();
+    inventory.detail = Some(detail);
+
+    let terminal = draw_inventory(inventory, 80, 30);
+    let text = buffer_text_compact(&terminal);
+    for expected in [
+        "类型：装备",
+        "主手攻速：1200ms",
+        "攻击+1",
+        "移速-5%",
+        "无视：浅水",
+        "部位：主手",
+        "可装：主手",
+        "Enter卸下",
+    ] {
+        assert!(
+            text.contains(expected),
+            "80×30 的详情应当完整显示 {expected}，实际画面：{text}"
+        );
+    }
+}
+
+/// 占位行（"（…）"）要弱化；焦点不在行囊时，行囊选中行只留标记不铺底色。
+#[test]
+fn inventory_placeholder_rows_are_dimmed_and_unfocused_selection_stays_marked() {
+    let mut inventory = inventory_view();
+    inventory.panels[1].list.items = vec![
+        ListItemView::new("生物血肉 ×2"),
+        ListItemView::new("（行囊是空的）"),
+    ];
+    let terminal = draw_inventory(inventory.clone(), 80, 30);
+    let layout = super::inventory::inventory_layout(Rect::new(0, 0, 80, 30), &inventory);
+    let panel = layout.panels[1];
+    let buffer = terminal.backend().buffer();
+
+    let selected = &buffer[(panel.x + 1, panel.y + 1)];
+    assert_eq!(selected.symbol(), "▸", "行囊的选中项仍有标记");
+    assert_ne!(selected.bg, Color::Cyan, "焦点在身体栏，行囊选中行不铺底色");
+
+    let placeholder = &buffer[(panel.x + 3, panel.y + 2)];
+    assert_eq!(placeholder.fg, Color::DarkGray, "占位行要弱化，不能和真物品一样亮");
+}
+
+/// 选中项超出可视行数时列表必须滚动：按 ↓ 不能选到屏幕外。
+#[test]
+fn inventory_panel_scrolls_to_keep_the_selected_item_visible() {
+    let mut inventory = inventory_view();
+    let items = (0..20)
+        .map(|index| ListItemView::new(format!("道具{index:02}")))
+        .collect::<Vec<_>>();
+    inventory.panels[1].list = ListView::new("行囊").with_items(items);
+    inventory.panels[1].list.selected = 15;
+    inventory.focus = InventoryFocus::Panel(InventoryPanel::Backpack);
+
+    let terminal = draw_inventory(inventory, 80, 20);
+    let text = buffer_text_compact(&terminal);
+
+    assert!(text.contains("道具15"), "选中项必须可见");
+    assert!(!text.contains("道具00"), "列表应当滚动，不能永远从第 0 项开始画");
+}
+
+/// 40 列窄屏：两栏上下堆叠，正文与底部提示都不能丢。
+#[test]
+fn inventory_narrow_terminal_stacks_panels_and_keeps_footer() {
+    let terminal = draw_inventory(inventory_view(), 40, 30);
+    let text = buffer_text_compact(&terminal);
+
+    assert!(text.contains("身体"), "窄屏也要有身体栏");
+    assert!(text.contains("行囊"), "窄屏也要有行囊栏");
+    assert!(text.contains("关闭"), "窄屏也要保留底部提示");
+
+    let rows = buffer_rows(&terminal);
+    let compact: Vec<String> = rows
+        .iter()
+        .map(|row| row.chars().filter(|ch| !ch.is_whitespace()).collect())
+        .collect();
+    let body_row = compact
+        .iter()
+        .position(|row| row.contains("身体"))
+        .expect("身体标题行");
+    let pack_row = compact
+        .iter()
+        .position(|row| row.contains("行囊"))
+        .expect("行囊标题行");
+    assert!(body_row < pack_row, "40 列放不下两栏，应当上下堆叠");
+}
+
+/// 极小/极窄终端只要求「不 panic、不越界」，不要求好看。
+#[test]
+fn inventory_page_survives_tiny_and_narrow_terminals() {
+    let mut inventory = inventory_view();
+    inventory.detail = Some(item_detail_view());
+    let scene = inventory_scene(inventory);
+
+    for (width, height) in [
+        (1u16, 1u16),
+        (2, 2),
+        (3, 2),
+        (10, 3),
+        (20, 5),
+        (40, 10),
+        (40, 30),
+        (48, 16),
+        (64, 20),
+        (100, 12),
+        (120, 40),
+    ] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试终端");
+        terminal
+            .draw(|frame| render_frame(frame, &scene, None))
+            .unwrap_or_else(|err| panic!("{width}×{height} 下画背包页失败: {err}"));
+    }
 }
 
 /// 空场景（首帧前）不得 panic。
