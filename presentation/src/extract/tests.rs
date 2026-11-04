@@ -244,6 +244,105 @@ fn corpses_are_drawn_with_the_monster_glyph_and_name() {
     assert!(view.visible, "探索过的格子上尸体必须可见");
 }
 
+/// 背包页详情面板（R2 收尾）：选中身体里的剑 → 名字/说明/修正/部位/动作提示。
+#[test]
+fn the_inventory_detail_describes_the_selected_item() {
+    let mut world = new_game(2026);
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        query.iter(&world).next().expect("有玩家")
+    };
+    let sword_def = ecs_core::ItemId(0).def();
+    let sword = world
+        .spawn((ecs_core::Item::new(ecs_core::ItemId(0)), ecs_core::Amount::new(1)))
+        .id();
+    // 主手是哪一格由布局表说了算（不写常数）。
+    let main_hand = ecs_core::BODY
+        .slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ecs_core::ItemTag::Weapon]))
+        .expect("身体必须有武器槽");
+    {
+        let mut body = world.get_mut::<ecs_core::Container>(player).expect("有身体");
+        body.insert(main_hand, sword, sword_def.tags)
+            .expect("主手空着");
+    }
+
+    let view = inventory_view(&world, 0);
+    let detail = view.detail.expect("选中行必须有详情");
+    assert_eq!(detail.title, sword_def.name, "标题是物品名");
+    let lines: Vec<String> = detail.lines.iter().map(|line| line.text()).collect();
+    assert!(
+        lines.iter().any(|line| line == sword_def.desc),
+        "详情要带注册表里的一句话说明：{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains(ecs_core::Stat::Attack.label())),
+        "装备修正要出现在详情里：{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("部位：")),
+        "要告诉玩家它装在哪个部位：{lines:?}"
+    );
+    assert!(
+        detail.footer.contains("Enter 卸下"),
+        "身体行的动作提示：{}",
+        detail.footer
+    );
+    assert!(
+        view.footer.contains("Enter 装/卸"),
+        "全局键位提示要完整：{}",
+        view.footer
+    );
+}
+
+/// 行囊里的消耗品：详情说效果，动作提示是 `r 使用`（而不是装/卸）。
+#[test]
+fn the_inventory_detail_for_a_consumable_says_how_to_use_it() {
+    let mut world = new_game(2026);
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        query.iter(&world).next().expect("有玩家")
+    };
+    let mushroom_def = ecs_core::ItemId(25).def();
+    let mushroom = world
+        .spawn((ecs_core::Item::new(ecs_core::ItemId(25)), ecs_core::Amount::new(1)))
+        .id();
+    let pack = {
+        let body = world.get::<ecs_core::Container>(player).expect("有身体");
+        body.slot(ecs_core::item::pack_slot_index())
+            .expect("身体背包槽里有行囊")
+    };
+    {
+        let mut pack = world.get_mut::<ecs_core::Container>(pack).expect("行囊是容器");
+        pack.insert(0, mushroom, mushroom_def.tags)
+            .expect("行囊第 1 格空着");
+    }
+
+    let view = inventory_view(&world, 0);
+    let detail = view.detail.expect("选中行必须有详情");
+    assert_eq!(detail.title, mushroom_def.name);
+    let lines: Vec<String> = detail.lines.iter().map(|line| line.text()).collect();
+    assert!(
+        lines.iter().any(|line| line.starts_with("使用：")),
+        "消耗品要写清效果：{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line == "行囊第 1 格"),
+        "行囊行要标出格子：{lines:?}"
+    );
+    assert!(
+        detail.footer.contains("r 使用"),
+        "消耗品的动作提示：{}",
+        detail.footer
+    );
+    assert!(
+        !detail.footer.contains("Enter 装上"),
+        "消耗品不能装到部位上：{}",
+        detail.footer
+    );
+}
+
 /// 视野外的怪物不得出现在帧里（防止"隔着墙看到怪物"）。
 #[test]
 fn monsters_outside_viewshed_are_not_rendered() {

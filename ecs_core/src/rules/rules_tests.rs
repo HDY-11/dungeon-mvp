@@ -249,3 +249,31 @@ fn for_stat_and_the_fold_agree_on_what_is_relevant() {
         "分解读数里的 relevant 必须与 for_stat 一致"
     );
 }
+
+/// 详情面板/日志用的修正描述（纯显示，不影响折叠）。
+///
+/// 把"这条修正写了什么"钉在一条用例里：显示层不重新推导数值，只读 `describe()`；
+/// 将来若改文案，改的是同一处，日志与详情面板一起变。
+#[test]
+fn modifiers_describe_themselves() {
+    assert_eq!(
+        Modifier::delta(Stat::Attack, EffectSource::Equipment, 1.0).describe(),
+        "攻击 +1"
+    );
+    assert_eq!(
+        Modifier::scaled(Stat::MoveSpeed, EffectSource::Terrain, 0.8).describe(),
+        "移动速度 ×0.8"
+    );
+    let both = Modifier {
+        stat: Stat::AttackSpeed,
+        source: EffectSource::Equipment,
+        base_delta: -2.0,
+        multiplier: 1.25,
+    };
+    assert_eq!(both.describe(), "攻击速度 -2 ×1.25");
+    // 两个位都中性时也要有可见的文字，避免详情里出现只有属性名的空行。
+    assert_eq!(
+        Modifier::delta(Stat::Defense, EffectSource::Equipment, 0.0).describe(),
+        "防御 +0"
+    );
+}

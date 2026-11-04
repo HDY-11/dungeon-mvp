@@ -76,6 +76,19 @@ impl Stat {
     pub fn is_ratio(self) -> bool {
         matches!(self, Stat::MoveSpeed | Stat::AttackSpeed)
     }
+
+    /// 界面/日志用的中文名。
+    ///
+    /// 权威措辞在 `GAME.md`（Gm4 装备表 / Gm8 怪物属性）；这里只是为了详情面板与
+    /// 日志不必各自再写一遍 `match stat`——显示名放一处，改文案不会漏改。
+    pub const fn label(self) -> &'static str {
+        match self {
+            Stat::Attack => "攻击",
+            Stat::Defense => "防御",
+            Stat::MoveSpeed => "移动速度",
+            Stat::AttackSpeed => "攻击速度",
+        }
+    }
 }
 
 /// 修正的**来源类别**：折叠时按桶过滤（"无视某类减速" = 丢掉这个桶）。
@@ -98,6 +111,21 @@ pub enum EffectSource {
     Status,
     /// 地形带来的修正（减速等）。
     Terrain,
+}
+
+impl EffectSource {
+    /// 界面/日志用的中文名（"无视某类来源"要能说清是哪一类）。
+    pub const fn label(self) -> &'static str {
+        match self {
+            EffectSource::Intrinsic => "先天",
+            EffectSource::Equipment => "装备",
+            EffectSource::Status => "状态",
+            EffectSource::Terrain => "地形",
+            // `#[non_exhaustive]`：将来新增来源桶时，旧版本用一个中性名字兜底，
+            // 而不是让详情面板编译不过（显示层不该阻塞规则层加桶）。
+            _ => "其它",
+        }
+    }
 }
 
 /// 一条修正：**作用于哪一项** + **来源** + 两类位（DESIGN DsnE10 第 2 条）。
@@ -149,6 +177,29 @@ impl Modifier {
     /// 这条修正是作用于 `stat` 的吗。
     pub fn affects(&self, stat: Stat) -> bool {
         self.stat == stat
+    }
+
+    /// 一条修正的中文描述（详情面板/日志用）：`攻击 +1`、`移动速度 ×0.8`、`攻击 +1 攻速 ×1.2`。
+    ///
+    /// 显示口径与折叠公式分开：这里只说"这条修正写了什么"，不说"最终值是多少"——
+    /// 后者要经过过滤与其它修正，属于 [`apply_modifiers`] 的职责。
+    pub fn describe(self) -> String {
+        let mut text = format!("{} ", self.stat.label());
+        // 两处都中性时也说一声，避免详情里出现只有数值名、没有数值的空行。
+        if self.base_delta == 0.0 && self.multiplier == 1.0 {
+            text.push_str("+0");
+            return text;
+        }
+        if self.base_delta != 0.0 {
+            text.push_str(&format!("{:+}", self.base_delta));
+        }
+        if self.multiplier != 1.0 {
+            if self.base_delta != 0.0 {
+                text.push(' ');
+            }
+            text.push_str(&format!("×{}", self.multiplier));
+        }
+        text
     }
 }
 

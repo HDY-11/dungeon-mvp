@@ -224,13 +224,24 @@ pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView
         backpack.selected = cursor - equipment_len;
     }
 
+    // 详情面板（R2 收尾）：选中行的物品说明 + 这一行能做什么。
+    // 与列表同源（都从 `inventory_rows` 的行序来），所以"选中的是第几行"与
+    // "详情讲的是哪件物品"不可能错位。
+    let detail = player.and_then(|player| {
+        let (target, _, _) = *inventory_rows(world, player).get(cursor)?;
+        let occupant = occupant_for(world, player, target)?;
+        item_detail(world, player, target, occupant)
+    });
+
     let mut view = render_api::InventoryView::default();
+    view.title = "背包".to_string();
     view.panels
         .push(InventoryPanelView::new(InventoryPanel::Equipment, equipment));
     view.panels
         .push(InventoryPanelView::new(InventoryPanel::Backpack, backpack));
     view.focus = render_api::InventoryFocus::Panel(InventoryPanel::Equipment);
-    view.footer = "↑↓ 选择    e/Esc 关闭".to_string();
+    view.detail = detail;
+    view.footer = "↑↓ 选择    Enter 装/卸    r 使用    d 丢弃    e/Esc 关闭".to_string();
     view
 }
 
@@ -294,6 +305,106 @@ pub fn inventory_target(world: &World, cursor: usize) -> Option<InventoryTarget>
     inventory_rows(world, player)
         .get(cursor)
         .map(|(target, _, _)| *target)
+}
+
+/// 目标槽位里现在放着哪件物品（空槽或没有玩家 → `None`）。
+fn occupant_for(world: &World, player: Entity, target: InventoryTarget) -> Option<Entity> {
+    let body = world.get::<ecs_core::Container>(player)?;
+    match target {
+        InventoryTarget::Body { slot } => body.slot(slot),
+        InventoryTarget::Pack { slot } => {
+            let pack = body.slot(ecs_core::item::pack_slot_index())?;
+            world.get::<ecs_core::Container>(pack)?.slot(slot)
+        }
+    }
+}
+
+/// 背包页详情面板的内容：物品说明 + 它带来的修正 + 放在哪里 + 能执行什么动作。
+///
+/// 文案模板在装配层，**数值与名字全部来自注册表 / 布局表**：详情面板不该出现
+/// 任何"界面自己记得的"装备属性，否则改一行注册表就会与界面分叉。
+fn item_detail(
+    world: &World,
+    player: Entity,
+    target: InventoryTarget,
+    occupant: Entity,
+) -> Option<render_api::DetailView> {
+    use render_api::{DetailView, UiTextLine};
+
+    let item = world.get::<ecs_core::Item>(occupant)?;
+    let def = item.def();
+    let amount = world
+        .get::<ecs_core::Amount>(occupant)
+        .map(|amount| amount.0)
+        .unwrap_or(1);
+    let title = if amount > 1 {
+        format!("{} ×{}", def.name, amount)
+    } else {
+        def.name.to_string()
+    };
+    let mut detail = DetailView::new(title);
+    detail.push_line(UiTextLine::plain(def.desc));
+
+    match def.kind {
+        ecs_core::ItemKind::Equipment { modifiers, ignores } => {
+            detail.push_line(UiTextLine::plain("类型：装备"));
+            if let Some(ms) = def.weapon_speed_ms {
+                detail.push_line(UiTextLine::plain(format!("主手攻速：{ms:.0}ms")));
+            }
+            for modifier in modifiers {
+                detail.push_line(UiTextLine::plain(modifier.describe()));
+            }
+            if !ignores.is_empty() {
+                let names: Vec<&str> = ignores.iter().map(|source| source.label()).collect();
+                detail.push_line(UiTextLine::plain(format!("无视：{}", names.join("、"))));
+            }
+        }
+        ecs_core::ItemKind::Consumable(effect) => {
+            detail.push_line(UiTextLine::plain(format!("使用：{}", effect.describe())));
+        }
+        ecs_core::ItemKind::Material => {
+            detail.push_line(UiTextLine::plain("材料：合成原料"));
+        }
+        ecs_core::ItemKind::Pack(layout) => {
+            detail.push_line(UiTextLine::plain(format!("容器：{} 格", layout.len())));
+        }
+    }
+
+    let body = world.get::<ecs_core::Container>(player)?;
+    match target {
+        InventoryTarget::Body { slot } => {
+            let name = body
+                .def()
+                .slots
+                .get(slot)
+                .map(|slot| slot.name)
+                .unwrap_or("?");
+            detail.push_line(UiTextLine::plain(format!("部位：{name}")));
+            detail.footer = "Enter 卸下    d 丢弃".to_string();
+        }
+        InventoryTarget::Pack { slot } => {
+            detail.push_line(UiTextLine::plain(format!("行囊第 {} 格", slot + 1)));
+            detail.footer = if def.is_equipment() {
+                "Enter 装上    d 丢弃".to_string()
+            } else {
+                "r 使用    d 丢弃".to_string()
+            };
+        }
+    }
+
+    // "能装到哪个部位"由两份数据求交（物品 tags × 槽位过滤），与拾取路由同一条判据。
+    if def.is_equipment() {
+        let slots: Vec<&str> = ecs_core::BODY
+            .slots
+            .iter()
+            .filter(|slot| slot.accept.accepts(def.tags))
+            .map(|slot| slot.name)
+            .collect();
+        if !slots.is_empty() {
+            detail.push_line(UiTextLine::plain(format!("可装：{}", slots.join("/"))));
+        }
+    }
+    Some(detail)
 }
 
 /// 帧号自增器：装配层持有它，保证 `revision` 单调递增。
