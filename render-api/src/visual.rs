@@ -103,6 +103,9 @@ pub enum VisualKey {
     Effect(u16),
     UiIcon(UiIcon),
     Unknown(u32),
+    /// 尸体：死了的怪物。语义上属于「怪物」，但外观必须与活着的同类区分，
+    /// 否则玩家分不清「哥布林」与「哥布林的尸体」。
+    Corpse,
 }
 
 impl Default for VisualKey {
@@ -123,6 +126,7 @@ impl VisualKey {
             Self::Effect(_) => VisualCategory::Effect,
             Self::UiIcon(_) => VisualCategory::Ui,
             Self::Unknown(_) => VisualCategory::Unknown,
+            Self::Corpse => VisualCategory::Monster,
         }
     }
 
@@ -145,6 +149,7 @@ impl VisualKey {
             Self::Effect(payload) => (5_u64 << TAG_SHIFT) | payload as u64,
             Self::UiIcon(icon) => (6_u64 << TAG_SHIFT) | icon.as_u8() as u64,
             Self::Unknown(payload) => (7_u64 << TAG_SHIFT) | payload as u64,
+            Self::Corpse => 8_u64 << TAG_SHIFT,
         }
     }
 
@@ -164,6 +169,7 @@ impl VisualKey {
             4 => Self::Tile(payload as u16),
             5 => Self::Effect(payload as u16),
             6 => Self::UiIcon(UiIcon::from_u8(payload as u8)),
+            8 => Self::Corpse,
             _ => Self::Unknown(payload as u32),
         }
     }
@@ -180,6 +186,7 @@ impl fmt::Debug for VisualKey {
             Self::Effect(id) => write!(f, "Effect({id})"),
             Self::UiIcon(icon) => write!(f, "UiIcon({icon:?})"),
             Self::Unknown(id) => write!(f, "Unknown({id})"),
+            Self::Corpse => f.write_str("Corpse"),
         }
     }
 }
@@ -203,6 +210,7 @@ mod tests {
             (6_u64 << TAG_SHIFT) | 1
         );
         assert_eq!(VisualKey::Unknown(11).as_u64(), (7_u64 << TAG_SHIFT) | 11);
+        assert_eq!(VisualKey::Corpse.as_u64(), 8_u64 << TAG_SHIFT);
     }
 
     #[test]
@@ -217,6 +225,7 @@ mod tests {
             VisualKey::UiIcon(UiIcon::Heart),
             VisualKey::UiIcon(UiIcon::Gold),
             VisualKey::Unknown(11),
+            VisualKey::Corpse,
         ];
         for key in keys {
             assert_eq!(VisualKey::from_u64(key.as_u64()), key, "{key:?}");
@@ -236,6 +245,8 @@ mod tests {
             VisualCategory::Ui
         );
         assert_eq!(VisualKey::Unknown(1).category(), VisualCategory::Unknown);
+        // 尸体画的是死掉的怪物：类别跟怪物一致，外观由后端再分。
+        assert_eq!(VisualKey::Corpse.category(), VisualCategory::Monster);
     }
 
     #[test]

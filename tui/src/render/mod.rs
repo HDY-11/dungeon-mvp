@@ -21,7 +21,7 @@ use ratatui::{
 };
 use render_api::{EntityView, SceneFrame, UiView};
 
-use crate::catalog::{TuiCatalog, log_color};
+use crate::catalog::TuiCatalog;
 use crate::state::DevLogBuffer;
 
 mod inventory;
@@ -309,17 +309,8 @@ fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
         )));
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "日志",
-        Style::default().fg(Color::Cyan),
-    )));
-    for line in &scene.log {
-        lines.push(Line::from(Span::styled(
-            line.text.clone(),
-            Style::default().fg(log_color(line.level)),
-        )));
-    }
+    // 日志面板已按玩家反馈去掉（消息事件仍留在 `EventLog` 里，
+    // 未来若要恢复，读 `scene.log` 就能画回来；这里只去掉显示，不删数据）。
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(

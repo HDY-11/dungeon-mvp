@@ -267,3 +267,27 @@ fn the_corpse_layout_accepts_anything() {
         0
     );
 }
+
+
+/// 载重上限只加在行囊上：身体与尸体不限重（DsnE20）。
+#[test]
+fn only_the_traveler_pack_has_a_weight_limit() {
+    assert_eq!(TRAVELER_PACK.max_weight, Some(20.0));
+    assert_eq!(BODY.max_weight, None);
+    assert_eq!(CORPSE.max_weight, None);
+}
+
+/// `total_weight` 用调用方给的重量函数求和；`accepts_weight` 在上限处拒绝。
+#[test]
+fn container_weight_and_limit_are_derived() {
+    let mut pack = Container::new(&TRAVELER_PACK);
+    let thing = item();
+    pack.insert(0, thing, &[]).expect("空格");
+    let weight_of = |entity: Entity| if entity == thing { 1.5 } else { 21.0 };
+    assert_eq!(pack.total_weight(weight_of), 1.5);
+    assert!(pack.accepts_weight(1.5, 18.5), "正好 20.0 可以");
+    assert!(!pack.accepts_weight(1.5, 18.6), "超过 20.0 不行");
+    // 身体不限重：同样的重量照样接。
+    let body = Container::new(&BODY);
+    assert!(body.accepts_weight(100.0, 100.0));
+}

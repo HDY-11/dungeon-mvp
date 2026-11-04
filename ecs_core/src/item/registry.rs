@@ -98,6 +98,9 @@ pub struct ItemDef {
     pub name: &'static str,
     /// 详情页的一句话描述。
     pub desc: &'static str,
+    /// 每单位重量（DsnE20）。行囊载重上限就是靠它算出来的；
+    /// 重量是**派生数据**，不进存档（读档后用注册表重算）。
+    pub weight: f32,
     /// 堆叠上限（装备恒为 1）。
     pub max_stack: u32,
     /// 种类与效果。
@@ -215,6 +218,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(0),
         name: "锈铁剑",
         desc: "一把生锈的铁剑。",
+        weight: 3.0,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: SWORD_MODS,
@@ -227,6 +231,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(1),
         name: "木盾",
         desc: "简陋的木盾。",
+        weight: 2.5,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: SHIELD_MODS,
@@ -239,6 +244,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(2),
         name: "皮甲",
         desc: "轻便皮甲。",
+        weight: 5.0,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: ARMOR_MODS,
@@ -251,6 +257,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(3),
         name: "攻击戒指",
         desc: "攻击之戒。",
+        weight: 0.1,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: RING_MODS,
@@ -263,6 +270,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(4),
         name: "皮帽",
         desc: "缝得粗糙的皮帽。聊胜于无。",
+        weight: 0.3,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: HAT_MODS,
@@ -275,6 +283,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(10),
         name: "生物血肉",
         desc: "怪物的血肉，散发出腥臭味。",
+        weight: 0.5,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -284,6 +293,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(11),
         name: "破布",
         desc: "破烂的布料，没什么用。",
+        weight: 0.2,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -293,6 +303,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(12),
         name: "坚硬木棍",
         desc: "还算结实的木棍，可以当柴烧。",
+        weight: 0.8,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -302,6 +313,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(13),
         name: "染血兽牙",
         desc: "沾满血迹的尖牙，散发出危险的气息。",
+        weight: 0.2,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -311,6 +323,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(14),
         name: "黑色甲壳",
         desc: "变异蝎子的坚硬外壳。",
+        weight: 1.0,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -320,6 +333,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(18),
         name: "石子",
         desc: "边缘锋利的石块，适合投掷。",
+        weight: 0.2,
         max_stack: 20,
         kind: ItemKind::Material,
         tags: &[],
@@ -329,6 +343,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(23),
         name: "石锤",
         desc: "沉重的石制战锤，挥舞缓慢但势大力沉。",
+        weight: 6.0,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: HAMMER_MODS,
@@ -341,6 +356,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(24),
         name: "匕首",
         desc: "轻巧的短刃，出手极快但伤害有限。",
+        weight: 1.0,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: DAGGER_MODS,
@@ -353,6 +369,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(25),
         name: "蘑菇",
         desc: "繁茂洞穴的荧光蘑菇。食用回复少量生命。",
+        weight: 0.1,
         max_stack: 20,
         kind: ItemKind::Consumable(ConsumeEffect::Heal(6.0)),
         tags: &[],
@@ -362,6 +379,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(26),
         name: "苔藓",
         desc: "潮湿的苔藓，散发着泥土的气息。",
+        weight: 0.1,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -371,6 +389,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(27),
         name: "孢子囊",
         desc: "蘑菇傀儡体内取出的孢子囊。",
+        weight: 0.3,
         max_stack: 9,
         kind: ItemKind::Material,
         tags: &[],
@@ -380,6 +399,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(28),
         name: "贝壳",
         desc: "地海常见的硬壳。",
+        weight: 0.2,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -389,6 +409,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(29),
         name: "珍珠",
         desc: "洞穴蟹体内孕育的稀有珍珠。",
+        weight: 0.1,
         max_stack: 9,
         kind: ItemKind::Material,
         tags: &[],
@@ -398,6 +419,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(30),
         name: "鱼骨",
         desc: "洞穴鱼的骨架，细长而尖锐。",
+        weight: 0.2,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -407,6 +429,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(31),
         name: "鳗皮",
         desc: "深鳗的皮革，湿滑坚韧。",
+        weight: 0.5,
         max_stack: 64,
         kind: ItemKind::Material,
         tags: &[],
@@ -416,6 +439,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(32),
         name: "海藻",
         desc: "地海的海藻。食用回复少量法力。",
+        weight: 0.1,
         max_stack: 20,
         kind: ItemKind::Consumable(ConsumeEffect::RestoreMagic(4.0)),
         tags: &[],
@@ -425,6 +449,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(40),
         name: "踏水靴",
         desc: "鞋底刻着水纹的旧靴子。走泥潭与浅水如履平地。",
+        weight: 0.8,
         max_stack: 1,
         kind: ItemKind::Equipment {
             modifiers: BOOTS_MODS,
@@ -437,6 +462,7 @@ pub const ITEMS: &[ItemDef] = &[
         id: ItemId(41),
         name: "旅者行囊",
         desc: "用了很多年的粗布行囊，能塞下不少东西。",
+        weight: 1.0,
         max_stack: 1,
         kind: ItemKind::Pack(&TRAVELER_PACK),
         tags: &[ItemTag::Pack],
@@ -447,6 +473,14 @@ pub const ITEMS: &[ItemDef] = &[
 /// 按名字查（配置与测试用；运行期一律走 [`ItemId`]）。
 pub fn item_by_name(name: &str) -> Option<&'static ItemDef> {
     ITEMS.iter().find(|item| item.name == name)
+}
+
+/// 一件（堆）物品的总重：每单位重量 × 数量。
+///
+/// 重量是**派生数据**：只写在注册表一行里，存档/容器都不存第二份（DsnE20）。
+/// `count == 0` 按 1 计——`Amount` 本身就不允许 0（空壳会被销毁）。
+pub fn stack_weight(id: ItemId, count: u32) -> f32 {
+    id.def().weight * count.max(1) as f32
 }
 
 #[cfg(test)]

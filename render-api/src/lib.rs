@@ -40,7 +40,9 @@ pub use visual::*;
 /// 契约版本。
 ///
 /// 任何会影响后端渲染语义的结构变更都必须递增此值。
-pub const CONTRACT_VERSION: u32 = 1;
+///
+/// 2：新增 [`VisualKey::Corpse`]（尸体与活怪共用 glyph 会分不清，属于影响后端语义的变更）。
+pub const CONTRACT_VERSION: u32 = 2;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -77,6 +79,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 1);
+        assert_eq!(CONTRACT_VERSION, 2);
     }
 }

@@ -26,7 +26,7 @@
 | 移动与写入权 | DsnE14 · DsnE15 |
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
-| 物品与装备 | DsnE16 · DsnE18 |
+| 物品与装备 | DsnE16 · DsnE18 · DsnE20 |
 | 存档与读档 | DsnE19 |
 | 楼层与推进 | DsnE17 |
 | 空间与地图 | DsnE2 · DsnE3 · DsnE7 · DsnE13 |
@@ -1247,12 +1247,13 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - **仍未做**：实例数据（耐久等，第③片）。
   **落地记录（2026-11，第②片，尸体容器）：**
 - **尸体 = 容器 + 世界对象**：`Corpse { kind, name }`（`monster` 模块）+ `Container::new(&CORPSE)`（4 个无过滤格），
-  带 `Position`、**不带 `Blocks`**（不挡路），踩上去即可搜刮；渲染复用怪物字形、名字读作「哥布林的尸体」
-  （`VisualLayer::Item`，探索过即画）。
+  带 `Position`、**不带 `Blocks`**（不挡路）；渲染用独立外观 `VisualKey::Corpse`（`%` 灰色，契约 V2）、
+  名字读作「哥布林的尸体」（`VisualLayer::Item`，探索过即画）。
 - **战利品口径 (a)**（用户拍板）：模板 `loot` 仍落在地上；`MonsterTemplate.equipment`（新增字段）装它**身上的装备**，
   死亡时进尸体。当前内容：哥布林带匕首（id 24）、蘑菇傀儡带石锤（id 23），其余物种为空。
-- **搜刮是过渡口径**：`pickup_system` 在拾取地面物品之后，把同格尸体里的东西按"先并堆、再开新格"收进行囊，
-  放不下就留在尸体里并记日志；尸体不销毁。等背包页有显式「翻找」动作后替换（容器→容器转移逻辑可直接复用）。
+- **搜刮是显式动作**（玩家反馈：默认全拾取太粗暴）：踩上去什么都不发生；按 `e` 打开背包页，「脚下」栏
+  逐件 `Enter` 拿取（`InventoryPanel::Ground` + `item::actions::take_from_corpse`，失败回滚到尸体原位）。
+  背包页「脚下」栏复用 `InventoryPanel::Ground`（契约里早留好的变体），不新增枚举。
 - **下楼清场**：`despawn_floor_contents` 把尸体**连同它装着的装备**一起清掉——只清尸体不清内容会留下
   "没有位置、没有主人"的物品实体。
 - 验证：`cargo test -p ecs_core` 222 passed（+3 尸体用例、+1 下楼清场用例）；gate 见提交记录。
@@ -1306,3 +1307,38 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）|
 `ecs_core/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
 <!-- &/DsnE19 -->
+
+<!-- &DsnE20  重量：每单位重量的注册表数据 + 行囊载重上限；装得下 = 有空槽 且 重量不超；派生不存档 -->
+### DsnE20 重量与行囊载重：容量是"槽位 × 载重"
+
+**决策**
+
+1. **重量是注册表数据，按单位计。** `ItemDef.weight: f32`（每单位），一堆重量 = 每单位 × 数量
+   （`item::stack_weight`）。理由：堆叠物品共用一行注册表数据，按堆记重会让"拿 1 个还是 10 个"
+   变成两套字段；注册表是唯一权威，判定与界面都从这一行读。
+2. **只有行囊限重。** `ContainerDef.max_weight: Option<f32>`：旅者行囊 `Some(20.0)`，身体与尸体 `None`。
+   身体不限重是因为"装备太重让人脱不下来"是纯粹的负体验；尸体不限重是因为玩家不需要背得动才能翻。
+   将来重量参与移动速度时再按平衡表调数值——结构上已经能表达。
+3. **"装得下" = 有空槽 且 重量不超。** 槽位判据（`free_slot_for`）与载重判据（`accepts_weight`）
+   分开，两处都过才允许放进；拾取、从尸体拿取、卸下装备三处走同一条口径。
+4. **超重与满格是两句话。** 玩家要知道"是没格子还是背不动"：日志分别记「行囊满了」「行囊超重」。
+5. **重量是派生数据，不进存档。** 存档只存物品编号与数量（DsnE19），读档后用注册表重算；
+   容器不缓存"当前载重"，避免第二个真相。
+6. **界面只显示不判定。** 行囊栏 footer 显示 `n/12 格 · x/20.0 载重`、HUD 一行「行囊载重」、
+   物品详情一行「重量」；核心层是唯一判据（界面算错也不影响能不能装）。
+
+**为什么仍然不做"Full 标记"**（与 DsnE18 第 4 条同源）：现在"满"有两个维度（格子、载重），
+做成标记就要在每次移动后维护它，而且它对不同物品可能不同；派生判据永远与容器状态一致。
+
+**状态**
+- 已落地：`ItemDef.weight`（23 行）、`ContainerDef.max_weight`、`Container::{max_weight,total_weight,accepts_weight}`、
+  `item::stack_weight` / `container_weight`；拾取与 `equip_from_pack` / `unequip_to_pack` / `take_from_corpse`
+  的载重校验（`ItemActionError::Overweight`）；背包页 / 详情 / HUD 显示。
+- 未做：重量影响移动速度、按重量分档的容器（箱子/袋）、投掷物重量（投掷未迁移）。
+
+**测试**：registry 全表重量为正、`stack_weight` 数量换算；container 只有行囊限重、`accepts_weight`
+边界；item 超重留地并记日志；actions 卸下/搜刮超重原子失败；presentation 详情重量行、行囊载重、
+HUD 载重行。
+
+**关联：** DsnE18（容器/槽位模型）· DsnE16（注册表）· DsnE19（存档只存编号与数量）。
+<!-- &/DsnE20 -->

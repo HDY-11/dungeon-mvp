@@ -38,6 +38,8 @@ impl TuiCatalog {
             VisualKey::Effect(_) => Rgb::new(255, 140, 0),
             VisualKey::UiIcon(icon) => Self::icon_fg(icon),
             VisualKey::Unknown(_) => Rgb::new(255, 255, 255),
+            // 尸体要一眼看出「死了」：统一暗灰，不跟随物种颜色。
+            VisualKey::Corpse => Rgb::new(130, 130, 130),
         }
     }
 
@@ -55,6 +57,8 @@ impl TuiCatalog {
             VisualKey::Effect(_) => '*',
             VisualKey::UiIcon(icon) => Self::icon_glyph(icon),
             VisualKey::Unknown(_) => '?',
+            // `%` 是 roguelike 传统里的尸体符号；颜色交给 fg（暗灰）。
+            VisualKey::Corpse => '%',
         }
     }
 
@@ -236,6 +240,7 @@ pub fn describe(key: VisualKey) -> String {
         VisualKey::Stairs => "楼梯".to_string(),
         VisualKey::UiIcon(_) => "图标".to_string(),
         VisualKey::Unknown(_) => "未知".to_string(),
+        VisualKey::Corpse => "尸体".to_string(),
     }
 }
 
@@ -351,6 +356,21 @@ mod tests {
         assert_eq!(TuiCatalog::glyph(VisualKey::Stairs), '>');
     }
 
+    /// 尸体用 roguelike 传统符号 `%`，且与活怪的颜色不同——玩家必须一眼分清。
+    #[test]
+    fn corpses_look_different_from_living_monsters() {
+        assert_eq!(TuiCatalog::glyph(VisualKey::Corpse), '%');
+        let corpse_fg = TuiCatalog::fg_rgb(VisualKey::Corpse);
+        for id in 0..8 {
+            assert_ne!(
+                corpse_fg,
+                TuiCatalog::monster_fg(id),
+                "尸体颜色不能与怪物 {id} 相同"
+            );
+        }
+        assert_eq!(describe(VisualKey::Corpse), "尸体");
+    }
+
     /// 只有地形有背景色（实体不该刷底，否则地图会被盖住）。
     #[test]
     fn only_terrain_has_a_background() {
@@ -358,6 +378,7 @@ mod tests {
         assert!(TuiCatalog::bg(VisualKey::Player).is_none());
         assert!(TuiCatalog::bg(VisualKey::Monster(0)).is_none());
         assert!(TuiCatalog::bg(VisualKey::Stairs).is_none());
+        assert!(TuiCatalog::bg(VisualKey::Corpse).is_none());
     }
 
     /// 暗化必须让外观**可区分**于原始颜色。

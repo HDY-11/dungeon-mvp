@@ -245,6 +245,38 @@ fn a_full_pack_leaves_the_item_on_the_ground_and_says_so() {
     );
 }
 
+/// 行囊**有空槽但超重**：物品留在原地，日志说"超重"而不是"满了"（DsnE20）。
+#[test]
+fn an_overweight_pack_leaves_the_item_on_the_ground_and_says_so() {
+    let (mut world, player) = open_world();
+    let pack_entity = pack_of(&world, player);
+    {
+        // 6 把锈铁剑 = 18.0，行囊还空着 6 格，但只剩 2.0 的余量。
+        let heavy: Vec<Entity> = (0..6)
+            .map(|_| world.spawn((Item::new(ItemId(0)), Amount::new(1))).id())
+            .collect();
+        let mut pack = world.get_mut::<Container>(pack_entity).expect("行囊是容器");
+        for (index, sword) in heavy.into_iter().enumerate() {
+            pack.insert(index, sword, &[]).expect("空格");
+        }
+    }
+    // 黑色甲壳 1.0 ×3：18.0 + 3.0 = 21.0 > 20.0（材料走行囊路由，不会被装备）。
+    let shell = place(&mut world, (10, 10), ItemId(14), 3);
+
+    pickup(&mut world);
+
+    assert!(
+        world.get::<GroundItemAt>(shell).is_some(),
+        "背不动的东西必须留在原地"
+    );
+    let log = world.resource::<EventLog>();
+    assert!(
+        log.messages.iter().any(|m| m.text.contains("行囊超重")),
+        "日志要区分超重与满：{:?}",
+        log.messages.iter().map(|m| &m.text).collect::<Vec<_>>()
+    );
+}
+
 /// 不站在物品上就什么也不捡。
 #[test]
 fn items_on_other_cells_are_not_picked_up() {
@@ -511,9 +543,10 @@ fn a_monster_without_equipment_leaves_an_empty_corpse() {
     assert_eq!(containers[0].used(), 0, "老鼠身上没装备，尸体是空的");
 }
 
-/// 踩到尸体格 → 尸体里的东西进**行囊**，尸体留在原地（空壳）。
+/// 踩到尸体格**不再自动搜刮**（玩家反馈）：尸体保持原样，东西由背包页「脚下」面板
+/// 显式拿取（`actions::take_from_corpse`，见 actions_tests.rs）。
 #[test]
-fn stepping_on_a_corpse_loots_its_contents_into_the_pack() {
+fn stepping_on_a_corpse_does_not_auto_loot() {
     let (mut world, player) = open_world();
     let dagger = world
         .spawn((Item::new(ItemId(24)), Amount::new(1)))
@@ -542,27 +575,19 @@ fn stepping_on_a_corpse_loots_its_contents_into_the_pack() {
             .filter_map(|(_, item)| world.get::<Item>(item).map(|item| item.id))
             .collect()
     };
-    assert_eq!(in_pack, vec![ItemId(24)], "匕首必须进行囊");
+    assert!(in_pack.is_empty(), "踩上尸体不该自动拿走任何东西");
     assert_eq!(
         world.get::<Container>(corpse).expect("尸体还在").used(),
-        0,
-        "搜刮之后尸体是空的"
-    );
-    assert!(
-        world.get::<crate::monster::Corpse>(corpse).is_some(),
-        "尸体留在原地（将来由翻找/清理逻辑处理）"
+        1,
+        "匕首必须还在尸体上，等玩家自己翻"
     );
 
     let log = world.resource::<EventLog>();
     assert!(
-        log.messages
+        !log.messages
             .iter()
-            .any(|message| message.text.contains("哥布林的尸体") && message.text.contains("匕首")),
-        "必须告诉玩家搜刮到了什么：{:?}",
-        log.messages
-            .iter()
-            .map(|message| &message.text)
-            .collect::<Vec<_>>()
+            .any(|message| message.text.contains("搜出了")),
+        "不再有自动搜刮的日志"
     );
 }
 use std::collections::HashSet;
@@ -578,7 +603,8 @@ fn every_item_is_either_on_the_ground_or_in_a_container() {
     use crate::components::Position;
 
     let (mut world, player) = open_world();
-    // 玩家挪到与哥布林同一格：拾取系统会同时收地面战利品与尸体里的匕首。
+    // 玩家挪到与哥布林同一格：拾取系统会收走落地的战利品，尸体里的匕首留在容器里
+    // （踩尸体不自动搜刮，正好让这条不变量同时覆盖「地面→行囊」与「尸体容器」两种存法）。
     world.get_mut::<Position>(player).unwrap().x = 10;
     world.get_mut::<Position>(player).unwrap().y = 10;
 

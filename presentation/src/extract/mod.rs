@@ -152,117 +152,156 @@ pub fn extract_scene_frame(
     frame
 }
 
-/// 背包页的视图（DsnE18 第①片的只读版）：**左栏身体、右栏行囊**。
+/// 背包页的视图（DsnE18 第①片的只读版）：**左栏身体、右栏行囊、脚下有尸体时多一栏**。
 ///
-/// 数据来源只有两处：身体容器（七个部位）与行囊容器（12 格）。名字一律来自注册表，
-/// 于是"界面里写了什么"与"规则里是什么"不可能分叉。
+/// 数据来源只有三处：身体容器（七个部位）、行囊容器（12 格）、脚下尸体容器（4 格）。
+/// 名字一律来自注册表/布局表，于是"界面里写了什么"与"规则里是什么"不可能分叉。
 ///
-/// `cursor` 是当前选中的行号（在"身体 + 行囊"的拼接列表上），渲染层只负责把它画出来。
+/// `cursor` 是当前选中的行号（在"身体 + 行囊 + 脚下"的拼接列表上），渲染层只负责把它画出来。
 pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView {
-    use render_api::{InventoryPanel, InventoryPanelView, ListItemView, ListView};
+    use render_api::{InventoryPanel, InventoryPanelView};
 
     let player = player_entity_of(world);
-    let mut equipment = ListView::new("身体");
-    let mut backpack = ListView::new("行囊");
+    let mut page = match player {
+        Some(player) => build_inventory_page(world, player),
+        None => InventoryPage::empty(),
+    };
+    let cursor = cursor.min(page.targets.len().saturating_sub(1));
+    page.focus(cursor);
+    let focus = page.focused_panel(cursor);
 
-    if let Some(player) = player
-        && let Some(body) = world.get::<ecs_core::Container>(player)
-    {
-            for (index, occupant) in body.iter() {
-                let Some(item) = world.get::<ecs_core::Item>(occupant) else {
-                    continue;
-                };
-                // 行囊本身不算"穿在身上"，它在下面的行囊栏里展开。
-                if item.def().container_def().is_some() {
-                    continue;
-                }
-                let slot = body.def().slots[index].name;
-                let mut entry = ListItemView::new(format!("{slot}：{}", item.def().name));
-                if let Some(amount) = world.get::<ecs_core::Amount>(occupant)
-                    && amount.0 > 1
-                {
-                    entry = entry.with_detail(format!("×{}", amount.0));
-                }
-                equipment.items.push(entry);
-            }
-            if let Some(pack) = body
-                .slot(ecs_core::item::pack_slot_index())
-                .and_then(|pack| world.get::<ecs_core::Container>(pack))
-            {
-                for (_, occupant) in pack.iter() {
-                    let Some(item) = world.get::<ecs_core::Item>(occupant) else {
-                        continue;
-                    };
-                    let amount = world
-                        .get::<ecs_core::Amount>(occupant)
-                        .map(|amount| amount.0)
-                        .unwrap_or(1);
-                    let label = if amount > 1 {
-                        format!("{} ×{}", item.def().name, amount)
-                    } else {
-                        item.def().name.to_string()
-                    };
-                    backpack
-                        .items
-                        .push(ListItemView::new(label).with_detail(item.def().desc));
-                }
-                backpack.footer = format!("{}/{}", pack.used(), pack.len());
-            }
-    }
-    if equipment.items.is_empty() {
-        equipment.items.push(ListItemView::new("（身上没穿东西）"));
-    }
-    if backpack.items.is_empty() {
-        backpack.items.push(ListItemView::new("（行囊是空的）"));
-    }
+    // 详情面板：选中行的物品说明 + 这一行能做什么。行 → 目标 → 占用实体三步
+    // 与 `inventory_target` 同源（同一份 `build_inventory_page`），所以"选中的是
+    // 第几行"与"详情讲的是哪件物品"不可能错位。
+    let detail = player
+        .zip(page.targets.get(cursor).copied())
+        .and_then(|(player, target)| {
+            let occupant = occupant_for(world, player, target)?;
+            item_detail(world, player, target, occupant)
+        });
 
-    // 光标落在"身体 + 行囊"的拼接列表上；渲染层看到的是两个列表各自的选中项。
-    let equipment_len = equipment.items.len();
-    if cursor < equipment_len {
-        equipment.selected = cursor;
-    } else {
-        backpack.selected = cursor - equipment_len;
+    let mut panels = vec![
+        InventoryPanelView::new(InventoryPanel::Equipment, page.equipment),
+        InventoryPanelView::new(InventoryPanel::Backpack, page.backpack),
+    ];
+    if let Some(corpse) = page.corpse {
+        panels.push(InventoryPanelView::new(InventoryPanel::Ground, corpse));
     }
-
-    // 详情面板（R2 收尾）：选中行的物品说明 + 这一行能做什么。
-    // 与列表同源（都从 `inventory_rows` 的行序来），所以"选中的是第几行"与
-    // "详情讲的是哪件物品"不可能错位。
-    let detail = player.and_then(|player| {
-        let (target, _, _) = *inventory_rows(world, player).get(cursor)?;
-        let occupant = occupant_for(world, player, target)?;
-        item_detail(world, player, target, occupant)
-    });
 
     render_api::InventoryView {
         title: "背包".to_string(),
-        panels: vec![
-            InventoryPanelView::new(InventoryPanel::Equipment, equipment),
-            InventoryPanelView::new(InventoryPanel::Backpack, backpack),
-        ],
-        focus: render_api::InventoryFocus::Panel(InventoryPanel::Equipment),
+        panels,
+        focus: render_api::InventoryFocus::Panel(focus),
         detail,
-        footer: "↑↓ 选择    Enter 装/卸    r 使用    d 丢弃    e/Esc 关闭".to_string(),
+        footer: "↑↓ 选择    Enter 装/卸/拿    r 使用    d 丢弃    e/Esc 关闭".to_string(),
     }
 }
 
-/// 背包页选中行对应的**世界目标**（`Body` = 身体槽位，`Pack` = 行囊槽位）。
+/// 背包页的一栏数据：渲染层看到的 `ListView` 与"行 → 世界目标"的 `targets` 同源生成。
 ///
-/// 页栈只存"光标在第几行"，行 → 槽位的换算由这里给出。视图构造与目标解析共用同一份
-/// [`inventory_rows`]，所以"看到第几行"与"动的是哪一格"不可能对不上。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InventoryTarget {
-    /// 身体第 `slot` 格。
-    Body { slot: usize },
-    /// 行囊第 `slot` 格。
-    Pack { slot: usize },
+/// 这两个东西**必须一起建**：以前视图按 `items.len()`（含占位行）分段、目标按真实行
+/// 分段，身体空着两栏就会错位一格。现在长度只在这里数一次。
+struct InventoryPage {
+    equipment: render_api::ListView,
+    backpack: render_api::ListView,
+    /// 脚下有尸体容器时才存在的第三栏。
+    corpse: Option<render_api::ListView>,
+    /// 行序：身体（部位顺序）→ 行囊（格子顺序）→ 脚下（尸体格子顺序）。
+    targets: Vec<InventoryTarget>,
+    /// 真实行数（`（…）` 占位行不计入光标）。
+    equipment_len: usize,
+    backpack_len: usize,
 }
 
-/// 背包页的行（顺序即界面顺序）：先身体（部位顺序），再行囊（格子顺序）。
-fn inventory_rows(world: &World, player: Entity) -> Vec<(InventoryTarget, &'static str, u32)> {
-    let mut rows = Vec::new();
-    let Some(body) = world.get::<ecs_core::Container>(player) else {
-        return rows;
+impl InventoryPage {
+    /// 没有玩家时的一页空数据（标题/占位仍然要画出来）。
+    fn empty() -> Self {
+        let mut equipment = render_api::ListView::new("身体");
+        let mut backpack = render_api::ListView::new("行囊");
+        equipment
+            .items
+            .push(render_api::ListItemView::new("（身上没穿东西）"));
+        backpack
+            .items
+            .push(render_api::ListItemView::new("（行囊是空的）"));
+        Self {
+            equipment,
+            backpack,
+            corpse: None,
+            targets: Vec::new(),
+            equipment_len: 0,
+            backpack_len: 0,
+        }
+    }
+
+    /// 把光标夹到合法行，并给每一栏标出选中项。
+    fn focus(&mut self, cursor: usize) {
+        if self.targets.is_empty() {
+            return;
+        }
+        if cursor < self.equipment_len {
+            self.equipment.selected = cursor;
+        } else if cursor < self.equipment_len + self.backpack_len {
+            self.backpack.selected = cursor - self.equipment_len;
+        } else if let Some(corpse) = self.corpse.as_mut() {
+            corpse.selected = cursor - self.equipment_len - self.backpack_len;
+        }
+    }
+
+    /// 光标落在哪一栏（空页按身体栏算，焦点总得有个去处）。
+    fn focused_panel(&self, cursor: usize) -> render_api::InventoryPanel {
+        use render_api::InventoryPanel;
+        if self.targets.is_empty() || cursor < self.equipment_len {
+            InventoryPanel::Equipment
+        } else if cursor < self.equipment_len + self.backpack_len {
+            InventoryPanel::Backpack
+        } else {
+            InventoryPanel::Ground
+        }
+    }
+}
+
+/// 行囊当前的载重与上限（`None` = 不限重）。
+///
+/// 与 `ecs_core` 同一口径：整堆重量 = 每单位重量 × 数量；界面只**显示**，不做判定
+/// （判定唯一权威在核心层，界面算错了也不该影响能不能装）。
+fn pack_load(world: &World, pack: &ecs_core::Container) -> (f32, Option<f32>) {
+    let weight = pack.total_weight(|item| {
+        world
+            .get::<ecs_core::Item>(item)
+            .map(|stack| {
+                let amount = world
+                    .get::<ecs_core::Amount>(item)
+                    .map(|amount| amount.0)
+                    .unwrap_or(1);
+                ecs_core::stack_weight(stack.id, amount)
+            })
+            .unwrap_or(0.0)
+    });
+    (weight, pack.max_weight())
+}
+
+/// 从世界重建一页：身体 → 行囊 → 脚下尸体。
+fn build_inventory_page(world: &World, player: Entity) -> InventoryPage {
+    use render_api::{ListItemView, ListView};
+
+    let mut page = InventoryPage {
+        equipment: ListView::new("身体"),
+        backpack: ListView::new("行囊"),
+        corpse: None,
+        targets: Vec::new(),
+        equipment_len: 0,
+        backpack_len: 0,
     };
+
+    let Some(body) = world.get::<ecs_core::Container>(player) else {
+        page.equipment
+            .items
+            .push(ListItemView::new("（身上没穿东西）"));
+        page.backpack.items.push(ListItemView::new("（行囊是空的）"));
+        return page;
+    };
+
     for (index, occupant) in body.iter() {
         let Some(item) = world.get::<ecs_core::Item>(occupant) else {
             continue;
@@ -271,20 +310,31 @@ fn inventory_rows(world: &World, player: Entity) -> Vec<(InventoryTarget, &'stat
         if item.def().container_def().is_some() {
             continue;
         }
-        let amount = world
-            .get::<ecs_core::Amount>(occupant)
-            .map(|amount| amount.0)
-            .unwrap_or(1);
-        rows.push((
-            InventoryTarget::Body { slot: index },
-            item.def().name,
-            amount,
-        ));
+        let slot = body.def().slots[index].name;
+        let mut entry = ListItemView::new(format!("{slot}：{}", item.def().name));
+        if let Some(amount) = world.get::<ecs_core::Amount>(occupant)
+            && amount.0 > 1
+        {
+            entry = entry.with_detail(format!("×{}", amount.0));
+        }
+        page.equipment.items.push(entry);
+        page.targets.push(InventoryTarget::Body { slot: index });
+        page.equipment_len += 1;
     }
+
     if let Some(pack) = body
         .slot(ecs_core::item::pack_slot_index())
         .and_then(|pack| world.get::<ecs_core::Container>(pack))
     {
+        let (weight, max_weight) = pack_load(world, pack);
+        page.backpack.footer = match max_weight {
+            Some(max) => format!(
+                "{}/{} 格 · {weight:.1}/{max:.1} 载重",
+                pack.used(),
+                pack.len()
+            ),
+            None => format!("{}/{} 格 · {weight:.1} 载重", pack.used(), pack.len()),
+        };
         for (index, occupant) in pack.iter() {
             let Some(item) = world.get::<ecs_core::Item>(occupant) else {
                 continue;
@@ -293,18 +343,93 @@ fn inventory_rows(world: &World, player: Entity) -> Vec<(InventoryTarget, &'stat
                 .get::<ecs_core::Amount>(occupant)
                 .map(|amount| amount.0)
                 .unwrap_or(1);
-            rows.push((InventoryTarget::Pack { slot: index }, item.def().name, amount));
+            let label = if amount > 1 {
+                format!("{} ×{}", item.def().name, amount)
+            } else {
+                item.def().name.to_string()
+            };
+            page.backpack
+                .items
+                .push(ListItemView::new(label).with_detail(item.def().desc));
+            page.targets.push(InventoryTarget::Pack { slot: index });
+            page.backpack_len += 1;
         }
     }
-    rows
+
+    if let Some(corpse) = corpse_underfoot(world, player)
+        && let Some(container) = world.get::<ecs_core::Container>(corpse)
+    {
+        let name = world
+            .get::<ecs_core::monster::Corpse>(corpse)
+            .map(|corpse| corpse.display_name())
+            .unwrap_or_else(|| "尸体".to_string());
+        let mut list = ListView::new(format!("脚下：{name}"));
+        for (index, occupant) in container.iter() {
+            let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+                continue;
+            };
+            let amount = world
+                .get::<ecs_core::Amount>(occupant)
+                .map(|amount| amount.0)
+                .unwrap_or(1);
+            let label = if amount > 1 {
+                format!("{} ×{}", item.def().name, amount)
+            } else {
+                item.def().name.to_string()
+            };
+            list.items
+                .push(ListItemView::new(label).with_detail("Enter 拿取"));
+            page.targets.push(InventoryTarget::Corpse { slot: index });
+        }
+        if list.items.is_empty() {
+            list.items.push(ListItemView::new("（尸体上没东西）"));
+        }
+        list.footer = "Enter 拿取".to_string();
+        page.corpse = Some(list);
+    }
+
+    if page.equipment_len == 0 {
+        page.equipment
+            .items
+            .push(ListItemView::new("（身上没穿东西）"));
+    }
+    if page.backpack_len == 0 {
+        page.backpack.items.push(ListItemView::new("（行囊是空的）"));
+    }
+    page
+}
+
+/// 玩家**脚下**那具尸体（同一格、带容器）。没尸体就没有"脚下"栏。
+fn corpse_underfoot(world: &World, player: Entity) -> Option<Entity> {
+    let here = world.get::<Position>(player)?.to_tuple();
+    world.iter_entities().find_map(|entity| {
+        entity.get::<ecs_core::monster::Corpse>()?;
+        if !entity.contains::<ecs_core::Container>() {
+            return None;
+        }
+        let position = entity.get::<Position>()?;
+        (position.to_tuple() == here).then(|| entity.id())
+    })
+}
+
+/// 背包页选中行对应的**世界目标**（身体槽位 / 行囊槽位 / 脚下尸体槽位）。
+///
+/// 页栈只存"光标在第几行"，行 → 槽位的换算由这里给出。视图构造与目标解析共用同一份
+/// [`build_inventory_page`]，所以"看到第几行"与"动的是哪一格"不可能对不上。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryTarget {
+    /// 身体第 `slot` 格。
+    Body { slot: usize },
+    /// 行囊第 `slot` 格。
+    Pack { slot: usize },
+    /// 脚下尸体第 `slot` 格。
+    Corpse { slot: usize },
 }
 
 /// 背包页当前选中的目标（`None` = 空行/没有玩家）。
 pub fn inventory_target(world: &World, cursor: usize) -> Option<InventoryTarget> {
     let player = player_entity_of(world)?;
-    inventory_rows(world, player)
-        .get(cursor)
-        .map(|(target, _, _)| *target)
+    build_inventory_page(world, player).targets.get(cursor).copied()
 }
 
 /// 目标槽位里现在放着哪件物品（空槽或没有玩家 → `None`）。
@@ -315,6 +440,10 @@ fn occupant_for(world: &World, player: Entity, target: InventoryTarget) -> Optio
         InventoryTarget::Pack { slot } => {
             let pack = body.slot(ecs_core::item::pack_slot_index())?;
             world.get::<ecs_core::Container>(pack)?.slot(slot)
+        }
+        InventoryTarget::Corpse { slot } => {
+            let corpse = corpse_underfoot(world, player)?;
+            world.get::<ecs_core::Container>(corpse)?.slot(slot)
         }
     }
 }
@@ -344,6 +473,11 @@ fn item_detail(
     };
     let mut detail = DetailView::new(title);
     detail.push_line(UiTextLine::plain(def.desc));
+    // 重量按**整堆**算（DsnE20）：单件重量 × 数量，与行囊载重同一口径。
+    detail.push_line(UiTextLine::plain(format!(
+        "重量：{:.1}",
+        ecs_core::stack_weight(def.id, amount)
+    )));
 
     match def.kind {
         ecs_core::ItemKind::Equipment { modifiers, ignores } => {
@@ -389,6 +523,15 @@ fn item_detail(
             } else {
                 "r 使用    d 丢弃".to_string()
             };
+        }
+        InventoryTarget::Corpse { slot } => {
+            let corpse_name = corpse_underfoot(world, player)
+                .and_then(|corpse| world.get::<ecs_core::monster::Corpse>(corpse))
+                .map(|corpse| corpse.display_name())
+                .unwrap_or_else(|| "尸体".to_string());
+            detail.push_line(UiTextLine::plain(format!("脚下：{corpse_name}")));
+            detail.push_line(UiTextLine::plain(format!("尸体第 {} 格", slot + 1)));
+            detail.footer = "Enter 拿取".to_string();
         }
     }
 
@@ -572,9 +715,9 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
             continue;
         }
 
-        let visual = if let Some(corpse) = corpse {
-            // 尸体复用怪物的字形（"哥布林倒下后还像哥布林"），颜色由后端决定。
-            map_monster_kind(corpse.kind)
+        let visual = if corpse.is_some() {
+            // 尸体有**独立外观**：同类怪物死了要一眼看得出，不能还画成活怪。
+            VisualKey::Corpse
         } else if is_stairs.is_some() {
             VisualKey::Stairs
         } else if let Some(kind) = kind {
@@ -813,22 +956,22 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
     else {
         return Vec::new();
     };
-    // `OwnedEffects` 只在第一个孩子出现时才存在，所以是 `Option`。
-    let Some(owned) = world.get::<ecs_core::OwnedEffects>(player) else {
-        return Vec::new();
-    };
-    let effects: Vec<Entity> = owned.iter().collect();
-
+    // `OwnedEffects` 只在第一个孩子出现时才存在，所以是 `Option`；没有效果时
+    // 其余状态行（装备、行囊载重）照样要画——早年这里直接 return，导致"没有 buff
+    // 就看不出自己穿了什么"。
     let mut lines = Vec::new();
-    for effect in effects {
-        if let Some(poison) = world.get::<ecs_core::Poison>(effect) {
-            // 中毒按 **AV** 计时（ISSUES ECS46），所以这里显示"还剩几次发作 + 下一次的 AV"，
-            // 不显示"回合"——回合是玩家概念，而毒的时间轴是世界时间。
-            lines.push(render_api::UiTextLine::plain(format!(
-                "中毒 还剩 {} 次（下一次 {:.0} AV）",
-                poison.ticks_left,
-                poison.remaining_av.max(0.0)
-            )));
+    if let Some(owned) = world.get::<ecs_core::OwnedEffects>(player) {
+        let effects: Vec<Entity> = owned.iter().collect();
+        for effect in effects {
+            if let Some(poison) = world.get::<ecs_core::Poison>(effect) {
+                // 中毒按 **AV** 计时（ISSUES ECS46），所以这里显示"还剩几次发作 + 下一次的 AV"，
+                // 不显示"回合"——回合是玩家概念，而毒的时间轴是世界时间。
+                lines.push(render_api::UiTextLine::plain(format!(
+                    "中毒 还剩 {} 次（下一次 {:.0} AV）",
+                    poison.ticks_left,
+                    poison.remaining_av.max(0.0)
+                )));
+            }
         }
     }
     // 身上带着什么：玩家必须能看出"我现在穿着/背着什么"，否则捡到装备等于没发生
@@ -856,6 +999,19 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
                 .join("、");
             lines.push(render_api::UiTextLine::plain(format!("装备：{joined}")));
         }
+    }
+    // 行囊载重（DsnE20）：玩家得能看出还剩多少余量，否则"捡不起来"会显得莫名其妙。
+    if let Some(body) = world.get::<ecs_core::Container>(player)
+        && let Some(pack) = body
+            .slot(ecs_core::item::pack_slot_index())
+            .and_then(|pack| world.get::<ecs_core::Container>(pack))
+    {
+        let (weight, max_weight) = pack_load(world, pack);
+        let text = match max_weight {
+            Some(max) => format!("行囊载重：{weight:.1}/{max:.1}"),
+            None => format!("行囊载重：{weight:.1}（不限重）"),
+        };
+        lines.push(render_api::UiTextLine::plain(text));
     }
     lines
 }

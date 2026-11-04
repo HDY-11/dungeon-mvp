@@ -254,3 +254,27 @@ fn every_equippable_item_fits_exactly_one_body_slot() {
     }
 }
 
+
+
+/// 每件物品都必须有正重量（DsnE20）：0 重会让"载重"这条规则对某些物品形同虚设。
+#[test]
+fn every_item_has_a_positive_weight() {
+    for def in ITEMS {
+        assert!(def.weight > 0.0, "{} 的重量必须为正", def.name);
+        assert!(
+            def.weight <= 10.0,
+            "{} 的重量 {:.1} 不像一件随身物",
+            def.name,
+            def.weight
+        );
+    }
+}
+
+/// 同一件东西：数量翻倍重量翻倍（堆叠按单位重算）。
+#[test]
+fn stack_weight_scales_with_count() {
+    let one = crate::item::stack_weight(ItemId(25), 1);
+    let three = crate::item::stack_weight(ItemId(25), 3);
+    assert!((three - one * 3.0).abs() < 1e-6, "蘑菇 ×3 = {three}");
+    assert!((crate::item::stack_weight(ItemId(0), 1) - 3.0).abs() < 1e-6);
+}

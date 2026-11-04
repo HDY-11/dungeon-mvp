@@ -393,16 +393,20 @@ fn game_over_notice_is_shown() {
     assert!(text.contains("你死了"), "应当提示玩家已死");
 }
 
-/// **死亡提示不能被日志挤出面板**（用眼睛玩才发现的问题）。
+/// **死亡提示不能被侧栏内容挤掉**（用眼睛玩才发现的问题）。
 ///
-/// 实测：日志区排在死亡提示之前，日志满 12 行时"你死了"被裁到面板外，
-/// 玩家只看到血条归零却没有任何说明。这条测试把"日志满 + 已死"这个最坏情况钉住。
+/// 侧栏先画死亡提示、再画楼层与"可见实体"；同屏实体很多时提示仍必须在
+/// 面板内可见。这条测试把「拥挤侧栏 + 已死」这个最坏情况钉住。
 #[test]
-fn death_notice_survives_a_full_log() {
+fn death_notice_survives_a_crowded_side_panel() {
     let mut scene = base_scene();
     scene.game_over = true;
-    scene.log = (0..40)
-        .map(|i| render_api::LogLine::new(render_api::LogLevel::Combat, format!("噪声日志 {i}")))
+    scene.entities = (0..40)
+        .map(|i| {
+            EntityView::new(EntityId::from_bits(100 + i), (i as i32 % 8, i as i32 % 4), VisualKey::Monster(0))
+                .with_name(format!("噪声实体 {i}"))
+                .with_visibility(true, true)
+        })
         .collect();
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
@@ -413,28 +417,30 @@ fn death_notice_survives_a_full_log() {
     let text = buffer_text_compact(&terminal);
     assert!(
         text.contains("你死了"),
-        "日志满 12 行时死亡提示仍必须在面板内可见"
+        "侧栏再拥挤，死亡提示也必须在面板内可见"
     );
 }
 
-/// 日志按等级上色（颜色来自 catalog，不散在渲染代码里）。
+/// 日志面板已经按玩家反馈去掉：`scene.log` 不再出现在画面里。
+///
+/// **不删数据**：事件仍在 `EventLog` 与 `SceneFrame.log` 里（未来换 UI 或做
+/// 调试面板可直接复用）；这里只钉住"状态侧栏不再画日志"。
 #[test]
-fn log_lines_use_catalog_colors() {
+fn the_status_panel_no_longer_renders_the_log() {
     let mut scene = base_scene();
-    scene.log = vec![
-        LogLine::new(LogLevel::Combat, "对老鼠造成 3 点伤害"),
-        LogLine::new(LogLevel::Danger, "你死了"),
-    ];
+    scene.log = vec![LogLine::new(
+        LogLevel::Combat,
+        "对老鼠造成 3 点伤害",
+    )];
 
-    let mut terminal = Terminal::new(TestBackend::new(60, 30)).expect("测试终端");
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
         .draw(|frame| render_frame(frame, &scene, None))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
-
-    assert!(text.contains("对老鼠造成3点伤害"), "日志正文应当出现");
-    assert!(text.contains("你死了"));
+    assert!(!text.contains("对老鼠造成3点伤害"), "状态侧栏不应再画日志");
+    assert!(!text.contains("日志"), "状态侧栏不应再有日志标题");
 }
 
 /// 未实现页给占位提示，而不是空白或崩溃。

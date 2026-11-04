@@ -97,11 +97,11 @@ fn unequipping_returns_to_pack_and_refuses_when_full() {
     let (slot, sword) = put_in_pack(&mut world, player, ItemId(0));
     equip_from_pack(&mut world, slot).expect("穿上");
 
-    // 先把行囊填满（用不可堆叠的剑）。
+    // 先把行囊填满（用不可堆叠的剑；换成轻的填充物，避免先撞载重上限）。
     let pack = pack_of(&world, player);
     {
         let fillers: Vec<Entity> = (0..TRAVELER_PACK.len())
-            .map(|_| world.spawn((Item::new(ItemId(0)), Amount::new(1))).id())
+            .map(|_| world.spawn((Item::new(ItemId(29)), Amount::new(1))).id())
             .collect();
         let mut container = world.get_mut::<Container>(pack).expect("行囊");
         for (index, filler) in fillers.into_iter().enumerate() {
@@ -189,5 +189,158 @@ fn wrong_targets_report_clear_errors() {
     assert_eq!(
         unequip_to_pack(&mut world, pack_slot_index()),
         Err(ItemActionError::CannotNestPack)
+    );
+}
+
+// ── 尸体显式搜刮（玩家反馈后从"踩上自动全拾取"改成背包页动作） ──
+
+/// 在玩家脚下放一具装着 `id` 的尸体，返回（尸体，物品）。
+fn corpse_underfoot_with(world: &mut World, player: Entity, id: ItemId) -> (Entity, Entity) {
+    let at = world.get::<Position>(player).expect("玩家有位置").to_tuple();
+    let item = world.spawn((Item::new(id), Amount::new(1))).id();
+    let mut container = Container::new(&crate::item::CORPSE);
+    container.insert(0, item, &[]).expect("尸体格子无过滤");
+    let corpse = world
+        .spawn((
+            crate::monster::Corpse::new(crate::monster::MonsterKindId::Goblin, "哥布林"),
+            Position::new(at.0, at.1),
+            container,
+        ))
+        .id();
+    (corpse, item)
+}
+
+/// 显式拿取：尸体那一格清空、物品出现在行囊，实体不重建（同一个 Entity）。
+#[test]
+fn taking_from_a_corpse_moves_the_item_into_the_pack() {
+    let (mut world, player) = world_with_player();
+    let (corpse, dagger) = corpse_underfoot_with(&mut world, player, ItemId(24));
+
+    let taken = take_from_corpse(&mut world, 0).expect("可以拿");
+
+    assert_eq!(taken, ItemId(24));
+    assert_eq!(
+        world.get::<Container>(corpse).expect("尸体").used(),
+        0,
+        "拿走之后尸体该格是空的"
+    );
+    let pack = pack_of(&world, player);
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(dagger)),
+        "匕首必须进同一个行囊实体（不是复制一份）"
+    );
+    assert!(world.get_entity(dagger).is_ok(), "物品实体不该被销毁重建");
+    assert!(
+        world.get::<crate::monster::Corpse>(corpse).is_some(),
+        "尸体本身留在原地"
+    );
+}
+
+/// 脚下没尸体 → `NoCorpse`；尸体空格 → `EmptySlot`。
+#[test]
+fn taking_from_a_corpse_reports_missing_corpse_and_empty_slot() {
+    let (mut world, player) = world_with_player();
+    assert_eq!(
+        take_from_corpse(&mut world, 0),
+        Err(ItemActionError::NoCorpse)
+    );
+    let _ = corpse_underfoot_with(&mut world, player, ItemId(24));
+    assert_eq!(
+        take_from_corpse(&mut world, 3),
+        Err(ItemActionError::EmptySlot),
+        "尸体只有 4 格，第 4 格（下标 3）是空的"
+    );
+}
+
+/// 行囊满 → 拿不动，东西**必须还留在尸体上**（不能凭空消失）。
+#[test]
+fn a_full_pack_keeps_the_corpse_item_in_place() {
+    let (mut world, player) = world_with_player();
+    let (corpse, dagger) = corpse_underfoot_with(&mut world, player, ItemId(24));
+    let pack = pack_of(&world, player);
+    {
+        let fillers: Vec<Entity> = (0..TRAVELER_PACK.len())
+            .map(|_| world.spawn((Item::new(ItemId(29)), Amount::new(1))).id())
+            .collect();
+        let mut container = world.get_mut::<Container>(pack).expect("行囊");
+        for (index, filler) in fillers.into_iter().enumerate() {
+            let _ = container.insert(index, filler, &[]);
+        }
+    }
+
+    assert_eq!(
+        take_from_corpse(&mut world, 0),
+        Err(ItemActionError::NoRoom)
+    );
+    assert!(
+        world
+            .get::<Container>(corpse)
+            .is_some_and(|container| container.slot(0) == Some(dagger)),
+        "拿不动时匕首必须回到尸体原位"
+    );
+    assert!(world.get_entity(dagger).is_ok());
+}
+
+// ── 载重（DsnE20）：槽位空着也可能背不动 ──
+
+/// 往行囊前 `count` 格塞锈铁剑（每把 3.0，共 18.0），留出空槽但接近上限 20.0。
+fn fill_pack_with_swords(world: &mut World, pack: Entity, count: usize) -> Vec<Entity> {
+    let swords: Vec<Entity> = (0..count)
+        .map(|_| world.spawn((Item::new(ItemId(0)), Amount::new(1))).id())
+        .collect();
+    let mut container = world.get_mut::<Container>(pack).expect("行囊");
+    for (index, sword) in swords.iter().copied().enumerate() {
+        container.insert(index, sword, &[]).expect("空格");
+    }
+    swords
+}
+
+/// 卸下会让行囊超重 → `Overweight`，装备**不脱下来**（原子失败）。
+#[test]
+fn unequipping_that_would_overweight_the_pack_is_refused() {
+    let (mut world, player) = world_with_player();
+    let (slot, sword) = put_in_pack(&mut world, player, ItemId(0));
+    equip_from_pack(&mut world, slot).expect("穿上");
+    let pack = pack_of(&world, player);
+    fill_pack_with_swords(&mut world, pack, 6); // 18.0，还剩空槽
+
+    assert_eq!(
+        unequip_to_pack(&mut world, main_hand()),
+        Err(ItemActionError::Overweight)
+    );
+    assert_eq!(
+        world
+            .get::<Container>(player)
+            .and_then(|body| body.slot(main_hand())),
+        Some(sword),
+        "背不动就继续穿着"
+    );
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.used() == 6),
+        "行囊不该被改动"
+    );
+}
+
+/// 尸体上的重物会让行囊超重 → `Overweight`，东西留在尸体上。
+#[test]
+fn taking_a_corpse_item_that_would_overweight_the_pack_is_refused() {
+    let (mut world, player) = world_with_player();
+    let (corpse, hammer) = corpse_underfoot_with(&mut world, player, ItemId(23));
+    let pack = pack_of(&world, player);
+    fill_pack_with_swords(&mut world, pack, 6); // 18.0；石锤 6.0 → 24.0 > 20.0
+
+    assert_eq!(
+        take_from_corpse(&mut world, 0),
+        Err(ItemActionError::Overweight)
+    );
+    assert!(
+        world
+            .get::<Container>(corpse)
+            .is_some_and(|container| container.slot(0) == Some(hammer)),
+        "背不动时东西必须留在尸体原位"
     );
 }

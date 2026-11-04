@@ -13,14 +13,16 @@
 //! - 换装：目标部位已被占 → 先把旧的收回行囊（**交换**，不是丢弃）；
 //! - 卸下：行囊满了就**放回去**，玩家的装备不会凭空消失；
 //! - 丢弃：物品落到玩家脚下（`GroundItemAt`），容器里不再有它；
-//! - 使用：消耗品用掉 1 个，数量归零才销毁实体。
+//! - 使用：消耗品用掉 1 个，数量归零才销毁实体；
+//! - 搜刮：把脚下尸体容器里的一件东西拿进行囊（尸体不自动清空，玩家自己翻）。
 //!
 //! 每次失败都回滚到"没发生"，所以调用方只需看 [`ItemActionError`]。
 
 use crate::components::{Health, Magic, Position};
 use crate::entity_cls::Player;
 use crate::item::{
-    Amount, Container, ConsumeEffect, GroundItemAt, Item, ItemDef, ItemId, ItemTag, pack_slot_index,
+    Amount, Container, ConsumeEffect, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
+    pack_slot_index, stack_weight,
 };
 use bevy_ecs::prelude::*;
 
@@ -41,6 +43,10 @@ pub enum ItemActionError {
     NotUsable,
     /// 想动「背包槽」本身（行囊不能塞进自己）。
     CannotNestPack,
+    /// 脚下没有可以搜刮的尸体。
+    NoCorpse,
+    /// 行囊的载重不够（DsnE20）。
+    Overweight,
 }
 
 impl ItemActionError {
@@ -54,6 +60,8 @@ impl ItemActionError {
             ItemActionError::NoRoom => "行囊里放不下了",
             ItemActionError::NotUsable => "现在用不上它",
             ItemActionError::CannotNestPack => "行囊不能塞进它自己",
+            ItemActionError::NoCorpse => "脚下没有可以搜刮的尸体",
+            ItemActionError::Overweight => "行囊超重了，背不动更多东西",
         }
     }
 }
@@ -80,6 +88,14 @@ pub fn equip_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemAc
     };
 
     // 先摘下来，再放进去：任意一步失败都把它塞回原处。
+    // 交换前先看行囊背不背得动旧装备——背不动就整笔拒绝，不做"换到一半"。
+    if let Some(old) = old {
+        let old_def = item_def(world, old)?;
+        let old_amount = item_amount(world, old);
+        if !pack_holds_weight(world, pack, stack_weight(old_def.id, old_amount)) {
+            return Err(ItemActionError::Overweight);
+        }
+    }
     let taken = take_from(world, pack, pack_slot).ok_or(ItemActionError::EmptySlot)?;
     if taken != item {
         // 读与写之间世界不该变；真变了就当作没发生（不 panic）。
@@ -112,6 +128,9 @@ pub fn unequip_to_pack(world: &mut World, body_slot: usize) -> Result<(), ItemAc
     }
     let item = slot_of(world, player, body_slot)?;
     let def = item_def(world, item)?;
+    if !pack_holds_weight(world, pack, stack_weight(def.id, item_amount(world, item))) {
+        return Err(ItemActionError::Overweight);
+    }
     let free = free_slot_in(world, pack, def.tags).ok_or(ItemActionError::NoRoom)?;
     let taken = take_from(world, player, body_slot).ok_or(ItemActionError::EmptySlot)?;
     if put_into(world, pack, free, taken, def.tags).is_err() {
@@ -156,6 +175,73 @@ pub fn use_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemActi
         world.entity_mut(item).insert(Amount::new(remaining - 1));
     }
     Ok(())
+}
+
+/// 把脚下尸体第 `corpse_slot` 格的物品拿进行囊。
+///
+/// 尸体**不再自动搜刮**（玩家反馈：默认全拾取太粗暴）：踩上去什么都不发生，
+/// 打开背包页在「脚下」面板里自己翻。并堆 / 开新格沿用行囊同一套规则，
+/// 任一失败都把东西放回尸体，保证"要么拿走、要么还在原地"。
+pub fn take_from_corpse(world: &mut World, corpse_slot: usize) -> Result<ItemId, ItemActionError> {
+    let player = player_entity(world)?;
+    let position = world
+        .get::<Position>(player)
+        .map(Position::to_tuple)
+        .ok_or(ItemActionError::NoPlayer)?;
+    let corpse = corpse_underfoot(world, position).ok_or(ItemActionError::NoCorpse)?;
+    let item = slot_of(world, corpse, corpse_slot)?;
+    let def = item_def(world, item)?;
+    let id = def.id;
+    let amount = world.get::<Amount>(item).map(|amount| amount.0).unwrap_or(1);
+    let pack = pack_entity(world, player)?;
+    // 空槽位只是"放得进"，还得"背得动"（DsnE20）。
+    if !pack_holds_weight(world, pack, stack_weight(id, amount)) {
+        return Err(ItemActionError::Overweight);
+    }
+
+    // 先在行囊里找同类、且**装得下整堆**的格子：整堆并进去最简单，也不会留下半个实体。
+    let merged = world.get::<Container>(pack).and_then(|pack| {
+        pack.iter().find_map(|(_, occupant)| {
+            let occupant_item = world.get::<Item>(occupant)?;
+            let occupant_amount = world.get::<Amount>(occupant)?;
+            (occupant_item.id == id && occupant_amount.room(occupant_item.def()) >= amount)
+                .then_some((occupant, occupant_amount.0))
+        })
+    });
+
+    let taken = take_from(world, corpse, corpse_slot).ok_or(ItemActionError::EmptySlot)?;
+    if taken != item {
+        // 读与写之间世界不该变；真变了就当作没发生（不 panic）。
+        return Err(ItemActionError::EmptySlot);
+    }
+
+    if let Some((occupant, current)) = merged {
+        let merged_amount = current + amount;
+        if let Some(mut held) = world.get_mut::<Amount>(occupant) {
+            held.0 = merged_amount;
+        }
+        world.entity_mut(item).despawn();
+        return Ok(id);
+    }
+
+    let Some(free) = free_slot_in(world, pack, def.tags) else {
+        let _ = put_back(world, corpse, corpse_slot, item);
+        return Err(ItemActionError::NoRoom);
+    };
+    if put_into(world, pack, free, item, def.tags).is_err() {
+        let _ = put_back(world, corpse, corpse_slot, item);
+        return Err(ItemActionError::NoRoom);
+    }
+    Ok(id)
+}
+
+/// 玩家脚下那具尸体（`Position` 相同且带 `Corpse`）。
+fn corpse_underfoot(world: &mut World, at: (usize, usize)) -> Option<Entity> {
+    let mut query = world.query_filtered::<(Entity, &Position), With<crate::monster::Corpse>>();
+    query
+        .iter(world)
+        .find(|(_, position)| position.to_tuple() == at)
+        .map(|(entity, _)| entity)
 }
 
 // ── 小工具（每个都只借一次 World，避免同时可变借用两个容器） ──
@@ -216,6 +302,32 @@ fn free_slot_in(world: &World, container: Entity, tags: &[ItemTag]) -> Option<us
     world
         .get::<Container>(container)
         .and_then(|container| container.free_slot_for(tags))
+}
+
+/// 容器当前总重（`&World` 版；系统里用 `item::container_weight`，口径同一份）。
+fn container_weight(world: &World, container: Entity) -> f32 {
+    world
+        .get::<Container>(container)
+        .map(|container| {
+            container.total_weight(|entity| {
+                world
+                    .get::<Item>(entity)
+                    .map(|stack| {
+                        let amount = world.get::<Amount>(entity).map(|amount| amount.0).unwrap_or(1);
+                        stack_weight(stack.id, amount)
+                    })
+                    .unwrap_or(0.0)
+            })
+        })
+        .unwrap_or(0.0)
+}
+
+/// 行囊在现有载重上再放 `extra` 重会不会超载。
+fn pack_holds_weight(world: &World, pack: Entity, extra: f32) -> bool {
+    let current = container_weight(world, pack);
+    world
+        .get::<Container>(pack)
+        .is_none_or(|pack| pack.accepts_weight(current, extra))
 }
 
 fn take_from(world: &mut World, container: Entity, slot: usize) -> Option<Entity> {

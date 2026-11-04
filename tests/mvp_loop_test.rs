@@ -480,3 +480,71 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
         "卸下的剑必须回到行囊"
     );
 }
+
+/// 背包页「脚下」栏 + 显式搜刮：尸体不再自动拾取，`e` 开页 `Enter` 自己拿。
+///
+/// 这条补的是"背包页能操作尸体"的接线：少了它，`take_from_corpse` 可能永远
+/// 没有调用方（核心动作单测全绿，玩家却拿不到东西）。
+#[test]
+fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
+    use ecs_core::item::{Amount, Container, Item, ItemId, CORPSE, pack_slot_index};
+    use ecs_core::monster::{Corpse, MonsterKindId};
+    use render_api::{InventoryPanel, UiView};
+
+    let mut app = quiet_app(2026);
+    let player = player_entity(app.world_mut());
+    let world = app.world_mut();
+    let position = *world.get::<Position>(player).expect("玩家有位置");
+    let dagger = world
+        .spawn((Item::new(ItemId(24)), Amount::new(1)))
+        .id();
+    let mut corpse_container = Container::new(&CORPSE);
+    corpse_container.insert(0, dagger, &[]).expect("尸体空格");
+    let corpse = world
+        .spawn((
+            Corpse::new(MonsterKindId::Goblin, "哥布林"),
+            position,
+            corpse_container,
+        ))
+        .id();
+
+    // 开局身体只有行囊（会被跳过）、行囊是空的 —— 光标 0 正好落在「脚下」那一行。
+    app.handle(key(Key::Char('e')));
+    let frame = app.refresh();
+    let UiView::Inventory(view) = &frame.ui else {
+        panic!("e 应当打开背包页，实际 {:?}", frame.ui.kind());
+    };
+    let ground = view
+        .panels
+        .iter()
+        .find(|panel| panel.panel == InventoryPanel::Ground)
+        .expect("脚下的尸体要单独成栏");
+    assert!(
+        ground.list.title.contains("脚下：哥布林的尸体"),
+        "栏标题要说明这是谁的尸体：{}",
+        ground.list.title
+    );
+    assert_eq!(ground.list.items[0].label, "匕首");
+
+    app.handle(key(Key::Enter));
+    app.refresh();
+    let world = app.world_mut();
+    let pack = world
+        .get::<Container>(player)
+        .and_then(|body| body.slot(pack_slot_index()))
+        .expect("玩家身上有行囊");
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(dagger)),
+        "Enter 应当把匕首拿进行囊"
+    );
+    assert_eq!(
+        world
+            .get::<Container>(corpse)
+            .expect("尸体还在")
+            .used(),
+        0,
+        "拿走后尸体那一格该是空的"
+    );
+}

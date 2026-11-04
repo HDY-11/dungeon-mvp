@@ -144,11 +144,16 @@ impl SlotDef {
 
 /// 一类容器的**布局**（静态内容表）。
 ///
-/// 类型 + 名字 + 槽位表。加一类容器 = 加一个常量；加一个槽位 = 在该常量的槽位列表里加一行。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 类型 + 名字 + 槽位表 + 载重上限。加一类容器 = 加一个常量；加一个槽位 = 在该常量的槽位列表里加一行。
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContainerDef {
     pub name: &'static str,
     pub slots: &'static [SlotDef],
+    /// 这个容器最重能装多少（`None` = 不限重）。
+    ///
+    /// 行囊有限重、身体与尸体不限：装备的重量不该让玩家"脱不下来"
+    /// （重量将来还要参与移动速度，那时再由平衡表决定）。
+    pub max_weight: Option<f32>,
 }
 
 impl ContainerDef {
@@ -171,6 +176,7 @@ impl ContainerDef {
 /// 物品不再自己声明"我占的是主手还是副手"。
 pub const BODY: ContainerDef = ContainerDef {
     name: "身体",
+    max_weight: None,
     slots: &[
         SlotDef::one("头", SlotAccept::Only(&[ItemTag::Head])),
         SlotDef::one("躯干", SlotAccept::Only(&[ItemTag::Chest])),
@@ -185,6 +191,7 @@ pub const BODY: ContainerDef = ContainerDef {
 /// **旅者行囊**：没有过滤的 12 格。玩家开局就带着（作为一件物品放进身体的「背包」槽）。
 pub const TRAVELER_PACK: ContainerDef = ContainerDef {
     name: "旅者行囊",
+    max_weight: Some(20.0),
     slots: &[
         SlotDef::any("格 1"),
         SlotDef::any("格 2"),
@@ -210,6 +217,7 @@ pub const TRAVELER_PACK: ContainerDef = ContainerDef {
 /// 尸体**不占格**（没有 `Blocks`），所以踩上去不会挡路；搜刮在拾取系统里做。
 pub const CORPSE: ContainerDef = ContainerDef {
     name: "尸体",
+    max_weight: None,
     slots: &[
         SlotDef::any("遗留 1"),
         SlotDef::any("遗留 2"),
@@ -233,7 +241,7 @@ pub enum InsertError {
 ///
 /// 物品是实体（DsnE18 决策「物品实体化」）：于是"实例数据"就是物品实体上的组件
 /// （耐久、附魔…），不需要一个 `ItemData` 大结构，也不会出现"数据堆 + 实体"两种表示。
-#[derive(Component, Debug, Clone, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct Container {
     def: &'static ContainerDef,
     slots: Vec<Option<Entity>>,
@@ -315,6 +323,28 @@ impl Container {
     /// 对这件物品而言是否满了。
     pub fn is_full_for(&self, item_tags: &[ItemTag]) -> bool {
         self.free_slot_for(item_tags).is_none()
+    }
+
+    /// 这个容器能装多重的上限（`None` = 不限重）。
+    pub fn max_weight(&self) -> Option<f32> {
+        self.def.max_weight
+    }
+
+    /// 容器里所有物品的总重。
+    ///
+    /// `weight_of` 由调用方给：系统持有 `Query<(&Item, &Amount)>`，动作函数只有 `&World`，
+    /// 两边共用这一处遍历，不必各写一遍求和（重量是派生数据，不存第二份）。
+    pub fn total_weight(&self, weight_of: impl Fn(Entity) -> f32) -> f32 {
+        self.iter().map(|(_, item)| weight_of(item)).sum()
+    }
+
+    /// 在 `current` 的基础上再装 `extra` 重，会不会超过上限。
+    ///
+    /// 槽位是否空着由 [`Self::free_slot_for`] 判断；两个判据合起来才是"装得下"。
+    pub fn accepts_weight(&self, current: f32, extra: f32) -> bool {
+        self.def
+            .max_weight
+            .is_none_or(|max| current + extra <= max)
     }
 
     /// 放进指定槽位。

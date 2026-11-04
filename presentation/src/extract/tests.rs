@@ -201,9 +201,12 @@ fn monsters_inside_the_viewshed_are_visible() {
     );
 }
 
-/// 尸体（DsnE18 第②片）要能以**怪物字形 + 名字**出现在帧里，且画在物品层。
+/// 尸体（DsnE18 第②片）要能以**独立外观 + 名字**出现在帧里，且画在物品层。
+///
+/// 外观曾经复用怪物字形，玩家分不清"站着的哥布林"和"躺着的哥布林"——
+/// 现在契约里有了 [`render_api::VisualKey::Corpse`]，这条测试钉住映射。
 #[test]
-fn corpses_are_drawn_with_the_monster_glyph_and_name() {
+fn corpses_are_drawn_with_their_own_visual_and_name() {
     let mut world = new_game(2026);
     let player = {
         let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
@@ -237,8 +240,8 @@ fn corpses_are_drawn_with_the_monster_glyph_and_name() {
         .expect("尸体必须出现在帧里");
     assert_eq!(
         view.visual,
-        crate::catalog::map_monster_kind(ecs_core::monster::MonsterKindId::Goblin),
-        "尸体沿用哥布林的字形"
+        render_api::VisualKey::Corpse,
+        "尸体使用独立外观，不能与活着的哥布林同形"
     );
     assert_eq!(view.layer, VisualLayer::Item, "尸体画在物品层");
     assert!(view.visible, "探索过的格子上尸体必须可见");
@@ -290,9 +293,23 @@ fn the_inventory_detail_describes_the_selected_item() {
         detail.footer
     );
     assert!(
+        lines.iter().any(|line| line.starts_with("重量：")),
+        "详情要标出重量（DsnE20）：{lines:?}"
+    );
+    assert!(
         view.footer.contains("Enter 装/卸"),
         "全局键位提示要完整：{}",
         view.footer
+    );
+    let backpack = view
+        .panels
+        .iter()
+        .find(|panel| panel.panel == render_api::InventoryPanel::Backpack)
+        .expect("背包页必须有行囊栏");
+    assert!(
+        backpack.list.footer.contains("载重"),
+        "行囊栏要显示载重：{}",
+        backpack.list.footer
     );
 }
 
@@ -340,6 +357,28 @@ fn the_inventory_detail_for_a_consumable_says_how_to_use_it() {
         !detail.footer.contains("Enter 装上"),
         "消耗品不能装到部位上：{}",
         detail.footer
+    );
+    assert!(
+        lines.iter().any(|line| line == "重量：0.1"),
+        "蘑菇每单位 0.1：{lines:?}"
+    );
+}
+
+/// HUD 要显示行囊载重（DsnE20）：否则玩家不知道"为什么捡不起来"。
+#[test]
+fn the_hud_shows_the_pack_load() {
+    let mut world = new_game(2026);
+    let config = ExtractConfig::default().with_viewport(40, 20);
+    let frame = extract_scene_frame(&mut world, &config, &PageStack::new(), 1);
+    let lines: Vec<String> = frame
+        .hud
+        .extra_lines
+        .iter()
+        .map(|line| line.text())
+        .collect();
+    assert!(
+        lines.iter().any(|line| line.starts_with("行囊载重：")),
+        "HUD 必须有行囊载重：{lines:?}"
     );
 }
 

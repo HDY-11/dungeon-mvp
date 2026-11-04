@@ -28,7 +28,7 @@
 //! [`Amount`] 是"这一堆有几个"，所以"一堆血肉 ×3"是**一个实体**；容器一个槽位放一个实体，
 //! 槽位容量（`SlotDef::capacity`）约束数量上限。
 //!
-//! # 拾取口径（背包页落地前的临时规则）
+//! # 拾取口径
 //!
 //! | 捡到什么 | 做什么 |
 //! |---|---|
@@ -36,7 +36,11 @@
 //! | 装备但部位已占 | 进行囊 |
 //! | 消耗品且对应资源未满 | **立即使用 1 个**，剩下的留在原地 |
 //! | 其他 | 进行囊（先并堆、再开新格） |
+//! | 行囊超重 | 与"满"同一条口径：**留在原地**并记一条日志（DsnE20） |
 //! | 放不下 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
+//!
+//! **尸体不自动搜刮**：踩上尸体什么都不会发生，玩家打开背包页在「脚下」面板里
+//! 自己翻（`actions::take_from_corpse` 的注释记录了这条玩家决策）。
 
 pub mod actions;
 pub mod container;
@@ -51,10 +55,13 @@ use bevy_ecs::prelude::*;
 pub use container::{
     BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
-pub use actions::{ItemActionError, drop_from_pack, equip_from_pack, unequip_to_pack, use_from_pack};
+pub use actions::{
+    ItemActionError, drop_from_pack, equip_from_pack, take_from_corpse, unequip_to_pack,
+    use_from_pack,
+};
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{
-    ConsumeEffect, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM, item_by_name,
+    ConsumeEffect, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM, item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
@@ -153,6 +160,19 @@ pub fn pack_slot_index() -> usize {
         .expect("BODY 必须有能装背包的槽位")
 }
 
+/// 容器当前总重（系统查询版）。
+///
+/// 槽位判"装得下"、载重判"装不装得动"，两个判据合起来才是可放置；
+/// 动作函数那边用 `&World` 的版本（`item::actions` 内部），逻辑同一份。
+pub fn container_weight(container: &Container, items: &Query<(&Item, &Amount)>) -> f32 {
+    container.total_weight(|entity| {
+        items
+            .get(entity)
+            .map(|(item, amount)| stack_weight(item.id, amount.0))
+            .unwrap_or(0.0)
+    })
+}
+
 /// 玩家的身体视图：位置 + 身体容器 + 两条会被消耗品改的资源。
 type PickupPlayer = (
     Entity,
@@ -169,7 +189,6 @@ pub fn pickup_system(
     mut others: Query<&mut Container, Without<Player>>,
     items: Query<(&Item, &Amount)>,
     ground: Query<(Entity, &GroundItemAt, &Item, &Amount)>,
-    corpses: Query<(Entity, &Position, &crate::monster::Corpse), Without<Player>>,
     mut event_log: ResMut<EventLog>,
 ) {
     let Ok((_, position, mut body, mut health, mut magic)) = players.single_mut() else {
@@ -221,7 +240,8 @@ pub fn pickup_system(
             break;
         };
 
-        // 并堆：找同类且有空间的槽位。
+        // 并堆：找同类且有空间的槽位。行囊有载重上限（DsnE20），并堆也算重量。
+        let mut weight = container_weight(&pack, &items);
         let merge_target = pack.iter().find_map(|(_, occupant)| {
             let (occupant_item, occupant_amount) = items.get(occupant).ok()?;
             (occupant_item.id == def.id && occupant_amount.room(def) > 0)
@@ -229,16 +249,27 @@ pub fn pickup_system(
         });
         if let Some((occupant, current, room)) = merge_target {
             let merged = room.min(left);
-            commands.entity(occupant).insert(Amount::new(current + merged));
-            left -= merged;
+            let merged_weight = stack_weight(def.id, merged);
+            if pack.accepts_weight(weight, merged_weight) {
+                commands.entity(occupant).insert(Amount::new(current + merged));
+                weight += merged_weight;
+                left -= merged;
+            }
         }
         // 开新格（一堆一个实体；超过 `max_stack` 的部分继续找下一格）。
+        // 空槽位只是"放得进"，还得"背得动"：载重超了就留在原地。
         let mut moved_original = false;
+        let mut overweight = false;
         while left > 0 {
             let Some(index) = pack.free_slot_for(def.tags) else {
                 break;
             };
             let put = def.max_stack.min(left);
+            let put_weight = stack_weight(def.id, put);
+            if !pack.accepts_weight(weight, put_weight) {
+                overweight = true;
+                break;
+            }
             let holder = if put == left {
                 moved_original = true;
                 entity
@@ -246,6 +277,7 @@ pub fn pickup_system(
                 spawn_item(&mut commands, def.id, put)
             };
             let _ = pack.insert(index, holder, def.tags);
+            weight += put_weight;
             left -= put;
         }
 
@@ -253,8 +285,9 @@ pub fn pickup_system(
             commands.entity(entity).remove::<GroundItemAt>();
             event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
         } else if left == amount.0 {
+            let reason = if overweight { "行囊超重" } else { "行囊满了" };
             event_log.push(EventMessage::system(format!(
-                "行囊满了，{}留在了地上",
+                "{reason}，{}留在了地上",
                 def.name
             )));
         } else if left > 0 {
@@ -266,100 +299,6 @@ pub fn pickup_system(
         } else {
             commands.entity(entity).despawn();
             event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
-        }
-    }
-
-    // 尸体是**容器**（DsnE18 第②片）：同一格上的尸体也一并搜刮。
-    loot_corpses(
-        &mut body,
-        &mut others,
-        &items,
-        here,
-        &corpses,
-        &mut commands,
-        &mut event_log,
-    );
-}
-
-/// 踩到尸体格时把尸体里的东西收进行囊（第②片的过渡口径）。
-///
-/// 与地面拾取分开写：尸体是**容器**，搜刮是"容器 → 容器"的转移，不涉及地面位置。
-/// 等背包页有"翻找"动作后，这条自动搜刮会被显式交互取代（记录在 DsnE18）。
-fn loot_corpses(
-    body: &mut Container,
-    others: &mut Query<&mut Container, Without<Player>>,
-    items: &Query<(&Item, &Amount)>,
-    player_position: (usize, usize),
-    corpses: &Query<(Entity, &Position, &crate::monster::Corpse), Without<Player>>,
-    commands: &mut Commands,
-    event_log: &mut EventLog,
-) {
-    let Some(pack_entity) = body.slot(pack_slot_index()) else {
-        return;
-    };
-    for (corpse_entity, position, corpse) in corpses.iter() {
-        if position.to_tuple() != player_position {
-            continue;
-        }
-        let contents: Vec<(usize, Entity)> = others
-            .get(corpse_entity)
-            .map(|container| container.iter().collect())
-            .unwrap_or_default();
-        if contents.is_empty() {
-            continue;
-        }
-        let mut looted: Vec<&'static str> = Vec::new();
-        for (slot, item) in contents {
-            let Some(def) = items.get(item).ok().map(|(item, _)| item.def()) else {
-                continue;
-            };
-            let mut placed = false;
-            if let Ok(mut pack) = others.get_mut(pack_entity) {
-                // 先并堆，再找空格（与地面拾取同一条口径）。
-                let merge_target = pack.iter().find_map(|(_, occupant)| {
-                    let (occupant_item, occupant_amount) = items.get(occupant).ok()?;
-                    (occupant_item.id == def.id && occupant_amount.room(def) > 0)
-                        .then_some((occupant, occupant_amount.0, occupant_amount.room(def)))
-                });
-                if let Some((occupant, current, room)) = merge_target {
-                    let taken = items.get(item).map(|(_, amount)| amount.0).unwrap_or(1);
-                    let merged = room.min(taken);
-                    commands
-                        .entity(occupant)
-                        .insert(Amount::new(current + merged));
-                    if merged == taken {
-                        // 整堆并入之后，原实体不再是"物品"，销毁它。
-                        commands.entity(item).despawn();
-                        placed = true;
-                    }
-                }
-                if !placed
-                    && let Some(index) = pack.free_slot_for(def.tags)
-                {
-                    placed = pack.insert(index, item, def.tags).is_ok();
-                }
-            }
-            if placed {
-                if let Ok(mut corpse_container) = others.get_mut(corpse_entity)
-                    && corpse_container.slot(slot) == Some(item)
-                {
-                    let _ = corpse_container.remove(item);
-                }
-                looted.push(def.name);
-            } else {
-                event_log.push(EventMessage::system(format!(
-                    "行囊满了，{}还留在{}身上",
-                    def.name,
-                    corpse.display_name()
-                )));
-            }
-        }
-        if !looted.is_empty() {
-            event_log.push(EventMessage::item(format!(
-                "你从{}身上搜出了{}",
-                corpse.display_name(),
-                looted.join("、")
-            )));
         }
     }
 }
