@@ -129,6 +129,13 @@ impl App {
 
     /// 落地一个页栈意图。
     fn apply_ui(&mut self, intent: UiIntent) -> bool {
+        // 背包页的动作意图改的是**世界**（不是页栈）：先在这里接地。
+        if matches!(
+            intent,
+            UiIntent::InventoryConfirm | UiIntent::InventoryUse | UiIntent::InventoryDrop
+        ) {
+            return self.apply_inventory_action(intent);
+        }
         let world_size = (ecs_core::MAP_WIDTH, ecs_core::MAP_HEIGHT);
         let mut pages: PageStack = self.world.resource::<PageStack>().clone();
         let handled = apply_ui_intent(&mut pages, intent, world_size);
@@ -141,6 +148,42 @@ impl App {
             request_quit(&mut self.world);
         }
         handled
+    }
+
+    /// 背包页的动作：把"选中的行"换算成槽位，再调核心动作。
+    ///
+    /// 失败转成一条日志（玩家必须知道"为什么没动"）；返回 `true`
+    /// ——按键确实被处理了，只是没成功。视图在下一帧 `refresh` 时按容器重建，
+    /// 所以这里不需要手动失效任何缓存。
+    fn apply_inventory_action(&mut self, intent: UiIntent) -> bool {
+        let cursor = self.world.resource::<PageStack>().inventory_cursor();
+        let Some(target) = presentation::inventory_target(&self.world, cursor) else {
+            return false;
+        };
+        use presentation::InventoryTarget;
+        let result = match (intent, target) {
+            (UiIntent::InventoryConfirm, InventoryTarget::Body { slot }) => {
+                ecs_core::unequip_to_pack(&mut self.world, slot)
+            }
+            (UiIntent::InventoryConfirm, InventoryTarget::Pack { slot }) => {
+                ecs_core::equip_from_pack(&mut self.world, slot)
+            }
+            (UiIntent::InventoryUse, InventoryTarget::Pack { slot }) => {
+                ecs_core::use_from_pack(&mut self.world, slot)
+            }
+            (UiIntent::InventoryDrop, InventoryTarget::Pack { slot }) => {
+                ecs_core::drop_from_pack(&mut self.world, slot)
+            }
+            // 身体行没有"用"与"丢"：装备要先卸下（避免"把剑吃了"这种误操作）。
+            (UiIntent::InventoryUse | UiIntent::InventoryDrop, InventoryTarget::Body { .. }) => {
+                Err(ecs_core::ItemActionError::NotUsable)
+            }
+            _ => return false,
+        };
+        if let Err(error) = result {
+            log::info!("背包动作失败：{}", error.describe());
+        }
+        true
     }
 
     /// 游戏是否已请求退出。

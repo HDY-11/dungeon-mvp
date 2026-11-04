@@ -38,6 +38,7 @@
 //! | 其他 | 进行囊（先并堆、再开新格） |
 //! | 放不下 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
 
+pub mod actions;
 pub mod container;
 pub mod loot;
 pub mod registry;
@@ -50,6 +51,7 @@ use bevy_ecs::prelude::*;
 pub use container::{
     BODY, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
+pub use actions::{ItemActionError, drop_from_pack, equip_from_pack, unequip_to_pack, use_from_pack};
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{
     ConsumeEffect, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM, item_by_name,

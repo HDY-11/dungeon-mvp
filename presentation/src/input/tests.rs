@@ -129,9 +129,12 @@ fn question_mark_is_ignored_inside_overlays() {
 }
 
 /// 覆盖页吃掉移动键：按方向键翻看地形不该把玩家走出去。
+///
+/// 背包页的 ↑/↓ 不是"被吞掉"，而是翻译成**光标移动意图**（`MoveInventoryCursor`）——
+/// 关键性质相同：它们不驱动世界。
 #[test]
 fn overlays_swallow_movement_keys() {
-    for page in [PageKind::Look, PageKind::Dialog, PageKind::Inventory] {
+    for page in [PageKind::Look, PageKind::Dialog] {
         let input = ctx(page);
         for k in [Key::Up, Key::Char('h'), Key::Char('.'), Key::Home] {
             assert!(
@@ -140,6 +143,12 @@ fn overlays_swallow_movement_keys() {
             );
         }
     }
+    // 背包页：方向键变成光标意图，仍然不是移动命令。
+    let input = ctx(PageKind::Inventory);
+    let up = map_input_event(key(Key::Up), &input);
+    assert!(up.command().is_none(), "背包页 ↑ 不得驱动世界");
+    let enter = map_input_event(key(Key::Enter), &input);
+    assert!(enter.command().is_none(), "背包页 Enter 不得驱动世界");
 }
 
 /// 确认键：只在退出对话框里被消费。

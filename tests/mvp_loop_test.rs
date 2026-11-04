@@ -416,3 +416,67 @@ fn mvp_viewport_resize_is_safe() {
     let text = render_text(&mut app);
     assert!(text.contains('@'));
 }
+
+/// 背包页真的能改世界：`e` 开页 → `Enter` 装上 → 再 `Enter` 卸下。
+///
+/// 唯一一条把「按键 → 页栈 → 世界动作 → 下一帧视图」串起来验证的用例：
+/// 少了它，动作系统与键位之间断了也不会红。
+#[test]
+fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
+    use ecs_core::ItemTag;
+    use ecs_core::item::{Amount, BODY, Container, Item, ItemId, pack_slot_index};
+
+    let mut app = quiet_app(2026);
+    let player = player_entity(app.world_mut());
+    let world = app.world_mut();
+    let pack = world
+        .get::<Container>(player)
+        .and_then(|body| body.slot(pack_slot_index()))
+        .expect("玩家身上有行囊");
+    let sword = world.spawn((Item::new(ItemId(0)), Amount::new(1))).id();
+    {
+        let mut pack_container = world.get_mut::<Container>(pack).expect("行囊");
+        let slot = pack_container.free_slot_for(&[]).expect("空格");
+        pack_container.insert(slot, sword, &[]).expect("空格");
+    }
+    let main_hand = BODY
+        .slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ItemTag::Weapon]))
+        .expect("有主手槽");
+
+    // 开页：光标 0 = 行囊第一格（剑）。
+    app.handle(key(Key::Char('e')));
+    assert_eq!(
+        app.refresh().ui.kind(),
+        PageKind::Inventory,
+        "e 应当打开背包页"
+    );
+    // Enter = 装上。
+    app.handle(key(Key::Enter));
+    app.refresh();
+    assert_eq!(
+        app.world_mut()
+            .get::<Container>(player)
+            .and_then(|body| body.slot(main_hand)),
+        Some(sword),
+        "Enter 应当把剑装上"
+    );
+    // 光标第一行现在是身体的主手 → 再 Enter = 卸下。
+    app.handle(key(Key::Enter));
+    app.refresh();
+    let world = app.world_mut();
+    assert_eq!(
+        world
+            .get::<Container>(player)
+            .and_then(|body| body.slot(main_hand)),
+        None,
+        "再按 Enter 应当卸下"
+    );
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(sword)),
+        "卸下的剑必须回到行囊"
+    );
+}

@@ -43,8 +43,14 @@ pub enum UiIntent {
     ClosePage,
     /// 打开背包页。
     OpenInventory,
-    /// 背包页移动光标（`dy` 为 ±1，或跳 7 行）。
+    /// 背包页移动光标（`dy` 为 ±1）。
     MoveInventoryCursor { dy: i32 },
+    /// 背包页确认：身体行 = 卸下，行囊行 = 装上。
+    InventoryConfirm,
+    /// 背包页使用（消耗品）。
+    InventoryUse,
+    /// 背包页丢弃。
+    InventoryDrop,
     /// 打开 Look 页，光标落在给定世界坐标。
     OpenLook { x: usize, y: usize },
     /// 移动 Look 光标。
@@ -145,6 +151,10 @@ impl PageStack {
                 self.open_quit_dialog();
                 true
             }
+            // 三个动作意图改的是**世界**而不是页栈：由应用层拿世界落地
+            // （见 `dungeon-app` 的 `apply_ui`）。这里返回 `false`，
+            // 让"忘了接地"在测试里表现为"按了没反应"，而不是偷偷改页栈状态。
+            UiIntent::InventoryConfirm | UiIntent::InventoryUse | UiIntent::InventoryDrop => false,
             UiIntent::OpenLook { x, y } => {
                 self.open_look(x, y);
                 true

@@ -150,9 +150,27 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
         }
         Key::Enter => match input.page {
             render_api::PageKind::Dialog => InputOutcome::Ui(UiIntent::ConfirmQuit),
+            // 背包页：身体行 = 卸下，行囊行 = 装上（行由应用层按视图光标解析）。
+            render_api::PageKind::Inventory => InputOutcome::Ui(UiIntent::InventoryConfirm),
             _ => InputOutcome::Ignored,
         },
         other => {
+            // 背包页：方向键移光标，Enter 确认（身体行卸下 / 行囊行装上），
+            // r 使用、d 丢弃 —— 这些键**不**驱动世界行动。
+            if matches!(input.page, render_api::PageKind::Inventory) {
+                return match other {
+                    Key::Up | Key::Char('k') => {
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dy: -1 })
+                    }
+                    Key::Down | Key::Char('j') => {
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dy: 1 })
+                    }
+                    Key::Enter => InputOutcome::Ui(UiIntent::InventoryConfirm),
+                    Key::Char('r') => InputOutcome::Ui(UiIntent::InventoryUse),
+                    Key::Char('d') => InputOutcome::Ui(UiIntent::InventoryDrop),
+                    _ => InputOutcome::Ignored,
+                };
+            }
             // 覆盖页打开时，移动/等待键不该同时驱动世界——否则按方向键翻看
             // 地形会把玩家走出去（旧实现没有覆盖页，所以没这个问题）。
             if in_overlay {

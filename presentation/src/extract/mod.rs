@@ -234,6 +234,68 @@ pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView
     view
 }
 
+/// 背包页选中行对应的**世界目标**（`Body` = 身体槽位，`Pack` = 行囊槽位）。
+///
+/// 页栈只存"光标在第几行"，行 → 槽位的换算由这里给出。视图构造与目标解析共用同一份
+/// [`inventory_rows`]，所以"看到第几行"与"动的是哪一格"不可能对不上。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InventoryTarget {
+    /// 身体第 `slot` 格。
+    Body { slot: usize },
+    /// 行囊第 `slot` 格。
+    Pack { slot: usize },
+}
+
+/// 背包页的行（顺序即界面顺序）：先身体（部位顺序），再行囊（格子顺序）。
+fn inventory_rows(world: &World, player: Entity) -> Vec<(InventoryTarget, &'static str, u32)> {
+    let mut rows = Vec::new();
+    let Some(body) = world.get::<ecs_core::Container>(player) else {
+        return rows;
+    };
+    for (index, occupant) in body.iter() {
+        let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+            continue;
+        };
+        // 行囊本身不算"穿在身上"，它在下面的行囊栏里展开。
+        if item.def().container_def().is_some() {
+            continue;
+        }
+        let amount = world
+            .get::<ecs_core::Amount>(occupant)
+            .map(|amount| amount.0)
+            .unwrap_or(1);
+        rows.push((
+            InventoryTarget::Body { slot: index },
+            item.def().name,
+            amount,
+        ));
+    }
+    if let Some(pack) = body
+        .slot(ecs_core::item::pack_slot_index())
+        .and_then(|pack| world.get::<ecs_core::Container>(pack))
+    {
+        for (index, occupant) in pack.iter() {
+            let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+                continue;
+            };
+            let amount = world
+                .get::<ecs_core::Amount>(occupant)
+                .map(|amount| amount.0)
+                .unwrap_or(1);
+            rows.push((InventoryTarget::Pack { slot: index }, item.def().name, amount));
+        }
+    }
+    rows
+}
+
+/// 背包页当前选中的目标（`None` = 空行/没有玩家）。
+pub fn inventory_target(world: &World, cursor: usize) -> Option<InventoryTarget> {
+    let player = player_entity_of(world)?;
+    inventory_rows(world, player)
+        .get(cursor)
+        .map(|(target, _, _)| *target)
+}
+
 /// 帧号自增器：装配层持有它，保证 `revision` 单调递增。
 ///
 /// 后端可以用 `revision` 跳过未变化的帧（DsnX14「后端不得反向修改」的配套：
