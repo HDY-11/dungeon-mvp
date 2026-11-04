@@ -447,10 +447,11 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
         Option<&Stairs>,
         Option<&MonsterKindId>,
         Option<&Health>,
+        Option<&ecs_core::monster::Corpse>,
     )>();
 
     let mut entities: Vec<EntityView> = Vec::new();
-    for (entity, position, is_player, is_stairs, kind, health) in query.iter(world) {
+    for (entity, position, is_player, is_stairs, kind, health, corpse) in query.iter(world) {
         if is_player.is_some() {
             continue;
         }
@@ -460,7 +461,10 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
             continue;
         }
 
-        let visual = if is_stairs.is_some() {
+        let visual = if let Some(corpse) = corpse {
+            // 尸体复用怪物的字形（"哥布林倒下后还像哥布林"），颜色由后端决定。
+            map_monster_kind(corpse.kind)
+        } else if is_stairs.is_some() {
             VisualKey::Stairs
         } else if let Some(kind) = kind {
             map_monster_kind(*kind)
@@ -468,13 +472,18 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
             VisualKey::Unknown(u32::from(crate::catalog::tile_id(ecs_core::Tile::Floor)))
         };
 
-        let layer = if is_stairs.is_some() {
+        let layer = if corpse.is_some() {
+            // 尸体是地上的物件（不占格），要画在怪物下面。
+            VisualLayer::Item
+        } else if is_stairs.is_some() {
             VisualLayer::Terrain
         } else {
             VisualLayer::Actor
         };
 
-        let name = if is_stairs.is_some() {
+        let name = if let Some(corpse) = corpse {
+            corpse.display_name()
+        } else if is_stairs.is_some() {
             "楼梯".to_string()
         } else if let Some(kind) = kind {
             monster_template(*kind).name.to_string()
@@ -484,10 +493,11 @@ fn build_entities(world: &mut World, config: &ExtractConfig) -> Vec<EntityView> 
 
         // 可见性**按实体类型分别裁定**：
         // - 楼梯是导航目标：探索过就画（否则玩家连往哪走都不知道，SYN7）；
+        // - 尸体与地面物品同类：探索过就画（躺着不动，玩家需要记得它在哪）；
         // - 其它实体（怪物）严格按当前视野：看不见就不画，避免"隔着墙看到怪物"。
         // 旧代码把这两条合成一句 `is_stairs && explored`，等价于"只有楼梯可见"。
         let is_stairs = is_stairs.is_some();
-        let visible = if is_stairs {
+        let visible = if is_stairs || corpse.is_some() {
             explored.contains(&(x, y))
         } else {
             seen.contains(&(x, y))

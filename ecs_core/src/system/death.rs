@@ -15,7 +15,7 @@
 use crate::components::*;
 use crate::entity_cls::Player;
 use crate::events::DeathEvent;
-use crate::item::{roll_loot, spawn_ground_item};
+use crate::item::{roll_loot, spawn_ground_item, spawn_item};
 use crate::monster::MonsterKindId;
 use crate::resources::{EventLog, EventMessage, GameRng, TurnManager};
 use bevy_ecs::prelude::*;
@@ -69,8 +69,25 @@ pub fn check_death_system(
         // 掉落：掷骰 → 生成地面物品。位置缺失（理论上不该发生）就跳过掉落但照常回收，
         // 免得"一只怪没位置"把整个死亡流程卡住。
         if let (Some(kind), Some(position)) = (kind, position) {
-            let table = crate::monster::monster_template(*kind).loot;
-            for (item, count) in roll_loot(table, &mut rng) {
+            let template = crate::monster::monster_template(*kind);
+
+            // 尸体容器（DsnE18 第②片）：把**身上的装备**放进去。
+            // 战利品仍按 Gm8 落在地上（用户选的 (a) 档）。
+            let mut corpse = crate::item::Container::new(&crate::item::CORPSE);
+            for (index, id) in template.equipment.iter().enumerate() {
+                let item = spawn_item(&mut commands, *id, 1);
+                if corpse.insert(index, item, id.def().tags).is_err() {
+                    // 布局放不下是编码错误（CORPSE 的格子数与配置不匹配）。
+                    log::warn!("尸体容器放不下 {:?}，该物品丢失", id);
+                }
+            }
+            commands.spawn((
+                crate::monster::Corpse::new(template.kind, template.name),
+                *position,
+                corpse,
+            ));
+
+            for (item, count) in roll_loot(template.loot, &mut rng) {
                 spawn_ground_item(&mut commands, item, count, (position.x, position.y));
             }
         }

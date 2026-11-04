@@ -201,6 +201,23 @@ pub const TRAVELER_PACK: ContainerDef = ContainerDef {
     ],
 };
 
+/// **尸体**：怪物倒下后留在原地的一具容器（DsnE18 第②片）。
+///
+/// 只装它**身上的装备**；战利品仍按 Gm8 掉在地上（用户选的 (a) 档：改动最小、
+/// 之后要改成"全部进尸体"只需把 `death` 里的地面掉落搬进这里）。
+/// 四个格子够用：现在一只怪最多带一件，留出余量给将来的"多件装备/战利品"。
+///
+/// 尸体**不占格**（没有 `Blocks`），所以踩上去不会挡路；搜刮在拾取系统里做。
+pub const CORPSE: ContainerDef = ContainerDef {
+    name: "尸体",
+    slots: &[
+        SlotDef::any("遗留 1"),
+        SlotDef::any("遗留 2"),
+        SlotDef::any("遗留 3"),
+        SlotDef::any("遗留 4"),
+    ],
+};
+
 /// 往槽位里放东西失败的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertError {

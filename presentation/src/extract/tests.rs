@@ -201,6 +201,49 @@ fn monsters_inside_the_viewshed_are_visible() {
     );
 }
 
+/// 尸体（DsnE18 第②片）要能以**怪物字形 + 名字**出现在帧里，且画在物品层。
+#[test]
+fn corpses_are_drawn_with_the_monster_glyph_and_name() {
+    let mut world = new_game(2026);
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        query.iter(&world).next().expect("有玩家")
+    };
+    let player_pos = *world.get::<ecs_core::Position>(player).expect("玩家有位置");
+
+    // 玩家脚下放一具装着匕首的哥布林尸体。
+    let dagger = world
+        .spawn((
+            ecs_core::Item::new(ecs_core::ItemId(24)),
+            ecs_core::Amount::new(1),
+        ))
+        .id();
+    let mut container = ecs_core::Container::new(&ecs_core::CORPSE);
+    container
+        .insert(0, dagger, &[ecs_core::ItemTag::Weapon])
+        .expect("尸体格子无过滤");
+    world.spawn((
+        ecs_core::monster::Corpse::new(ecs_core::monster::MonsterKindId::Goblin, "哥布林"),
+        ecs_core::Position::new(player_pos.x, player_pos.y),
+        container,
+    ));
+
+    let config = ExtractConfig::default().with_viewport(40, 20);
+    let frame = extract_scene_frame(&mut world, &config, &PageStack::new(), 1);
+    let view = frame
+        .entities
+        .iter()
+        .find(|entity| entity.name == "哥布林的尸体")
+        .expect("尸体必须出现在帧里");
+    assert_eq!(
+        view.visual,
+        crate::catalog::map_monster_kind(ecs_core::monster::MonsterKindId::Goblin),
+        "尸体沿用哥布林的字形"
+    );
+    assert_eq!(view.layer, VisualLayer::Item, "尸体画在物品层");
+    assert!(view.visible, "探索过的格子上尸体必须可见");
+}
+
 /// 视野外的怪物不得出现在帧里（防止"隔着墙看到怪物"）。
 #[test]
 fn monsters_outside_viewshed_are_not_rendered() {

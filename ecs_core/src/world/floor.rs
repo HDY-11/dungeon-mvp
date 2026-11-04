@@ -146,6 +146,18 @@ fn despawn_floor_contents(world: &mut World) {
         doomed.extend(query.iter(world));
     }
     {
+        // 尸体是**容器**（DsnE18 第②片）：要连同它装着的装备一起清掉，
+        // 否则下楼之后会留下"无主物品"，而它们没有位置、也没人认领。
+        let mut query = world.query_filtered::<Entity, With<crate::monster::Corpse>>();
+        let corpses: Vec<Entity> = query.iter(world).collect();
+        for corpse in corpses {
+            if let Some(container) = world.get::<crate::item::Container>(corpse) {
+                doomed.extend(container.iter().map(|(_, item)| item));
+            }
+            doomed.push(corpse);
+        }
+    }
+    {
         let mut query = world.query_filtered::<Entity, With<Stairs>>();
         doomed.extend(query.iter(world));
     }

@@ -222,7 +222,12 @@ fn take_slot_is_index_based() {
 /// 的**入口断言**：现在谁把容量写成 2 而没有配套的 `Amount` 组件，这条立刻红。
 #[test]
 fn slot_capacity_is_one_for_now() {
-    for def in BODY.slots.iter().chain(TRAVELER_PACK.slots.iter()) {
+    for def in BODY
+        .slots
+        .iter()
+        .chain(TRAVELER_PACK.slots.iter())
+        .chain(CORPSE.slots.iter())
+    {
         assert_eq!(
             def.capacity, 1,
             "槽位「{}」的容量放开了，但还没有堆叠（Amount）支持",
@@ -234,7 +239,7 @@ fn slot_capacity_is_one_for_now() {
 /// 布局表的自检：名字非空、槽位不重名（重名会让日志与 UI 分不清是哪一个）。
 #[test]
 fn container_defs_are_well_formed() {
-    for def in [&BODY, &TRAVELER_PACK] {
+    for def in [&BODY, &TRAVELER_PACK, &CORPSE] {
         let mut names: Vec<&str> = Vec::new();
         for slot in def.slots {
             assert!(!slot.name.is_empty(), "{} 有空名字的槽位", def.name);
@@ -243,4 +248,22 @@ fn container_defs_are_well_formed() {
         }
         assert!(!def.is_empty(), "{} 是 0 格容器", def.name);
     }
+}
+
+/// 尸体没有过滤（DsnE18 第②片）：谁身上的东西都装得下。
+#[test]
+fn the_corpse_layout_accepts_anything() {
+    for slot in CORPSE.slots {
+        assert!(
+            matches!(slot.accept, SlotAccept::Any),
+            "尸体槽位「{}」不该有过滤",
+            slot.name
+        );
+    }
+    let mut corpse = Container::new(&CORPSE);
+    let whatever = item();
+    assert_eq!(
+        corpse.insert(0, whatever, &[]).expect("战利品无 tag 也得放得下"),
+        0
+    );
 }

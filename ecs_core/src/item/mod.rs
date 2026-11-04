@@ -49,7 +49,7 @@ use crate::resources::{EventLog, EventMessage};
 use bevy_ecs::prelude::*;
 
 pub use container::{
-    BODY, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
+    BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
 pub use actions::{ItemActionError, drop_from_pack, equip_from_pack, unequip_to_pack, use_from_pack};
 pub use loot::{LootEntry, roll_loot};
@@ -169,6 +169,7 @@ pub fn pickup_system(
     mut others: Query<&mut Container, Without<Player>>,
     items: Query<(&Item, &Amount)>,
     ground: Query<(Entity, &GroundItemAt, &Item, &Amount)>,
+    corpses: Query<(Entity, &Position, &crate::monster::Corpse), Without<Player>>,
     mut event_log: ResMut<EventLog>,
 ) {
     let Ok((_, position, mut body, mut health, mut magic)) = players.single_mut() else {
@@ -265,6 +266,100 @@ pub fn pickup_system(
         } else {
             commands.entity(entity).despawn();
             event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
+        }
+    }
+
+    // 尸体是**容器**（DsnE18 第②片）：同一格上的尸体也一并搜刮。
+    loot_corpses(
+        &mut body,
+        &mut others,
+        &items,
+        here,
+        &corpses,
+        &mut commands,
+        &mut event_log,
+    );
+}
+
+/// 踩到尸体格时把尸体里的东西收进行囊（第②片的过渡口径）。
+///
+/// 与地面拾取分开写：尸体是**容器**，搜刮是"容器 → 容器"的转移，不涉及地面位置。
+/// 等背包页有"翻找"动作后，这条自动搜刮会被显式交互取代（记录在 DsnE18）。
+fn loot_corpses(
+    body: &mut Container,
+    others: &mut Query<&mut Container, Without<Player>>,
+    items: &Query<(&Item, &Amount)>,
+    player_position: (usize, usize),
+    corpses: &Query<(Entity, &Position, &crate::monster::Corpse), Without<Player>>,
+    commands: &mut Commands,
+    event_log: &mut EventLog,
+) {
+    let Some(pack_entity) = body.slot(pack_slot_index()) else {
+        return;
+    };
+    for (corpse_entity, position, corpse) in corpses.iter() {
+        if position.to_tuple() != player_position {
+            continue;
+        }
+        let contents: Vec<(usize, Entity)> = others
+            .get(corpse_entity)
+            .map(|container| container.iter().collect())
+            .unwrap_or_default();
+        if contents.is_empty() {
+            continue;
+        }
+        let mut looted: Vec<&'static str> = Vec::new();
+        for (slot, item) in contents {
+            let Some(def) = items.get(item).ok().map(|(item, _)| item.def()) else {
+                continue;
+            };
+            let mut placed = false;
+            if let Ok(mut pack) = others.get_mut(pack_entity) {
+                // 先并堆，再找空格（与地面拾取同一条口径）。
+                let merge_target = pack.iter().find_map(|(_, occupant)| {
+                    let (occupant_item, occupant_amount) = items.get(occupant).ok()?;
+                    (occupant_item.id == def.id && occupant_amount.room(def) > 0)
+                        .then_some((occupant, occupant_amount.0, occupant_amount.room(def)))
+                });
+                if let Some((occupant, current, room)) = merge_target {
+                    let taken = items.get(item).map(|(_, amount)| amount.0).unwrap_or(1);
+                    let merged = room.min(taken);
+                    commands
+                        .entity(occupant)
+                        .insert(Amount::new(current + merged));
+                    if merged == taken {
+                        // 整堆并入之后，原实体不再是"物品"，销毁它。
+                        commands.entity(item).despawn();
+                        placed = true;
+                    }
+                }
+                if !placed
+                    && let Some(index) = pack.free_slot_for(def.tags)
+                {
+                    placed = pack.insert(index, item, def.tags).is_ok();
+                }
+            }
+            if placed {
+                if let Ok(mut corpse_container) = others.get_mut(corpse_entity)
+                    && corpse_container.slot(slot) == Some(item)
+                {
+                    let _ = corpse_container.remove(item);
+                }
+                looted.push(def.name);
+            } else {
+                event_log.push(EventMessage::system(format!(
+                    "行囊满了，{}还留在{}身上",
+                    def.name,
+                    corpse.display_name()
+                )));
+            }
+        }
+        if !looted.is_empty() {
+            event_log.push(EventMessage::item(format!(
+                "你从{}身上搜出了{}",
+                corpse.display_name(),
+                looted.join("、")
+            )));
         }
     }
 }

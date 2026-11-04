@@ -190,6 +190,11 @@ pub struct MonsterTemplate {
     pub spawn: &'static [SpawnWeightFor],
     /// 死亡时的掉落表（GAME.md Gm7）。空列表 = 不掉东西。
     pub loot: &'static [LootEntry],
+    /// **身上带的装备**（DsnE18 第②片）：死亡时进尸体容器，不掉在地上。
+    ///
+    /// 只给"会用工具"的物种配：目前是哥布林（匕首）与蘑菇傀儡（石锤）。
+    /// 数值一律引用注册表里的物品编号，不在模板里复制属性。
+    pub equipment: &'static [ItemId],
 }
 
 /// 由模板生成的实体数值。
@@ -360,6 +365,7 @@ const RAT: MonsterTemplate = MonsterTemplate {
         },
     ],
     loot: RAT_LOOT,
+    equipment: &[],
 };
 
 const SCORPION: MonsterTemplate = MonsterTemplate {
@@ -393,6 +399,7 @@ const SCORPION: MonsterTemplate = MonsterTemplate {
         },
     ],
     loot: SCORPION_LOOT,
+    equipment: &[],
 };
 
 const GOBLIN: MonsterTemplate = MonsterTemplate {
@@ -427,6 +434,7 @@ const GOBLIN: MonsterTemplate = MonsterTemplate {
         },
     ],
     loot: GOBLIN_LOOT,
+    equipment: &[ItemId(24)],
 };
 
 const SPORELING: MonsterTemplate = MonsterTemplate {
@@ -454,6 +462,7 @@ const SPORELING: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::falling(30.0, -2.0, 0.5),
     }],
     loot: SPORELING_LOOT,
+    equipment: &[],
 };
 
 const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
@@ -481,6 +490,7 @@ const MUSHROOM_GOLEM: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::rising(5.0, 2.5, 40.0),
     }],
     loot: MUSHROOM_GOLEM_LOOT,
+    equipment: &[ItemId(23)],
 };
 
 const CAVE_FISH: MonsterTemplate = MonsterTemplate {
@@ -508,6 +518,7 @@ const CAVE_FISH: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::falling(30.0, -2.0, 0.5),
     }],
     loot: CAVE_FISH_LOOT,
+    equipment: &[],
 };
 
 const CAVE_CRAB: MonsterTemplate = MonsterTemplate {
@@ -535,6 +546,7 @@ const CAVE_CRAB: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::rising(12.0, 1.5, 35.0),
     }],
     loot: CAVE_CRAB_LOOT,
+    equipment: &[],
 };
 
 const DEEP_EEL: MonsterTemplate = MonsterTemplate {
@@ -562,6 +574,7 @@ const DEEP_EEL: MonsterTemplate = MonsterTemplate {
         weight: SpawnWeight::rising(8.0, 2.0, 35.0),
     }],
     loot: DEEP_EEL_LOOT,
+    equipment: &[],
 };
 
 pub fn monster_template(kind: MonsterKindId) -> &'static MonsterTemplate {

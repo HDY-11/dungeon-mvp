@@ -259,3 +259,42 @@ fn new_floor_items_are_on_walkable_cells() {
         );
     }
 }
+
+/// 尸体是容器（DsnE18 第②片）：下楼时**连同它装着的装备**一起清掉。
+///
+/// 只清尸体不清内容，会留下"没有位置、也没有主人"的物品实体——它们不在任何查询
+/// 结果里，却永远活着，是那种不会报错的内存泄漏。
+#[test]
+fn descending_clears_corpses_and_what_they_hold() {
+    let mut world = new_game(2026);
+    let player = player_entity(&world).expect("开局必须有玩家");
+    let at = world.get::<Position>(player).unwrap().to_tuple();
+    let dagger = world
+        .spawn((
+            crate::item::Item::new(ItemId(24)),
+            crate::item::Amount::new(1),
+        ))
+        .id();
+    let mut container = crate::item::Container::new(&crate::item::CORPSE);
+    container
+        .insert(0, dagger, &[crate::item::ItemTag::Weapon])
+        .expect("尸体格子无过滤");
+    let corpse = world
+        .spawn((
+            crate::monster::Corpse::new(MonsterKindId::Goblin, "哥布林"),
+            Position::new(at.0, at.1),
+            container,
+        ))
+        .id();
+
+    stand_on_stairs(&mut world);
+    assert!(descend(&mut world));
+
+    assert!(world.get_entity(corpse).is_err(), "下楼后尸体必须被清掉");
+    assert!(
+        world.get_entity(dagger).is_err(),
+        "尸体里的物品也要一起清掉"
+    );
+    let mut leftovers = world.query_filtered::<&Position, With<crate::monster::Corpse>>();
+    assert_eq!(leftovers.iter(&world).count(), 0);
+}

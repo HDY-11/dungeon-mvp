@@ -445,3 +445,123 @@ fn equipment_bonus_reaches_the_damage_pipeline() {
         "持剑的伤害必须更高（空手 {unarmed}，持剑 {armed}）"
     );
 }
+
+// ── 4. 尸体容器（DsnE18 第②片）───────────────────────
+
+/// 哥布林倒下 → 原地留一具**容器**，装着它身上的匕首；战利品仍落在地上。
+#[test]
+fn a_dead_monster_leaves_a_corpse_holding_its_equipment() {
+    let (mut world, _player) = open_world();
+    let goblin = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Goblin,
+        (6, 6),
+        10.0,
+        4.0,
+    );
+    world.get_mut::<Health>(goblin).unwrap().current = 0.0;
+
+    let _ = world.run_system_once(crate::system::death::check_death_system);
+
+    let corpses: Vec<(Entity, (usize, usize))> = {
+        let mut query =
+            world.query_filtered::<(Entity, &Position), With<crate::monster::Corpse>>();
+        query
+            .iter(&world)
+            .map(|(entity, position)| (entity, position.to_tuple()))
+            .collect()
+    };
+    assert_eq!(corpses.len(), 1, "一只怪倒下一具尸体");
+    let (corpse, at) = corpses[0];
+    assert_eq!(at, (6, 6), "尸体留在它倒下的那一格");
+    assert!(
+        world.get::<crate::components::Blocks>(corpse).is_none(),
+        "尸体不占格，玩家能踩上去"
+    );
+
+    let held: Vec<ItemId> = {
+        let container = world.get::<Container>(corpse).expect("尸体必须是容器");
+        container
+            .iter()
+            .filter_map(|(_, item)| world.get::<Item>(item).map(|item| item.id))
+            .collect()
+    };
+    assert_eq!(held, vec![ItemId(24)], "哥布林身上的匕首进尸体");
+
+    // 用户选的 (a) 档：战利品（模板 `loot`）仍然落在地上。
+    let mut ground = world.query_filtered::<&Item, With<GroundItemAt>>();
+    assert!(
+        ground.iter(&world).count() > 0,
+        "战利品仍按 GAME.md Gm8 落地"
+    );
+}
+
+/// 不配装备的物种（老鼠）留下**空**尸体，不掉多余的东西。
+#[test]
+fn a_monster_without_equipment_leaves_an_empty_corpse() {
+    let (mut world, _player) = open_world();
+    let rat = spawn_test_monster(&mut world, crate::monster::MonsterKindId::Rat, (6, 6), 10.0, 4.0);
+    world.get_mut::<Health>(rat).unwrap().current = 0.0;
+
+    let _ = world.run_system_once(crate::system::death::check_death_system);
+
+    let mut query = world.query_filtered::<&Container, With<crate::monster::Corpse>>();
+    let containers: Vec<&Container> = query.iter(&world).collect();
+    assert_eq!(containers.len(), 1, "老鼠也有尸体");
+    assert_eq!(containers[0].used(), 0, "老鼠身上没装备，尸体是空的");
+}
+
+/// 踩到尸体格 → 尸体里的东西进**行囊**，尸体留在原地（空壳）。
+#[test]
+fn stepping_on_a_corpse_loots_its_contents_into_the_pack() {
+    let (mut world, player) = open_world();
+    let dagger = world
+        .spawn((Item::new(ItemId(24)), Amount::new(1)))
+        .id();
+    let mut container = Container::new(&CORPSE);
+    container
+        .insert(0, dagger, &[ItemTag::Weapon])
+        .expect("尸体格子无过滤");
+    let corpse = world
+        .spawn((
+            crate::monster::Corpse::new(crate::monster::MonsterKindId::Goblin, "哥布林"),
+            Position::new(10, 10),
+            container,
+        ))
+        .id();
+
+    let _ = world.run_system_once(pickup_system);
+
+    let pack_entity = world
+        .get::<Container>(player)
+        .and_then(|body| body.slot(pack_slot_index()))
+        .expect("玩家必须有行囊");
+    let in_pack: Vec<ItemId> = {
+        let pack = world.get::<Container>(pack_entity).expect("行囊实体");
+        pack.iter()
+            .filter_map(|(_, item)| world.get::<Item>(item).map(|item| item.id))
+            .collect()
+    };
+    assert_eq!(in_pack, vec![ItemId(24)], "匕首必须进行囊");
+    assert_eq!(
+        world.get::<Container>(corpse).expect("尸体还在").used(),
+        0,
+        "搜刮之后尸体是空的"
+    );
+    assert!(
+        world.get::<crate::monster::Corpse>(corpse).is_some(),
+        "尸体留在原地（将来由翻找/清理逻辑处理）"
+    );
+
+    let log = world.resource::<EventLog>();
+    assert!(
+        log.messages
+            .iter()
+            .any(|message| message.text.contains("哥布林的尸体") && message.text.contains("匕首")),
+        "必须告诉玩家搜刮到了什么：{:?}",
+        log.messages
+            .iter()
+            .map(|message| &message.text)
+            .collect::<Vec<_>>()
+    );
+}
