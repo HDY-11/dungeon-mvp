@@ -270,76 +270,150 @@ impl LookView {
     }
 }
 
-/// 背包页中的面板类型。
+/// 背包页导航栏里的一个页签。
+///
+/// 导航栏 1（Nav1）放「身体 / 行囊」，导航栏 2（Nav2）放「尸体 / 地面」；
+/// 每个页签决定它下方 Context 栏显示哪个容器的内容（DsnA5）。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum InventoryPanel {
+pub enum InventoryNav {
+    /// 身体七部位（Nav1 第一个页签）。
     #[default]
-    Equipment,
-    Backpack,
+    Body,
+    /// 旅者行囊（Nav1 第二个页签）。
+    Pack,
+    /// 脚下尸体（Nav2；有尸体时才出现）。
+    Corpse,
+    /// 脚下地面物品（Nav2；有地面物品时才出现）。
     Ground,
 }
 
-/// 背包页当前焦点。
+impl InventoryNav {
+    /// 页签文字。渲染层只负责画，不自己造词。
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Body => "身体",
+            Self::Pack => "行囊",
+            Self::Corpse => "尸体",
+            Self::Ground => "地面",
+        }
+    }
+
+    /// 属于导航栏 1 还是导航栏 2。
+    pub const fn group(self) -> InventoryNavGroup {
+        match self {
+            Self::Body | Self::Pack => InventoryNavGroup::Nav1,
+            Self::Corpse | Self::Ground => InventoryNavGroup::Nav2,
+        }
+    }
+}
+
+/// 背包页的两条导航栏。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum InventoryFocus {
-    Panel(InventoryPanel),
-    Detail,
+pub enum InventoryNavGroup {
+    Nav1,
+    Nav2,
 }
 
-impl Default for InventoryFocus {
-    fn default() -> Self {
-        Self::Panel(InventoryPanel::default())
+impl InventoryNavGroup {
+    pub const fn context(self) -> InventoryFocus {
+        match self {
+            Self::Nav1 => InventoryFocus::Context1,
+            Self::Nav2 => InventoryFocus::Context2,
+        }
     }
 }
 
-/// 背包页中的一个面板。
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct InventoryPanelView {
-    pub panel: InventoryPanel,
-    pub list: ListView,
-}
-
-impl InventoryPanelView {
-    pub fn new(panel: InventoryPanel, list: ListView) -> Self {
-        Self { panel, list }
-    }
-}
-
-/// 背包 / 装备页视图。
+/// 背包页的 4 个焦点位，顺时针 `Nav1 → Nav2 → Context2 → Context1`。
 ///
-/// 物品系统迁移到 `core` 之前，这是目标形状；`presentation` 按
-/// [`InventoryPanel`] 填充装备 / 背包 / 地面面板，详情面板可选。
-/// 用面板列表而不是三个固定字段，方便未来追加“合成 / 商店”等页面。
+/// `Detail` 不是焦点位：详情跟随当前 Context 的选中行（DsnA5）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum InventoryFocus {
+    #[default]
+    Nav1,
+    Nav2,
+    Context2,
+    Context1,
+}
+
+impl InventoryFocus {
+    /// 顺时针的下一个焦点位。
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Nav1 => Self::Nav2,
+            Self::Nav2 => Self::Context2,
+            Self::Context2 => Self::Context1,
+            Self::Context1 => Self::Nav1,
+        }
+    }
+}
+
+/// 背包页视图（DsnA5）：3×3 网格 + 右侧详情。
+///
+/// ```text
+/// Nav1     Nav2     Detail
+/// Context1 Context2 Detail
+/// Tip      Tip      Tip
+/// ```
+///
+/// `nav2` 为空表示脚下既没有尸体也没有地面物品，此时 Nav2 / Context2 不参与渲染
+/// 与焦点轮转。行与动作的对应关系由 `presentation` 决定，渲染层只画 `ListView`。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InventoryView {
     pub title: String,
-    pub panels: Vec<InventoryPanelView>,
-    pub focus: InventoryFocus,
+    /// 导航栏 1 的页签（身体、行囊）。
+    pub nav1: Vec<InventoryNav>,
+    pub nav1_selected: usize,
+    /// 导航栏 2 的页签（尸体、地面）；空 = 脚下什么都没有。
+    pub nav2: Vec<InventoryNav>,
+    pub nav2_selected: usize,
+    pub context1: ListView,
+    pub context2: ListView,
     pub detail: Option<DetailView>,
-    pub footer: String,
+    /// 底部按键提示，逐行画。
+    pub tips: Vec<UiTextLine>,
+    pub focus: InventoryFocus,
 }
 
 impl InventoryView {
-    /// 按面板类型查找列表。
-    pub fn panel(&self, panel: InventoryPanel) -> Option<&ListView> {
-        self.panels
-            .iter()
-            .find(|entry| entry.panel == panel)
-            .map(|entry| &entry.list)
+    /// 某条导航栏的页签列表。
+    pub fn nav_tabs(&self, group: InventoryNavGroup) -> &[InventoryNav] {
+        match group {
+            InventoryNavGroup::Nav1 => &self.nav1,
+            InventoryNavGroup::Nav2 => &self.nav2,
+        }
     }
 
-    pub fn panel_mut(&mut self, panel: InventoryPanel) -> Option<&mut ListView> {
-        self.panels
-            .iter_mut()
-            .find(|entry| entry.panel == panel)
-            .map(|entry| &mut entry.list)
+    /// 某条导航栏当前选中的页签。
+    pub fn nav_selected(&self, group: InventoryNavGroup) -> Option<InventoryNav> {
+        self.nav_tabs(group)
+            .get(match group {
+                InventoryNavGroup::Nav1 => self.nav1_selected,
+                InventoryNavGroup::Nav2 => self.nav2_selected,
+            })
+            .copied()
     }
 
-    /// 当前焦点对应的列表；焦点在详情页时返回 `None`。
-    pub fn focused_panel(&self) -> Option<&ListView> {
+    /// 某条导航栏对应的 Context 栏。
+    pub fn context(&self, group: InventoryNavGroup) -> &ListView {
+        match group {
+            InventoryNavGroup::Nav1 => &self.context1,
+            InventoryNavGroup::Nav2 => &self.context2,
+        }
+    }
+
+    /// 焦点所在的 Context 栏（焦点在导航栏时返回它的 Context）。
+    pub fn focused_context(&self) -> &ListView {
         match self.focus {
-            InventoryFocus::Panel(panel) => self.panel(panel),
-            InventoryFocus::Detail => None,
+            InventoryFocus::Nav1 | InventoryFocus::Context1 => &self.context1,
+            InventoryFocus::Nav2 | InventoryFocus::Context2 => &self.context2,
+        }
+    }
+
+    /// 焦点所在的导航栏（焦点在 Context 时返回它上方的导航栏）。
+    pub fn focused_nav_group(&self) -> InventoryNavGroup {
+        match self.focus {
+            InventoryFocus::Nav1 | InventoryFocus::Context1 => InventoryNavGroup::Nav1,
+            InventoryFocus::Nav2 | InventoryFocus::Context2 => InventoryNavGroup::Nav2,
         }
     }
 }
@@ -389,7 +463,9 @@ pub enum UiView {
     Game,
     Look(LookView),
     Dialog(DialogView),
-    Inventory(InventoryView),
+    /// 背包页是网格视图，比其它页大得多；装箱避免把整个枚举撑到 368 字节
+    /// （`SceneFrame` 每帧克隆一次）。
+    Inventory(Box<InventoryView>),
     ThrowSelect(ListView),
     ThrowAim(ThrowAimView),
 }
@@ -444,7 +520,7 @@ mod tests {
         assert!(!dialog.is_fullscreen());
         assert!(dialog.is_overlay());
 
-        let inventory = UiView::Inventory(InventoryView::default());
+        let inventory = UiView::Inventory(Box::default());
         assert_eq!(inventory.kind(), PageKind::Inventory);
         assert!(inventory.is_fullscreen());
         assert!(!inventory.is_overlay());
@@ -521,29 +597,58 @@ mod tests {
     }
 
     #[test]
-    fn inventory_view_panels_and_focus() {
-        let backpack = ListView::new("背包").with_items(vec![ListItemView::new("药水")]);
-        let mut inventory = InventoryView {
+    fn inventory_grid_exposes_navs_contexts_and_focus_cycle() {
+        let pack = ListView::new("行囊").with_items(vec![ListItemView::new("蘑菇 ×2")]);
+        let inventory = InventoryView {
             title: "背包".to_string(),
-            panels: vec![InventoryPanelView::new(InventoryPanel::Backpack, backpack)],
+            nav1: vec![InventoryNav::Body, InventoryNav::Pack],
+            nav1_selected: 1,
+            nav2: vec![InventoryNav::Ground],
+            nav2_selected: 0,
+            context1: pack,
+            context2: ListView::new("地面").with_items(vec![ListItemView::new("石子 ×1")]),
             ..InventoryView::default()
         };
+
         assert_eq!(
-            inventory.panel(InventoryPanel::Backpack).map(ListView::len),
-            Some(1)
+            inventory.nav_selected(InventoryNavGroup::Nav1),
+            Some(InventoryNav::Pack)
         );
-        assert!(inventory.panel(InventoryPanel::Equipment).is_none());
-        assert!(
-            inventory.focused_panel().is_none(),
-            "默认焦点是装备面板，但这里没有装备面板"
+        assert_eq!(
+            inventory.nav_selected(InventoryNavGroup::Nav2),
+            Some(InventoryNav::Ground)
         );
+        // 焦点默认 Nav1 → 它对应 Context1。
+        assert_eq!(inventory.focused_nav_group(), InventoryNavGroup::Nav1);
+        assert_eq!(inventory.focused_context().len(), 1);
+        // Nav1 的 Context1 里是行囊内容（身体页签的列表由 presentation 换）。
+        assert_eq!(inventory.context(InventoryNavGroup::Nav1).items[0].label, "蘑菇 ×2");
+        assert_eq!(inventory.nav_tabs(InventoryNavGroup::Nav2), &[InventoryNav::Ground]);
+        assert_eq!(InventoryNav::Corpse.group(), InventoryNavGroup::Nav2);
+        assert_eq!(InventoryNav::Body.label(), "身体");
 
-        inventory.focus = InventoryFocus::Panel(InventoryPanel::Backpack);
-        assert_eq!(inventory.focused_panel().map(ListView::len), Some(1));
-        inventory.focus = InventoryFocus::Detail;
-        assert!(inventory.focused_panel().is_none());
-
-        assert!(inventory.panel_mut(InventoryPanel::Backpack).is_some());
-        assert!(inventory.panel_mut(InventoryPanel::Ground).is_none());
+        assert_eq!(
+            [
+                InventoryFocus::Nav1,
+                InventoryFocus::Nav2,
+                InventoryFocus::Context2,
+                InventoryFocus::Context1,
+            ]
+            .map(InventoryFocus::next),
+            [
+                InventoryFocus::Nav2,
+                InventoryFocus::Context2,
+                InventoryFocus::Context1,
+                InventoryFocus::Nav1,
+            ],
+            "焦点位顺时针轮转"
+        );
+        let mut focused = InventoryView {
+            focus: InventoryFocus::Context2,
+            ..inventory
+        };
+        assert_eq!(focused.focused_nav_group(), InventoryNavGroup::Nav2);
+        focused.focus = InventoryFocus::Nav1;
+        assert_eq!(focused.focused_context().items[0].label, "蘑菇 ×2");
     }
 }

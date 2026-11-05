@@ -1,27 +1,38 @@
-//! 背包页（全屏页，Dsn21）的绘制。
+//! 背包页（全屏页，DsnA5 的 3×3 网格）的绘制。
 //!
 //! # 只画契约
 //!
-//! 收的是 [`render_api::InventoryView`]：每栏有哪些行、选中哪一行、详情面板有什么、
-//! 底部提示写什么，全部由 `presentation` 决定（DsnX14：显示数据归 presentation，
-//! 后端只负责画）。这一层**不写死键位文案**，也不重排内容。
+//! 收的是 [`render_api::InventoryView`]：两条导航栏有哪些页签、两条内容栏有什么行、
+//! 详情面板写什么、底部提示是什么，全部由 `presentation` 决定（DsnX14：显示数据归
+//! presentation，后端只负责画）。这一层**不写死键位文案**，也不重排内容。
 //!
-//! # 为什么要自己算显示宽度
+//! # 网格与焦点
+//!
+//! ```text
+//! Nav1       Nav2       Detail
+//! Context1   Context2   Detail
+//! Tip        Tip        Tip
+//! ```
+//!
+//! 页签画在每条内容栏的标题行上（Nav1 在 Context1 上、Nav2 在 Context2 上），选中
+//! 页签反色，导航栏聚焦时再加粗；内容栏聚焦时整行反色。焦点顺序只有 4 个位置
+//! （Nav1 → Nav2 → Context2 → Context1），详情不参与——那些语义全在契约里，这里只
+//! 按 `view.focus` 决定哪个框描青边。
+//!
+//! # 为什么自己算显示宽度
 //!
 //! 终端的「列」不等于 `char`：一个汉字或全角标点占 2 列。用 `chars().count()` 当
-//! 宽度去补空格，选中行的高亮会短一半（中文标签），窄屏截断还会把宽字符切成半个。
-//! `tui` 的依赖表里没有 `unicode-width`（本任务的写域只允许 `tui/src`），所以
-//! [`display_width`] 用一张 East Asian Wide/Fullwidth 表近似它，口径与 ratatui
-//! 内部的 `unicode-width`（默认非 CJK：全角 2 列、歧义宽度 1 列、组合记号 0 列）
-//! 保持一致，保证「补空格铺满整行」与 ratatui 实际写进缓冲的宽度对得上。
+//! 宽度补空格会让中文选中行短一半，窄屏截断还会把宽字符切成半个。`tui` 的依赖表里
+//! 没有 `unicode-width`，所以 [`display_width`] 用一张 East Asian Wide/Fullwidth 表
+//! 近似它，口径与 ratatui 内部的 `unicode-width` 一致。
 //!
 //! # 布局降级
 //!
-//! 1. 宽屏（内容 ≥ 64 列）：身体 / 行囊左右两栏（40% : 60%，中间 1 列间隔）；
-//! 2. 窄屏（< 64 列，例如 40 列终端）：上下堆叠，宁可滚动也不压扁标签；
-//! 3. 详情面板：超宽（≥ 100 列且 ≥ 12 行）放右侧；普通宽屏（≥ 48 列且 ≥ 16 行）
-//!    放底部；再小就**不画**详情——降级时先保证两栏可用；
-//! 4. 极小终端（1×1、10×3）：所有尺寸用 saturating 运算，画不下就少画，绝不 panic。
+//! 1. 宽屏（内容 ≥ 64 列）：详情放右侧；
+//! 2. 普通屏（内容高 ≥ 16 行）：详情放底部；
+//! 3. 更小：不画详情，网格占满，先保证导航栏与内容栏可用；
+//! 4. 内容宽 < 50 列：Context1 / Context2 上下堆叠，不压扁标签；
+//! 5. 极小终端（1×1、10×3）：所有尺寸用 saturating 运算，画不下就少画，绝不 panic。
 
 use ratatui::{
     Frame,
@@ -31,79 +42,71 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use render_api::{
-    DetailView, InventoryFocus, InventoryPanelView, InventoryView, ListItemView, ListView,
-    UiTextLine, UiTextStyle,
+    DetailView, InventoryFocus, InventoryNav, InventoryView, ListItemView, ListView, UiTextLine,
+    UiTextStyle,
 };
 
-/// 页面内容至少这么宽时，身体 / 行囊左右并排；否则上下堆叠。
-const COLUMNS_MIN_WIDTH: u16 = 64;
-/// 两栏并排时每栏的最小宽度（含边框）。
-const PANEL_MIN_WIDTH: u16 = 18;
 /// 栏与栏之间的间隔列数。
 const GAP: u16 = 1;
-/// 内容高度低于这个值时不留底部提示行（否则两栏只剩边框）。
-const FOOTER_MIN_HEIGHT: u16 = 6;
+/// 两栏并排时每栏的最小宽度（含边框）。
+const PANEL_MIN_WIDTH: u16 = 18;
+/// 两条内容栏并排所需的最小宽度；更窄就上下堆叠。
+const COLUMNS_MIN_WIDTH: u16 = 50;
+/// 底部提示最多占的行数（契约给几行就画几行，超了截断）。
+const TIPS_MAX_HEIGHT: u16 = 2;
 
 /// 详情放右侧所需的最小内容尺寸。
-const DETAIL_SIDE_MIN_WIDTH: u16 = 100;
-const DETAIL_SIDE_MIN_HEIGHT: u16 = 12;
+const DETAIL_SIDE_MIN_WIDTH: u16 = 64;
+const DETAIL_SIDE_MIN_HEIGHT: u16 = 10;
 /// 详情放底部所需的最小内容尺寸。
-const DETAIL_BOTTOM_MIN_WIDTH: u16 = 48;
 const DETAIL_BOTTOM_MIN_HEIGHT: u16 = 16;
 /// 详情栏宽 / 高的占比与夹取范围。
-///
-/// 高度按 45% 给：80×30 的常见终端里内容区 27 行，详情拿 12 行 = 边框 2 + 正文 9 + 提示 1，
-/// 刚好放得下"说明 + 类型 + 攻速 + 修正 + 部位 + 可装"这类最长的一行内容；两栏各剩 12 行
-/// （身体 7 格一屏放满，行囊 12 格正好一屏）。再矮一档就优先保列表，正文允许截断。
 const DETAIL_WIDTH_PERCENT: u16 = 34;
 const DETAIL_WIDTH_MIN: u16 = 24;
 const DETAIL_WIDTH_MAX: u16 = 44;
 const DETAIL_HEIGHT_PERCENT: u16 = 45;
 const DETAIL_HEIGHT_MIN: u16 = 5;
-const DETAIL_HEIGHT_MAX: u16 = 12;
+const DETAIL_HEIGHT_MAX: u16 = 10;
 
 /// 页面布局结果。**抽成纯函数是为了能测**：测试直接断言矩形几何，
 /// 不依赖 `TestBackend` 的像素去反推布局。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct InventoryLayout {
-    /// 页面外框内的内容区（不含底部提示行）。
-    pub(super) content: Rect,
-    /// 每栏区域（含栏自己的边框），顺序与 `inventory.panels` 一致。
-    pub(super) panels: Vec<Rect>,
-    /// 详情面板区域（含边框）；`None` = 放不下或没有详情。
+    pub(super) context1: Rect,
+    pub(super) context2: Rect,
     pub(super) detail: Option<Rect>,
-    /// 底部提示行区域；`None` = 高度不够，不画。
-    pub(super) footer: Option<Rect>,
+    /// 底部提示区；高度 0 = 不画。
+    pub(super) tips: Rect,
 }
 
 /// 计算背包页布局。纯函数，不做 I/O，测试可直接调用。
 pub(super) fn inventory_layout(area: Rect, inventory: &InventoryView) -> InventoryLayout {
-    let frame_inner = Block::default().borders(Borders::ALL).inner(area);
-    let footer = if frame_inner.height >= FOOTER_MIN_HEIGHT && !inventory.footer.is_empty() {
-        Some(Rect {
-            x: frame_inner.x,
-            y: frame_inner.y + frame_inner.height - 1,
-            width: frame_inner.width,
-            height: 1,
-        })
+    let mut layout = InventoryLayout::default();
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    if inner.width == 0 || inner.height == 0 {
+        return layout;
+    }
+
+    // 提示行贴底：契约不保证几行，取行的下界；太矮就干脆不画（先保列表）。
+    let tips_height = if inner.height >= 6 {
+        (inventory.tips.len() as u16).min(TIPS_MAX_HEIGHT)
     } else {
-        None
+        0
     };
     let content = Rect {
-        x: frame_inner.x,
-        y: frame_inner.y,
-        width: frame_inner.width,
-        height: frame_inner
-            .height
-            .saturating_sub(u16::from(footer.is_some())),
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: inner.height.saturating_sub(tips_height),
     };
-
-    let mut layout = InventoryLayout {
-        content,
-        panels: Vec::new(),
-        detail: None,
-        footer,
-    };
+    if tips_height > 0 {
+        layout.tips = Rect {
+            x: inner.x,
+            y: inner.y + content.height,
+            width: inner.width,
+            height: tips_height,
+        };
+    }
     if content.width == 0 || content.height == 0 {
         return layout;
     }
@@ -112,74 +115,62 @@ pub(super) fn inventory_layout(area: Rect, inventory: &InventoryView) -> Invento
         .detail
         .as_ref()
         .is_some_and(|detail| !detail.is_empty());
+    let mut grid = content;
 
-    // 没有列表栏（未来页面可能只有详情）：详情占满内容区。
-    if inventory.panels.is_empty() {
-        if has_detail {
-            layout.detail = Some(content);
-        }
-        return layout;
-    }
-
-    // 详情放右侧：超宽屏。
-    if has_detail
-        && content.width >= DETAIL_SIDE_MIN_WIDTH
-        && content.height >= DETAIL_SIDE_MIN_HEIGHT
+    // 详情放右侧：宽屏优先（详情与内容并排，常用终端的舒服形态）。
+    if has_detail && content.width >= DETAIL_SIDE_MIN_WIDTH && content.height >= DETAIL_SIDE_MIN_HEIGHT
     {
-        let panel_count = inventory.panels.len() as u16;
-        let max_detail_width = content
-            .width
-            .saturating_sub(PANEL_MIN_WIDTH * panel_count + GAP);
         let detail_width = ((u32::from(content.width) * u32::from(DETAIL_WIDTH_PERCENT) / 100) as u16)
             .clamp(DETAIL_WIDTH_MIN, DETAIL_WIDTH_MAX)
-            .min(max_detail_width);
+            .min(content.width.saturating_sub(COLUMNS_MIN_WIDTH + GAP));
         if detail_width >= DETAIL_WIDTH_MIN {
-            let panels_area = Rect {
+            grid = Rect {
                 x: content.x,
                 y: content.y,
                 width: content.width - detail_width - GAP,
                 height: content.height,
             };
-            layout.panels = split_panels(panels_area, inventory.panels.len());
             layout.detail = Some(Rect {
                 x: content.x + content.width - detail_width,
                 y: content.y,
                 width: detail_width,
                 height: content.height,
             });
-            return layout;
         }
     }
 
-    // 详情放底部：普通宽屏且够高。
-    if has_detail
-        && content.width >= DETAIL_BOTTOM_MIN_WIDTH
-        && content.height >= DETAIL_BOTTOM_MIN_HEIGHT
-    {
+    // 详情放底部：普通屏幕的退路。
+    if has_detail && layout.detail.is_none() && content.height >= DETAIL_BOTTOM_MIN_HEIGHT {
         let detail_height =
             ((u32::from(content.height) * u32::from(DETAIL_HEIGHT_PERCENT) / 100) as u16)
-                .clamp(DETAIL_HEIGHT_MIN, DETAIL_HEIGHT_MAX);
-        let panels_height = content.height.saturating_sub(detail_height + GAP);
-        if panels_height > 0 {
-            let panels_area = Rect {
+                .clamp(DETAIL_HEIGHT_MIN, DETAIL_HEIGHT_MAX)
+                .min(content.height.saturating_sub(8));
+        if detail_height >= DETAIL_HEIGHT_MIN {
+            grid = Rect {
                 x: content.x,
                 y: content.y,
                 width: content.width,
-                height: panels_height,
+                height: content.height - detail_height - GAP,
             };
-            layout.panels = split_panels(panels_area, inventory.panels.len());
             layout.detail = Some(Rect {
                 x: content.x,
-                y: content.y + panels_height + GAP,
+                y: content.y + content.height - detail_height,
                 width: content.width,
                 height: detail_height,
             });
-            return layout;
         }
     }
 
-    // 放不下详情：降级为两栏（或堆叠），优先保证列表可用。
-    layout.panels = split_panels(content, inventory.panels.len());
+    if grid.width == 0 || grid.height == 0 {
+        return layout;
+    }
+    let contexts = split_panels(grid, 2);
+    if let Some(rect) = contexts.first() {
+        layout.context1 = *rect;
+    }
+    if let Some(rect) = contexts.get(1) {
+        layout.context2 = *rect;
+    }
     layout
 }
 
@@ -276,24 +267,38 @@ pub(super) fn render_inventory_page(frame: &mut Frame, area: Rect, inventory: &I
     let layout = inventory_layout(area, inventory);
     frame.render_widget(page_block(inventory), area);
 
-    if layout.content.width > 0 && layout.content.height > 0 {
-        for (panel_view, panel_area) in inventory.panels.iter().zip(&layout.panels) {
-            let focused = inventory.focus == InventoryFocus::Panel(panel_view.panel);
-            render_panel(frame, *panel_area, panel_view, focused);
-        }
-        if let (Some(detail_view), Some(detail_area)) = (inventory.detail.as_ref(), layout.detail) {
-            render_detail(
-                frame,
-                detail_area,
-                detail_view,
-                inventory.focus == InventoryFocus::Detail,
-            );
-        }
+    render_context(
+        frame,
+        layout.context1,
+        &inventory.context1,
+        &inventory.nav1,
+        inventory.nav1_selected,
+        navigation_focused(inventory.focus, render_api::InventoryNavGroup::Nav1),
+        inventory.focus == InventoryFocus::Context1,
+    );
+    render_context(
+        frame,
+        layout.context2,
+        &inventory.context2,
+        &inventory.nav2,
+        inventory.nav2_selected,
+        navigation_focused(inventory.focus, render_api::InventoryNavGroup::Nav2),
+        inventory.focus == InventoryFocus::Context2,
+    );
+    if let (Some(detail_view), Some(detail_area)) = (inventory.detail.as_ref(), layout.detail) {
+        render_detail(frame, detail_area, detail_view, false);
     }
+    render_tips(frame, layout.tips, &inventory.tips);
+}
 
-    if let Some(footer_area) = layout.footer {
-        render_footer(frame, footer_area, &inventory.footer);
-    }
+/// 焦点是否停在这条导航栏上（详情不参与焦点，所以这里只可能是 Nav1/Nav2）。
+fn navigation_focused(focus: InventoryFocus, group: render_api::InventoryNavGroup) -> bool {
+    use render_api::InventoryNavGroup;
+    matches!(
+        (focus, group),
+        (InventoryFocus::Nav1, InventoryNavGroup::Nav1)
+            | (InventoryFocus::Nav2, InventoryNavGroup::Nav2)
+    )
 }
 
 /// 页面外框：青色边框 + 标题（标题也是契约数据，不在这里编）。
@@ -312,28 +317,28 @@ fn page_block(inventory: &InventoryView) -> Block<'static> {
     block
 }
 
-/// 一栏：标题（+ 右对齐的占用数）、边框、可滚动列表。
-fn render_panel(
+/// 一条内容栏：标题行画该栏的页签（选中反色）、右侧画占用/载重，框内画列表。
+fn render_context(
     frame: &mut Frame,
     area: Rect,
-    panel: &InventoryPanelView,
+    list: &ListView,
+    tabs: &[InventoryNav],
+    selected_tab: usize,
+    nav_focused: bool,
     focused: bool,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let list = &panel.list;
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(focused));
-    if !list.title.is_empty() {
-        block = block.title_top(Line::from(Span::styled(
-            format!(" {} ", list.title),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
-    }
+    let title = if tabs.is_empty() {
+        title_line(&list.title, Style::default().fg(Color::Yellow))
+    } else {
+        Line::from(nav_tabs(tabs, selected_tab, nav_focused))
+    };
+    block = block.title_top(title);
     if !list.footer.is_empty() {
         block = block.title_top(
             Line::from(Span::styled(
@@ -368,6 +373,51 @@ fn render_panel(
         let line = item_line(item, index == list.selected, focused, inner.width as usize);
         frame.render_widget(line, row_area);
     }
+}
+
+/// 标题行的一小段样式化文本。
+fn title_line(text: &str, style: Style) -> Line<'static> {
+    Line::from(Span::styled(format!(" {text} "), style))
+}
+
+/// 导航栏的一行页签：选中项反色，导航栏聚焦时再加粗。
+///
+/// 页签文案来自契约（`InventoryNav::label`），这里不认「身体/行囊」这些字。
+fn nav_tabs(tabs: &[InventoryNav], selected: usize, focused: bool) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, tab) in tabs.iter().enumerate() {
+        let mut style = if index == selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        if focused && index == selected {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        spans.push(Span::styled(format!(" {} ", tab.label()), style));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(" ", Style::default()));
+    }
+    spans
+}
+
+/// 底部提示：逐行画契约给的文本（每行一条，超行截断）。
+fn render_tips(frame: &mut Frame, area: Rect, tips: &[UiTextLine]) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let lines: Vec<Line<'static>> = tips
+        .iter()
+        .take(area.height as usize)
+        .map(|tip| {
+            Line::from(Span::styled(
+                truncate_to_width(&tip.text(), area.width as usize),
+                Style::default().fg(Color::DarkGray),
+            ))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// 计算列表可见窗口的起点：至少让 `selected` 落在可视范围内。
@@ -503,28 +553,6 @@ fn render_detail(frame: &mut Frame, area: Rect, detail: &DetailView, focused: bo
             },
         );
     }
-}
-
-/// 页面底部提示：契约给的一整行文本，按 **2 个及以上连续空格**分组后
-/// 用 `│` 分隔显示。分组只是排版，键位文案仍全来自 `presentation`（LTUI3）。
-fn render_footer(frame: &mut Frame, area: Rect, footer: &str) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let text = truncate_to_width(&footer_groups(footer).join(" │ "), area.width as usize);
-    frame.render_widget(
-        Line::from(Span::styled(text, Style::default().fg(Color::DarkGray))),
-        area,
-    );
-}
-
-/// 把 footer 拆成若干组：2 个及以上连续空格视为组边界。
-fn footer_groups(footer: &str) -> Vec<&str> {
-    footer
-        .split("  ")
-        .map(str::trim)
-        .filter(|group| !group.is_empty())
-        .collect()
 }
 
 /// 契约语义样式 → 终端样式（外观定义仍集中在渲染层，契约层不出现颜色）。

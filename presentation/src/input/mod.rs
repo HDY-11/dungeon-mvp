@@ -147,12 +147,14 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
             }
         }
         Key::Tab => {
-            // Tab 切换游戏画面的面板焦点（顺时针）。覆盖页里有自己的焦点模型
-            // （背包页的 Nav1/Nav2/Context1/Context2），这里不抢键位。
-            if in_overlay {
-                InputOutcome::Ignored
-            } else {
-                InputOutcome::Ui(UiIntent::CyclePaneFocus)
+            // 游戏画面：Tab 切换四栏焦点（顺时针）。背包页：Tab 切换 4 个焦点位
+            // （Nav1 → Nav2 → Context2 → Context1）；其它覆盖页没有焦点模型。
+            match input.page {
+                render_api::PageKind::Game => InputOutcome::Ui(UiIntent::CyclePaneFocus),
+                render_api::PageKind::Inventory => {
+                    InputOutcome::Ui(UiIntent::CycleInventoryFocus)
+                }
+                _ => InputOutcome::Ignored,
             }
         }
         Key::Char('?') => {
@@ -172,15 +174,21 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
             _ => InputOutcome::Ignored,
         },
         other => {
-            // 背包页：方向键移光标，Enter 确认（身体行卸下 / 行囊行装上），
-            // r 使用、d 丢弃 —— 这些键**不**驱动世界行动。
+            // 背包页：方向键按焦点位分流（导航栏上左右切页签、内容栏上下移行），
+            // Enter 装/卸/拿、r 使用、d 丢弃 —— 这些键**不**驱动世界行动。
             if matches!(input.page, render_api::PageKind::Inventory) {
                 return match other {
                     Key::Up | Key::Char('k') => {
-                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dy: -1 })
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dx: 0, dy: -1 })
                     }
                     Key::Down | Key::Char('j') => {
-                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dy: 1 })
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dx: 0, dy: 1 })
+                    }
+                    Key::Left | Key::Char('h') => {
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dx: -1, dy: 0 })
+                    }
+                    Key::Right | Key::Char('l') => {
+                        InputOutcome::Ui(UiIntent::MoveInventoryCursor { dx: 1, dy: 0 })
                     }
                     Key::Enter => InputOutcome::Ui(UiIntent::InventoryConfirm),
                     Key::Char('r') => InputOutcome::Ui(UiIntent::InventoryUse),

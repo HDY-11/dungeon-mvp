@@ -10,7 +10,7 @@
 
 **归属范围：** 渲染契约的决策：视图模型边界、字段语义与版本策略。
 
-**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA4 四条）。
+**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA5 五条）。
 判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
 
 ---
@@ -21,10 +21,11 @@
 
 | 主题 | 条目 |
 |---|---|
-| 渲染契约 | DsnA1 · DsnA2 · DsnA3 · DsnA4 |
+| 渲染契约 | DsnA1 · DsnA2 · DsnA3 · DsnA4 · DsnA5 |
 | 界面几何与焦点 | DsnA2 |
 | 事件行与时间轴 | DsnA3 |
 | 信息栏 | DsnA4 |
+| 背包网格 | DsnA5 |
 
 
 <!-- &DsnA1  后端无关只读契约 SceneFrame/VisualKey/UiView/InputEvent；tui 不依赖 ecs_core -->
@@ -183,6 +184,48 @@ GAME.md Gm14（界面）
 **关联：** DsnA1（渲染契约）· DsnA2（四栏布局与焦点）·
 ecs_core/DESIGN.md DsnE21 · GAME.md Gm14
 <!-- &/DsnA4 -->
+
+---
+
+<!-- &DsnA5  背包网格：InventoryView 换成 Nav1/Nav2/Context1/Context2/Detail/Tip 的 3×3 形状，四个焦点位顺时针轮转；CONTRACT_VERSION 6 -->
+### DsnA5 背包网格契约：`InventoryView` 的 3×3 形状（已落地，契约版本 6）
+
+**决策**
+
+背包页按玩家设计稿改为前端式网格（DsnE21 阶段 4b）：
+
+- `InventoryView` 去掉两栏 `panels` 与 `InventoryFocus::Panel/Detail`，换成
+  `nav1: Vec<InventoryNav>` / `nav2` / `nav1_selected` / `nav2_selected` /
+  `context1: ListView` / `context2: ListView` / `detail` / `tips: Vec<UiTextLine>`。
+- `InventoryNav { Body, Pack, Corpse, Ground }` 是页签（身体/行囊/尸体/地面）；
+  `Body/Pack` 属 `Nav1`，`Corpse/Ground` 属 `Nav2`；`InventoryNavGroup::context()` 给出
+  "这个组的内容画在哪一条 Context 栏"。
+- 焦点 4 个：`InventoryFocus { Nav1, Nav2, Context2, Context1 }`，`next()` **顺时针**
+  （Nav1 → Nav2 → Context2 → Context1 → Nav1）。Nav2 不存在时由 `presentation` 跳过
+  Nav2 与 Context2 两个焦点位（合同只定义轮转顺序，不定义跳过规则）。
+- `tips` 是契约文本（不写死键位）：后端逐行画出即可，排版（颜色/分组）归 tui。
+- `CONTRACT_VERSION` 由 5 升到 6。
+
+**背景（舍弃的方案）**
+
+- **保留两栏 `panels` + 给 `InventoryPanel` 再加变体**：两栏装不下"导航/内容/详情/提示"
+  四个区域；再加变体会让后端用 `match` 猜布局。
+- **把焦点顺序也写进契约的枚举迭代**：焦点跳过规则依赖"Nav2 有没有页签"（世界状态），
+  契约只提供 `next()` 的固定顺序，跳过由 presentation 的 `PageStack` 决定。
+- **页签文案写进契约**：文案（身体/行囊/尸体/地面）是内容层的事，契约只给枚举与
+  `label()`，后端不拼中文。
+
+**状态**
+
+已落地：`InventoryView` 网格契约与 `CONTRACT_VERSION 6`、`PageStack` 背包焦点状态
+（4 焦点/两条 Context 光标/Nav2 长度同步）、presentation 提取层按页签建
+Context 与 `InventoryTarget`、tui 网格渲染器（页签/两条 Context/右侧或底部详情/
+底部 Tip、窄屏堆叠、全角列宽）与端到端键盘用例。
+
+**关联：** DsnA1（渲染契约）· DsnA2（四栏布局与焦点）·
+ecs_core/DESIGN.md DsnE21 · GAME.md Gm7（背包）
+<!-- &/DsnA5 -->
+
 
 
 

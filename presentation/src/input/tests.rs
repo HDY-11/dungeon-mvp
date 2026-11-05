@@ -249,7 +249,7 @@ fn unknown_keys_are_ignored() {
     }
 }
 
-/// Tab 在游戏页轮转栏位焦点；在覆盖页（背包/查看/对话框）里不做焦点轮转。
+/// Tab 在游戏页轮转四栏焦点；背包页轮转网格焦点；查看/对话框页不处理。
 #[test]
 fn tab_cycles_the_pane_focus_only_on_the_game_page() {
     let input = ctx(PageKind::Game);
@@ -258,11 +258,18 @@ fn tab_cycles_the_pane_focus_only_on_the_game_page() {
         Some(UiIntent::CyclePaneFocus)
     );
 
-    for page in [PageKind::Inventory, PageKind::Look, PageKind::Dialog] {
+    let input = ctx(PageKind::Inventory);
+    assert_eq!(
+        map_input_event(key(Key::Tab), &input).ui_intent(),
+        Some(UiIntent::CycleInventoryFocus),
+        "背包页的 Tab 轮转 Nav/Context 焦点位"
+    );
+
+    for page in [PageKind::Look, PageKind::Dialog] {
         let input = ctx(page);
         assert!(
             map_input_event(key(Key::Tab), &input).is_ignored(),
-            "{page:?} 页的 Tab 不轮转四栏焦点"
+            "{page:?} 页的 Tab 不轮转焦点"
         );
     }
 }

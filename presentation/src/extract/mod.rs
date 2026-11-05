@@ -142,146 +142,303 @@ pub fn extract_scene_frame(
             .get_resource::<TurnManager>()
             .is_some_and(|turns| turns.wants_quit),
     };
-    // 背包页要读世界（身体/行囊容器），所以在这里构造而不是在 `PageStack::view` 里：
-    // 页栈只持有光标，视图每帧从世界重建，规则与界面因此不可能分叉。
+    // 背包页要读世界（身体/行囊/脚下容器），所以在这里构造而不是在 `PageStack::view` 里：
+    // 页栈只持有焦点与光标，视图每帧从世界重建，规则与界面因此不可能分叉。
     frame.ui = match pages.kind() {
-        render_api::PageKind::Inventory => render_api::UiView::Inventory(inventory_view(
-            &*world,
-            pages.inventory_cursor(),
-        )),
+        render_api::PageKind::Inventory => render_api::UiView::Inventory(Box::new(inventory_view(world, pages))),
         _ => pages.view(config, &frame),
     };
     frame
 }
 
-/// 背包页的视图（DsnE18 第①片的只读版）：**左栏身体、右栏行囊、脚下有尸体时多一栏**。
+/// 脚下 Nav2 的页签：有尸体先「尸体」、有地面物品再「地面」；脚下空的就没有 Nav2。
 ///
-/// 数据来源只有三处：身体容器（七个部位）、行囊容器（12 格）、脚下尸体容器（4 格）。
-/// 名字一律来自注册表/布局表，于是"界面里写了什么"与"规则里是什么"不可能分叉。
+/// 应用层在分发页栈意图前调用它同步页签数量（页栈不读世界），
+/// `inventory_view` 再按同一份推导建导航栏——两处不可能分叉。
+pub fn inventory_nav2_tabs(world: &World) -> Vec<render_api::InventoryNav> {
+    use render_api::InventoryNav;
+
+    let Some(player) = player_entity_of(world) else {
+        return Vec::new();
+    };
+    let mut tabs = Vec::new();
+    if corpse_underfoot(world, player).is_some() {
+        tabs.push(InventoryNav::Corpse);
+    }
+    if !ground_items_underfoot(world, player).is_empty() {
+        tabs.push(InventoryNav::Ground);
+    }
+    tabs
+}
+
+/// 背包页视图（DsnA5 的 3×3 网格）：Nav1/Nav2、Context1/Context2、Detail、Tip。
 ///
-/// `cursor` 是当前选中的行号（在"身体 + 行囊 + 脚下"的拼接列表上），渲染层只负责把它画出来。
-pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView {
-    use render_api::{InventoryPanel, InventoryPanelView};
+/// 页栈只存"焦点停在哪个焦点位、每条内容栏选中第几行"；行 → 世界目标由这里同源换
+/// 算，所以"看到的行"与"按下 Enter 动的槽"不可能错位。焦点停在导航栏时，详情仍跟着
+/// 该栏的选中行，但动作只从内容栏焦点发出（[`inventory_target`] 在导航栏上返回 `None`）。
+pub fn inventory_view(world: &World, pages: &PageStack) -> render_api::InventoryView {
+    use render_api::{InventoryFocus, InventoryNav, InventoryNavGroup, UiTextLine};
 
     let player = player_entity_of(world);
-    let mut page = match player {
-        Some(player) => build_inventory_page(world, player),
-        None => InventoryPage::empty(),
+    let nav2_tabs = inventory_nav2_tabs(world);
+    let nav1_selected = pages.inventory_nav1_selected().min(1);
+    let nav2_selected = if nav2_tabs.is_empty() {
+        0
+    } else {
+        pages.inventory_nav2_selected().min(nav2_tabs.len() - 1)
     };
-    let cursor = cursor.min(page.targets.len().saturating_sub(1));
-    page.focus(cursor);
-    let focus = page.focused_panel(cursor);
+    let nav1_tab = if nav1_selected == 0 {
+        InventoryNav::Body
+    } else {
+        InventoryNav::Pack
+    };
+    let nav2_tab = nav2_tabs.get(nav2_selected).copied();
 
-    // 详情面板：选中行的物品说明 + 这一行能做什么。行 → 目标 → 占用实体三步
-    // 与 `inventory_target` 同源（同一份 `build_inventory_page`），所以"选中的是
-    // 第几行"与"详情讲的是哪件物品"不可能错位。
+    let mut context1 = match player {
+        Some(player) if nav1_tab == InventoryNav::Body => body_context(world, player),
+        Some(player) => pack_context(world, player),
+        None => InventoryContext::placeholder("身体", "（没有玩家）"),
+    };
+    let mut context2 = match (player, nav2_tab) {
+        (Some(player), Some(InventoryNav::Corpse)) => corpse_context(world, player),
+        (Some(player), Some(InventoryNav::Ground)) => ground_context(world, player),
+        _ => InventoryContext::placeholder("脚下", "（脚下没有尸体或地面物品）"),
+    };
+
+    let focus = pages.inventory_focus();
+    let group = match focus {
+        InventoryFocus::Nav1 | InventoryFocus::Context1 => InventoryNavGroup::Nav1,
+        InventoryFocus::Nav2 | InventoryFocus::Context2 => InventoryNavGroup::Nav2,
+    };
+    let target1 = context1.select(pages.inventory_context_cursor(InventoryNavGroup::Nav1));
+    let target2 = context2.select(pages.inventory_context_cursor(InventoryNavGroup::Nav2));
+    let active_target = match group {
+        InventoryNavGroup::Nav1 => target1,
+        InventoryNavGroup::Nav2 => target2,
+    };
+    // 详情：当前焦点所在栏的选中行 → 世界目标 → 占用实体。三步与动作解析同源。
     let detail = player
-        .zip(page.targets.get(cursor).copied())
+        .zip(active_target)
         .and_then(|(player, target)| {
             let occupant = occupant_for(world, player, target)?;
             item_detail(world, player, target, occupant)
         });
 
-    let mut panels = vec![
-        InventoryPanelView::new(InventoryPanel::Equipment, page.equipment),
-        InventoryPanelView::new(InventoryPanel::Backpack, page.backpack),
-    ];
-    if let Some(corpse) = page.corpse {
-        panels.push(InventoryPanelView::new(InventoryPanel::Ground, corpse));
-    }
-    if let Some(ground) = page.ground {
-        panels.push(InventoryPanelView::new(InventoryPanel::Ground, ground));
-    }
-
     render_api::InventoryView {
         title: "背包".to_string(),
-        panels,
-        focus: render_api::InventoryFocus::Panel(focus),
+        nav1: vec![InventoryNav::Body, InventoryNav::Pack],
+        nav1_selected,
+        nav2: nav2_tabs,
+        nav2_selected,
+        context1: context1.list,
+        context2: context2.list,
         detail,
-        footer: "↑↓ 选择    Enter 装/卸/拿    r 使用    d 丢弃    e/Esc 关闭".to_string(),
+        tips: vec![
+            UiTextLine::plain("Tab 切换焦点    ←/→ 切换页签    ↑/↓ 选择行"),
+            UiTextLine::plain("Enter 装/卸/拿    r 使用    d 丢弃    e/Esc 关闭"),
+        ],
+        focus,
     }
 }
 
-/// 背包页的一栏数据：渲染层看到的 `ListView` 与"行 → 世界目标"的 `targets` 同源生成。
+/// 内容栏数据：`ListView` 与"行 → 世界目标"的 `targets` 同源生成。
 ///
-/// 这两个东西**必须一起建**：以前视图按 `items.len()`（含占位行）分段、目标按真实行
-/// 分段，身体空着两栏就会错位一格。现在长度只在这里数一次。
-struct InventoryPage {
-    equipment: render_api::ListView,
-    backpack: render_api::ListView,
-    /// 脚下有尸体容器时才存在的「尸体」栏。
-    corpse: Option<render_api::ListView>,
-    /// 脚下有地面物品时才存在的「地面」栏（DsnE21 阶段 4：拾取全显式）。
-    ground: Option<render_api::ListView>,
-    /// 行序：身体（部位顺序）→ 行囊（格子顺序）→ 尸体（格子顺序）→ 地面（实体 id 升序）。
+/// 两者必须一起建：视图按 `items.len()` 画、目标按 `targets.len()` 解析，一旦分两处
+/// 数行数，空栏或占位行就会让"选中的行"和"动的槽"错位一格。
+struct InventoryContext {
+    list: render_api::ListView,
     targets: Vec<InventoryTarget>,
-    /// 真实行数（`（…）` 占位行不计入光标）。
-    equipment_len: usize,
-    backpack_len: usize,
 }
 
-impl InventoryPage {
-    /// 没有玩家时的一页空数据（标题/占位仍然要画出来）。
-    fn empty() -> Self {
-        let mut equipment = render_api::ListView::new("身体");
-        let mut backpack = render_api::ListView::new("行囊");
-        equipment
-            .items
-            .push(render_api::ListItemView::new("（身上没穿东西）"));
-        backpack
-            .items
-            .push(render_api::ListItemView::new("（行囊是空的）"));
+impl InventoryContext {
+    fn new(title: impl Into<String>) -> Self {
         Self {
-            equipment,
-            backpack,
-            corpse: None,
-            ground: None,
+            list: render_api::ListView::new(title),
             targets: Vec::new(),
-            equipment_len: 0,
-            backpack_len: 0,
         }
     }
 
-    /// 把光标夹到合法行，并给每一栏标出选中项。
-    fn focus(&mut self, cursor: usize) {
-        if self.targets.is_empty() {
-            return;
-        }
-        if cursor < self.equipment_len {
-            self.equipment.selected = cursor;
-        } else if cursor < self.equipment_len + self.backpack_len {
-            self.backpack.selected = cursor - self.equipment_len;
-        } else if let Some(corpse) = self.corpse.as_mut() {
-            let len = corpse.items.len();
-            let offset = cursor - self.equipment_len - self.backpack_len;
-            if offset < len {
-                corpse.selected = offset;
-                return;
-            }
-            if let Some(ground) = self.ground.as_mut()
-                && offset - len < ground.items.len()
-            {
-                ground.selected = offset - len;
-            }
-        } else if let Some(ground) = self.ground.as_mut() {
-            let offset = cursor - self.equipment_len - self.backpack_len;
-            if offset < ground.items.len() {
-                ground.selected = offset;
-            }
-        }
+    fn placeholder(title: impl Into<String>, text: impl Into<String>) -> Self {
+        let mut context = Self::new(title);
+        context
+            .list
+            .items
+            .push(render_api::ListItemView::new(text));
+        context
     }
 
-    /// 光标落在哪一栏（空页按身体栏算，焦点总得有个去处）。
-    fn focused_panel(&self, cursor: usize) -> render_api::InventoryPanel {
-        use render_api::InventoryPanel;
-        if self.targets.is_empty() || cursor < self.equipment_len {
-            InventoryPanel::Equipment
-        } else if cursor < self.equipment_len + self.backpack_len {
-            InventoryPanel::Backpack
-        } else {
-            InventoryPanel::Ground
+    fn push(
+        &mut self,
+        label: impl Into<String>,
+        detail: impl Into<String>,
+        target: InventoryTarget,
+    ) {
+        self.list
+            .items
+            .push(render_api::ListItemView::new(label).with_detail(detail));
+        self.targets.push(target);
+    }
+
+    /// 夹取光标、标出选中行，并返回该行对应的目标（占位行/空栏 → `None`）。
+    fn select(&mut self, cursor: usize) -> Option<InventoryTarget> {
+        if self.list.items.is_empty() {
+            self.list
+                .items
+                .push(render_api::ListItemView::new("（空的）"));
+        }
+        let index = cursor.min(self.list.items.len() - 1);
+        self.list.selected = index;
+        self.targets.get(index).copied()
+    }
+}
+
+/// 物品在列表里的标签：名字（堆叠 >1 时带 `×N`）。
+fn stack_label(world: &World, occupant: Entity) -> String {
+    let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+        return "？".to_string();
+    };
+    let amount = world
+        .get::<ecs_core::Amount>(occupant)
+        .map(|amount| amount.0)
+        .unwrap_or(1);
+    if amount > 1 {
+        format!("{} ×{}", item.def().name, amount)
+    } else {
+        item.def().name.to_string()
+    }
+}
+
+/// 行囊实体（身体「背包」槽里的那件容器）。
+fn pack_entity_of(world: &World, player: Entity) -> Option<Entity> {
+    world
+        .get::<ecs_core::Container>(player)?
+        .slot(ecs_core::item::pack_slot_index())
+}
+
+/// 身体栏：已装备的物品（**不含行囊本身**，它在 Nav1「行囊」页签里展开）。
+fn body_context(world: &World, player: Entity) -> InventoryContext {
+    use render_api::ListItemView;
+
+    let Some(body) = world.get::<ecs_core::Container>(player) else {
+        return InventoryContext::placeholder("身体", "（没有身体容器）");
+    };
+    let mut context = InventoryContext::new("身体");
+    for (slot, occupant) in body.iter() {
+        let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+            continue;
+        };
+        if item.def().container_def().is_some() {
+            continue;
+        }
+        let slot_name = body.def().slots[slot].name;
+        context.push(
+            format!("{slot_name}：{}", stack_label(world, occupant)),
+            item.def().desc,
+            InventoryTarget::Body { slot },
+        );
+    }
+    if context.targets.is_empty() {
+        context
+            .list
+            .items
+            .push(ListItemView::new("（身上没穿东西）"));
+    }
+    context
+}
+
+/// 行囊栏：容器里的物品 + 底部占用/载重提示。
+fn pack_context(world: &World, player: Entity) -> InventoryContext {
+    use render_api::ListItemView;
+
+    let Some(pack) = pack_entity_of(world, player) else {
+        return InventoryContext::placeholder("行囊", "（身上没有行囊）");
+    };
+    let Some(container) = world.get::<ecs_core::Container>(pack) else {
+        return InventoryContext::placeholder("行囊", "（行囊不是容器）");
+    };
+    let mut context = InventoryContext::new("行囊");
+    let (weight, max_weight) = pack_load(world, container);
+    context.list.footer = match max_weight {
+        Some(max) => format!(
+            "{}/{} 格 · {weight:.1}/{max:.1} 载重",
+            container.used(),
+            container.len()
+        ),
+        None => format!(
+            "{}/{} 格 · {weight:.1} 载重",
+            container.used(),
+            container.len()
+        ),
+    };
+    for (slot, occupant) in container.iter() {
+        let Some(item) = world.get::<ecs_core::Item>(occupant) else {
+            continue;
+        };
+        context.push(
+            stack_label(world, occupant),
+            item.def().desc,
+            InventoryTarget::Pack { slot },
+        );
+    }
+    if context.targets.is_empty() {
+        context.list.items.push(ListItemView::new("（行囊是空的）"));
+    }
+    context
+}
+
+/// 尸体栏（Nav2 的「尸体」页签）：脚下那具尸体容器的内容。
+fn corpse_context(world: &World, player: Entity) -> InventoryContext {
+    let Some(corpse) = corpse_underfoot(world, player) else {
+        return InventoryContext::placeholder("脚下", "（脚下没有尸体）");
+    };
+    let name = world
+        .get::<ecs_core::monster::Corpse>(corpse)
+        .map(|corpse| corpse.display_name())
+        .unwrap_or_else(|| "尸体".to_string());
+    let mut context = InventoryContext::new(format!("脚下：{name}"));
+    context.list.footer = "Enter 拿取".to_string();
+    if let Some(container) = world.get::<ecs_core::Container>(corpse) {
+        for (slot, occupant) in container.iter() {
+            if world.get::<ecs_core::Item>(occupant).is_none() {
+                continue;
+            }
+            context.push(
+                stack_label(world, occupant),
+                "Enter 拿取",
+                InventoryTarget::Corpse { slot },
+            );
         }
     }
+    if context.targets.is_empty() {
+        context
+            .list
+            .items
+            .push(render_api::ListItemView::new("（尸体上没东西）"));
+    }
+    context
+}
+
+/// 地面栏（Nav2 的「地面」页签）：脚下同格的地面物品，行序=实体 id 升序。
+fn ground_context(world: &World, player: Entity) -> InventoryContext {
+    let mut context = InventoryContext::new("地面");
+    context.list.footer = "Enter 拿取".to_string();
+    for (index, entity) in ground_items_underfoot(world, player).into_iter().enumerate() {
+        if world.get::<ecs_core::Item>(entity).is_none() {
+            continue;
+        }
+        context.push(
+            stack_label(world, entity),
+            "Enter 拿取",
+            InventoryTarget::Ground { index },
+        );
+    }
+    if context.targets.is_empty() {
+        context
+            .list
+            .items
+            .push(render_api::ListItemView::new("（脚下地面是空的）"));
+    }
+    context
 }
 
 /// 行囊当前的载重与上限（`None` = 不限重）。
@@ -304,152 +461,7 @@ fn pack_load(world: &World, pack: &ecs_core::Container) -> (f32, Option<f32>) {
     (weight, pack.max_weight())
 }
 
-/// 从世界重建一页：身体 → 行囊 → 脚下尸体。
-fn build_inventory_page(world: &World, player: Entity) -> InventoryPage {
-    use render_api::{ListItemView, ListView};
-
-    let mut page = InventoryPage {
-        equipment: ListView::new("身体"),
-        backpack: ListView::new("行囊"),
-        corpse: None,
-        ground: None,
-        targets: Vec::new(),
-        equipment_len: 0,
-        backpack_len: 0,
-    };
-
-    let Some(body) = world.get::<ecs_core::Container>(player) else {
-        page.equipment
-            .items
-            .push(ListItemView::new("（身上没穿东西）"));
-        page.backpack.items.push(ListItemView::new("（行囊是空的）"));
-        return page;
-    };
-
-    for (index, occupant) in body.iter() {
-        let Some(item) = world.get::<ecs_core::Item>(occupant) else {
-            continue;
-        };
-        // 行囊本身不算"穿在身上"，它在下面的行囊栏里展开。
-        if item.def().container_def().is_some() {
-            continue;
-        }
-        let slot = body.def().slots[index].name;
-        let mut entry = ListItemView::new(format!("{slot}：{}", item.def().name));
-        if let Some(amount) = world.get::<ecs_core::Amount>(occupant)
-            && amount.0 > 1
-        {
-            entry = entry.with_detail(format!("×{}", amount.0));
-        }
-        page.equipment.items.push(entry);
-        page.targets.push(InventoryTarget::Body { slot: index });
-        page.equipment_len += 1;
-    }
-
-    if let Some(pack) = body
-        .slot(ecs_core::item::pack_slot_index())
-        .and_then(|pack| world.get::<ecs_core::Container>(pack))
-    {
-        let (weight, max_weight) = pack_load(world, pack);
-        page.backpack.footer = match max_weight {
-            Some(max) => format!(
-                "{}/{} 格 · {weight:.1}/{max:.1} 载重",
-                pack.used(),
-                pack.len()
-            ),
-            None => format!("{}/{} 格 · {weight:.1} 载重", pack.used(), pack.len()),
-        };
-        for (index, occupant) in pack.iter() {
-            let Some(item) = world.get::<ecs_core::Item>(occupant) else {
-                continue;
-            };
-            let amount = world
-                .get::<ecs_core::Amount>(occupant)
-                .map(|amount| amount.0)
-                .unwrap_or(1);
-            let label = if amount > 1 {
-                format!("{} ×{}", item.def().name, amount)
-            } else {
-                item.def().name.to_string()
-            };
-            page.backpack
-                .items
-                .push(ListItemView::new(label).with_detail(item.def().desc));
-            page.targets.push(InventoryTarget::Pack { slot: index });
-            page.backpack_len += 1;
-        }
-    }
-
-    if let Some(corpse) = corpse_underfoot(world, player)
-        && let Some(container) = world.get::<ecs_core::Container>(corpse)
-    {
-        let name = world
-            .get::<ecs_core::monster::Corpse>(corpse)
-            .map(|corpse| corpse.display_name())
-            .unwrap_or_else(|| "尸体".to_string());
-        let mut list = ListView::new(format!("脚下：{name}"));
-        for (index, occupant) in container.iter() {
-            let Some(item) = world.get::<ecs_core::Item>(occupant) else {
-                continue;
-            };
-            let amount = world
-                .get::<ecs_core::Amount>(occupant)
-                .map(|amount| amount.0)
-                .unwrap_or(1);
-            let label = if amount > 1 {
-                format!("{} ×{}", item.def().name, amount)
-            } else {
-                item.def().name.to_string()
-            };
-            list.items
-                .push(ListItemView::new(label).with_detail("Enter 拿取"));
-            page.targets.push(InventoryTarget::Corpse { slot: index });
-        }
-        if list.items.is_empty() {
-            list.items.push(ListItemView::new("（尸体上没东西）"));
-        }
-        list.footer = "Enter 拿取".to_string();
-        page.corpse = Some(list);
-    }
-
-    // 地面：踩上不再自动拾取，玩家在这里选一件、按 Enter 拿（DsnE21 阶段 4）。
-    // 行序 = 实体 id 升序，与 `ecs_core::take_from_ground(world, index)` 的排序同一份。
-    let ground_items = ground_items_underfoot(world, player);
-    if !ground_items.is_empty() {
-        let mut list = ListView::new("地面");
-        for (index, entity) in ground_items.iter().copied().enumerate() {
-            let Some(item) = world.get::<ecs_core::Item>(entity) else {
-                continue;
-            };
-            let amount = world
-                .get::<ecs_core::Amount>(entity)
-                .map(|amount| amount.0)
-                .unwrap_or(1);
-            let label = if amount > 1 {
-                format!("{} ×{}", item.def().name, amount)
-            } else {
-                item.def().name.to_string()
-            };
-            list.items
-                .push(ListItemView::new(label).with_detail("Enter 拿取"));
-            page.targets.push(InventoryTarget::Ground { index });
-        }
-        list.footer = "Enter 拿取".to_string();
-        page.ground = Some(list);
-    }
-
-    if page.equipment_len == 0 {
-        page.equipment
-            .items
-            .push(ListItemView::new("（身上没穿东西）"));
-    }
-    if page.backpack_len == 0 {
-        page.backpack.items.push(ListItemView::new("（行囊是空的）"));
-    }
-    page
-}
-
-/// 玩家**脚下**那具尸体（同一格、带容器）。没尸体就没有"脚下"栏。
+/// 玩家**脚下**那具尸体（同一格、带容器）。没尸体就没有 Nav2 的「尸体」页签。
 fn corpse_underfoot(world: &World, player: Entity) -> Option<Entity> {
     let here = world.get::<Position>(player)?.to_tuple();
     world.iter_entities().find_map(|entity| {
@@ -480,8 +492,7 @@ fn ground_items_underfoot(world: &World, player: Entity) -> Vec<Entity> {
 
 /// 背包页选中行对应的**世界目标**（身体槽位 / 行囊槽位 / 脚下尸体槽位 / 地面物品下标）。
 ///
-/// 页栈只存"光标在第几行"，行 → 槽位的换算由这里给出。视图构造与目标解析共用同一份
-/// [`build_inventory_page`]，所以"看到第几行"与"动的是哪一格"不可能对不上。
+/// 只在内容栏聚焦时返回目标：导航栏聚焦时方向键用于切页签，Enter 不做动作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InventoryTarget {
     /// 身体第 `slot` 格。
@@ -494,10 +505,45 @@ pub enum InventoryTarget {
     Ground { index: usize },
 }
 
-/// 背包页当前选中的目标（`None` = 空行/没有玩家）。
-pub fn inventory_target(world: &World, cursor: usize) -> Option<InventoryTarget> {
+/// 背包页当前选中的动作目标（`None` = 导航栏焦点 / 空行 / 没有玩家）。
+pub fn inventory_target(world: &World, pages: &PageStack) -> Option<InventoryTarget> {
+    use render_api::{InventoryFocus, InventoryNav, InventoryNavGroup};
+
+    let focus = pages.inventory_focus();
+    let group = match focus {
+        InventoryFocus::Context1 => InventoryNavGroup::Nav1,
+        InventoryFocus::Context2 => InventoryNavGroup::Nav2,
+        // 导航栏焦点：方向键切页签、Enter 不动作。
+        InventoryFocus::Nav1 | InventoryFocus::Nav2 => return None,
+    };
     let player = player_entity_of(world)?;
-    build_inventory_page(world, player).targets.get(cursor).copied()
+    let cursor = pages.inventory_context_cursor(group);
+    match group {
+        InventoryNavGroup::Nav1 => {
+            let tab = if pages.inventory_nav1_selected() == 0 {
+                InventoryNav::Body
+            } else {
+                InventoryNav::Pack
+            };
+            let mut context = match tab {
+                InventoryNav::Body => body_context(world, player),
+                _ => pack_context(world, player),
+            };
+            context.select(cursor)
+        }
+        InventoryNavGroup::Nav2 => {
+            let tabs = inventory_nav2_tabs(world);
+            let selected = pages
+                .inventory_nav2_selected()
+                .min(tabs.len().saturating_sub(1));
+            let mut context = match tabs.get(selected) {
+                Some(InventoryNav::Corpse) => corpse_context(world, player),
+                Some(InventoryNav::Ground) => ground_context(world, player),
+                _ => return None,
+            };
+            context.select(cursor)
+        }
+    }
 }
 
 /// 目标槽位里现在放着哪件物品（空槽或没有玩家 → `None`）。

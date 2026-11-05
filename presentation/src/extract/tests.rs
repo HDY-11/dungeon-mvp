@@ -9,7 +9,7 @@ use ecs_core::world_loop::new_game;
 use render_api::{PageKind, VisualCategory, VisualKey, VisualLayer};
 
 use super::*;
-use crate::ui::PageStack;
+use crate::ui::{PageStack, UiIntent};
 
 fn frame_for(seed: u64, pages: &PageStack) -> (World, SceneFrame) {
     let mut world = new_game(seed);
@@ -265,28 +265,40 @@ fn the_inventory_page_lists_ground_items_underfoot() {
         ecs_core::GroundItemAt::new(here.0, here.1),
     ));
 
-    let cursor = (0..64)
-        .find(|&index| {
-            inventory_target(&world, index)
-                .is_some_and(|target| matches!(target, InventoryTarget::Ground { index: 0 }))
-        })
-        .expect("地面物品必须成为可选中行");
-    let view = inventory_view(&world, cursor);
-    let ground = view
-        .panels
-        .iter()
-        .find(|panel| panel.list.title == "地面")
-        .expect("脚下有东西就必须有「地面」栏");
+    let mut pages = PageStack::new();
+    pages.open_inventory();
+    let nav2_len = inventory_nav2_tabs(&world).len();
+    pages.set_inventory_nav2_len(nav2_len);
+    // 顺时针：Nav1 → Nav2 → Context2；脚下内容栏只看 Nav2 选中的页签。
+    pages.apply(UiIntent::CycleInventoryFocus);
+    pages.apply(UiIntent::CycleInventoryFocus);
+    assert_eq!(
+        pages.inventory_focus(),
+        render_api::InventoryFocus::Context2,
+        "两次 Tab 后焦点应落在脚下内容栏"
+    );
+
+    let target = inventory_target(&world, &pages).expect("地面物品必须成为可选中行");
     assert!(
-        ground
-            .list
+        matches!(target, InventoryTarget::Ground { index: 0 }),
+        "第一行是地面物品的确定性排序第一件：{target:?}"
+    );
+    let view = inventory_view(&world, &pages);
+    assert_eq!(
+        view.nav2,
+        vec![render_api::InventoryNav::Ground],
+        "脚下只有地面物品时 Nav2 只有一个页签"
+    );
+    assert_eq!(view.context2.title, "地面");
+    assert!(
+        view.context2
             .items
             .iter()
             .any(|item| item.label.contains("黑色甲壳")),
         "行标签要写物品名：{:?}",
-        ground.list.items.iter().map(|item| &item.label).collect::<Vec<_>>()
+        view.context2.items.iter().map(|item| &item.label).collect::<Vec<_>>()
     );
-    assert_eq!(ground.list.footer, "Enter 拿取");
+    assert_eq!(view.context2.footer, "Enter 拿取");
     let detail = view.detail.expect("选中地面物品必须有详情");
     assert_eq!(detail.title, "黑色甲壳 ×3");
     assert!(detail.footer.contains("Enter 拾取"));
@@ -316,7 +328,9 @@ fn the_inventory_detail_describes_the_selected_item() {
             .expect("主手空着");
     }
 
-    let view = inventory_view(&world, 0);
+    let mut pages = PageStack::new();
+    pages.open_inventory();
+    let view = inventory_view(&world, &pages);
     let detail = view.detail.expect("选中行必须有详情");
     assert_eq!(detail.title, sword_def.name, "标题是物品名");
     let lines: Vec<String> = detail.lines.iter().map(|line| line.text()).collect();
@@ -341,20 +355,21 @@ fn the_inventory_detail_describes_the_selected_item() {
         lines.iter().any(|line| line.starts_with("重量：")),
         "详情要标出重量（DsnE20）：{lines:?}"
     );
+    let tips: Vec<String> = view.tips.iter().map(|line| line.text()).collect();
     assert!(
-        view.footer.contains("Enter 装/卸"),
-        "全局键位提示要完整：{}",
-        view.footer
+        tips.iter().any(|line| line.contains("Enter 装/卸/拿")),
+        "底部键位提示要完整：{tips:?}"
     );
-    let backpack = view
-        .panels
-        .iter()
-        .find(|panel| panel.panel == render_api::InventoryPanel::Backpack)
-        .expect("背包页必须有行囊栏");
+
+    // Nav1 聚焦时 ←/→ 切页签——行囊页签的 Context1 底部显示占用与载重。
+    pages.apply(UiIntent::MoveInventoryCursor { dx: 1, dy: 0 });
+    let view = inventory_view(&world, &pages);
+    assert_eq!(view.nav1_selected, 1, "→ 键切到行囊页签");
+    assert_eq!(view.context1.title, "行囊");
     assert!(
-        backpack.list.footer.contains("载重"),
+        view.context1.footer.contains("载重"),
         "行囊栏要显示载重：{}",
-        backpack.list.footer
+        view.context1.footer
     );
 }
 
@@ -381,7 +396,12 @@ fn the_inventory_detail_for_a_consumable_says_how_to_use_it() {
             .expect("行囊第 1 格空着");
     }
 
-    let view = inventory_view(&world, 0);
+    let mut pages = PageStack::new();
+    pages.open_inventory();
+    // Nav1 聚焦时 ←/→ 在「身体」「行囊」间切页签；行囊内容进 Context1。
+    pages.apply(UiIntent::MoveInventoryCursor { dx: 1, dy: 0 });
+    let view = inventory_view(&world, &pages);
+    assert_eq!(view.nav1_selected, 1);
     let detail = view.detail.expect("选中行必须有详情");
     assert_eq!(detail.title, mushroom_def.name);
     let lines: Vec<String> = detail.lines.iter().map(|line| line.text()).collect();

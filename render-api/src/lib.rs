@@ -50,7 +50,9 @@ pub use visual::*;
 ///    "已落定"与"进行中"（DsnE21），后端画法不同，属于影响渲染语义的变更。
 /// 5：新增信息栏契约 [`InfoView`]（`SceneFrame::info`）：信息栏的观察顺序与
 ///    选中行不再由后端自行排序（DsnA4），属于影响渲染语义的变更。
-pub const CONTRACT_VERSION: u32 = 5;
+/// 6：背包页改为 3×3 网格契约（[`InventoryView`] 的 Nav1/Nav2/Context1/Context2/Detail/Tip，
+///    焦点位 [`InventoryFocus`] 四个顺时针轮转）：旧后端的两栏 `panels` 形状被替换（DsnA5）。
+pub const CONTRACT_VERSION: u32 = 6;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -65,7 +67,7 @@ pub mod prelude {
         SceneFrame, TileInfo, WorldRect,
     };
     pub use crate::ui::{
-        DetailView, DialogView, InventoryFocus, InventoryPanel, InventoryPanelView, InventoryView,
+        DetailView, DialogView, InventoryFocus, InventoryNav, InventoryNavGroup, InventoryView,
         ListItemView, ListView, LookView, PageKind, ThrowAimView, UiSpan, UiTextLine, UiTextStyle,
         UiView,
     };
@@ -88,6 +90,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 5, "契约版本变更必须同步此断言");
+        assert_eq!(CONTRACT_VERSION, 6, "契约版本变更必须同步此断言");
     }
 }

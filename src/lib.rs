@@ -211,6 +211,9 @@ impl App {
         }
         let world_size = (ecs_core::MAP_WIDTH, ecs_core::MAP_HEIGHT);
         let mut pages: PageStack = self.world.resource::<PageStack>().clone();
+        // 页栈不读世界：Nav2 有几个页签（脚下有没有尸体/地面物品）由这里同步，
+        // 否则 Tab 会转到"看不见的焦点位"上。提取层用同一份推导建导航栏。
+        pages.set_inventory_nav2_len(presentation::inventory_nav2_tabs(&self.world).len());
         let handled = apply_ui_intent(&mut pages, intent, world_size);
         *self.world.resource_mut::<PageStack>() = pages;
 
@@ -229,8 +232,8 @@ impl App {
     /// ——按键确实被处理了，只是没成功。视图在下一帧 `refresh` 时按容器重建，
     /// 所以这里不需要手动失效任何缓存。
     fn apply_inventory_action(&mut self, intent: UiIntent) -> bool {
-        let cursor = self.world.resource::<PageStack>().inventory_cursor();
-        let Some(target) = presentation::inventory_target(&self.world, cursor) else {
+        let pages = self.world.resource::<PageStack>().clone();
+        let Some(target) = presentation::inventory_target(&self.world, &pages) else {
             return false;
         };
         use presentation::InventoryTarget;

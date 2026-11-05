@@ -83,17 +83,31 @@ fn ui_contract_smoke() {
 
     let inventory = InventoryView {
         title: "背包".to_string(),
-        panels: vec![InventoryPanelView::new(InventoryPanel::Backpack, list)],
-        focus: InventoryFocus::Panel(InventoryPanel::Backpack),
+        nav1: vec![InventoryNav::Body, InventoryNav::Pack],
+        nav1_selected: 1,
+        nav2: vec![InventoryNav::Ground],
+        context1: list,
         ..InventoryView::default()
     };
     assert_eq!(
-        inventory.panel(InventoryPanel::Backpack).map(ListView::len),
-        Some(2)
+        inventory
+            .nav_selected(InventoryNavGroup::Nav1)
+            .map(InventoryNav::label),
+        Some("行囊")
     );
-    assert!(inventory.focused_panel().is_some());
+    assert_eq!(
+        inventory.context(InventoryNavGroup::Nav1).len(),
+        2,
+        "焦点所在的 Context 栏就是 Nav1 的内容"
+    );
+    assert_eq!(inventory.focused_context().len(), 2);
+    assert_eq!(
+        InventoryFocus::Nav1.next(),
+        InventoryFocus::Nav2,
+        "焦点位顺时针"
+    );
 
-    let view = UiView::Inventory(inventory);
+    let view = UiView::Inventory(Box::new(inventory));
     assert!(view.is_fullscreen());
     assert_eq!(view.kind(), PageKind::Inventory);
 

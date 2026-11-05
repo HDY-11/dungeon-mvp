@@ -223,21 +223,60 @@ fn visual_text_mentions_the_category() {
     assert!(text.contains("楼梯"), "实际: {text}");
 }
 
-/// 背包页（R2 只读版）：`e` 打开、方向键移光标、`Esc` 关闭。
+/// 背包页网格（DsnA5）：`e` 打开后焦点在 Nav1，Tab 顺时针轮转，Esc 关闭。
 #[test]
-fn the_inventory_page_opens_moves_and_closes() {
+fn the_inventory_page_opens_cycles_focus_and_closes() {
+    use render_api::{InventoryFocus, InventoryNavGroup};
+
     let mut pages = PageStack::new();
     assert_eq!(pages.kind(), render_api::PageKind::Game);
 
     assert!(pages.apply(UiIntent::OpenInventory));
     assert_eq!(pages.kind(), render_api::PageKind::Inventory);
-    assert_eq!(pages.inventory_cursor(), 0);
+    assert_eq!(pages.inventory_focus(), InventoryFocus::Nav1);
 
-    assert!(pages.apply(UiIntent::MoveInventoryCursor { dy: 1 }));
-    assert_eq!(pages.inventory_cursor(), 1);
-    // 向上不会走到负数（夹取下界）。
-    assert!(pages.apply(UiIntent::MoveInventoryCursor { dy: -5 }));
-    assert_eq!(pages.inventory_cursor(), 0);
+    // Nav1 聚焦时 ←/→ 在「身体」「行囊」间切页签。
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dx: 1, dy: 0 }));
+    assert_eq!(pages.inventory_nav1_selected(), 1);
+    // 下界夹取：连按 ← 也只回到第一页签。
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dx: -5, dy: 0 }));
+    assert_eq!(pages.inventory_nav1_selected(), 0);
+
+    // 脚下没有 Nav2 页签时，Tab 跳过 Nav2 / Context2。
+    for expected in [InventoryFocus::Context1, InventoryFocus::Nav1] {
+        assert!(pages.apply(UiIntent::CycleInventoryFocus));
+        assert_eq!(pages.inventory_focus(), expected);
+    }
+
+    // 有了 Nav2 页签后：Nav1 → Nav2 → Context2 → Context1 → Nav1。
+    pages.set_inventory_nav2_len(1);
+    for expected in [
+        InventoryFocus::Nav2,
+        InventoryFocus::Context2,
+        InventoryFocus::Context1,
+        InventoryFocus::Nav1,
+    ] {
+        assert!(pages.apply(UiIntent::CycleInventoryFocus));
+        assert_eq!(pages.inventory_focus(), expected);
+    }
+
+    // 内容栏聚焦时 ↑/↓ 只把光标夹在下界 0（上界留给提取时按行数夹取）。
+    // 先把焦点从 Nav1 再走三步回到 Context1。
+    pages.set_inventory_nav2_len(1);
+    for _ in 0..3 {
+        assert!(pages.apply(UiIntent::CycleInventoryFocus));
+    }
+    assert_eq!(pages.inventory_focus(), InventoryFocus::Context1);
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dx: 0, dy: 5 }));
+    assert_eq!(
+        pages.inventory_context_cursor(InventoryNavGroup::Nav1),
+        5
+    );
+    assert!(pages.apply(UiIntent::MoveInventoryCursor { dx: 0, dy: -99 }));
+    assert_eq!(
+        pages.inventory_context_cursor(InventoryNavGroup::Nav1),
+        0
+    );
 
     assert!(pages.apply(UiIntent::ClosePage));
     assert_eq!(pages.kind(), render_api::PageKind::Game);

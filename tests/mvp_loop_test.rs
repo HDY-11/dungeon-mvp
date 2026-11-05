@@ -445,14 +445,15 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
         .position(|slot| slot.accept.accepts(&[ItemTag::Weapon]))
         .expect("有主手槽");
 
-    // 开页：光标 0 = 行囊第一格（剑）。
+    // 开页：焦点在 Nav1、页签默认「身体」。→ 切到「行囊」，Tab 到内容栏，Enter 装上。
     app.handle(key(Key::Char('e')));
     assert_eq!(
         app.refresh().ui.kind(),
         PageKind::Inventory,
         "e 应当打开背包页"
     );
-    // Enter = 装上。
+    app.handle(key(Key::Right));
+    app.handle(key(Key::Tab));
     app.handle(key(Key::Enter));
     app.refresh();
     assert_eq!(
@@ -462,7 +463,10 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
         Some(sword),
         "Enter 应当把剑装上"
     );
-    // 光标第一行现在是身体的主手 → 再 Enter = 卸下。
+    // 回到 Nav1、页签切回「身体」，Tab 到内容栏，Enter 卸下（内容第 0 行现在是主手）。
+    app.handle(key(Key::Tab));
+    app.handle(key(Key::Left));
+    app.handle(key(Key::Tab));
     app.handle(key(Key::Enter));
     app.refresh();
     let world = app.world_mut();
@@ -489,7 +493,7 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
 fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
     use ecs_core::item::{Amount, Container, Item, ItemId, CORPSE, pack_slot_index};
     use ecs_core::monster::{Corpse, MonsterKindId};
-    use render_api::{InventoryPanel, UiView};
+    use render_api::{InventoryNav, UiView};
 
     let mut app = quiet_app(2026);
     let player = player_entity(app.world_mut());
@@ -508,24 +512,19 @@ fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
         ))
         .id();
 
-    // 开局身体只有行囊（会被跳过）、行囊是空的 —— 光标 0 正好落在「脚下」那一行。
+    // 开局身体只有行囊（会被跳过）、行囊是空的；脚下有尸体，Nav2 多出「尸体」页签。
     app.handle(key(Key::Char('e')));
     let frame = app.refresh();
     let UiView::Inventory(view) = &frame.ui else {
         panic!("e 应当打开背包页，实际 {:?}", frame.ui.kind());
     };
-    let ground = view
-        .panels
-        .iter()
-        .find(|panel| panel.panel == InventoryPanel::Ground)
-        .expect("脚下的尸体要单独成栏");
-    assert!(
-        ground.list.title.contains("脚下：哥布林的尸体"),
-        "栏标题要说明这是谁的尸体：{}",
-        ground.list.title
-    );
-    assert_eq!(ground.list.items[0].label, "匕首");
+    assert_eq!(view.nav2, vec![InventoryNav::Corpse], "脚下的尸体要单独成页签");
+    assert_eq!(view.context2.title, "脚下：哥布林的尸体");
+    assert_eq!(view.context2.items[0].label, "匕首");
 
+    // 焦点从 Nav1 顺时针走到 Context2（脚下的尸体内容），再 Enter 拿。
+    assert!(app.handle(key(Key::Tab)), "Tab 在背包页应当被消费");
+    assert!(app.handle(key(Key::Tab)), "再 Tab 一次到内容栏");
     app.handle(key(Key::Enter));
     app.refresh();
     let world = app.world_mut();
@@ -553,7 +552,7 @@ fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
 #[test]
 fn the_inventory_page_picks_up_ground_items_through_the_keyboard() {
     use ecs_core::item::{Amount, Container, GroundItemAt, Item, ItemId, pack_slot_index};
-    use render_api::{InventoryPanel, UiView};
+    use render_api::{InventoryNav, UiView};
 
     let mut app = quiet_app(2026);
     let player = player_entity(app.world_mut());
@@ -572,17 +571,20 @@ fn the_inventory_page_picks_up_ground_items_through_the_keyboard() {
     let UiView::Inventory(view) = &frame.ui else {
         panic!("e 应当打开背包页，实际 {:?}", frame.ui.kind());
     };
-    let ground = view
-        .panels
-        .iter()
-        .find(|panel| panel.panel == InventoryPanel::Ground && panel.list.title == "地面")
-        .expect("脚下的地面物品要单独成栏");
+    assert_eq!(view.nav2, vec![InventoryNav::Ground], "脚下地面物品要单独成页签");
+    assert_eq!(view.context2.title, "地面");
     assert!(
-        ground.list.items.iter().any(|item| item.label.contains("血肉")),
-        "地面栏要列出物品：{:?}",
-        ground.list.items.iter().map(|item| &item.label).collect::<Vec<_>>()
+        view.context2.items.iter().any(|item| item.label.contains("血肉")),
+        "地面页签下要列出物品：{:?}",
+        view.context2
+            .items
+            .iter()
+            .map(|item| &item.label)
+            .collect::<Vec<_>>()
     );
 
+    assert!(app.handle(key(Key::Tab)), "Tab 在背包页应当被消费");
+    assert!(app.handle(key(Key::Tab)), "再 Tab 一次到内容栏");
     app.handle(key(Key::Enter));
     app.refresh();
     let world = app.world_mut();

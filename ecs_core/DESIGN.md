@@ -1406,14 +1406,21 @@ Tip           Tip           Tip
   不满时用 1 个 / 其余进行囊并堆后开格；超重与满格分别报 `Overweight`/`NoRoom` 并留原地）、
   背包页新增「地面」栏（`InventoryTarget::Ground { index }`，行序=同格地面物品按实体编号
   升序，与动作同源）、`Enter` 拿取；尸体仍走 `take_from_corpse`。
-- 未做（阶段 4b）：背包 3×3 grid（Nav/Context/Detail/Tip、4 焦点顺时针、←/→ 切 tab）。
+- 已落地（阶段 4b，背包 3×3 grid）：契约 `InventoryView` 换成
+  Nav1/Nav2/Context1/Context2/Detail/Tip（DsnA5，契约版本 6）；Nav1=身体/行囊、
+  Nav2=尸体/地面（按脚下情况出现）；4 个焦点位顺时针
+  Nav1→Nav2→Context2→Context1、Nav2 不存在时跳过其两格；导航栏 `←/→` 切页签、
+  内容栏 `↑/↓` 选行；每条 Context 保留各自光标；tui 网格渲染（窄屏两条 Context
+  上下堆叠、详情先右侧后底部）。
+- 未做：图鉴页（放一放）。
 
 **测试**
 
 - 事件：Done 事件旧→新、Running 按剩余时间降序排在 Done 之后；玩家自己空闲时
   不出现玩家 Running 行；行动实体消失后对应 Running 行不残留。
-- 背包 grid：焦点顺序、←/→ 切 tab、每 tab 的 Context 保留各自选中、地面物品
-  不再因踩踏自动消失、Enter 从地面拿一件（超重/满格留在原地）。
+- 背包 grid：焦点顺序与 Nav2 跳格、←/→ 切页签、每 tab 的 Context 保留各自选中、
+  地面物品不再因踩踏自动消失、Enter 从地面拿一件（超重/满格留在原地）、
+  键盘端到端（装/卸、拿地面、搜尸体）。
 - 渲染：事件栏显示 Running 行且带剩余 AV、贴底行为、0 刻度在栏底。
 
 **关联：** DsnA2（四栏布局与焦点）· DsnE18（容器/槽位/地面不是容器）·

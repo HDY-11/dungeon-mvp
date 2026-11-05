@@ -45,8 +45,10 @@ pub enum UiIntent {
     ClosePage,
     /// 打开背包页。
     OpenInventory,
-    /// 背包页移动光标（`dy` 为 ±1）。
-    MoveInventoryCursor { dy: i32 },
+    /// 背包页：4 个焦点位顺时针轮转（Tab）。
+    CycleInventoryFocus,
+    /// 背包页：导航栏聚焦时 `dx` 切页签，内容栏聚焦时 `dy` 移行。
+    MoveInventoryCursor { dx: i32, dy: i32 },
     /// 背包页确认：身体行 = 卸下，行囊行 = 装上。
     InventoryConfirm,
     /// 背包页使用（消耗品）。
@@ -75,8 +77,19 @@ pub struct PageStack {
     look_cursor: (i32, i32),
     /// 当前 `Dialog` 页是否是退出确认（决定 `Enter` 的含义）。
     quit_pending: bool,
-    /// 背包页的光标（"身体 + 行囊"拼接列表上的行号）。
-    inventory_cursor: usize,
+    /// 背包页的焦点位（顺时针 Nav1 → Nav2 → Context2 → Context1）。
+    inventory_focus: render_api::InventoryFocus,
+    /// 背包页 Nav1 的选中页签（身体 / 行囊）。
+    inventory_nav1_selected: usize,
+    /// 背包页 Nav2 的选中页签（尸体 / 地面）。
+    inventory_nav2_selected: usize,
+    /// 背包页 Nav2 的页签数量（0 = 脚下既没有尸体也没有地面物品）。
+    ///
+    /// 由应用层在分发页栈意图前从世界同步——页栈不读世界（DsnX14）。
+    inventory_nav2_len: usize,
+    /// Body / Pack 两个内容栏各自的选中行（页栈只存鼠标/键盘位置，不夹取）。
+    inventory_context1_cursor: usize,
+    inventory_context2_cursor: usize,
     /// 信息栏的选中行（只列视野内的观察候选；夹取发生在提取时）。
     info_cursor: usize,
     /// 游戏画面的面板焦点（Tab 顺时针轮转）。
@@ -89,7 +102,12 @@ impl PageStack {
             kind: PageKind::Game,
             look_cursor: (0, 0),
             quit_pending: false,
-            inventory_cursor: 0,
+            inventory_focus: render_api::InventoryFocus::Nav1,
+            inventory_nav1_selected: 0,
+            inventory_nav2_selected: 0,
+            inventory_nav2_len: 0,
+            inventory_context1_cursor: 0,
+            inventory_context2_cursor: 0,
             info_cursor: 0,
             pane_focus: Pane::Camera,
         }
@@ -127,15 +145,71 @@ impl PageStack {
     }
 
     /// 打开 Look 页，光标落在给定世界坐标。
-    /// 打开背包页（光标回到第一行）。
+    /// 打开背包页：焦点回到 Nav1/身体，所有内容栏光标归零。
     pub fn open_inventory(&mut self) {
         self.kind = PageKind::Inventory;
-        self.inventory_cursor = 0;
+        self.inventory_focus = render_api::InventoryFocus::Nav1;
+        self.inventory_nav1_selected = 0;
+        self.inventory_nav2_selected = 0;
+        self.inventory_context1_cursor = 0;
+        self.inventory_context2_cursor = 0;
     }
 
-    /// 背包页光标位置（视图构造用它）。
-    pub const fn inventory_cursor(&self) -> usize {
-        self.inventory_cursor
+    /// 背包页焦点位。
+    pub const fn inventory_focus(&self) -> render_api::InventoryFocus {
+        self.inventory_focus
+    }
+
+    /// 背包页 Nav1 的选中页签下标。
+    pub const fn inventory_nav1_selected(&self) -> usize {
+        self.inventory_nav1_selected
+    }
+
+    /// 背包页 Nav2 的选中页签下标（页栈不夹取，提取时按实际页签数保底）。
+    pub const fn inventory_nav2_selected(&self) -> usize {
+        self.inventory_nav2_selected
+    }
+
+    /// 背包页某个内容栏的选中行下标。
+    pub const fn inventory_context_cursor(&self, group: render_api::InventoryNavGroup) -> usize {
+        match group {
+            render_api::InventoryNavGroup::Nav1 => self.inventory_context1_cursor,
+            render_api::InventoryNavGroup::Nav2 => self.inventory_context2_cursor,
+        }
+    }
+
+    /// 由应用层在世界变化后同步：Nav2 有几个页签（0 = 脚下什么都没有）。
+    ///
+    /// 焦点的合法性也跟着变：Nav2 消失时若焦点正停在 Nav2/Context2，回到 Nav1。
+    pub fn set_inventory_nav2_len(&mut self, len: usize) {
+        self.inventory_nav2_len = len;
+        if len == 0 {
+            self.inventory_nav2_selected = 0;
+            if matches!(
+                self.inventory_focus,
+                render_api::InventoryFocus::Nav2 | render_api::InventoryFocus::Context2
+            ) {
+                self.inventory_focus = render_api::InventoryFocus::Nav1;
+            }
+        } else if self.inventory_nav2_selected >= len {
+            self.inventory_nav2_selected = len - 1;
+        }
+    }
+
+    /// 背包页 Tab：焦点顺时针跳过不存在的 Nav2/Context2。
+    /// Tab 顺时针轮转四个焦点位；Nav2 不存在时整组跳过。
+    pub fn cycle_inventory_focus(&mut self) {
+        let mut next = self.inventory_focus.next();
+        if self.inventory_nav2_len == 0 {
+            // 跳过 Nav2 与 Context2 两个连着的焦点位，而不是只跳一个。
+            while matches!(
+                next,
+                render_api::InventoryFocus::Nav2 | render_api::InventoryFocus::Context2
+            ) {
+                next = next.next();
+            }
+        }
+        self.inventory_focus = next;
     }
 
     pub fn open_look(&mut self, x: usize, y: usize) {
@@ -198,16 +272,44 @@ impl PageStack {
                 self.open_inventory();
                 true
             }
-            UiIntent::MoveInventoryCursor { dy } => {
-                // 行数由视图给出（页栈不自己数内容）；`apply` 拿不到视图，所以
-                // 这里只挪光标、不夹取——夹取发生在 `inventory_view` 里
-                // （`cursor` 超界时落在最后一栏）。刻意与 `MoveLookCursor` 不同：
-                // 背包行数是"内容"，不是"世界尺寸"，没必要把世界传进来。
+            UiIntent::MoveInventoryCursor { dx, dy } => {
+                // 页栈不数内容行数（内容每帧从世界重算），所以内容栏只挪光标、
+                // 不夹取；夹取发生在提取时按本帧行数做。页签数量是页栈知道的
+                // （Nav1 恒 2 个，Nav2 由应用层同步），所以页签在这里夹取。
                 if !matches!(self.kind, PageKind::Inventory) {
                     return false;
                 }
-                let next = (self.inventory_cursor as i32 + dy).max(0);
-                self.inventory_cursor = next as usize;
+                use render_api::InventoryFocus;
+                match self.inventory_focus {
+                    InventoryFocus::Nav1 if dx != 0 => {
+                        let next = (self.inventory_nav1_selected as i32 + dx).clamp(0, 1);
+                        self.inventory_nav1_selected = next as usize;
+                        true
+                    }
+                    InventoryFocus::Nav2 if dx != 0 && self.inventory_nav2_len > 0 => {
+                        let last = self.inventory_nav2_len.saturating_sub(1) as i32;
+                        let next = (self.inventory_nav2_selected as i32 + dx).clamp(0, last);
+                        self.inventory_nav2_selected = next as usize;
+                        true
+                    }
+                    InventoryFocus::Context1 if dy != 0 => {
+                        self.inventory_context1_cursor =
+                            (self.inventory_context1_cursor as i32 + dy).max(0) as usize;
+                        true
+                    }
+                    InventoryFocus::Context2 if dy != 0 => {
+                        self.inventory_context2_cursor =
+                            (self.inventory_context2_cursor as i32 + dy).max(0) as usize;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            UiIntent::CycleInventoryFocus => {
+                if !matches!(self.kind, PageKind::Inventory) {
+                    return false;
+                }
+                self.cycle_inventory_focus();
                 true
             }
             UiIntent::CyclePaneFocus => {

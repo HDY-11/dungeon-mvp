@@ -44,7 +44,7 @@ pub use catalog::{
 pub use camera::{CameraFollow, camera_for, center_on_player};
 pub use extract::{
     ExtractConfig, ExtractedScene, InventoryTarget, SceneFrameSource, extract_scene_frame,
-    inventory_target, player_position,
+    inventory_nav2_tabs, inventory_target, player_position,
 };
 pub use input::{
     InputOutcome, PresentationInput, apply_ui_intent, map_input_event, mouse_cell,
