@@ -548,3 +548,22 @@ fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
         "拿走后尸体那一格该是空的"
     );
 }
+
+/// `Tab` 顺时针轮转四栏焦点，画面上的焦点框真的跟着走（端到端，不 mock 页栈）。
+#[test]
+fn tab_cycles_the_four_pane_focus_on_screen() {
+    use render_api::Pane;
+
+    let mut app = quiet_app(2026);
+    assert_eq!(
+        app.frame().focus,
+        Pane::Camera,
+        "开局焦点应当停在摄像机"
+    );
+
+    for expected in [Pane::Info, Pane::Status, Pane::Events, Pane::Camera] {
+        assert!(app.handle(key(Key::Tab)), "Tab 应当被游戏页消费");
+        let frame = app.refresh();
+        assert_eq!(frame.focus, expected, "Tab 应当顺时针轮转到 {expected:?}");
+    }
+}

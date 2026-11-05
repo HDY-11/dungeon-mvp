@@ -6,6 +6,12 @@
 //! （`tui` 的依赖表里没有 `ecs_core`），所以"顺手查一下 core 组件"在编译期就
 //! 不可能。这正是 Dsn28 要的可替换性：`GpuPlugin` 消费同一个 `SceneFrame`。
 //!
+//! # 四栏布局
+//!
+//! 栏目划分**不在本文件**：它是契约层的 [`render_api::game_layout`]，焦点轮转
+//! 与鼠标命中读同一份矩形。这里只把 [`render_api::Rect`] 换成 ratatui 的
+//! `Rect`，然后往四个栏位里画内容。
+//!
 //! # 相机
 //!
 //! 视口位置由 `frame.camera` 决定（`presentation` 算好的，含世界边界夹取），
@@ -14,97 +20,93 @@
 
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
-use render_api::{EntityView, SceneFrame, UiView};
+use render_api::{EntityView, Pane, SceneFrame, UiView, VisualKey};
 
 use crate::catalog::TuiCatalog;
+use crate::layout::inner_rect;
 use crate::state::DevLogBuffer;
 
 mod inventory;
 
 use inventory::render_inventory_page;
 
-/// 调试面板高度（终端行）。
+/// 调试面板高度（终端行）。它是**覆盖层**：只在有调试输出时盖住底部几行，
+/// 不参与四栏划分——否则相机视口会随调试输出出现/消失而跳变。
 const DEBUG_PANEL_HEIGHT: u16 = 8;
-/// 侧栏最小宽度。
-const SIDE_PANEL_MIN_WIDTH: u16 = 26;
 
-/// 一整帧的区块划分。
-///
-/// **抽成独立类型是因为相机需要它**：地图只占终端的一部分，`presentation`
-/// 必须知道**地图区**多大才能正确夹取相机（`Camera2D.viewport` 要的是后端表面
-/// 上留给世界的尺寸，不是整个终端）。曾经把整个终端尺寸传给相机，结果是
-/// 视口被当成 80 宽、大于世界的一半，夹取失效，玩家一走出中心就滚出画面。
+/// 一整帧的区块划分（由契约层的四栏布局换算而来）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameAreas {
     /// 全部可用区域。
     pub full: Rect,
-    /// 游戏主区（地图 + 侧栏）。
-    pub main: Rect,
-    /// 地图区（含边框）。
-    pub map: Rect,
-    /// 侧栏（含边框）。
-    pub side: Rect,
-    /// 调试面板。
+    /// 地图栏（含边框）。
+    pub camera: Rect,
+    /// 信息栏（含边框）。
+    pub info: Rect,
+    /// 状态栏（含边框）。
+    pub status: Rect,
+    /// 事件栏（含边框）。
+    pub events: Rect,
+    /// 调试面板（覆盖层，仅在有关闭输出时使用）。
     pub debug: Rect,
 }
 
-/// 计算区块划分。**这是布局的唯一权威**——渲染与相机都从这里取。
+/// 计算区块划分。**这是 TUI 侧布局的唯一入口**——它只是契约布局的换算，
+/// 不重新决定比例。
 pub fn frame_areas(area: Rect) -> FrameAreas {
-    frame_areas_with_debug(area, DEBUG_PANEL_HEIGHT)
-}
-
-/// 同 [`frame_areas`]，但调试面板高度可传 0 —— **没有调试输出时不要把屏幕留空**（SYN9）。
-fn frame_areas_with_debug(area: Rect, debug_height: u16) -> FrameAreas {
-    let [main, debug] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(debug_height)]).areas(area);
-    let [map, side] = Layout::horizontal([
-        Constraint::Percentage(60),
-        Constraint::Min(SIDE_PANEL_MIN_WIDTH),
-    ])
-    .areas(main);
+    let layout = render_api::game_layout((area.width, area.height));
+    let offset = |rect: render_api::Rect| Rect {
+        x: area.x.saturating_add(rect.x),
+        y: area.y.saturating_add(rect.y),
+        width: rect.width,
+        height: rect.height,
+    };
     FrameAreas {
         full: area,
-        main,
-        map,
-        side,
-        debug,
+        camera: offset(layout.camera),
+        info: offset(layout.info),
+        status: offset(layout.status),
+        events: offset(layout.events),
+        debug: Rect {
+            x: area.x,
+            y: area.y
+                .saturating_add(area.height.saturating_sub(DEBUG_PANEL_HEIGHT)),
+            width: area.width,
+            height: DEBUG_PANEL_HEIGHT.min(area.height),
+        },
     }
 }
 
-/// 地图区里**可画世界格**的尺寸（去掉边框）。
+/// 地图栏里**可画世界格**的尺寸（去掉边框）。
 ///
-/// 这就是 [`Camera2D`] 该收到的视口。返回 `(0, 0)` 表示"太小/未知"，
+/// 这就是 [`render_api::Camera2D`] 该收到的视口。返回 `(0, 0)` 表示"太小/未知"，
 /// 相机会退回世界中心而不是 panic。
-///
-/// [`Camera2D`]: render_api::Camera2D
 pub fn map_viewport(area: Rect) -> (u16, u16) {
-    let map = frame_areas(area).map;
-    (map.width.saturating_sub(2), map.height.saturating_sub(2))
+    let camera = inner_rect(frame_areas(area).camera, 1);
+    (camera.width, camera.height)
 }
 
 /// 画一整帧。
 pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Option<&DevLogBuffer>) {
-    // 调试面板只在**真的有调试输出**时占地方：否则 80×30 下它白占 7 行（SYN9）。
     let has_debug = dev_log.is_some_and(|buffer| !buffer.lines.is_empty());
-    let areas = frame_areas_with_debug(
-        terminal_frame.area(),
-        if has_debug { DEBUG_PANEL_HEIGHT } else { 0 },
-    );
+    let areas = frame_areas(terminal_frame.area());
 
     match &scene.ui {
         // 背包页是全屏页（Dsn21）：身体与行囊两栏并排，其余页面叠加在游戏画面上。
         UiView::Inventory(inventory) => render_inventory_page(terminal_frame, areas.full, inventory),
         ui => {
-            render_map(terminal_frame, areas.full, scene);
-            render_side(terminal_frame, areas.full, scene);
+            render_map(terminal_frame, areas.camera, scene);
+            render_info(terminal_frame, areas.info, scene);
+            render_status(terminal_frame, areas.status, scene);
+            render_events(terminal_frame, areas.events, scene);
 
             match ui {
-                UiView::Look(look) => render_look_overlay(terminal_frame, areas.full, look),
+                UiView::Look(look) => render_look_overlay(terminal_frame, areas.camera, look),
                 UiView::Dialog(dialog) => render_dialog_overlay(terminal_frame, areas.full, dialog),
                 UiView::ThrowSelect(_) | UiView::ThrowAim(_) => render_placeholder(
                     terminal_frame,
@@ -122,35 +124,172 @@ pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Opt
     }
 }
 
-/// 画地图。
-///
-/// 收的是**整帧区域**而不是地图区：布局必须由 [`frame_areas`] 算**一次**。
-/// 曾经这里收地图区、又调一次 `map_viewport`（它内部再算一次 `frame_areas`），
-/// 于是调试面板的高度被减了两次，地图区缩水成 22×14，玩家被裁到画面外。
-fn render_map(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
-    let area = frame_areas(full).map;
-    let (viewport_w, viewport_h) = map_viewport(full);
-    let (viewport_w, viewport_h) = (viewport_w as usize, viewport_h as usize);
+/// 栏位外框：聚焦时用青色描边，让"Tab 现在在哪一栏"一眼可见。
+fn pane_block(title: &str, focused: bool) -> Block<'_> {
+    let block = Block::default().borders(Borders::ALL).title(title);
+    if focused {
+        block.border_style(Style::default().fg(Color::Cyan))
+    } else {
+        block
+    }
+}
 
-    let lines = build_map_lines(scene, viewport_w, viewport_h);
+/// 画地图。
+fn render_map(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let inner = inner_rect(area, 1);
+    let viewport = (inner.width as usize, inner.height as usize);
+    let lines = build_map_lines(scene, viewport.0, viewport.1);
 
     let title = if scene.game_over {
         " 游戏结束 "
     } else {
         " Dungeon MVP (ecs_core) "
     };
-    let block = Block::default()
-        .title(title)
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL);
+    let block = pane_block(title, scene.focus == Pane::Camera).title_alignment(Alignment::Center);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// 画信息栏：**当前可见**的可交互物与怪物（名字 + 血量），以及切页键位提示。
+///
+/// 排序暂时沿用 `entities` 的稳定顺序；"按距离再由上顺时针"的排序属于下一步
+/// （先有 Observable 标记，再谈关注集）。
+fn render_info(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let mut lines = Vec::new();
+    let mut count = 0usize;
+    for entity in scene.visible_entities() {
+        if entity.visual == VisualKey::Player {
+            continue;
+        }
+        let hp = match entity.hp {
+            Some(hp) if hp.max > 0.0 => format!(" {:.0}/{:.0}", hp.current, hp.max),
+            _ => String::new(),
+        };
+        lines.push(Line::from(format!(
+            "{} {}{hp}",
+            TuiCatalog::glyph(entity.visual),
+            entity.name
+        )));
+        count += 1;
+    }
+    if count == 0 {
+        lines.push(Line::from(Span::styled(
+            "（视野内没有别的东西）",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab：切换焦点",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(pane_block("信息", scene.focus == Pane::Info))
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        area,
+    );
+}
+
+/// 画状态栏：楼层、玩家属性、扩展状态与键位提示。
+fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let mut lines = Vec::new();
+
+    // 死亡提示必须排在最前：面板再挤也不能让"你死了"被挤出可视区。
+    if scene.game_over {
+        lines.push(Line::from(Span::styled(
+            "你死了。按 q 退出。",
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(format!("楼层：{}", scene.hud.floor)));
+    if !scene.hud.map_kind.is_empty() {
+        lines.push(Line::from(format!("地图类型：{}", scene.hud.map_kind)));
+    }
+
+    if scene.hud.is_ready() {
+        lines.push(Line::from(Span::styled(
+            format!("{} Lv.{}", scene.hud.player_name, scene.hud.level),
+            Style::default().fg(Color::Yellow),
+        )));
+        lines.push(Line::from(format!(
+            "HP：{:.0} / {:.0}",
+            scene.hud.hp.current, scene.hud.hp.max
+        )));
+        lines.push(Line::from(format!(
+            "MP：{:.0} / {:.0}",
+            scene.hud.mp.current, scene.hud.mp.max
+        )));
+        lines.push(Line::from(format!(
+            "EXP：{:.0} / {:.0}",
+            scene.hud.exp.current, scene.hud.exp.max
+        )));
+        // 扩展信息（C3 起：装备加成、中毒、行囊载重等）。
+        for line in &scene.hud.extra_lines {
+            let text: String = line.spans.iter().map(|span| span.text.as_str()).collect();
+            if !text.is_empty() {
+                lines.push(Line::from(Span::styled(text, Style::default().fg(Color::Red))));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "方向键/hjkl：移动或攻击    .：等待",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "e：背包    ?：查看    q/Esc：退出",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(pane_block("状态", scene.focus == Pane::Status))
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        area,
+    );
+}
+
+/// 画事件栏：**事实事件**的时间轴，旧在上、新在下，自动贴底。
+///
+/// 进行中动作（已定未落）的条目与 0 刻度线在后续阶段接入；这里先接历史事件，
+/// 这样"事件栏取代日志面板"的视觉与滚动行为可以先落地。
+fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let inner_height = usize::from(area.height.saturating_sub(2));
+    let mut lines: Vec<Line> = Vec::new();
+
+    if scene.log.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "（暂无事件）",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        let start = scene.log.len().saturating_sub(inner_height.max(1));
+        for line in &scene.log[start..] {
+            lines.push(Line::from(Span::styled(
+                line.text.clone(),
+                Style::default().fg(crate::catalog::log_color(line.level)),
+            )));
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines).block(pane_block("事件", scene.focus == Pane::Events)),
+        area,
+    );
 }
 
 /// 把可见区域渲染成终端行。
 ///
 /// 抽成公开函数是为了让 golden 测试**不经过 `Terminal`** 就能断言画面内容
 /// （`TestBackend` 也能测，但拿 `Vec<Line>` 更适合断言"这一格画了什么"）。
-pub fn build_map_lines(scene: &SceneFrame, viewport_w: usize, viewport_h: usize) -> Vec<Line<'static>> {
+pub fn build_map_lines(
+    scene: &SceneFrame,
+    viewport_w: usize,
+    viewport_h: usize,
+) -> Vec<Line<'static>> {
     let rect = scene.camera.visible_rect();
     // 相机中心是格子中心（x.5），可见矩形左上角因此落在半格处；
     // `floor` 得到第一个完整可见格。相机已由 `presentation` 夹在世界内，
@@ -243,96 +382,7 @@ fn visible_entity_at(scene: &SceneFrame, x: i32, y: i32) -> Option<&EntityView> 
         .max_by_key(|entity| entity.layer)
 }
 
-fn render_side(frame: &mut Frame, full: Rect, scene: &SceneFrame) {
-    let area = frame_areas(full).side;
-    let mut lines = Vec::new();
-
-    // 死亡提示必须排在最前：日志会把后面的行挤出面板（实测日志满 12 行时
-    // "你死了" 被裁掉，玩家只看到血条变 0 却没有任何说明）。
-    if scene.game_over {
-        lines.push(Line::from(Span::styled(
-            "你死了。按 q 退出。",
-            Style::default().fg(Color::Red),
-        )));
-        lines.push(Line::from(""));
-    }
-
-    lines.push(Line::from(format!("楼层：{}", scene.hud.floor)));
-    if !scene.hud.map_kind.is_empty() {
-        lines.push(Line::from(format!("地图类型：{}", scene.hud.map_kind)));
-    }
-
-    if scene.hud.is_ready() {
-        lines.push(Line::from(Span::styled(
-            format!("{} Lv.{}", scene.hud.player_name, scene.hud.level),
-            Style::default().fg(Color::Yellow),
-        )));
-        lines.push(Line::from(format!(
-            "HP：{:.0} / {:.0}",
-            scene.hud.hp.current, scene.hud.hp.max
-        )));
-        lines.push(Line::from(format!(
-            "MP：{:.0} / {:.0}",
-            scene.hud.mp.current, scene.hud.mp.max
-        )));
-        lines.push(Line::from(format!(
-            "EXP：{:.0} / {:.0}",
-            scene.hud.exp.current, scene.hud.exp.max
-        )));
-        // 扩展信息（C3 起：中毒等状态）。`extra_lines` 此前是契约里**没有消费者的字段**，
-        // 现在有内容在写它——所以这里也必须有地方读它，否则状态就只存在于数据结构里。
-        for line in &scene.hud.extra_lines {
-            let text: String = line.spans.iter().map(|span| span.text.as_str()).collect();
-            if !text.is_empty() {
-                lines.push(Line::from(Span::styled(text, Style::default().fg(Color::Red))));
-            }
-        }
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "可见实体",
-        Style::default().fg(Color::Cyan),
-    )));
-    for entity in scene.visible_entities() {
-        if entity.visual == render_api::VisualKey::Player {
-            continue;
-        }
-        let hp = match entity.hp {
-            Some(hp) if hp.max > 0.0 => format!(" {:.0}/{:.0}", hp.current, hp.max),
-            _ => String::new(),
-        };
-        lines.push(Line::from(format!(
-            "{} {}{hp}",
-            TuiCatalog::glyph(entity.visual),
-            entity.name
-        )));
-    }
-
-    // 日志面板已按玩家反馈去掉（消息事件仍留在 `EventLog` 里，
-    // 未来若要恢复，读 `scene.log` 就能画回来；这里只去掉显示，不删数据）。
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "方向键/hjkl：移动或攻击    .：等待",
-        Style::default().fg(Color::DarkGray),
-    )));
-    lines.push(Line::from(Span::styled(
-        "?：查看    q/Esc：退出",
-        Style::default().fg(Color::DarkGray),
-    )));
-
-    // 死亡提示已移到面板顶部（避免被日志挤出可视区）。
-
-    let block = Block::default().borders(Borders::ALL).title("状态");
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
-        area,
-    );
-}
-
-fn render_look_overlay(frame: &mut Frame, full: Rect, look: &render_api::LookView) {
-    let area = frame_areas(full).map;
+fn render_look_overlay(frame: &mut Frame, area: Rect, look: &render_api::LookView) {
     // 光标位置换算到终端格：相机已经把世界原点定好了，这里只做平移。
     // 换算失败的唯一原因是视口尺寸为 0（终端太小），此时不画光标。
     let mut lines = Vec::new();
@@ -344,7 +394,10 @@ fn render_look_overlay(frame: &mut Frame, full: Rect, look: &render_api::LookVie
         Some(tile) => {
             // 名称由后端目录决定（显示数据归后端），不用 `TileInfo.name`：
             // 那份字段是 presentation 从 `{:?}` 生成的占位，会把 `Tile(1)` 打给玩家。
-            lines.push(Line::from(format!("地形：{}", crate::catalog::describe(tile.visual))));
+            lines.push(Line::from(format!(
+                "地形：{}",
+                crate::catalog::describe(tile.visual)
+            )));
             lines.push(Line::from(format!(
                 "可见：{}    已探索：{}",
                 yes_no(tile.visible),
@@ -395,10 +448,7 @@ fn render_dialog_overlay(frame: &mut Frame, area: Rect, dialog: &render_api::Dia
         .title(dialog.title.clone())
         .title_alignment(Alignment::Center)
         .border_style(style);
-    frame.render_widget(
-        Paragraph::new(lines).block(block).centered(),
-        inner,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block).centered(), inner);
 }
 
 fn render_placeholder(frame: &mut Frame, area: Rect, title: &str, message: &str) {

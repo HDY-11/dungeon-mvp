@@ -125,6 +125,7 @@ pub fn extract_scene_frame(
     let mut frame = SceneFrame {
         revision,
         camera,
+        focus: pages.pane_focus(),
         map: build_map_view(world, config),
         entities: build_entities(world, config),
         player: build_player_view(world),

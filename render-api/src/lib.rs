@@ -28,11 +28,13 @@
 #![forbid(unsafe_code)]
 
 pub mod input;
+pub mod layout;
 pub mod scene;
 pub mod ui;
 pub mod visual;
 
 pub use input::*;
+pub use layout::*;
 pub use scene::*;
 pub use ui::*;
 pub use visual::*;
@@ -42,7 +44,9 @@ pub use visual::*;
 /// 任何会影响后端渲染语义的结构变更都必须递增此值。
 ///
 /// 2：新增 [`VisualKey::Corpse`]（尸体与活怪共用 glyph 会分不清，属于影响后端语义的变更）。
-pub const CONTRACT_VERSION: u32 = 2;
+/// 3：新增四栏布局契约（[`Rect`] / [`Pane`] / [`GameLayout`] / [`game_layout`]）与
+///    [`SceneFrame::focus`]——旧后端不认识"哪一栏有焦点"，属于影响渲染语义的变更。
+pub const CONTRACT_VERSION: u32 = 3;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -51,6 +55,7 @@ pub mod prelude {
         InputEvent, InputQueue, Key, KeyEvent, KeyState, Modifiers, MouseButton, MouseEvent,
         MouseKind, SurfaceInfo,
     };
+    pub use crate::layout::{GameLayout, MIN_SURFACE, Pane, Rect, game_layout};
     pub use crate::scene::{
         Camera2D, EntityId, EntityView, HudView, LogLevel, LogLine, MapView, Meter, SceneFrame,
         TileInfo, WorldRect,
@@ -79,6 +84,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 2);
+        assert_eq!(CONTRACT_VERSION, 3);
     }
 }

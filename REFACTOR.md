@@ -44,9 +44,10 @@
 | M5 | **楼层推进（下楼）**：`PlayerCommand::Descend` + `world/floor.rs`（白名单清场 + 复用初始化系统重建层内容 + 派生索引重建）；换层不是行动 | DsnE17 / Gm12 | 本次提交 |
 | H11 | 效果实体三落点（`EffectOf` 级联 / `EquippedBy` 不级联 / 每格一实体）+ **最小闭环一对**：格子减速 × `IgnoresSource(Terrain)` | DsnE12、ECS28、ECS42 | 与 H9 同一提交 |
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
+| M9 | **四栏界面与焦点**：布局几何进契约（`render-api::layout`：`Rect`/`Pane`/`GameLayout`/`game_layout`，右栏 42%、顶行 60%、最小 80×24 降级）；`SceneFrame.focus` 由 `PageStack` 每帧供给；`Tab` 顺时针轮转、tui 四栏渲染 | DsnA2 / Gm14 | 本次提交 |
 
 **当前基线（实测）：** `cargo test -p ecs_core` **237 passed**；`cargo test --workspace`
-29 目标 **495 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+29 目标 **507 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

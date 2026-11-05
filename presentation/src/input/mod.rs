@@ -138,6 +138,15 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                 InputOutcome::Ui(UiIntent::OpenQuitDialog)
             }
         }
+        Key::Tab => {
+            // Tab 切换游戏画面的面板焦点（顺时针）。覆盖页里有自己的焦点模型
+            // （背包页的 Nav1/Nav2/Context1/Context2），这里不抢键位。
+            if in_overlay {
+                InputOutcome::Ignored
+            } else {
+                InputOutcome::Ui(UiIntent::CyclePaneFocus)
+            }
+        }
         Key::Char('?') => {
             if in_overlay {
                 InputOutcome::Ignored

@@ -4,6 +4,7 @@
 //! 每帧从 ECS 世界提取。它是只读视图模型，不是第二套游戏状态：
 //! 不包含规则、不包含可变引用、不持久化。
 
+use crate::layout::Pane;
 use crate::ui::{UiTextLine, UiView};
 use crate::visual::{VisualKey, VisualLayer};
 use bevy_ecs::prelude::*;
@@ -417,6 +418,9 @@ impl LogLine {
 pub struct SceneFrame {
     pub revision: u64,
     pub camera: Camera2D,
+    /// 当前面板焦点（Tab 顺时针轮转）。焦点是 **UI 状态**，由
+    /// `presentation` 的 `PageStack` 持有并每帧提取；后端只负责把它画出来。
+    pub focus: Pane,
     pub map: MapView,
     pub entities: Vec<EntityView>,
     pub player: Option<EntityView>,

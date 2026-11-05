@@ -244,8 +244,26 @@ fn non_key_events_are_ignored() {
 #[test]
 fn unknown_keys_are_ignored() {
     let input = ctx(PageKind::Game);
-    for k in [Key::Unknown, Key::Tab, Key::Backspace, Key::F(5)] {
+    for k in [Key::Unknown, Key::Backspace, Key::F(5)] {
         assert!(map_input_event(key(k), &input).is_ignored(), "{k:?}");
+    }
+}
+
+/// Tab 在游戏页轮转栏位焦点；在覆盖页（背包/查看/对话框）里不做焦点轮转。
+#[test]
+fn tab_cycles_the_pane_focus_only_on_the_game_page() {
+    let input = ctx(PageKind::Game);
+    assert_eq!(
+        map_input_event(key(Key::Tab), &input).ui_intent(),
+        Some(UiIntent::CyclePaneFocus)
+    );
+
+    for page in [PageKind::Inventory, PageKind::Look, PageKind::Dialog] {
+        let input = ctx(page);
+        assert!(
+            map_input_event(key(Key::Tab), &input).is_ignored(),
+            "{page:?} 页的 Tab 不轮转四栏焦点"
+        );
     }
 }
 

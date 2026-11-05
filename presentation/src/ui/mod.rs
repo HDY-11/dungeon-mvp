@@ -25,7 +25,9 @@
 //! 游戏状态，页栈同理）。
 
 use bevy_ecs::prelude::*;
-use render_api::{DialogView, EntityView, LookView, PageKind, TileInfo, UiTextLine, UiView, VisualKey};
+use render_api::{
+    DialogView, EntityView, LookView, PageKind, Pane, TileInfo, UiTextLine, UiView, VisualKey,
+};
 
 use crate::extract::ExtractConfig;
 
@@ -55,6 +57,8 @@ pub enum UiIntent {
     OpenLook { x: usize, y: usize },
     /// 移动 Look 光标。
     MoveLookCursor { dx: i32, dy: i32 },
+    /// 切换游戏画面的面板焦点（Tab，顺时针：摄像机 → 信息 → 状态 → 事件）。
+    CyclePaneFocus,
     /// 用户确认退出。
     ConfirmQuit,
     /// 用户取消退出。
@@ -71,6 +75,8 @@ pub struct PageStack {
     quit_pending: bool,
     /// 背包页的光标（"身体 + 行囊"拼接列表上的行号）。
     inventory_cursor: usize,
+    /// 游戏画面的面板焦点（Tab 顺时针轮转）。
+    pane_focus: Pane,
 }
 
 impl PageStack {
@@ -80,7 +86,18 @@ impl PageStack {
             look_cursor: (0, 0),
             quit_pending: false,
             inventory_cursor: 0,
+            pane_focus: Pane::Camera,
         }
+    }
+
+    /// 当前面板焦点。
+    pub const fn pane_focus(&self) -> Pane {
+        self.pane_focus
+    }
+
+    /// 把焦点移到下一个面板（顺时针）。只在游戏页生效。
+    pub fn cycle_pane_focus(&mut self) {
+        self.pane_focus = self.pane_focus.next();
     }
 
     pub const fn kind(&self) -> PageKind {
@@ -181,6 +198,15 @@ impl PageStack {
                 }
                 let next = (self.inventory_cursor as i32 + dy).max(0);
                 self.inventory_cursor = next as usize;
+                true
+            }
+            UiIntent::CyclePaneFocus => {
+                // 焦点只在游戏画面里有意义：页面打开时 Tab 留给页面自己的
+                // 焦点模型（背包页的 Nav1/Nav2/Context1/Context2）。
+                if !self.is_game() {
+                    return false;
+                }
+                self.cycle_pane_focus();
                 true
             }
             UiIntent::ClosePage => {

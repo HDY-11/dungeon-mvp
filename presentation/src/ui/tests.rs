@@ -242,3 +242,29 @@ fn the_inventory_page_opens_moves_and_closes() {
     assert!(pages.apply(UiIntent::ClosePage));
     assert_eq!(pages.kind(), render_api::PageKind::Game);
 }
+
+/// Tab 焦点轮转是**顺时针**的：摄像机 → 信息 → 状态 → 事件 → 摄像机。
+#[test]
+fn tab_cycles_the_pane_focus_clockwise() {
+    let mut pages = PageStack::new();
+    assert_eq!(pages.pane_focus(), render_api::Pane::Camera);
+
+    for expected in [
+        render_api::Pane::Info,
+        render_api::Pane::Status,
+        render_api::Pane::Events,
+        render_api::Pane::Camera,
+    ] {
+        assert!(pages.apply(UiIntent::CyclePaneFocus));
+        assert_eq!(pages.pane_focus(), expected);
+    }
+}
+
+/// 覆盖页打开时 Tab 不轮转四栏焦点：背包页有自己的焦点模型（Nav/Context）。
+#[test]
+fn pane_focus_does_not_cycle_while_a_page_is_open() {
+    let mut pages = PageStack::new();
+    pages.apply(UiIntent::OpenInventory);
+    assert!(!pages.apply(UiIntent::CyclePaneFocus));
+    assert_eq!(pages.pane_focus(), render_api::Pane::Camera);
+}

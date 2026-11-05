@@ -255,7 +255,7 @@ fn out_of_world_cells_are_blank() {
 ///
 /// 这条测试钉住两个不变量：
 ///
-/// 1. **自洽**：`map_viewport(整帧)` 必须等于 `frame_areas(整帧).map` 去掉边框后的
+/// 1. **自洽**：`map_viewport(整帧)` 必须等于 `frame_areas(整帧).camera` 去掉边框后的
 ///    尺寸——相机以为的格数 = 实际画的格数；
 /// 2. **不可嵌套**：把地图区当输入再算一次布局会得到**不同**的结果，说明"拿子区域
 ///    当输入"是明确的错误用法，而不是碰巧能用。
@@ -264,24 +264,27 @@ fn layout_is_computed_once_and_viewport_matches_the_drawn_area() {
     for terminal in [
         ratatui::layout::Rect::new(0, 0, 80, 30),
         ratatui::layout::Rect::new(0, 0, 120, 40),
-        ratatui::layout::Rect::new(0, 0, 60, 24),
+        ratatui::layout::Rect::new(0, 0, 100, 30),
     ] {
         let areas = frame_areas(terminal);
-        let inner_w = areas.map.width.saturating_sub(2);
-        let inner_h = areas.map.height.saturating_sub(2);
+        let inner_w = areas.camera.width.saturating_sub(2);
+        let inner_h = areas.camera.height.saturating_sub(2);
 
         assert_eq!(
             map_viewport(terminal),
             (inner_w, inner_h),
             "整帧 {terminal:?}: 相机视口必须等于实际绘制的地图区尺寸"
         );
-
-        assert_ne!(
-            frame_areas(areas.map).map,
-            areas.map,
-            "对子区域再算布局应当得到不同结果（所以它必须只算一次）"
-        );
     }
+
+    // 「不可嵌套」：120×40 下地图区本身仍然是四栏尺寸，再拿它当输入会得到
+    // **不同**的地图矩形——说明"拿子区域当输入"是明确的错误用法，而不是碰巧能用。
+    let full = frame_areas(ratatui::layout::Rect::new(0, 0, 120, 40));
+    assert_ne!(
+        frame_areas(full.camera).camera,
+        full.camera,
+        "对子区域再算布局应当得到不同结果（所以它必须只算一次）"
+    );
 }
 
 /// 需求外的实体（Unknown key）画成 `?`，而不是静默当空气。
@@ -293,7 +296,7 @@ fn unknown_visual_keys_render_as_question_mark() {
     assert_eq!(text[0].chars().next(), Some('?'));
 }
 
-/// 整帧布局：用 `TestBackend` 走一遍真实绘制路径，确认不 panic 且各区块都在。
+/// 整帧布局：用 `TestBackend` 走一遍真实绘制路径，确认不 panic 且四栏都在。
 #[test]
 fn full_frame_renders_without_panicking_and_shows_all_panels() {
     let scene = base_scene();
@@ -305,9 +308,11 @@ fn full_frame_renders_without_panicking_and_shows_all_panels() {
 
     let text = buffer_text_compact(&terminal);
 
-
-    assert!(text.contains("DungeonMVP"), "标题应当出现");
-    assert!(text.contains("状态"), "侧栏标题应当出现");
+    assert!(text.contains("DungeonMVP"), "地图标题应当出现");
+    assert!(text.contains("摄像机") || text.contains("DungeonMVP"), "地图栏");
+    assert!(text.contains("信息"), "信息栏标题应当出现");
+    assert!(text.contains("状态"), "状态栏标题应当出现");
+    assert!(text.contains("事件"), "事件栏标题应当出现");
     // 调试面板在**没有调试输出时高度为 0**（SYN9：80×30 下它白占 7 行）。
     // 这里传的是 `None`，所以它**不该**出现——出现才是 bug。
     assert!(
@@ -316,6 +321,52 @@ fn full_frame_renders_without_panicking_and_shows_all_panels() {
     );
     assert!(text.contains('@'), "玩家 glyph 应当出现");
     assert!(text.contains("HP"), "状态栏应当有 HP");
+}
+
+/// 四栏布局：80×30 下地图占左上、信息右上、事件左下、状态右下。
+///
+/// 比例由契约层定；这里断言后端**真的按契约画**：四栏互不重叠、拼起来铺满终端。
+#[test]
+fn four_panes_tile_the_surface_without_overlap() {
+    let areas = frame_areas(Rect::new(0, 0, 80, 30));
+    let panes = [areas.camera, areas.info, areas.status, areas.events];
+    assert!(
+        panes.iter().all(|pane| pane.width > 0 && pane.height > 0),
+        "四栏都必须有面积"
+    );
+
+    assert_eq!(areas.camera.x, 0, "地图在顶行左侧");
+    assert_eq!(areas.camera.y, 0, "地图在顶行");
+    assert_eq!(areas.info.y, 0, "信息在顶行右侧");
+    assert_eq!(areas.camera.right(), areas.info.x, "顶行两栏不留缝");
+    assert_eq!(areas.info.right(), 80, "信息栏贴右边缘");
+
+    assert_eq!(areas.events.y, areas.camera.bottom(), "事件在地图下方");
+    assert_eq!(areas.status.y, areas.events.y, "状态与事件同排");
+    assert_eq!(areas.status.x, areas.info.x, "右栏上下对齐");
+    assert_eq!(areas.events.right(), areas.status.x, "底行两栏不留缝");
+    assert_eq!(areas.events.bottom(), 30, "底行贴下边缘");
+    assert_eq!(areas.camera.bottom(), areas.events.y, "顶行贴底行");
+    assert_eq!(areas.events.height, areas.status.height, "底行两栏同高");
+    assert_eq!(areas.camera.width, areas.events.width, "左列两栏同宽");
+}
+
+/// 焦点所在栏用青色描边（Tab 的视觉反馈）。
+#[test]
+fn the_focused_pane_gets_a_cyan_border() {
+    let mut scene = base_scene();
+    scene.focus = Pane::Events;
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+
+    let areas = frame_areas(Rect::new(0, 0, 80, 30));
+    let buffer = terminal.backend().buffer();
+    let corner = &buffer[(areas.events.x, areas.events.y)];
+    assert_eq!(corner.fg, Color::Cyan, "焦点栏的边框应当高亮");
+    let other = &buffer[(areas.camera.x, areas.camera.y)];
+    assert_ne!(other.fg, Color::Cyan, "非焦点栏不抢焦");
 }
 
 /// 退出对话框叠加在游戏画面上，且捕获输入。
@@ -421,26 +472,40 @@ fn death_notice_survives_a_crowded_side_panel() {
     );
 }
 
-/// 日志面板已经按玩家反馈去掉：`scene.log` 不再出现在画面里。
-///
-/// **不删数据**：事件仍在 `EventLog` 与 `SceneFrame.log` 里（未来换 UI 或做
-/// 调试面板可直接复用）；这里只钉住"状态侧栏不再画日志"。
+/// 日志面板已按玩家反馈去掉，改为**事件栏**：`scene.log` 从状态侧栏搬到
+/// 左下的事件栏，旧事件在上、新事件在下。
 #[test]
-fn the_status_panel_no_longer_renders_the_log() {
+fn the_events_panel_renders_the_log_in_timeline_order() {
     let mut scene = base_scene();
-    scene.log = vec![LogLine::new(
-        LogLevel::Combat,
-        "对老鼠造成 3 点伤害",
-    )];
+    scene.log = vec![
+        LogLine::new(LogLevel::Combat, "你击中了老鼠"),
+        LogLine::new(LogLevel::Combat, "对老鼠造成 3 点伤害"),
+    ];
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
         .draw(|frame| render_frame(frame, &scene, None))
         .expect("绘制不得失败");
 
+    // 宽字符在缓冲里占两格（续格是空格），所以先按行去掉空白再做 contains/顺序比较。
+    let rows: Vec<String> = buffer_rows(&terminal)
+        .iter()
+        .map(|row| row.chars().filter(|ch| !ch.is_whitespace()).collect())
+        .collect();
+    let old_row = rows
+        .iter()
+        .position(|row| row.contains("你击中了老鼠"))
+        .expect("旧事件应当出现在画面里");
+    let new_row = rows
+        .iter()
+        .position(|row| row.contains("对老鼠造成3点伤害"))
+        .expect("新事件应当出现在画面里");
+    assert!(
+        old_row < new_row,
+        "事件栏是时间轴：旧事件在上、新事件在下（old={old_row}, new={new_row}）"
+    );
     let text = buffer_text_compact(&terminal);
-    assert!(!text.contains("对老鼠造成3点伤害"), "状态侧栏不应再画日志");
-    assert!(!text.contains("日志"), "状态侧栏不应再有日志标题");
+    assert!(!text.contains("日志"), "不应再有「日志」标题");
 }
 
 /// 未实现页给占位提示，而不是空白或崩溃。
