@@ -267,6 +267,23 @@ fn tab_cycles_the_pane_focus_only_on_the_game_page() {
     }
 }
 
+/// 焦点在信息栏时，↑/↓ 变成选行意图而不是玩家移动；切回摄像机后方向键恢复移动。
+#[test]
+fn arrow_keys_select_info_rows_only_when_the_info_pane_is_focused() {
+    let input = ctx(PageKind::Game).with_pane_focus(render_api::Pane::Info);
+    let up = map_input_event(key(Key::Up), &input);
+    assert!(up.command().is_none(), "信息栏焦点时 ↑ 不得驱动世界");
+    assert_eq!(up.ui_intent(), Some(UiIntent::MoveInfoCursor { dy: -1 }));
+    let down = map_input_event(key(Key::Down), &input);
+    assert!(down.command().is_none(), "信息栏焦点时 ↓ 不得驱动世界");
+    assert_eq!(down.ui_intent(), Some(UiIntent::MoveInfoCursor { dy: 1 }));
+
+    let input = ctx(PageKind::Game).with_pane_focus(render_api::Pane::Camera);
+    let up = map_input_event(key(Key::Up), &input);
+    assert!(up.command().is_some(), "摄像机焦点时 ↑ 仍是移动");
+    assert!(up.ui_intent().is_none());
+}
+
 /// `apply_ui_intent` 是唯一能移动 Look 光标的地方（它带世界尺寸）。
 #[test]
 fn apply_ui_intent_moves_the_look_cursor() {

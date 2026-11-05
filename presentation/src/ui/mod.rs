@@ -59,6 +59,8 @@ pub enum UiIntent {
     MoveLookCursor { dx: i32, dy: i32 },
     /// 切换游戏画面的面板焦点（Tab，顺时针：摄像机 → 信息 → 状态 → 事件）。
     CyclePaneFocus,
+    /// 信息栏移动选中行（`dy` 为 ±1；焦点在信息栏时方向键改为选行）。
+    MoveInfoCursor { dy: i32 },
     /// 用户确认退出。
     ConfirmQuit,
     /// 用户取消退出。
@@ -75,6 +77,8 @@ pub struct PageStack {
     quit_pending: bool,
     /// 背包页的光标（"身体 + 行囊"拼接列表上的行号）。
     inventory_cursor: usize,
+    /// 信息栏的选中行（只列视野内的观察候选；夹取发生在提取时）。
+    info_cursor: usize,
     /// 游戏画面的面板焦点（Tab 顺时针轮转）。
     pane_focus: Pane,
 }
@@ -86,8 +90,14 @@ impl PageStack {
             look_cursor: (0, 0),
             quit_pending: false,
             inventory_cursor: 0,
+            info_cursor: 0,
             pane_focus: Pane::Camera,
         }
+    }
+
+    /// 信息栏的选中行（提取时按候选数量夹取）。
+    pub const fn info_cursor(&self) -> usize {
+        self.info_cursor
     }
 
     /// 当前面板焦点。
@@ -207,6 +217,17 @@ impl PageStack {
                     return false;
                 }
                 self.cycle_pane_focus();
+                true
+            }
+            UiIntent::MoveInfoCursor { dy } => {
+                // 只有游戏页、焦点在信息栏时方向键才用来选行。行数由本帧的候选
+                // 决定（页栈数不出来），所以这里只挪光标；夹取在提取时对
+                // `entries.len()` 做。
+                if !self.is_game() || self.pane_focus != Pane::Info {
+                    return false;
+                }
+                let next = (self.info_cursor as i32 + dy).max(0);
+                self.info_cursor = next as usize;
                 true
             }
             UiIntent::ClosePage => {

@@ -532,6 +532,75 @@ fn running_actions_are_listed_after_facts_with_remaining_time() {
     );
 }
 
+/// 信息栏只列视野内、带 `Observable` 的实体，按"近→远；同距按方位顺时针（正上=0）"排序。
+#[test]
+fn the_info_pane_lists_visible_observable_objects_near_to_far() {
+    let mut world = new_game(11);
+    let player = ecs_core::player_entity(&world).expect("新游戏必须有玩家");
+    let (px, py) = world
+        .get::<ecs_core::Position>(player)
+        .expect("玩家有位置")
+        .to_tuple();
+
+    let up = (px, py - 1);
+    let right = (px + 1, py);
+    let down = (px, py + 1);
+    let far = (px + 2, py);
+    let plain = (px.saturating_sub(1), py);
+
+    let spawn_observable = |world: &mut World, at: (usize, usize)| {
+        world
+            .spawn((
+                ecs_core::Position::new(at.0, at.1),
+                ecs_core::EntityName(format!("{at:?}")),
+                ecs_core::Observable,
+            ))
+            .id()
+    };
+    let up_id = spawn_observable(&mut world, up);
+    let right_id = spawn_observable(&mut world, right);
+    let down_id = spawn_observable(&mut world, down);
+    let far_id = spawn_observable(&mut world, far);
+    // 视野内但没有标记的实体不进信息栏。
+    world.spawn((
+        ecs_core::Position::new(plain.0, plain.1),
+        ecs_core::EntityName("背景".into()),
+    ));
+
+    // 直接写视野集合，避免地图墙体让用例依赖种子布局。
+    world
+        .get_mut::<ecs_core::Viewshed>(player)
+        .expect("玩家有视野")
+        .visible_tiles = vec![up, right, down, plain]
+            .into_iter()
+            .chain([far])
+            .collect();
+
+    let mut pages = PageStack::new();
+    pages.cycle_pane_focus();
+    assert_eq!(
+        extract_scene_frame(&mut world, &ExtractConfig::default(), &pages, 1)
+            .info
+            .entries,
+        vec![
+            render_api::EntityId::from_bits(up_id.to_bits()),
+            render_api::EntityId::from_bits(right_id.to_bits()),
+            render_api::EntityId::from_bits(down_id.to_bits()),
+            render_api::EntityId::from_bits(far_id.to_bits()),
+        ],
+        "近的先排；同距从正上方起顺时针"
+    );
+
+    // 光标越界夹到最后一行。
+    pages.apply(crate::ui::UiIntent::MoveInfoCursor { dy: 99 });
+    let frame = extract_scene_frame(&mut world, &ExtractConfig::default(), &pages, 2);
+    assert_eq!(frame.info.selected, Some(3), "光标应夹在最后一行");
+    assert_eq!(
+        frame.info.selected_id(),
+        Some(render_api::EntityId::from_bits(far_id.to_bits()))
+    );
+}
+
 /// 页栈状态进入帧：Game 页对应 `UiView::Game`，退出确认对应 Dialog。
 #[test]
 fn page_stack_state_is_reflected_in_the_frame() {

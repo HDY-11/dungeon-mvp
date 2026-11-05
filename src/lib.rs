@@ -152,8 +152,9 @@ impl App {
         }
 
         let page = self.world.resource::<PageStack>().kind();
+        let pane_focus = self.world.resource::<PageStack>().pane_focus();
         let player = presentation::player_position(&mut self.world).unwrap_or((0, 0));
-        let input = PresentationInput::new(page, player);
+        let input = PresentationInput::new(page, player).with_pane_focus(pane_focus);
 
         match map_input_event(event, &input) {
             InputOutcome::Ignored => false,

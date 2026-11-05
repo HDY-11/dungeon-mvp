@@ -268,3 +268,23 @@ fn pane_focus_does_not_cycle_while_a_page_is_open() {
     assert!(!pages.apply(UiIntent::CyclePaneFocus));
     assert_eq!(pages.pane_focus(), render_api::Pane::Camera);
 }
+
+/// 信息栏选行只在焦点位于信息栏、且游戏页未开覆盖页时生效。
+#[test]
+fn info_cursor_moves_only_with_the_info_pane_focused() {
+    let mut pages = PageStack::new();
+    assert!(!pages.apply(UiIntent::MoveInfoCursor { dy: 1 }), "摄像机焦点不选行");
+    assert_eq!(pages.info_cursor(), 0);
+
+    pages.apply(UiIntent::CyclePaneFocus); // → Info
+    assert_eq!(pages.pane_focus(), render_api::Pane::Info);
+    assert!(pages.apply(UiIntent::MoveInfoCursor { dy: 3 }));
+    assert_eq!(pages.info_cursor(), 3);
+    assert!(pages.apply(UiIntent::MoveInfoCursor { dy: -1 }));
+    assert_eq!(pages.info_cursor(), 2);
+
+    // 覆盖页打开时，选行意图也不该被消费（焦点在页面内部）。
+    pages.apply(UiIntent::OpenInventory);
+    assert!(!pages.apply(UiIntent::MoveInfoCursor { dy: 1 }));
+    assert_eq!(pages.info_cursor(), 2);
+}

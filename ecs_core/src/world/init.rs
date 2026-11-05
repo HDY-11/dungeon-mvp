@@ -233,6 +233,8 @@ pub fn spawn_stairs_system(
         Stairs,
         Position::new(pos.0, pos.1),
         EntityName("楼梯".into()),
+        // 楼梯能产生事件（"你下楼了"），是信息栏候选（DsnE21 阶段 3）。
+        Observable,
     ));
 }
 
@@ -391,6 +393,8 @@ pub fn spawn_monsters_system(
             .insert(EntityName(template.name.into()))
             .insert(AttackName(template.attack_name.into()))
             .insert(LastKnownPlayerPos::default())
+            // 怪物能产生事件（行动、受击、死亡），是信息栏候选（DsnE21 阶段 3）。
+            .insert(Observable)
             .insert(Idle);
         // 能力来自模板（Phase H6）：这个循环不再列举任何物种名。
         attach_abilities(&mut cmd, template.abilities);

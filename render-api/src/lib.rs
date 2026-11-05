@@ -48,7 +48,9 @@ pub use visual::*;
 ///    [`SceneFrame::focus`]——旧后端不认识"哪一栏有焦点"，属于影响渲染语义的变更。
 /// 4：`LogLine` → [`EventLine`]（`SceneFrame::log` → `events`）：事件栏要区分
 ///    "已落定"与"进行中"（DsnE21），后端画法不同，属于影响渲染语义的变更。
-pub const CONTRACT_VERSION: u32 = 4;
+/// 5：新增信息栏契约 [`InfoView`]（`SceneFrame::info`）：信息栏的观察顺序与
+///    选中行不再由后端自行排序（DsnA4），属于影响渲染语义的变更。
+pub const CONTRACT_VERSION: u32 = 5;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -59,8 +61,8 @@ pub mod prelude {
     };
     pub use crate::layout::{GameLayout, MIN_SURFACE, Pane, Rect, game_layout};
     pub use crate::scene::{
-        Camera2D, EntityId, EntityView, EventLine, HudView, LogLevel, MapView, Meter, SceneFrame,
-        TileInfo, WorldRect,
+        Camera2D, EntityId, EntityView, EventLine, HudView, InfoView, LogLevel, MapView, Meter,
+        SceneFrame, TileInfo, WorldRect,
     };
     pub use crate::ui::{
         DetailView, DialogView, InventoryFocus, InventoryPanel, InventoryPanelView, InventoryView,
@@ -86,6 +88,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 4);
+        assert_eq!(CONTRACT_VERSION, 5, "契约版本变更必须同步此断言");
     }
 }

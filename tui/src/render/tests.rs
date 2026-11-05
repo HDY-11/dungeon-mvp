@@ -369,6 +369,64 @@ fn the_focused_pane_gets_a_cyan_border() {
     assert_ne!(other.fg, Color::Cyan, "非焦点栏不抢焦");
 }
 
+/// 信息栏按 `InfoView` 的顺序渲染，选中行带 `>` 且在地图上反色（DsnA4）。
+#[test]
+fn the_info_pane_follows_the_contract_order_and_highlights_the_selection() {
+    let mut scene = base_scene();
+    scene.focus = Pane::Info;
+    let rat = EntityId::from_bits(11);
+    let goblin = EntityId::from_bits(12);
+    scene.entities = vec![
+        EntityView::new(rat, (1, 2), VisualKey::Monster(0))
+            .with_name("老鼠")
+            .with_hp(Meter::new(6.0, 6.0)),
+        EntityView::new(goblin, (3, 2), VisualKey::Monster(1))
+            .with_name("哥布林")
+            .with_hp(Meter::new(18.0, 18.0)),
+    ];
+    scene.info = render_api::InfoView {
+        entries: vec![goblin, rat],
+        selected: Some(0),
+    };
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+
+    // 宽字符在缓冲里每个格子一个符号、续格是空格；断言前先去掉空白。
+    let rows: Vec<String> = buffer_rows(&terminal)
+        .iter()
+        .map(|row| row.split_whitespace().collect())
+        .collect();
+    let goblin_row = rows
+        .iter()
+        .position(|row| row.contains("哥布林"))
+        .unwrap_or_else(|| panic!("哥布林在信息栏；rows={rows:#?}"));
+    let rat_row = rows.iter().position(|row| row.contains("老鼠")).expect("老鼠在信息栏");
+    assert!(goblin_row < rat_row, "信息栏必须按契约给的顺序画");
+    assert!(rows[goblin_row].contains('>'), "选中行要有 `>` 前缀");
+    assert!(!rows[rat_row].contains('>'), "未选中行不带前缀");
+    assert!(rows[goblin_row].contains("18/18"), "应当显示血量");
+
+    // 地图上同一实体被反色高亮：`build_map_lines` 里应有黄底的字形。
+    let map_lines = build_map_lines(&scene, W, H);
+    let highlighted = map_lines
+        .iter()
+        .flat_map(|line| &line.spans)
+        .any(|span| span.style.bg == Some(Color::Yellow));
+    assert!(highlighted, "选中的哥布林格应当反色");
+
+    scene.info.selected = None;
+    let map_lines = build_map_lines(&scene, W, H);
+    assert!(
+        map_lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.bg != Some(Color::Yellow)),
+        "没有选中时不该有高亮"
+    );
+}
+
 /// 退出对话框叠加在游戏画面上，且捕获输入。
 #[test]
 fn dialog_overlay_is_drawn_over_the_game() {

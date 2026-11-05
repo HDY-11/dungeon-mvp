@@ -424,6 +424,26 @@ impl EventLine {
     }
 }
 
+/// 信息栏的一列（DsnA4 / DsnE21 阶段 3）。
+///
+/// 只给**顺序与选中**：条目引用同一帧里 `entities` 的实体 id，名字/血量/glyph
+/// 由后端从实体视图里取（不在这里复制一份，避免两处数据分叉）。
+/// 排序由 `presentation` 决定（近→远，同距按方位顺时针），后端只按给定顺序画。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InfoView {
+    /// 按观察顺序排好的可见实体（不含玩家）。
+    pub entries: Vec<EntityId>,
+    /// 焦点在信息栏时的选中行；`None` = 不在信息栏或列表为空。
+    pub selected: Option<usize>,
+}
+
+impl InfoView {
+    /// 当前选中的实体（越界时取 None）。
+    pub fn selected_id(&self) -> Option<EntityId> {
+        self.selected.and_then(|index| self.entries.get(index).copied())
+    }
+}
+
 /// 一帧场景快照。
 ///
 /// `presentation` 每帧重建并写入 ECS；TUI / GPU 后端只读此资源。
@@ -442,6 +462,8 @@ pub struct SceneFrame {
     pub entities: Vec<EntityView>,
     pub player: Option<EntityView>,
     pub hud: HudView,
+    /// 信息栏（DsnA4）：可见候选实体的观察顺序与选中行。
+    pub info: InfoView,
     /// 事件栏的一列（DsnE21）：已落定事实在前（旧→新），进行中的行动在后
     /// （剩余时间降序），栏底即 0 刻度。
     pub events: Vec<EventLine>,

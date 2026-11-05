@@ -27,11 +27,11 @@
 use bevy_ecs::prelude::*;
 use ecs_core::{
     Attack, Defense, EventLog, Experience, FloorNumber, Health, Level, Magic, Map, MapMemory,
-    MapSeed, MonsterKindId, Player, Position, Stairs, TurnManager, Viewshed, map_kind_for,
-    monster_template,
+    MapSeed, MonsterKindId, Observable, Player, Position, Stairs, TurnManager, Viewshed,
+    map_kind_for, monster_template,
 };
 use render_api::{
-    EntityId, EntityView, EventLine, HudView, LogLevel, MapView, Meter, SceneFrame,
+    EntityId, EntityView, EventLine, HudView, InfoView, LogLevel, MapView, Meter, SceneFrame,
     VisualKey, VisualLayer,
 };
 
@@ -130,6 +130,7 @@ pub fn extract_scene_frame(
         entities: build_entities(world, config),
         player: build_player_view(world),
         hud: build_hud(world),
+        info: build_info(world, pages.info_cursor()),
         events: build_events(world, config),
         // 先留空，等其余字段就位后再算：Look 页的地形详情**从本帧快照读**，
         // 而不是回头再查一次世界——那样会出现「页栈显示的地形与地图不一致」。
@@ -1015,6 +1016,63 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
         lines.push(render_api::UiTextLine::plain(text));
     }
     lines
+}
+
+/// 信息栏（DsnA4 / DsnE21 阶段 3）：只列**视野内、带 `Observable` 标记**的实体。
+///
+/// 排序：先按到玩家的距离从近到远；同距离按**方位顺时针**（正上方为 0，
+/// 右为 1/4 圈，下为 1/2 圈，左为 3/4 圈）——这样"同一排的怪物"不会因实体
+/// id 的生成顺序而跳动。选中行由 `PageStack.info_cursor` 给出，越界落在最后一行。
+fn build_info(world: &mut World, cursor: usize) -> InfoView {
+    let Some(player) = ecs_core::player_entity(world) else {
+        return InfoView::default();
+    };
+    let Some(player_pos) = world.get::<Position>(player).map(Position::to_tuple) else {
+        return InfoView::default();
+    };
+    let seen: std::collections::HashSet<(usize, usize)> = {
+        let mut query = world.query_filtered::<&Viewshed, With<Player>>();
+        query
+            .iter(world)
+            .next()
+            .map(|viewshed| viewshed.visible_tiles.iter().copied().collect())
+            .unwrap_or_default()
+    };
+
+    let mut candidates: Vec<(usize, f64, Entity)> = Vec::new();
+    {
+        let mut query = world.query_filtered::<(Entity, &Position), With<Observable>>();
+        for (entity, position) in query.iter(world) {
+            if entity == player {
+                continue;
+            }
+            let at = position.to_tuple();
+            if !seen.contains(&at) {
+                continue;
+            }
+            let dx = at.0 as f64 - player_pos.0 as f64;
+            let dy = at.1 as f64 - player_pos.1 as f64;
+            // 屏幕坐标 y 向下：`-dy` 让"正上方"成为 0 度；`rem_euclid` 归一化到
+            // [0, 2π)，于是顺时针方向角度递增。
+            let clockwise = dx.atan2(-dy).rem_euclid(std::f64::consts::TAU);
+            candidates.push((dx.mul_add(dx, dy * dy) as usize, clockwise, entity));
+        }
+    }
+    candidates.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
+    let entries: Vec<EntityId> = candidates
+        .iter()
+        .map(|(_, _, entity)| EntityId::from_bits(entity.to_bits()))
+        .collect();
+    let selected = if entries.is_empty() {
+        None
+    } else {
+        Some(cursor.min(entries.len() - 1))
+    };
+    InfoView { entries, selected }
 }
 
 /// 事件栏的一列（DsnE21）：已落定事实（旧→新）+ 进行中的行动（剩余时间降序）。

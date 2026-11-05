@@ -1398,7 +1398,9 @@ Tip           Tip           Tip
 - 已落地（阶段 2）：事件行契约（DsnA3，`EventLine{running}`）+ `EventLog` 容量 200 +
   事实/进行中合并排序（presentation 投影，`ActionName::phrase` 出文案）+ tui 事件栏
   渲染（进行中暗色）；进行中只列玩家视野内的行动。
-- 未做（阶段 3）：信息栏的 `Observable` 标记、按距离/方位排序、地图高亮。
+- 已落地（阶段 3）：`Observable` 标记（怪物/楼梯/地面物品/尸体；玩家与容器内
+  物品不标）、信息栏 `InfoView` 契约（DsnA4）、presentation 按「近→远、同距方位
+  顺时针」排序（正上=0）、`PageStack.info_cursor` 选行与地图反色高亮。
 - 未做（阶段 4）：背包 3×3 grid（Nav/Context/Detail/Tip、4 焦点顺时针、←/→ 切 tab）
   与地面全显式拾取。
 

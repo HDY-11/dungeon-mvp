@@ -71,6 +71,8 @@ impl InputOutcome {
 pub struct PresentationInput {
     /// 当前页栈状态（决定按键被谁消费）。
     pub page: render_api::PageKind,
+    /// 游戏画面的面板焦点（信息栏聚焦时方向键改为选行，不驱动移动）。
+    pub pane_focus: render_api::Pane,
     /// 玩家当前世界坐标（`?` 打开 Look 时的初始光标）。
     pub player_position: (usize, usize),
     /// 世界尺寸（Look 光标夹取用）。
@@ -81,9 +83,15 @@ impl PresentationInput {
     pub const fn new(page: render_api::PageKind, player_position: (usize, usize)) -> Self {
         Self {
             page,
+            pane_focus: render_api::Pane::Camera,
             player_position,
             world_size: (ecs_core::MAP_WIDTH, ecs_core::MAP_HEIGHT),
         }
+    }
+
+    pub const fn with_pane_focus(mut self, pane: render_api::Pane) -> Self {
+        self.pane_focus = pane;
+        self
     }
 
     pub const fn with_world_size(mut self, width: usize, height: usize) -> Self {
@@ -179,6 +187,17 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                     Key::Char('d') => InputOutcome::Ui(UiIntent::InventoryDrop),
                     _ => InputOutcome::Ignored,
                 };
+            }
+            // 信息栏聚焦时 ↑/↓ 改为选行，不驱动玩家移动（`j/k` 仍是移动，
+            // 免得玩家以为焦点在信息栏就完全走不动）。
+            if matches!(input.page, render_api::PageKind::Game)
+                && input.pane_focus == render_api::Pane::Info
+            {
+                match other {
+                    Key::Up => return InputOutcome::Ui(UiIntent::MoveInfoCursor { dy: -1 }),
+                    Key::Down => return InputOutcome::Ui(UiIntent::MoveInfoCursor { dy: 1 }),
+                    _ => {}
+                }
             }
             // 覆盖页打开时，移动/等待键不该同时驱动世界——否则按方向键翻看
             // 地形会把玩家走出去（旧实现没有覆盖页，所以没这个问题）。

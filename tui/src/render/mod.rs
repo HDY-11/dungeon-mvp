@@ -25,7 +25,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use render_api::{EntityView, Pane, SceneFrame, UiView, VisualKey};
+use render_api::{EntityView, Pane, SceneFrame, UiView};
 
 use crate::catalog::TuiCatalog;
 use crate::layout::inner_rect;
@@ -149,42 +149,60 @@ fn render_map(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// 画信息栏：**当前可见**的可交互物与怪物（名字 + 血量），以及切页键位提示。
+/// 画信息栏：**当前可见的观察候选**（名字 + 血量），以及切页键位提示。
 ///
-/// 排序暂时沿用 `entities` 的稳定顺序；"按距离再由上顺时针"的排序属于下一步
-/// （先有 Observable 标记，再谈关注集）。
+/// 顺序由契约层的 [`render_api::InfoView`] 给出（近→远，同距按方位顺时针），
+/// 后端不再自己排序。焦点在信息栏时 `↑/↓` 选中一行，选中对象在地图上高亮。
 fn render_info(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let focused = scene.focus == Pane::Info;
+    let selected = scene.info.selected_id();
     let mut lines = Vec::new();
     let mut count = 0usize;
-    for entity in scene.visible_entities() {
-        if entity.visual == VisualKey::Player {
+    for id in &scene.info.entries {
+        let Some(entity) = scene.entities.iter().find(|entity| entity.id == *id) else {
+            // 候选来自同一帧的实体列表；这里找不到说明提取器产出了悬空 id。
             continue;
-        }
+        };
         let hp = match entity.hp {
             Some(hp) if hp.max > 0.0 => format!(" {:.0}/{:.0}", hp.current, hp.max),
             _ => String::new(),
         };
-        lines.push(Line::from(format!(
-            "{} {}{hp}",
-            TuiCatalog::glyph(entity.visual),
-            entity.name
+        let is_selected = selected == Some(*id);
+        let marker = if is_selected { '>' } else { ' ' };
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{marker}{} {}{hp}",
+                TuiCatalog::glyph(entity.visual),
+                entity.name
+            ),
+            style,
         )));
         count += 1;
     }
     if count == 0 {
         lines.push(Line::from(Span::styled(
-            "（视野内没有别的东西）",
+            "（视野内没有可关注的东西）",
             Style::default().fg(Color::DarkGray),
         )));
     }
     lines.push(Line::from(""));
+    let hint = if focused {
+        "↑↓：选择对象    Tab：切换焦点"
+    } else {
+        "Tab：切换焦点"
+    };
     lines.push(Line::from(Span::styled(
-        "Tab：切换焦点",
+        hint,
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(
         Paragraph::new(lines)
-            .block(pane_block("信息", scene.focus == Pane::Info))
+            .block(pane_block("信息", focused))
             .wrap(ratatui::widgets::Wrap { trim: true }),
         area,
     );
@@ -335,10 +353,14 @@ fn cell_span(scene: &SceneFrame, x: i32, y: i32) -> Span<'static> {
     };
 
     if let Some(entity) = visible_entity_at(scene, x, y) {
-        return Span::styled(
-            TuiCatalog::glyph(entity.visual).to_string(),
-            Style::default().fg(TuiCatalog::fg(entity.visual)).bg(tile_bg),
-        );
+        let mut style = Style::default()
+            .fg(TuiCatalog::fg(entity.visual))
+            .bg(tile_bg);
+        // 信息栏选中的对象在地图上反色，玩家不用在列表和地图之间来回找。
+        if scene.info.selected_id() == Some(entity.id) {
+            style = style.fg(Color::Black).bg(Color::Yellow);
+        }
+        return Span::styled(TuiCatalog::glyph(entity.visual).to_string(), style);
     }
 
     if scene.map.is_visible(ux, uy) {

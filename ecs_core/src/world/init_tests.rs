@@ -194,3 +194,59 @@ fn world_layout_is_pinned_for_a_known_seed() {
     );
     assert_ne!(stairs, spawn, "楼梯不能和出生点重合");
 }
+
+/// 观察标记只贴在"地图上值得关注的东西"上（DsnE21 阶段 3）：
+/// 怪物、楼梯、地面物品（尸体由死亡系统另测）；玩家自己与容器里的物品都不贴。
+///
+/// 这条用例守的是**标记的覆盖口径**——以后新增可关注实体的 spawn 点
+/// 若忘了 `.insert(Observable)`，信息栏会静默漏掉它。
+#[test]
+fn observable_marks_map_objects_but_not_container_contents() {
+    use crate::item::{Container, GroundItemAt, Item};
+    use crate::monster::MonsterKindId;
+
+    let mut world = crate::world_loop::new_game(2026);
+    let player = crate::player_entity(&world).expect("新开局必须有玩家");
+    assert!(
+        world.get::<crate::components::Observable>(player).is_none(),
+        "玩家不是观察候选"
+    );
+
+    let (observable_monsters, observable_stairs, observable_items) = {
+        let mut monsters = world.query_filtered::<Entity, (With<MonsterKindId>, With<Observable>)>();
+        let count = monsters.iter(&world).count();
+        let mut stairs = world.query_filtered::<Entity, (With<Stairs>, With<Observable>)>();
+        let stairs = stairs.iter(&world).count();
+        let mut items =
+            world.query_filtered::<Entity, (With<GroundItemAt>, With<Observable>, With<Item>)>();
+        (count, stairs, items.iter(&world).count())
+    };
+    let (monsters, stairs, ground_items) = {
+        let mut monsters = world.query_filtered::<Entity, With<MonsterKindId>>();
+        let count = monsters.iter(&world).count();
+        let mut stairs = world.query::<&Stairs>();
+        let stairs = stairs.iter(&world).count();
+        let mut items = world.query_filtered::<Entity, With<GroundItemAt>>();
+        (count, stairs, items.iter(&world).count())
+    };
+    assert!(monsters > 0 && ground_items > 0, "种子 2026 应当有怪物和地面物品");
+    assert_eq!(observable_monsters, monsters, "每个怪物都应可关注");
+    assert_eq!(observable_stairs, stairs, "楼梯应可关注");
+    assert_eq!(observable_items, ground_items, "地面物品应可关注");
+
+    // 容器里的物品不挂标记：玩家身体槽与行囊里的东西都不该出现在信息栏。
+    let contained: Vec<Entity> = {
+        let mut query = world.query::<&Container>();
+        query
+            .iter(&world)
+            .flat_map(|container| container.iter().map(|(_, entity)| entity))
+            .collect()
+    };
+    assert!(!contained.is_empty(), "新开局行囊里至少有行囊物品本身");
+    for entity in contained {
+        assert!(
+            world.get::<crate::components::Observable>(entity).is_none(),
+            "容器里的物品不是地图上的观察候选"
+        );
+    }
+}

@@ -139,6 +139,9 @@ pub fn spawn_item(commands: &mut Commands, id: ItemId, count: u32) -> Entity {
 }
 
 /// 在地上放一堆物品，返回实体。
+///
+/// 地面物品挂 [`crate::components::Observable`]（DsnE21 阶段 3）：它们能产生
+/// "你捡起了 X"这类事件，是信息栏候选；容器里的物品没有位置，不挂。
 pub fn spawn_ground_item(
     commands: &mut Commands,
     id: ItemId,
@@ -148,7 +151,7 @@ pub fn spawn_ground_item(
     let entity = spawn_item(commands, id, count);
     commands
         .entity(entity)
-        .insert(GroundItemAt::new(at.0, at.1));
+        .insert((GroundItemAt::new(at.0, at.1), crate::components::Observable));
     entity
 }
 

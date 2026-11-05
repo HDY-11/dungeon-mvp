@@ -46,9 +46,10 @@
 | D1 | 确定性修补：仲裁的授予/回收顺序显式排序（`ordered_grants` + `losers.sort`）；四个 Schedule 改经 `schedule::core_schedule()` 构建，`ambiguity_detection` 提到 `Error` | DsnX17 ③ | 本次提交 |
 | M9 | **四栏界面与焦点**：布局几何进契约（`render-api::layout`：`Rect`/`Pane`/`GameLayout`/`game_layout`，右栏 42%、顶行 60%、最小 80×24 降级）；`SceneFrame.focus` 由 `PageStack` 每帧供给；`Tab` 顺时针轮转、tui 四栏渲染 | DsnA2 / Gm14 | 本次提交 |
 | M10 | **事件时间轴**：`LogLine` → `EventLine{level,text,running}`（契约 4）；`EventLog` 容量 200 只计事实；进行中行动由 `ActiveAction+ActionTimer` 投影（`ActionName::phrase`），Done 旧→新 + Running 剩余降序、栏底 0 刻度 | DsnE21 / DsnA3 / Gm14 | 本次提交 |
+| M11 | **信息栏观察候选**：`Observable` 显式标记（怪物/楼梯/地面物品/尸体，容器内容不标）；信息栏契约 `InfoView{entries,selected}`（契约 5），presentation 按「近→远、同距方位顺时针（正上=0）」排序；`PageStack.info_cursor` 选行、地图反色高亮 | DsnE21 / DsnA4 / Gm14 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **237 passed**；`cargo test --workspace`
-29 目标 **508 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **238 passed**；`cargo test --workspace`
+29 目标 **514 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

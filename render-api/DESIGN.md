@@ -10,7 +10,7 @@
 
 **归属范围：** 渲染契约的决策：视图模型边界、字段语义与版本策略。
 
-**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA3 三条）。
+**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA4 四条）。
 判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
 
 ---
@@ -21,9 +21,10 @@
 
 | 主题 | 条目 |
 |---|---|
-| 渲染契约 | DsnA1 · DsnA2 · DsnA3 |
+| 渲染契约 | DsnA1 · DsnA2 · DsnA3 · DsnA4 |
 | 界面几何与焦点 | DsnA2 |
 | 事件行与时间轴 | DsnA3 |
+| 信息栏 | DsnA4 |
 
 
 <!-- &DsnA1  后端无关只读契约 SceneFrame/VisualKey/UiView/InputEvent；tui 不依赖 ecs_core -->
@@ -148,6 +149,40 @@ presentation 投影（事实 + 玩家视野内的 `ActiveAction`）、tui 事件
 **关联：** DsnA1（渲染契约）· DESIGN.md DsnE21（事件时间轴与背包格）·
 GAME.md Gm14（界面）
 <!-- &/DsnA3 -->
+
+---
+
+<!-- &DsnA4  信息栏契约：InfoView{entries,selected}，候选与排序由 presentation 决定；选中行是 UI 状态；CONTRACT_VERSION 5 -->
+### DsnA4 信息栏契约：`InfoView` 与"可关注对象"列表（已落地，契约版本 5）
+
+**决策**
+
+`SceneFrame` 在 `hud` 之后加 `info: InfoView`：
+
+- `InfoView { entries: Vec<EntityId>, selected: Option<usize> }`，`selected_id()`
+  取当前选中实体的 id。
+- **候选与排序由 `presentation` 决定**：`entries` 已经按「近→远，同距按方位
+  顺时针（正上=0）」排好（DsnE21）；后端只按给定顺序画，不再自己过滤、排序。
+- `selected` 是**界面状态**（`PageStack.info_cursor` 每帧投影，越界夹到最后一行），
+  不是"玩家关注了谁"的规则状态；当前用于信息栏选中行标记与地图反色高亮。
+- `CONTRACT_VERSION` 由 4 升到 5。
+
+**背景（舍弃的方案）**
+
+- **让后端从 `entities` 里猜"可关注对象"**：过滤规则会在每个后端各写一份并
+  迟早分叉；"值得关注"由内容决定（显式 `Observable` 标记），不是视觉属性。
+- **把"关注集"塞进契约**：关注集是后续"事件只报关注对象"的规则状态，属于
+  ECS/规则层；先只在 UI 上暴露"选中行"，等过滤规则落地再接。
+
+**状态**
+
+已落地：`InfoView` 契约与 `CONTRACT_VERSION 5`、`Observable` 标记（怪物/楼梯/
+地面物品/尸体）、presentation 距离+方位排序与选中夹取、tui 信息栏渲染与地图
+反色高亮、端到端 Tab+↑↓ 用例。
+
+**关联：** DsnA1（渲染契约）· DsnA2（四栏布局与焦点）·
+ecs_core/DESIGN.md DsnE21 · GAME.md Gm14
+<!-- &/DsnA4 -->
 
 
 

@@ -89,6 +89,8 @@ pub fn check_death_system(
                 crate::monster::Corpse::new(template.kind, template.name),
                 *position,
                 corpse,
+                // 尸体能被搜刮、能产生事件，是信息栏候选（DsnE21 阶段 3）。
+                crate::components::Observable,
             ));
 
             for (item, count) in roll_loot(template.loot, &mut rng) {

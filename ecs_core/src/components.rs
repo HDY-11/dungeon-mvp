@@ -333,3 +333,15 @@ pub struct Flee;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wander;
+
+// ── 观察候选（DsnE21 阶段 3） ────────────────────────
+
+/// "这个实体能产生事件、值得被玩家关注"的**显式标记**。
+///
+/// 信息栏的候选列表只列带这个标记的可见实体；规则层在 spawn 实体时决定要不要
+/// 挂它（怪物、地面物品、尸体、楼梯），而不是靠"有没有 `Health`""有没有 `Item`"
+/// 之类的字段猜测——猜测会在加新实体类型时悄悄漏掉或误收，标记则逼着生成方表态。
+///
+/// 标记与"玩家关注了谁"是两件事：关注集属于 UI 状态（`PageStack`），不写进世界。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Observable;

@@ -567,3 +567,33 @@ fn tab_cycles_the_four_pane_focus_on_screen() {
         assert_eq!(frame.focus, expected, "Tab 应当顺时针轮转到 {expected:?}");
     }
 }
+
+/// 信息栏聚焦时 ↑↓ 只选行，不驱动玩家移动（端到端）。
+#[test]
+fn arrow_keys_in_the_info_pane_do_not_move_the_player() {
+    use render_api::Pane;
+
+    let mut app = quiet_app(2026);
+    let before = presentation::player_position(app.world_mut()).expect("玩家有位置");
+
+    assert!(app.handle(key(Key::Tab)), "第一次 Tab 到信息栏");
+    assert_eq!(app.refresh().focus, Pane::Info);
+    let cursor_before = app
+        .world()
+        .resource::<presentation::PageStack>()
+        .info_cursor();
+
+    assert!(app.handle(key(Key::Down)), "信息栏焦点时 ↓ 应被消费");
+    let frame = app.refresh();
+    assert_eq!(frame.focus, Pane::Info, "选行不该切走焦点");
+    assert_eq!(
+        app.world()
+            .resource::<presentation::PageStack>()
+            .info_cursor(),
+        cursor_before + 1,
+        "↓ 应当把信息栏光标往下挪一行"
+    );
+
+    let after = presentation::player_position(app.world_mut()).expect("玩家有位置");
+    assert_eq!(before, after, "信息栏选行不得驱动玩家移动");
+}
