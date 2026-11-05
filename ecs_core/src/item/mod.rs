@@ -30,16 +30,19 @@
 //!
 //! # 拾取口径
 //!
+//! **踩上去不会自动捡**（DsnE21 阶段 4）：玩家在背包页的「地面」栏按 `Enter`
+//! 拿一件（`actions::take_from_ground`），每按一次走一次下面的路由：
+//!
 //! | 捡到什么 | 做什么 |
 //! |---|---|
 //! | 装备且对应部位空着 | 进身体槽位（= 穿上） |
 //! | 装备但部位已占 | 进行囊 |
 //! | 消耗品且对应资源未满 | **立即使用 1 个**，剩下的留在原地 |
 //! | 其他 | 进行囊（先并堆、再开新格） |
-//! | 行囊超重 | 与"满"同一条口径：**留在原地**并记一条日志（DsnE20） |
-//! | 放不下 | **留在原地**并记一条日志（不许静默失败，ISSUES SYN6） |
+//! | 行囊超重 | 与"满"同一条口径：**留在原地**并记一条事件（DsnE20） |
+//! | 放不下 | **留在原地**并记一条事件（不许静默失败，ISSUES SYN6） |
 //!
-//! **尸体不自动搜刮**：踩上尸体什么都不会发生，玩家打开背包页在「脚下」面板里
+//! **尸体也不自动搜刮**：踩上尸体什么都不会发生，玩家打开背包页在「脚下」面板里
 //! 自己翻（`actions::take_from_corpse` 的注释记录了这条玩家决策）。
 
 pub mod actions;
@@ -47,17 +50,16 @@ pub mod container;
 pub mod loot;
 pub mod registry;
 
-use crate::components::*;
-use crate::entity_cls::Player;
-use crate::resources::{EventLog, EventMessage};
+#[cfg(test)]
+use crate::resources::EventLog;
 use bevy_ecs::prelude::*;
 
 pub use container::{
     BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
 pub use actions::{
-    ItemActionError, drop_from_pack, equip_from_pack, take_from_corpse, unequip_to_pack,
-    use_from_pack,
+    ItemActionError, drop_from_pack, equip_from_pack, take_from_corpse, take_from_ground,
+    unequip_to_pack, use_from_pack,
 };
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{
@@ -174,175 +176,6 @@ pub fn container_weight(container: &Container, items: &Query<(&Item, &Amount)>) 
             .map(|(item, amount)| stack_weight(item.id, amount.0))
             .unwrap_or(0.0)
     })
-}
-
-/// 玩家的身体视图：位置 + 身体容器 + 两条会被消耗品改的资源。
-type PickupPlayer = (
-    Entity,
-    &'static Position,
-    &'static mut Container,
-    &'static mut Health,
-    Option<&'static mut Magic>,
-);
-
-/// 玩家踩到物品就捡起。
-pub fn pickup_system(
-    mut commands: Commands,
-    mut players: Query<PickupPlayer, With<Player>>,
-    mut others: Query<&mut Container, Without<Player>>,
-    items: Query<(&Item, &Amount)>,
-    ground: Query<(Entity, &GroundItemAt, &Item, &Amount)>,
-    mut event_log: ResMut<EventLog>,
-) {
-    let Ok((_, position, mut body, mut health, mut magic)) = players.single_mut() else {
-        return;
-    };
-    let here = position.to_tuple();
-
-    for (entity, at, item, amount) in &ground {
-        if at.to_tuple() != here {
-            continue;
-        }
-        let def = item.def();
-        let mut left = amount.0;
-
-        // ① 装备：身体上对应部位空着就穿上（部位由 `tags` 求交得到）。
-        if def.is_equipment()
-            && let Some(index) = body.free_slot_for(def.tags)
-        {
-            let _ = body.insert(index, entity, def.tags);
-            commands.entity(entity).remove::<GroundItemAt>();
-            event_log.push(EventMessage::item(format!(
-                "你装备了{}（{}）",
-                def.name,
-                BODY.slots[index].name
-            )));
-            continue;
-        }
-
-        // ② 消耗品：对应资源没满就立刻用掉 1 个，剩下的留在原地。
-        if let Some(effect) = def.consume_effect()
-            && consume_one(effect, def.name, &mut health, magic.as_deref_mut(), &mut event_log)
-        {
-            left -= 1;
-            if left == 0 {
-                commands.entity(entity).despawn();
-            } else {
-                commands.entity(entity).insert(Amount::new(left));
-            }
-            continue;
-        }
-
-        // ③ 其余进**行囊**：先并堆、再开新格。
-        let Some(pack_entity) = body.slot(pack_slot_index()) else {
-            event_log.push(EventMessage::system("你没有可用的行囊，东西只能留在原地"));
-            break;
-        };
-        let Ok(mut pack) = others.get_mut(pack_entity) else {
-            event_log.push(EventMessage::system("你的行囊不见了，东西只能留在原地"));
-            break;
-        };
-
-        // 并堆：找同类且有空间的槽位。行囊有载重上限（DsnE20），并堆也算重量。
-        let mut weight = container_weight(&pack, &items);
-        let merge_target = pack.iter().find_map(|(_, occupant)| {
-            let (occupant_item, occupant_amount) = items.get(occupant).ok()?;
-            (occupant_item.id == def.id && occupant_amount.room(def) > 0)
-                .then_some((occupant, occupant_amount.0, occupant_amount.room(def)))
-        });
-        if let Some((occupant, current, room)) = merge_target {
-            let merged = room.min(left);
-            let merged_weight = stack_weight(def.id, merged);
-            if pack.accepts_weight(weight, merged_weight) {
-                commands.entity(occupant).insert(Amount::new(current + merged));
-                weight += merged_weight;
-                left -= merged;
-            }
-        }
-        // 开新格（一堆一个实体；超过 `max_stack` 的部分继续找下一格）。
-        // 空槽位只是"放得进"，还得"背得动"：载重超了就留在原地。
-        let mut moved_original = false;
-        let mut overweight = false;
-        while left > 0 {
-            let Some(index) = pack.free_slot_for(def.tags) else {
-                break;
-            };
-            let put = def.max_stack.min(left);
-            let put_weight = stack_weight(def.id, put);
-            if !pack.accepts_weight(weight, put_weight) {
-                overweight = true;
-                break;
-            }
-            let holder = if put == left {
-                moved_original = true;
-                entity
-            } else {
-                spawn_item(&mut commands, def.id, put)
-            };
-            let _ = pack.insert(index, holder, def.tags);
-            weight += put_weight;
-            left -= put;
-        }
-
-        if moved_original {
-            commands.entity(entity).remove::<GroundItemAt>();
-            event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
-        } else if left == amount.0 {
-            let reason = if overweight { "行囊超重" } else { "行囊满了" };
-            event_log.push(EventMessage::system(format!(
-                "{reason}，{}留在了地上",
-                def.name
-            )));
-        } else if left > 0 {
-            commands.entity(entity).insert(Amount::new(left));
-            event_log.push(EventMessage::system(format!(
-                "行囊放不下全部{}，剩下的留在地上",
-                def.name
-            )));
-        } else {
-            commands.entity(entity).despawn();
-            event_log.push(EventMessage::item(format!("你捡起了{}", def.name)));
-        }
-    }
-}
-
-/// 用掉 1 个消耗品；返回是否真的用掉了（资源已满 = 没用到，留着）。
-fn consume_one(
-    effect: ConsumeEffect,
-    name: &str,
-    health: &mut Health,
-    magic: Option<&mut Magic>,
-    event_log: &mut EventLog,
-) -> bool {
-    match effect {
-        ConsumeEffect::Heal(amount) => {
-            if health.current >= health.max {
-                return false;
-            }
-            let before = health.current;
-            health.current = (health.current + amount).min(health.max);
-            event_log.push(EventMessage::item(format!(
-                "你吃下{name}，回复 {:.0} 点生命",
-                health.current - before
-            )));
-            true
-        }
-        ConsumeEffect::RestoreMagic(amount) => {
-            let Some(magic) = magic else {
-                return false;
-            };
-            if magic.current >= magic.max {
-                return false;
-            }
-            let before = magic.current;
-            magic.current = (magic.current + amount).min(magic.max);
-            event_log.push(EventMessage::item(format!(
-                "你喝下{name}，回复 {:.0} 点法力",
-                magic.current - before
-            )));
-            true
-        }
-    }
 }
 
 #[cfg(test)]

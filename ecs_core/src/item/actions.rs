@@ -21,9 +21,10 @@
 use crate::components::{Health, Magic, Position};
 use crate::entity_cls::Player;
 use crate::item::{
-    Amount, Container, ConsumeEffect, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
+    Amount, BODY, Container, ConsumeEffect, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
     pack_slot_index, stack_weight,
 };
+use crate::resources::{EventLog, EventMessage};
 use bevy_ecs::prelude::*;
 
 /// 动作失败的原因（每条都能给玩家一句话）。
@@ -45,6 +46,8 @@ pub enum ItemActionError {
     CannotNestPack,
     /// 脚下没有可以搜刮的尸体。
     NoCorpse,
+    /// 脚下没有可以拿的地面物品。
+    NoGround,
     /// 行囊的载重不够（DsnE20）。
     Overweight,
 }
@@ -61,6 +64,7 @@ impl ItemActionError {
             ItemActionError::NotUsable => "现在用不上它",
             ItemActionError::CannotNestPack => "行囊不能塞进它自己",
             ItemActionError::NoCorpse => "脚下没有可以搜刮的尸体",
+            ItemActionError::NoGround => "脚下没有可以拿的东西",
             ItemActionError::Overweight => "行囊超重了，背不动更多东西",
         }
     }
@@ -234,6 +238,158 @@ pub fn take_from_corpse(world: &mut World, corpse_slot: usize) -> Result<ItemId,
     }
     Ok(id)
 }
+
+/// 从脚下地面拿**一件**东西（显式拾取，DsnE21 阶段 4）。
+///
+/// `ground_index` 是"同格地面物品按实体 id 升序"后的下标：视图（`presentation` 的
+/// 「地面」栏）与这个动作共用同一份排序，所以玩家选中的行就是真正拿走的那件。
+///
+/// 路由与旧的踩踏式拾取一致，只是从"每帧自动扫一遍"变成"玩家按一下拿一件"：
+/// 装备进空部位 → 消耗品资源不满时用 1 个 → 其余进行囊（先并堆、再开新格、查载重）。
+/// 放不下/超重时**留在原地**并往事件栏写一句话；部分放进行囊时剩余数量留在原地。
+pub fn take_from_ground(
+    world: &mut World,
+    ground_index: usize,
+) -> Result<ItemId, ItemActionError> {
+    let player = player_entity(world)?;
+    let here = world
+        .get::<Position>(player)
+        .map(Position::to_tuple)
+        .ok_or(ItemActionError::NoPlayer)?;
+
+    let mut ground: Vec<(Entity, ItemId, u32)> = Vec::new();
+    {
+        let mut query = world.query::<(Entity, &GroundItemAt, &Item, &Amount)>();
+        for (entity, at, item, amount) in query.iter(world) {
+            if at.to_tuple() == here {
+                ground.push((entity, item.id, amount.0));
+            }
+        }
+    }
+    ground.sort_by_key(|(entity, ..)| entity.to_bits());
+    let (entity, id, amount) = *ground.get(ground_index).ok_or(ItemActionError::NoGround)?;
+    let def = id.def();
+
+    // ① 装备：有空部位就穿上（与旧拾取一致，不要求玩家先手动装）。
+    if def.is_equipment()
+        && let Some(slot) = free_slot_in(world, player, def.tags)
+    {
+        world.entity_mut(entity).remove::<GroundItemAt>();
+        put_into(world, player, slot, entity, def.tags)?;
+        push_log(
+            world,
+            format!("你装备了{}（{}）", def.name, BODY.slots[slot].name),
+        );
+        return Ok(id);
+    }
+
+    // ② 消耗品：现在用得上就用 1 个，用不上就进行囊。
+    if let Some(effect) = def.consume_effect()
+        && apply_effect(world, player, effect)
+    {
+        push_log(world, format!("你使用了{}", def.name));
+        if amount <= 1 {
+            world.despawn(entity);
+        } else {
+            world.entity_mut(entity).insert(Amount::new(amount - 1));
+        }
+        return Ok(id);
+    }
+
+    // ③ 其余进行囊：先并堆，再开新格；每一步都查载重（DsnE20）。
+    let pack = pack_entity(world, player)?;
+    let tags = def.tags;
+    let mut left = amount;
+    let mut reason = ItemActionError::NoRoom;
+    // 原地面实体是否被**整个**搬进了容器（搬进去后不能再 despawn）。
+    let mut moved_original = false;
+
+    let occupants: Vec<(Entity, ItemId, u32)> = world
+        .get::<Container>(pack)
+        .map(|pack| {
+            pack.iter()
+                .filter_map(|(_, occupant)| {
+                    let stack = world.get::<Item>(occupant)?;
+                    let count = world.get::<Amount>(occupant).map(|amount| amount.0)?;
+                    Some((occupant, stack.id, count))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (occupant, occupant_id, occupant_amount) in occupants {
+        if left == 0 {
+            break;
+        }
+        if occupant_id != id {
+            continue;
+        }
+        let take = def.max_stack.saturating_sub(occupant_amount).min(left);
+        if take == 0 {
+            continue;
+        }
+        let extra = stack_weight(id, take);
+        if !pack_holds_weight(world, pack, extra) {
+            reason = ItemActionError::Overweight;
+            continue;
+        }
+        if let Some(mut held) = world.get_mut::<Amount>(occupant) {
+            held.0 = occupant_amount + take;
+        }
+        left -= take;
+    }
+
+    while left > 0 {
+        let Some(slot) = free_slot_in(world, pack, tags) else {
+            reason = ItemActionError::NoRoom;
+            break;
+        };
+        let put = def.max_stack.min(left);
+        let extra = stack_weight(id, put);
+        if !pack_holds_weight(world, pack, extra) {
+            reason = ItemActionError::Overweight;
+            break;
+        }
+        if put == left {
+            moved_original = true;
+            world.entity_mut(entity).remove::<GroundItemAt>();
+            put_into(world, pack, slot, entity, tags)?;
+        } else {
+            let holder = world.spawn((Item::new(id), Amount::new(put))).id();
+            if let Some(layout) = def.container_def() {
+                world.entity_mut(holder).insert(Container::new(layout));
+            }
+            put_into(world, pack, slot, holder, tags)?;
+        }
+        left -= put;
+    }
+
+    if left == amount {
+        let why = match reason {
+            ItemActionError::Overweight => "行囊超重",
+            _ => "行囊满了",
+        };
+        push_log(world, format!("{why}，{}留在了地上", def.name));
+        return Err(reason);
+    }
+    if left == 0 {
+        // 原实体被整个搬进容器时**不能**再 despawn（上面的 `moved_original`）。
+        if !moved_original && world.get_entity(entity).is_ok() {
+            world.despawn(entity);
+        }
+        push_log(world, format!("你捡起了{}", def.name));
+    } else if world.get_entity(entity).is_ok() {
+        world.entity_mut(entity).insert(Amount::new(left));
+    }
+    Ok(id)
+}
+
+/// 往事件栏写一句话（动作本身没有返回值给玩家看，失败原因也要落进事件）。
+fn push_log(world: &mut World, text: impl Into<String>) {
+    if let Some(mut log) = world.get_resource_mut::<EventLog>() {
+        log.push(EventMessage::item(text));
+    }
+}
+
 
 /// 玩家脚下那具尸体（`Position` 相同且带 `Corpse`）。
 fn corpse_underfoot(world: &mut World, at: (usize, usize)) -> Option<Entity> {

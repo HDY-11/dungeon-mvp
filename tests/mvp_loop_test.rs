@@ -549,6 +549,59 @@ fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
     );
 }
 
+/// 地面物品全显式：背包页「地面」栏 `Enter` 拿一件，不踩上自动捡（DsnE21 阶段 4）。
+#[test]
+fn the_inventory_page_picks_up_ground_items_through_the_keyboard() {
+    use ecs_core::item::{Amount, Container, GroundItemAt, Item, ItemId, pack_slot_index};
+    use render_api::{InventoryPanel, UiView};
+
+    let mut app = quiet_app(2026);
+    let player = player_entity(app.world_mut());
+    let world = app.world_mut();
+    let position = *world.get::<Position>(player).expect("玩家有位置");
+    let flesh = world
+        .spawn((
+            Item::new(ItemId(10)),
+            Amount::new(2),
+            GroundItemAt::new(position.x, position.y),
+        ))
+        .id();
+
+    app.handle(key(Key::Char('e')));
+    let frame = app.refresh();
+    let UiView::Inventory(view) = &frame.ui else {
+        panic!("e 应当打开背包页，实际 {:?}", frame.ui.kind());
+    };
+    let ground = view
+        .panels
+        .iter()
+        .find(|panel| panel.panel == InventoryPanel::Ground && panel.list.title == "地面")
+        .expect("脚下的地面物品要单独成栏");
+    assert!(
+        ground.list.items.iter().any(|item| item.label.contains("血肉")),
+        "地面栏要列出物品：{:?}",
+        ground.list.items.iter().map(|item| &item.label).collect::<Vec<_>>()
+    );
+
+    app.handle(key(Key::Enter));
+    app.refresh();
+    let world = app.world_mut();
+    let pack = world
+        .get::<Container>(player)
+        .and_then(|body| body.slot(pack_slot_index()))
+        .expect("玩家身上有行囊");
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(flesh)),
+        "Enter 应当把地面物品拿进行囊"
+    );
+    assert!(
+        world.get::<GroundItemAt>(flesh).is_none(),
+        "进了容器就不能还带着地面位置"
+    );
+}
+
 /// `Tab` 顺时针轮转四栏焦点，画面上的焦点框真的跟着走（端到端，不 mock 页栈）。
 #[test]
 fn tab_cycles_the_four_pane_focus_on_screen() {

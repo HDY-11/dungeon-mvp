@@ -196,6 +196,18 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
             }
         }
 
+        // ── 显式拾取 ────────────────────────────────────
+        // 踩上物品不再自动捡（DsnE21 阶段 4）：驱动器代替玩家在每回合行动后
+        // 把脚下的地面物品逐件拿起来，否则 soak 永远测不到拾取/装备路由。
+        // 只在动作被接受时拿（被拒绝说明世界没推进，没必要重复试探）。
+        if accepted {
+            for _ in 0..3 {
+                if ecs_core::take_from_ground(&mut world, 0).is_err() {
+                    break;
+                }
+            }
+        }
+
         // ── 日志（新行） ────────────────────────────────
         {
             let log = world.resource::<ecs_core::EventLog>();

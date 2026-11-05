@@ -189,6 +189,9 @@ pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView
     if let Some(corpse) = page.corpse {
         panels.push(InventoryPanelView::new(InventoryPanel::Ground, corpse));
     }
+    if let Some(ground) = page.ground {
+        panels.push(InventoryPanelView::new(InventoryPanel::Ground, ground));
+    }
 
     render_api::InventoryView {
         title: "背包".to_string(),
@@ -206,9 +209,11 @@ pub fn inventory_view(world: &World, cursor: usize) -> render_api::InventoryView
 struct InventoryPage {
     equipment: render_api::ListView,
     backpack: render_api::ListView,
-    /// 脚下有尸体容器时才存在的第三栏。
+    /// 脚下有尸体容器时才存在的「尸体」栏。
     corpse: Option<render_api::ListView>,
-    /// 行序：身体（部位顺序）→ 行囊（格子顺序）→ 脚下（尸体格子顺序）。
+    /// 脚下有地面物品时才存在的「地面」栏（DsnE21 阶段 4：拾取全显式）。
+    ground: Option<render_api::ListView>,
+    /// 行序：身体（部位顺序）→ 行囊（格子顺序）→ 尸体（格子顺序）→ 地面（实体 id 升序）。
     targets: Vec<InventoryTarget>,
     /// 真实行数（`（…）` 占位行不计入光标）。
     equipment_len: usize,
@@ -230,6 +235,7 @@ impl InventoryPage {
             equipment,
             backpack,
             corpse: None,
+            ground: None,
             targets: Vec::new(),
             equipment_len: 0,
             backpack_len: 0,
@@ -246,7 +252,22 @@ impl InventoryPage {
         } else if cursor < self.equipment_len + self.backpack_len {
             self.backpack.selected = cursor - self.equipment_len;
         } else if let Some(corpse) = self.corpse.as_mut() {
-            corpse.selected = cursor - self.equipment_len - self.backpack_len;
+            let len = corpse.items.len();
+            let offset = cursor - self.equipment_len - self.backpack_len;
+            if offset < len {
+                corpse.selected = offset;
+                return;
+            }
+            if let Some(ground) = self.ground.as_mut()
+                && offset - len < ground.items.len()
+            {
+                ground.selected = offset - len;
+            }
+        } else if let Some(ground) = self.ground.as_mut() {
+            let offset = cursor - self.equipment_len - self.backpack_len;
+            if offset < ground.items.len() {
+                ground.selected = offset;
+            }
         }
     }
 
@@ -291,6 +312,7 @@ fn build_inventory_page(world: &World, player: Entity) -> InventoryPage {
         equipment: ListView::new("身体"),
         backpack: ListView::new("行囊"),
         corpse: None,
+        ground: None,
         targets: Vec::new(),
         equipment_len: 0,
         backpack_len: 0,
@@ -390,6 +412,32 @@ fn build_inventory_page(world: &World, player: Entity) -> InventoryPage {
         page.corpse = Some(list);
     }
 
+    // 地面：踩上不再自动拾取，玩家在这里选一件、按 Enter 拿（DsnE21 阶段 4）。
+    // 行序 = 实体 id 升序，与 `ecs_core::take_from_ground(world, index)` 的排序同一份。
+    let ground_items = ground_items_underfoot(world, player);
+    if !ground_items.is_empty() {
+        let mut list = ListView::new("地面");
+        for (index, entity) in ground_items.iter().copied().enumerate() {
+            let Some(item) = world.get::<ecs_core::Item>(entity) else {
+                continue;
+            };
+            let amount = world
+                .get::<ecs_core::Amount>(entity)
+                .map(|amount| amount.0)
+                .unwrap_or(1);
+            let label = if amount > 1 {
+                format!("{} ×{}", item.def().name, amount)
+            } else {
+                item.def().name.to_string()
+            };
+            list.items
+                .push(ListItemView::new(label).with_detail("Enter 拿取"));
+            page.targets.push(InventoryTarget::Ground { index });
+        }
+        list.footer = "Enter 拿取".to_string();
+        page.ground = Some(list);
+    }
+
     if page.equipment_len == 0 {
         page.equipment
             .items
@@ -414,7 +462,23 @@ fn corpse_underfoot(world: &World, player: Entity) -> Option<Entity> {
     })
 }
 
-/// 背包页选中行对应的**世界目标**（身体槽位 / 行囊槽位 / 脚下尸体槽位）。
+/// 玩家脚下同格的地面物品（按实体 id 升序，与 `take_from_ground` 的下标一致）。
+fn ground_items_underfoot(world: &World, player: Entity) -> Vec<Entity> {
+    let Some(here) = world.get::<Position>(player).map(Position::to_tuple) else {
+        return Vec::new();
+    };
+    let mut items: Vec<Entity> = world
+        .iter_entities()
+        .filter_map(|entity| {
+            let at = entity.get::<ecs_core::GroundItemAt>()?;
+            (at.to_tuple() == here && entity.contains::<ecs_core::Item>()).then(|| entity.id())
+        })
+        .collect();
+    items.sort_by_key(|entity| entity.to_bits());
+    items
+}
+
+/// 背包页选中行对应的**世界目标**（身体槽位 / 行囊槽位 / 脚下尸体槽位 / 地面物品下标）。
 ///
 /// 页栈只存"光标在第几行"，行 → 槽位的换算由这里给出。视图构造与目标解析共用同一份
 /// [`build_inventory_page`]，所以"看到第几行"与"动的是哪一格"不可能对不上。
@@ -426,6 +490,8 @@ pub enum InventoryTarget {
     Pack { slot: usize },
     /// 脚下尸体第 `slot` 格。
     Corpse { slot: usize },
+    /// 脚下地面物品第 `index` 件（排序键=实体 id，与核心动作一致）。
+    Ground { index: usize },
 }
 
 /// 背包页当前选中的目标（`None` = 空行/没有玩家）。
@@ -446,6 +512,9 @@ fn occupant_for(world: &World, player: Entity, target: InventoryTarget) -> Optio
         InventoryTarget::Corpse { slot } => {
             let corpse = corpse_underfoot(world, player)?;
             world.get::<ecs_core::Container>(corpse)?.slot(slot)
+        }
+        InventoryTarget::Ground { index } => {
+            ground_items_underfoot(world, player).get(index).copied()
         }
     }
 }
@@ -534,6 +603,11 @@ fn item_detail(
             detail.push_line(UiTextLine::plain(format!("脚下：{corpse_name}")));
             detail.push_line(UiTextLine::plain(format!("尸体第 {} 格", slot + 1)));
             detail.footer = "Enter 拿取".to_string();
+        }
+        InventoryTarget::Ground { index } => {
+            detail.push_line(UiTextLine::plain("位置：脚下地面"));
+            detail.push_line(UiTextLine::plain(format!("地面第 {} 件", index + 1)));
+            detail.footer = "Enter 拾取".to_string();
         }
     }
 

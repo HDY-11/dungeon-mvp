@@ -344,3 +344,106 @@ fn taking_a_corpse_item_that_would_overweight_the_pack_is_refused() {
         "背不动时东西必须留在尸体原位"
     );
 }
+
+// ── 地面显式拾取（DsnE21 阶段 4） ──
+
+/// 在玩家脚下生成一件地面物品。
+fn ground_underfoot_with(
+    world: &mut World,
+    player: Entity,
+    id: ItemId,
+    count: u32,
+) -> Entity {
+    let position = world
+        .get::<Position>(player)
+        .expect("玩家有位置")
+        .to_tuple();
+    world
+        .spawn((
+            Item::new(id),
+            Amount::new(count),
+            GroundItemAt::new(position.0, position.1),
+        ))
+        .id()
+}
+
+/// 地面材料：拿起来进行囊，实体被搬走、不再带地面位置。
+#[test]
+fn taking_from_the_ground_moves_the_item_into_the_pack() {
+    let (mut world, player) = world_with_player();
+    let flesh = ground_underfoot_with(&mut world, player, ItemId(10), 2);
+    let pack = pack_of(&world, player);
+
+    assert_eq!(take_from_ground(&mut world, 0), Ok(ItemId(10)));
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(flesh)),
+        "拿起来的东西必须进行囊"
+    );
+    assert!(
+        world.get::<GroundItemAt>(flesh).is_none(),
+        "进了容器就不能还带着地面位置"
+    );
+}
+
+/// 地面装备且对应部位空着 → 直接穿上（沿用旧拾取的路由）。
+#[test]
+fn taking_ground_equipment_with_a_free_slot_equips_it() {
+    let (mut world, player) = world_with_player();
+    let sword = ground_underfoot_with(&mut world, player, ItemId(0), 1);
+
+    assert_eq!(take_from_ground(&mut world, 0), Ok(ItemId(0)));
+    assert_eq!(
+        world
+            .get::<Container>(player)
+            .and_then(|body| body.slot(main_hand())),
+        Some(sword),
+        "剑必须进主手槽"
+    );
+}
+
+/// 脚下没东西、或下标越界 → `NoGround`（不 panic、不误拿别的东西）。
+#[test]
+fn taking_from_the_ground_reports_missing_items_and_bad_indices() {
+    let (mut world, player) = world_with_player();
+
+    assert_eq!(
+        take_from_ground(&mut world, 0),
+        Err(ItemActionError::NoGround),
+        "脚下没东西"
+    );
+    ground_underfoot_with(&mut world, player, ItemId(10), 1);
+    assert_eq!(
+        take_from_ground(&mut world, 1),
+        Err(ItemActionError::NoGround),
+        "只有一件，下标 1 越界"
+    );
+    assert!(take_from_ground(&mut world, 0).is_ok());
+}
+
+/// 行囊超重 → `Overweight`，东西留在原地（事件栏要说清楚）。
+#[test]
+fn an_overweight_ground_item_stays_where_it_is() {
+    let (mut world, player) = world_with_player();
+    let pack = pack_of(&world, player);
+    fill_pack_with_swords(&mut world, pack, 6); // 18.0；甲壳 1.0×3 → 21.0 > 20.0
+    // 用**非装备**的重物：装备会被①空部位直接穿上，测不到行囊载重。
+    let shell = ground_underfoot_with(&mut world, player, ItemId(14), 3);
+
+    assert_eq!(
+        take_from_ground(&mut world, 0),
+        Err(ItemActionError::Overweight)
+    );
+    assert!(
+        world.get::<GroundItemAt>(shell).is_some(),
+        "背不动就留在地上"
+    );
+    let log = world.resource::<EventLog>();
+    assert!(
+        log.messages
+            .iter()
+            .any(|message| message.text.contains("行囊超重")),
+        "事件栏必须区分超重与满"
+    );
+}

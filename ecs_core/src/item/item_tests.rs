@@ -10,6 +10,7 @@
 //! 断言只需要"看槽里有没有它"，不必追某个关系实体有没有被正确同步。
 
 use super::*;
+use crate::components::{Health, Position};
 use crate::effect::EffectContext;
 use crate::events::{AttackEvent, AttackIntentEvent};
 use crate::map::Tile;
@@ -50,9 +51,9 @@ fn place(world: &mut World, pos: (usize, usize), id: ItemId, count: u32) -> Enti
         .id()
 }
 
-/// 跑一次拾取。
+/// 显式拾取一次：拿脚下第 0 件（旧测试的"踩上自动捡"已改成动作调用）。
 fn pickup(world: &mut World) {
-    let _ = world.run_system_once(pickup_system);
+    let _ = take_from_ground(world, 0);
 }
 
 /// 玩家的身体容器里第 `index` 槽占了谁。
@@ -563,8 +564,11 @@ fn stepping_on_a_corpse_does_not_auto_loot() {
         ))
         .id();
 
-    let _ = world.run_system_once(pickup_system);
-
+    // 玩家这一格没有地面物品：显式拾取也拿不到任何东西。
+    assert_eq!(
+        take_from_ground(&mut world, 0),
+        Err(ItemActionError::NoGround)
+    );
     let pack_entity = world
         .get::<Container>(player)
         .and_then(|body| body.slot(pack_slot_index()))
@@ -623,7 +627,8 @@ fn every_item_is_either_on_the_ground_or_in_a_container() {
     );
     world.get_mut::<Health>(goblin).unwrap().current = 0.0;
     let _ = world.run_system_once(crate::system::death::check_death_system);
-    let _ = world.run_system_once(pickup_system);
+    // 显式把同格地面战利品全部拿走（踩上不再自动捡）。
+    while take_from_ground(&mut world, 0).is_ok() {}
 
     let mut in_container: HashSet<bevy_ecs::entity::Entity> = HashSet::new();
     let mut containers = world.query::<&Container>();

@@ -234,10 +234,17 @@ impl App {
             return false;
         };
         use presentation::InventoryTarget;
-        // 脚下尸体只认"拿取"：进/用/丢都说不通。这是本轮把自动搜刮改成显式动作的入口。
+        // 脚下尸体/地面只认"拿取"：进/用/丢都说不通。这是把自动拾取改成显式动作的入口。
         if let (UiIntent::InventoryConfirm, InventoryTarget::Corpse { slot }) = (intent, target) {
             match ecs_core::take_from_corpse(&mut self.world, slot) {
                 Ok(id) => log::info!("从尸体上拿起了{}", id.def().name),
+                Err(error) => log::info!("背包动作失败：{}", error.describe()),
+            }
+            return true;
+        }
+        if let (UiIntent::InventoryConfirm, InventoryTarget::Ground { index }) = (intent, target) {
+            match ecs_core::take_from_ground(&mut self.world, index) {
+                Ok(id) => log::info!("捡起了{}", id.def().name),
                 Err(error) => log::info!("背包动作失败：{}", error.describe()),
             }
             return true;
@@ -260,6 +267,9 @@ impl App {
                 Err(ecs_core::ItemActionError::NotUsable)
             }
             (UiIntent::InventoryUse | UiIntent::InventoryDrop, InventoryTarget::Corpse { .. }) => {
+                Err(ecs_core::ItemActionError::NotUsable)
+            }
+            (UiIntent::InventoryUse | UiIntent::InventoryDrop, InventoryTarget::Ground { .. }) => {
                 Err(ecs_core::ItemActionError::NotUsable)
             }
             _ => return false,

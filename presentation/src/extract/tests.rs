@@ -247,6 +247,51 @@ fn corpses_are_drawn_with_their_own_visual_and_name() {
     assert!(view.visible, "探索过的格子上尸体必须可见");
 }
 
+/// 背包页要列出脚下的地面物品（DsnE21 阶段 4：拾取全显式）。
+#[test]
+fn the_inventory_page_lists_ground_items_underfoot() {
+    let mut world = new_game(2026);
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        query.iter(&world).next().expect("有玩家")
+    };
+    let here = world
+        .get::<ecs_core::Position>(player)
+        .expect("玩家有位置")
+        .to_tuple();
+    world.spawn((
+        ecs_core::Item::new(ecs_core::ItemId(14)),
+        ecs_core::Amount::new(3),
+        ecs_core::GroundItemAt::new(here.0, here.1),
+    ));
+
+    let cursor = (0..64)
+        .find(|&index| {
+            inventory_target(&world, index)
+                .is_some_and(|target| matches!(target, InventoryTarget::Ground { index: 0 }))
+        })
+        .expect("地面物品必须成为可选中行");
+    let view = inventory_view(&world, cursor);
+    let ground = view
+        .panels
+        .iter()
+        .find(|panel| panel.list.title == "地面")
+        .expect("脚下有东西就必须有「地面」栏");
+    assert!(
+        ground
+            .list
+            .items
+            .iter()
+            .any(|item| item.label.contains("黑色甲壳")),
+        "行标签要写物品名：{:?}",
+        ground.list.items.iter().map(|item| &item.label).collect::<Vec<_>>()
+    );
+    assert_eq!(ground.list.footer, "Enter 拿取");
+    let detail = view.detail.expect("选中地面物品必须有详情");
+    assert_eq!(detail.title, "黑色甲壳 ×3");
+    assert!(detail.footer.contains("Enter 拾取"));
+}
+
 /// 背包页详情面板（R2 收尾）：选中身体里的剑 → 名字/说明/修正/部位/动作提示。
 #[test]
 fn the_inventory_detail_describes_the_selected_item() {

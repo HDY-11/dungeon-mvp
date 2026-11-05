@@ -1401,8 +1401,12 @@ Tip           Tip           Tip
 - 已落地（阶段 3）：`Observable` 标记（怪物/楼梯/地面物品/尸体；玩家与容器内
   物品不标）、信息栏 `InfoView` 契约（DsnA4）、presentation 按「近→远、同距方位
   顺时针」排序（正上=0）、`PageStack.info_cursor` 选行与地图反色高亮。
-- 未做（阶段 4）：背包 3×3 grid（Nav/Context/Detail/Tip、4 焦点顺时针、←/→ 切 tab）
-  与地面全显式拾取。
+- 已落地（阶段 4a，地面全显式拾取）：`pickup_system` 退役出结算链（踩上不再自动捡）、
+  新核心动作 `take_from_ground(world, index)`（路由沿用旧拾取：空部位装备 / 消耗品在资源
+  不满时用 1 个 / 其余进行囊并堆后开格；超重与满格分别报 `Overweight`/`NoRoom` 并留原地）、
+  背包页新增「地面」栏（`InventoryTarget::Ground { index }`，行序=同格地面物品按实体编号
+  升序，与动作同源）、`Enter` 拿取；尸体仍走 `take_from_corpse`。
+- 未做（阶段 4b）：背包 3×3 grid（Nav/Context/Detail/Tip、4 焦点顺时针、←/→ 切 tab）。
 
 **测试**
 
