@@ -31,7 +31,7 @@ use ecs_core::{
     monster_template,
 };
 use render_api::{
-    EntityId, EntityView, HudView, LogLevel, LogLine, MapView, Meter, SceneFrame,
+    EntityId, EntityView, EventLine, HudView, LogLevel, MapView, Meter, SceneFrame,
     VisualKey, VisualLayer,
 };
 
@@ -130,7 +130,7 @@ pub fn extract_scene_frame(
         entities: build_entities(world, config),
         player: build_player_view(world),
         hud: build_hud(world),
-        log: build_log(world, config),
+        events: build_events(world, config),
         // 先留空，等其余字段就位后再算：Look 页的地形详情**从本帧快照读**，
         // 而不是回头再查一次世界——那样会出现「页栈显示的地形与地图不一致」。
         ui: render_api::UiView::Game,
@@ -1017,7 +1017,69 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
     lines
 }
 
-fn build_log(world: &mut World, config: &ExtractConfig) -> Vec<LogLine> {
+/// 事件栏的一列（DsnE21）：已落定事实（旧→新）+ 进行中的行动（剩余时间降序）。
+///
+/// 进行中的行动**不另存状态**：玩家可见（等待输入）时自己的行动必然已完成，
+/// 怪物名下的 `ActiveAction` 带着 `ActionTimer` 剩余 AV，本身就是"已起手、还没落"
+/// 的唯一权威。行动实体被回收后这一行自然消失，不需要清理、也不进存档。
+fn build_events(world: &mut World, config: &ExtractConfig) -> Vec<EventLine> {
+    let mut events = build_done_events(world, config);
+
+    // 只列玩家视野内的行动，避免远处怪物在事件栏里刷屏；过滤规则在后续阶段
+    // 会扩展到"观察集 ∪ 重大事件"（DsnE21 决策 5 之前的一步）。
+    let seen: std::collections::HashSet<(usize, usize)> = {
+        let mut query = world.query_filtered::<&Viewshed, With<Player>>();
+        query
+            .iter(world)
+            .next()
+            .map(|viewshed| viewshed.visible_tiles.iter().copied().collect())
+            .unwrap_or_default()
+    };
+
+    let mut pending: Vec<(f64, EventLine)> = Vec::new();
+    {
+        let mut query = world.query_filtered::<
+            (&ecs_core::ActionOf, &ecs_core::ActionName, &ecs_core::ActionTimer),
+            With<ecs_core::ActiveAction>,
+        >();
+        for (action_of, name, timer) in query.iter(world) {
+            let actor = action_of.parent();
+            let Some(position) = world.get::<Position>(actor) else {
+                continue;
+            };
+            if !seen.contains(&position.to_tuple()) {
+                continue;
+            }
+            let actor_name = actor_name_of(world, actor);
+            let remaining = timer.remaining_av.max(0.0);
+            let level = if name.0 == "BasicAttack" {
+                LogLevel::Combat
+            } else {
+                LogLevel::System
+            };
+            let text = format!("{actor_name}{}（{remaining:.0}AV）", name.phrase());
+            pending.push((remaining, EventLine::running(level, text)));
+        }
+    }
+    // 剩余时间降序：剩得多的在上、越往下越接近"现在"，栏底就是 0 刻度线。
+    pending.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    events.extend(pending.into_iter().map(|(_, line)| line));
+    events
+}
+
+/// 事件文案里的行动者名字：玩家是"你"，其余用实体名。
+fn actor_name_of(world: &World, actor: Entity) -> String {
+    if world.get::<Player>(actor).is_some() {
+        return "你".to_string();
+    }
+    world
+        .get::<ecs_core::EntityName>(actor)
+        .map(|name| name.0.clone())
+        .unwrap_or_else(|| "???".to_string())
+}
+
+/// 已落定的事实（`EventLog`）。
+fn build_done_events(world: &mut World, config: &ExtractConfig) -> Vec<EventLine> {
     let Some(log) = world.get_resource::<EventLog>() else {
         return Vec::new();
     };
@@ -1028,14 +1090,13 @@ fn build_log(world: &mut World, config: &ExtractConfig) -> Vec<LogLine> {
         .rev()
         .map(|message| {
             // 合并过的重复消息在文本里带计数（ISSUES SYN8）：中毒这类高频消息
-            // 不再一条条挤占日志区。**不改进 render-api 契约**——`LogLine` 只有
-            // level+text，聚合是"怎么显示"的问题，属呈现层。
+            // 不再一条条挤占事件栏。聚合是"怎么显示"的问题，属呈现层。
             let text = if message.repeat > 1 {
                 format!("{} (×{})", message.text, message.repeat)
             } else {
                 message.text.clone()
             };
-            LogLine::new(map_log_level(message.level), text)
+            EventLine::done(map_log_level(message.level), text)
         })
         .collect()
 }

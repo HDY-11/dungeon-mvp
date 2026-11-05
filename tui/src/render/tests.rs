@@ -18,7 +18,7 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use render_api::{
     Camera2D, DetailView, DialogView, EntityId, EntityView, HudView, InventoryFocus,
-    InventoryPanel, InventoryPanelView, InventoryView, ListItemView, ListView, LogLevel, LogLine,
+    InventoryPanel, InventoryPanelView, InventoryView, ListItemView, ListView, LogLevel, EventLine,
     MapView, Meter, SceneFrame, TileInfo, UiTextLine, UiTextStyle, UiView, VisualKey, VisualLayer,
 };
 
@@ -472,14 +472,15 @@ fn death_notice_survives_a_crowded_side_panel() {
     );
 }
 
-/// 日志面板已按玩家反馈去掉，改为**事件栏**：`scene.log` 从状态侧栏搬到
-/// 左下的事件栏，旧事件在上、新事件在下。
+/// 事件栏是时间轴：`scene.events` 从状态侧栏搬到左下的事件栏，
+/// 旧事件在上、新事件在下；进行中的行动排在事实之后。
 #[test]
-fn the_events_panel_renders_the_log_in_timeline_order() {
+fn the_events_panel_renders_the_timeline_in_order() {
     let mut scene = base_scene();
-    scene.log = vec![
-        LogLine::new(LogLevel::Combat, "你击中了老鼠"),
-        LogLine::new(LogLevel::Combat, "对老鼠造成 3 点伤害"),
+    scene.events = vec![
+        EventLine::done(LogLevel::Combat, "你击中了老鼠"),
+        EventLine::done(LogLevel::Combat, "对老鼠造成 3 点伤害"),
+        EventLine::running(LogLevel::System, "哥布林举起了武器（200AV）"),
     ];
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
@@ -500,9 +501,17 @@ fn the_events_panel_renders_the_log_in_timeline_order() {
         .iter()
         .position(|row| row.contains("对老鼠造成3点伤害"))
         .expect("新事件应当出现在画面里");
+    let running_row = rows
+        .iter()
+        .position(|row| row.contains("哥布林举起了武器（200AV）"))
+        .expect("进行中的行动应当出现在画面里");
     assert!(
         old_row < new_row,
         "事件栏是时间轴：旧事件在上、新事件在下（old={old_row}, new={new_row}）"
+    );
+    assert!(
+        new_row < running_row,
+        "进行中的行动排在已落定事实之后（new={new_row}, running={running_row}）"
     );
     let text = buffer_text_compact(&terminal);
     assert!(!text.contains("日志"), "不应再有「日志」标题");

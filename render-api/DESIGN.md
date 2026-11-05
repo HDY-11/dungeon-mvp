@@ -10,7 +10,7 @@
 
 **归属范围：** 渲染契约的决策：视图模型边界、字段语义与版本策略。
 
-**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA2 两条）。
+**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA3 三条）。
 判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
 
 ---
@@ -21,8 +21,9 @@
 
 | 主题 | 条目 |
 |---|---|
-| 渲染契约 | DsnA1 · DsnA2 |
+| 渲染契约 | DsnA1 · DsnA2 · DsnA3 |
 | 界面几何与焦点 | DsnA2 |
+| 事件行与时间轴 | DsnA3 |
 
 
 <!-- &DsnA1  后端无关只读契约 SceneFrame/VisualKey/UiView/InputEvent；tui 不依赖 ecs_core -->
@@ -110,5 +111,43 @@ core ──> presentation ──> render-api <── tui / gpu
 **关联：** DsnA1（渲染契约）| DESIGN.md DsnP2（页栈状态在 presentation）|
 DESIGN.md DsnX14（渲染分层）
 <!-- &/DsnA2 -->
+
+---
+
+<!-- &DsnA3  事件栏一条列：EventLine{level,text,running}，Done 旧→新 + Running 剩余降序由 presentation 排；CONTRACT_VERSION 4 -->
+### DsnA3 事件行契约：`EventLine` 与"事实 / 进行中"同行（已落地，契约版本 4）
+
+**决策**
+
+`SceneFrame.log: Vec<LogLine>` 换成 `events: Vec<EventLine>`，一行事件的形状是
+`{ level, text, running }`：
+
+- `EventLine::done(level, text)`：已经落定的事实（战斗/物品/系统日志）。
+- `EventLine::running(level, text)`：已经开始、还没落定的行动；`text` 里由呈现层
+  格式化剩余 AV（"哥布林举起了武器（140AV）"）。
+- **排序不在后端**：`presentation` 按「Done 旧→新，再 Running 剩余时间降序」拼好
+  一列，栏底即 0 刻度（DsnE21）。TUI/GPU 只按给定顺序画，`running` 用不同样式
+  （TUI 用暗色）区分。
+- `CONTRACT_VERSION` 由 3 升到 4。
+
+**背景（舍弃的方案）**
+
+- **事实与预告别放两个列表**：`log` + `pending` 两个字段会让"现在/过去"的分界由
+  每个后端各自拼，排序规则迟早分叉；一列 + `running` 位只表达"这一行是什么"，
+  顺序仍是契约给的。
+- **在 Render 层把剩余时间换算成进度条**：契约只给剩余 AV 的文本，进度条留作
+  后续视觉决策；现在写成文本足够玩家读出"还剩多久"。
+- **`LogLine` 保留兼容**：没有第二个消费者，保留两套行类型只会让后端要写两个
+  分支。直接替换。
+
+**状态**
+
+已落地：契约（`EventLine` / `contract.rs` 冒烟）、`EventLog` 容量 200（只计事实）、
+presentation 投影（事实 + 玩家视野内的 `ActiveAction`）、tui 事件栏渲染与测试。
+
+**关联：** DsnA1（渲染契约）· DESIGN.md DsnE21（事件时间轴与背包格）·
+GAME.md Gm14（界面）
+<!-- &/DsnA3 -->
+
 
 

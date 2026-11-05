@@ -252,26 +252,28 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     );
 }
 
-/// 画事件栏：**事实事件**的时间轴，旧在上、新在下，自动贴底。
+/// 画事件栏：一条"截止现在"的时间轴（DsnE21）。
 ///
-/// 进行中动作（已定未落）的条目与 0 刻度线在后续阶段接入；这里先接历史事件，
-/// 这样"事件栏取代日志面板"的视觉与滚动行为可以先落地。
+/// 已落定事实在前（旧→新）、进行中的行动在后（剩余时间降序），栏底即 0 刻度；
+/// 自动贴底显示最新。进行中行用暗色，和"已经发生完"一眼分得开。
 fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     let inner_height = usize::from(area.height.saturating_sub(2));
     let mut lines: Vec<Line> = Vec::new();
 
-    if scene.log.is_empty() {
+    if scene.events.is_empty() {
         lines.push(Line::from(Span::styled(
             "（暂无事件）",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let start = scene.log.len().saturating_sub(inner_height.max(1));
-        for line in &scene.log[start..] {
-            lines.push(Line::from(Span::styled(
-                line.text.clone(),
-                Style::default().fg(crate::catalog::log_color(line.level)),
-            )));
+        let start = scene.events.len().saturating_sub(inner_height.max(1));
+        for line in &scene.events[start..] {
+            let mut style = Style::default().fg(crate::catalog::log_color(line.level));
+            if line.running {
+                // 进行中：暗一点，表示"还没落定"；剩余 AV 已经写在文案里。
+                style = style.fg(Color::DarkGray);
+            }
+            lines.push(Line::from(Span::styled(line.text.clone(), style)));
         }
     }
 

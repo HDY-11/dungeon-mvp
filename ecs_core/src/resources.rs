@@ -275,9 +275,12 @@ pub struct EventLog {
     max: usize,
 }
 
+/// 事件栏的历史容量（DsnE21：只计已落定的事实；进行中的行动是投影，不占名额）。
+pub const EVENT_LOG_CAPACITY: usize = 200;
+
 impl EventLog {
     pub const fn new() -> Self {
-        Self { messages: Vec::new(), max: 50 }
+        Self { messages: Vec::new(), max: EVENT_LOG_CAPACITY }
     }
 
     pub fn push(&mut self, msg: EventMessage) {

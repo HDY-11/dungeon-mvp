@@ -35,9 +35,17 @@ fn scene_frame_public_api_smoke() {
         defense: 1.0,
         extra_lines: vec![UiTextLine::plain("测试")],
     };
-    frame.log.push(LogLine::new(LogLevel::Combat, "命中"));
+    frame
+        .events
+        .push(EventLine::done(LogLevel::Combat, "命中"));
+    frame
+        .events
+        .push(EventLine::running(LogLevel::Combat, "哥布林举起了武器（200AV）"));
     frame.ui = UiView::Dialog(DialogView::confirm("退出", "确认退出？"));
 
+    assert!(frame.hud.is_ready());
+    assert!(frame.events[1].running);
+    assert!(!frame.events[0].running);
     assert!(frame.hud.is_ready());
     assert_eq!(frame.ui.kind(), PageKind::Dialog);
     assert!(frame.ui.captures_input());

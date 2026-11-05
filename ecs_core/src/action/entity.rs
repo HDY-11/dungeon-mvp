@@ -248,6 +248,24 @@ pub struct ActiveAction;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionName(pub &'static str);
 
+impl ActionName {
+    /// 进行中事件的一句话（DsnE21）："哥布林举起了武器" 这类**已起手**的说法。
+    ///
+    /// 文案与动作标识放在一起：新增行动时编译器逼着在这里补一句，事件栏不会
+    /// 显示 `BasicAttack` 这种内部标识。已落定的事实文案仍由规则层的日志给。
+    pub fn phrase(self) -> &'static str {
+        match self.0 {
+            "Wander" => "游荡起来",
+            "Flee" => "转身逃跑",
+            "Wait" => "原地待命",
+            "Chase" => "追了上去",
+            "Move" => "迈开脚步",
+            "BasicAttack" => "举起了武器",
+            _ => "行动",
+        }
+    }
+}
+
 // ── 行动类别 → 速度组件（Phase D / REFACTOR.md §2.6） ──
 //
 // 「哪一类行动受哪个速度影响」是**生成期的口径**，所以映射放在这里，

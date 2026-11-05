@@ -441,9 +441,9 @@ fn entities_outside_configured_world_are_dropped() {
     );
 }
 
-/// 日志按时间正序保留最近 N 条。
+/// 事件栏：已落定事实按时间正序保留最近 N 条。
 #[test]
-fn log_keeps_the_most_recent_lines_in_chronological_order() {
+fn events_keep_the_most_recent_facts_in_chronological_order() {
     let mut world = new_game(11);
     let pages = PageStack::new();
 
@@ -457,10 +457,79 @@ fn log_keeps_the_most_recent_lines_in_chronological_order() {
     let config = ExtractConfig::default().with_log_lines(2);
     let frame = extract_scene_frame(&mut world, &config, &pages, 1);
 
-    let texts: Vec<&str> = frame.log.iter().map(|line| line.text.as_str()).collect();
+    let texts: Vec<&str> = frame.events.iter().map(|line| line.text.as_str()).collect();
     assert_eq!(texts, vec!["第二条", "第三条"], "取最近 2 条且保持正序");
-    assert_eq!(frame.log[0].level, render_api::LogLevel::Danger);
-    assert_eq!(frame.log[1].level, render_api::LogLevel::System);
+    assert_eq!(frame.events[0].level, render_api::LogLevel::Danger);
+    assert_eq!(frame.events[1].level, render_api::LogLevel::System);
+    assert!(frame.events.iter().all(|line| !line.running));
+}
+
+/// 进行中的行动排在已落定事实之后，并按剩余时间降序（栏底即 0 刻度）。
+#[test]
+fn running_actions_are_listed_after_facts_with_remaining_time() {
+    let mut world = new_game(11);
+    let pages = PageStack::new();
+    let player = ecs_core::player_entity(&world).expect("新游戏必须有玩家");
+    let player_pos = world
+        .get::<ecs_core::Position>(player)
+        .expect("玩家有位置")
+        .to_tuple();
+
+    // 把一只怪物挪到玩家视野内，再手动挂两个"已起手、还没落"的行动。
+    let monster = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Monster>>();
+        query
+            .iter(&world)
+            .next()
+            .expect("种子地图上应当有怪物")
+    };
+    world
+        .entity_mut(monster)
+        .insert(ecs_core::Position::new(player_pos.0, player_pos.1));
+    world.spawn((
+        ecs_core::ActionOf(monster),
+        ecs_core::ActionName("BasicAttack"),
+        ecs_core::ActionTimer {
+            remaining_av: 200.0,
+        },
+        ecs_core::ActiveAction,
+    ));
+    world.spawn((
+        ecs_core::ActionOf(monster),
+        ecs_core::ActionName("Move"),
+        ecs_core::ActionTimer {
+            remaining_av: 50.0,
+        },
+        ecs_core::ActiveAction,
+    ));
+    world
+        .resource_mut::<ecs_core::EventLog>()
+        .push(ecs_core::EventMessage::combat("你击中了老鼠"));
+
+    let config = ExtractConfig::default().with_log_lines(10);
+    let frame = extract_scene_frame(&mut world, &config, &pages, 1);
+
+    assert_eq!(frame.events[0].text, "你击中了老鼠");
+    assert!(!frame.events[0].running, "落定事实不能标成进行中");
+
+    let running: Vec<&render_api::EventLine> =
+        frame.events.iter().filter(|line| line.running).collect();
+    assert_eq!(running.len(), 2, "两个进行中行动各占一行");
+    assert!(
+        running[0].text.contains("200AV"),
+        "剩余时间多的排在前面：{:?}",
+        running[0].text
+    );
+    assert!(
+        running[1].text.contains("50AV"),
+        "剩余时间少的排在后面：{:?}",
+        running[1].text
+    );
+    assert!(
+        running[0].text.contains("举起了武器"),
+        "行动标识要换成可读文案：{:?}",
+        running[0].text
+    );
 }
 
 /// 页栈状态进入帧：Game 页对应 `UiView::Game`，退出确认对应 Dialog。

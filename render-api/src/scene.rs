@@ -391,18 +391,35 @@ pub enum LogLevel {
     Debug,
 }
 
-/// 一条玩家可见日志。
+/// 时间轴上的一条事件。
+///
+/// 已落定的事实与进行中的行动共用同一行类型：`running` 区分"已经发生完"与
+/// "已经开始、还没落"（DsnE21）。排序由 `presentation` 决定（Done 旧→新，
+/// Running 按剩余时间降序排在后面，栏底是 0 刻度），后端只按给定顺序画。
 #[derive(Clone, Debug, PartialEq)]
-pub struct LogLine {
+pub struct EventLine {
     pub level: LogLevel,
     pub text: String,
+    /// 是否仍在进行中（带剩余 AV 的"已发生部分"）。
+    pub running: bool,
 }
 
-impl LogLine {
-    pub fn new(level: LogLevel, text: impl Into<String>) -> Self {
+impl EventLine {
+    /// 一条已经落定的事实。
+    pub fn done(level: LogLevel, text: impl Into<String>) -> Self {
         Self {
             level,
             text: text.into(),
+            running: false,
+        }
+    }
+
+    /// 一条进行中的行动（`text` 由呈现层格式化剩余 AV）。
+    pub fn running(level: LogLevel, text: impl Into<String>) -> Self {
+        Self {
+            level,
+            text: text.into(),
+            running: true,
         }
     }
 }
@@ -425,7 +442,9 @@ pub struct SceneFrame {
     pub entities: Vec<EntityView>,
     pub player: Option<EntityView>,
     pub hud: HudView,
-    pub log: Vec<LogLine>,
+    /// 事件栏的一列（DsnE21）：已落定事实在前（旧→新），进行中的行动在后
+    /// （剩余时间降序），栏底即 0 刻度。
+    pub events: Vec<EventLine>,
     pub ui: UiView,
     pub game_over: bool,
     pub quit_requested: bool,
