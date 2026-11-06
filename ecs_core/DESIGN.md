@@ -27,6 +27,7 @@
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
 | 物品与装备 | DsnE16 · DsnE18 · DsnE20 · DsnE22 |
+| 生命/法力与品质 | DsnE23 |
 | 存档与读档 | DsnE19 |
 | 事件时间轴与界面 | DsnE21 |
 | 楼层与推进 | DsnE17 |
@@ -1261,8 +1262,8 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - **仍未做**：箱类容器（等放置/交互）、实例数据（耐久等，第③片）。
 <!-- &/DsnE18 -->
 
-<!-- &DsnE19  存档 V2：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异；F5/F9 -->
-### DsnE19 存档 V2：投影式快照（seed + floor + 玩家容器树 + 物品实例差异）
+<!-- &DsnE19  存档 V3：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异/当前生命法力；F5/F9 -->
+### DsnE19 存档 V3：投影式快照（seed + floor + 玩家容器树 + 物品实例差异 + 当前生命法力）
 
 **决策**
 
@@ -1275,9 +1276,9 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 
    ```text
    文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
-   载荷：bincode(SaveV2)
-   SaveV2 { items_schema, map_seed, floor, player: PlayerSave }
-   PlayerSave { x, y, level, experience, health, magic, magic_mastery, body: [Option<ItemSave>] }
+   载荷：bincode(SaveV3)
+   SaveV3 { items_schema, map_seed, floor, player: PlayerSave }
+   PlayerSave { x, y, level, experience, health, mana, magic_mastery, body: [Option<ItemSave>] }  // health/mana 只存 current
    ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> } // 容器树递归
    ItemOverrides { durability: Option<f32> }   // 只存玩家造成的实例差异（DsnE22 阶段 ④）
    ```
@@ -1287,16 +1288,18 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 
    `Entity` 不上盘；容器槽位本身是数据（DsnE18），树直接摊平。版本放在**文件头**而不是
    bincode 载荷里：bincode 1.3 不是自描述格式，结构一变旧档就解不出来——版本若在载荷里，
-   读旧档时永远走不到它，只能报"编码失败"。头部先读、版本先判，才能报"版本 2 不认识（当前 1）"。
+   读旧档时永远走不到它，只能报"编码失败"。头部先读、版本先判，才能报"版本 N 不认识（当前 M）"。
    V2 起 `items_schema` 也进载荷：物品数据版本与编进来的一致才读，否则明确报错（MVP 不做
    迁移，见 DsnE22 已拍板第 3 条）。
 3. **不进档的东西（以及代价）。** 地面物品不入档：玩家丢在地上的东西读档后消失，地面回到
    `(seed, floor)` 的初始内容——这是 DsnE17 的直接推论。同理，**中途存档读回的是该层初始状态**
    （已杀的怪物会回来、已捡走的地面物品会重刷）；想要"保留中途进度"得等 V2 的地面/怪物差异段。
    另有两个有意的取舍：**不存 `GameRng`**（读档后随机流从该层开局重来，与"一直玩下去"会分叉，
-   这也是"进层检查点"比"随时存档"更自然的另一个理由）；**生命/法力上限按值存**（当前没有
-   "重算上限"的系统；将来装备/buff 能改上限时，要么存"基础值+修正"、要么先实现单一写入者）。
+   这也是"进层检查点"比"随时存档"更自然的另一个理由）。
    V2 只补存"玩家造成的物品实例差异"（目前是耐久当前值），地面物品与怪物差异仍然不入档。
+   V3（DsnE23）起**生命/法力只存 current、不存上限**：上限是"等级曲线 + 装备修正"的派生
+   数据，读档时按当前规则重算——否则改公式后旧档会带着旧上限继续跑，出现"同一件装备两个
+   上限"。这条替代了 V2 的"上限按值存"取舍。
 4. **load 复用初始化与下楼代码，不另写生成管线。** `new_game(map_seed)` 起世界 →
    `FloorNumber = floor` 后走一次"重建层内容"（与 `descend` 共用的函数）→ 还原玩家与容器树。
    任何"重建层"的修正都同时修到下楼与读档两条路径。
@@ -1307,11 +1310,12 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    `describe()`，统一写 `EventLog`。失败静默 = 玩家以为存上了。
 7. **死亡状态不可存。** `game_over` 时拒绝存档，避免存出"读档即死"的档。
 
-**状态：** 实现（V2）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV2`；手写投影、
-`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides{durability}`）、
-统一装配桥 `spawn_item_assembled` 同时服务系统与读档、`App` 的 F5/F9 接线、`tests/save_test.rs`
-10 条（roundtrip 含耐久 / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
-F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 2`；旧 V1 文件被版本头直接拒绝，
+**状态：** 实现（V3）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV3`；手写投影、
+`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides{durability}`；玩家
+`health/mana` 只存 current，读档按 DsnE23 的单一上限公式重算后夹取）、统一装配桥
+`spawn_item_assembled` 同时服务系统与读档、`App` 的 F5/F9 接线、`tests/save_test.rs`
+10 条（roundtrip / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
+F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 3`；旧 V1/V2 文件被版本头直接拒绝，
 `items_schema` 不一致报 `ContentVersion`（MVP 不迁移，DsnE22 已拍板第 3 条）。
 **关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
 DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）|
@@ -1577,10 +1581,51 @@ IgnoreSource}` 表达全部三条现有行为（蘑菇/海藻的 `use` 回复、
 `[0, max]`）；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走
 `World`）；存档升 `SaveV2`（`items_schema` + `ItemSave.overrides`，只存玩家造成的耐久差异），
 读档先按蓝图装配再套差异；`SAVE_VERSION = 2`，旧 V1 档被版本头拒绝、`items_schema` 不一致
-报 `ContentVersion`（MVP 不迁移）。验收不变量测试「无 overrides 时模板装配 == 存档装配」已落地。
+报 `ContentVersion`（MVP 不迁移）。DsnE23 之后存档再升 V3：生命/法力只存 current，
+装配/上限重算仍走同一读档管线。验收不变量测试「无 overrides 时模板装配 == 存档装配」已落地。
 四阶段全部完成；后续长尾内容（附魔/充能/磨损规则等）走同一形状增量加，不改结构。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
-DsnE20（重量）· DsnE19（存档边界，V2 在这里扩展）· DsnE10（Modifier 求值）·
+DsnE20（重量）· DsnE19（存档边界，V2/V3 在这里扩展）· DsnE10（Modifier 求值）·
 DsnX17（确定性）。
 <!-- &/DsnE22 -->
+
+<!-- &DsnE23  品质六档 + 生命/法力基线：等级曲线 + 装备修正、单一上限写者、只存 current -->
+### DsnE23 品质与生命/法力基线
+
+**背景。** 物品系统原本没有"品质"维度（所有物品平级），生命/法力上限是半成品：由
+`max_hp_for(level, defense)` / `max_mp_for(level, mastery)` 直接算出，防御顺带加血、等级
+曲线写死两个方向。用户拍板：生命/法力可以重做，不用考虑适配历史（原型阶段）。
+
+**决策**
+
+1. **品质是蓝图分类，不是数值表。** 内部 `Quality` 枚举六档、数据里写 snake_case 名字：
+   `Coarse(粗劣) / Common(普通) / Fine(精良) / Rare(稀有) / Epic(史诗) / Legendary(传说)`；
+   `Common` 为默认。中文名 + 固定颜色（灰/白/绿/蓝/紫/金）由后端映射，**不做罗马数字**
+   （与武器等级撞轴）、**不做 I/I+ 细分**（武器等级已提供细粒度成长）。品质影响"预算/
+   学派门槛/EXP 倍率"，不是唯一数值来源；实例不改品质（MVP 不做升品）。
+2. **生命/法力是同一个通用池。** `Pool { current, max }`；`Health` 与 `Mana` 是它的
+   newtype（`Deref` 暴露字段，既有代码 `health.current` 不动）；以后气力直接加第三个池。
+   `Magic` 组件改名 `Mana`，避免"法力资源"与"魔法体系"在讨论里打架。
+3. **上限 = 等级曲线 + 修正，防御不再加血。** `max_hp = 40 + 8×(等级-1) + max_health 修正`、
+   `max_mp = 12 + 2×(等级-1) + max_mana 修正`；曲线是内容数值，可调。词表新增
+   `max_health` / `max_mana`（默认 0、区间 [0, 9999]），装备/附魔/词条通过普通 `Modifier`
+   加（木盾 +3、皮甲 +5 已作为真实内容）。防御只做减伤。
+4. **单一上限写者。** `rules::vitals::apply_maxima` 是唯一写 max 的函数（升级、装备/卸下、
+   每轮兜底、读档都走它）；普通刷新只把 `current` 夹到上限内、**不回血**（穿上再脱下
+   +生命上限装备不能变成免费治疗）；升级时传 `restore = true` 回满（存活者，沿用 P1 修复：
+   死亡不回血）。
+5. **存档只存 current（V3）。** 上限是派生数据，读档后按当前规则重算再夹取。这样改曲线或
+   加一件撑上限的装备，旧档不会带着旧上限继续跑。
+6. **MP 自然回复延后。** 目前没有法术消耗出口，回复系统随后续法术阶段（法术/附魔/回魔，尚未立项）一起做；
+   本阶段只做上限重算与存档口径。
+
+**状态：** 已落地。`Quality` + 加载器（`items.json` schema 5，23 行品质）；`Pool`/`Health`/
+`Mana` 与 `Magic → Mana` 改名；`STATS` 两项 + `rules/vitals.rs`（曲线、单一写者、每轮刷新）；
+`experience` 升级回满、`init` 出生满池、装备动作后即时刷新；UI 物品行按品质着色、详情加
+「品质：」行（契约 `UiTextStyle::Quality(u8)`，渲染契约版本 7）；存档 V3。测试：`vitals`
+单测、`components` 池测试、注册表加载校验、存档 roundtrip/版本/装配等价。
+
+**关联：** DsnE16 / DsnE22（物品蓝图与实例）· DsnE19（存档 V3）· DsnE20（重量）·
+DsnX17（确定性）· Gm4 / Gm7 / Gm13。
+<!-- &/DsnE23 -->

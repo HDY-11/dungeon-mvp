@@ -52,7 +52,9 @@ pub use visual::*;
 ///    选中行不再由后端自行排序（DsnA4），属于影响渲染语义的变更。
 /// 6：背包页改为 3×3 网格契约（[`InventoryView`] 的 Nav1/Nav2/Context1/Context2/Detail/Tip，
 ///    焦点位 [`InventoryFocus`] 四个顺时针轮转）：旧后端的两栏 `panels` 形状被替换（DsnA5）。
-pub const CONTRACT_VERSION: u32 = 6;
+/// 7：新增品质文本样式 [`UiTextStyle::Quality`]（DsnE23）：物品名按品质着色，
+///    颜色由后端映射，属于影响渲染语义的变更。
+pub const CONTRACT_VERSION: u32 = 7;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -90,6 +92,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 6, "契约版本变更必须同步此断言");
+        assert_eq!(CONTRACT_VERSION, 7, "契约版本变更必须同步此断言");
     }
 }

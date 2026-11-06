@@ -40,6 +40,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 use crate::item::container::{ContainerDef, ItemTag, TRAVELER_PACK};
+use crate::item::quality::Quality;
 use crate::rules::{EffectSource, Modifier, ModifierOp};
 
 /// 旅者行囊的编号（初始化时给玩家挂一件，DsnE18）。
@@ -49,7 +50,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 4;
+pub const ITEMS_SCHEMA_VERSION: u32 = 5;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -159,6 +160,11 @@ pub struct ItemDef {
     pub name: &'static str,
     /// 详情页的一句话描述。
     pub desc: &'static str,
+    /// 物品品质（DsnE23）：蓝图上的分类，实例不改变它。
+    ///
+    /// 规则层不直接读它；品质影响的是内容预算、附魔/配方门槛与武器 EXP 倍率
+    /// （后者在 DsnE24 接入），所以这里只存数据，界面负责展示。
+    pub quality: Quality,
     /// 每单位重量（DsnE20）。行囊载重上限就是靠它算出来的；
     /// 重量是**派生数据**，不进存档（读档后用注册表重算）。
     pub weight: f32,
@@ -298,6 +304,7 @@ struct RawItem {
     id: u16,
     name: String,
     desc: String,
+    quality: Quality,
     weight: f32,
     max_stack: u32,
     kind: RawKind,
@@ -360,6 +367,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             id,
             name,
             desc,
+            quality,
             weight,
             max_stack,
             kind,
@@ -466,6 +474,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             id: ItemId(id),
             name: leak_str(name),
             desc: leak_str(desc),
+            quality,
             weight,
             durability_max,
             max_stack,

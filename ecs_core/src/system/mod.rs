@@ -86,6 +86,9 @@ pub fn build_core_schedule() -> Schedule {
             // 与回合推进相关的系统。
             death::check_death_system,
             experience::apply_exp_system,
+            // 等级变化后重算生命/法力上限（DsnE23 的唯一上限公式）。
+            // 放在升级之后、其它系统之前：本轮的观测值（HUD）已经是新上限。
+            crate::rules::refresh_vitals_system,
             perception::fov_system,
             perception::update_map_memory_system,
             perception::update_visible_memory_system,

@@ -44,27 +44,34 @@ impl Position {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Health {
+/// 通用资源池（DsnE23）：生命、法力，将来的气力也复用这一形状。
+///
+/// `current` 只被伤害/消耗/回复写；`max` 由 [`crate::rules::vitals`] 的唯一公式
+/// 重算——`Health`/`Mana` 的字段访问经 `Deref` 暴露，`health.current` 照旧可读。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pool {
     pub current: f64,
     pub max: f64,
 }
 
-impl Health {
+impl Pool {
+    /// 满池。
     pub const fn new(max: f64) -> Self {
         Self { current: max, max }
     }
 
+    /// 指定当前值与上限（读档/测试用；不做夹取，调用点自己保证语义）。
     pub const fn full(current: f64, max: f64) -> Self {
         Self { current, max }
     }
 
+    /// 设置当前值（夹到 `[0, max]`）。
     pub fn with_current(mut self, current: f64) -> Self {
         self.current = current.clamp(0.0, self.max);
         self
     }
 
-    /// 返回修正后的生命值；正值治疗，负值受伤，结果钳制在 `[0, max]`。
+    /// 返回修正后的池值；正值治疗，负值受伤，结果钳制在 `[0, max]`。
     pub fn modified(mut self, amount: f64) -> Self {
         self.current = (self.current + amount).clamp(0.0, self.max);
         self
@@ -91,42 +98,118 @@ impl Health {
             self.current / self.max
         }
     }
-}
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Magic {
-    pub current: f64,
-    pub max: f64,
-}
-
-impl Magic {
-    pub const fn new(max: f64) -> Self {
-        Self { current: max, max }
-    }
-
+    /// 尝试扣除（负数是调用方错误）；法力等"不够就不能用"的资源用它。
     pub fn try_cost(&mut self, amount: f64) -> Result<(), &'static str> {
         if amount < 0.0 {
-            return Err("法力消耗不能为负数");
+            return Err("资源消耗不能为负数");
         }
         if self.current - amount < 0.0 {
-            return Err("法力不足");
+            return Err("资源不足");
         }
         self.current -= amount;
         Ok(())
     }
 
+    /// 回复（受上限钳制），返回实际回复量。
     pub fn restore(&mut self, amount: f64) -> f64 {
         let actual = amount.max(0.0).min(self.max - self.current);
         self.current += actual;
         actual
     }
+}
 
-    pub fn ratio(self) -> f64 {
-        if self.max <= 0.0 {
-            0.0
-        } else {
-            self.current / self.max
-        }
+/// 生命值池（DsnE23：`Health` 是 [`Pool`] 的 newtype）。
+///
+/// 字段经 `Deref`/`DerefMut` 暴露，所以既有代码的 `health.current` /
+/// `health.is_alive()` 不用改；**上限**只能由 [`crate::rules::vitals::apply_maxima`]
+/// 写（单一公式，DsnE23）。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Health(pub Pool);
+
+impl Health {
+    /// 满血。
+    pub const fn new(max: f64) -> Self {
+        Self(Pool::new(max))
+    }
+
+    /// 指定当前值与上限。
+    pub const fn full(current: f64, max: f64) -> Self {
+        Self(Pool::full(current, max))
+    }
+
+    /// 设当前值（返回新 `Health`，与旧接口一致）。
+    pub fn with_current(self, current: f64) -> Self {
+        Self(self.0.with_current(current))
+    }
+
+    /// 治疗（返回新 `Health`，与旧接口一致）。
+    pub fn heal(self, amount: f64) -> Self {
+        Self(self.0.heal(amount))
+    }
+
+    /// 受伤（返回新 `Health`，与旧接口一致）。
+    pub fn damage(self, amount: f64) -> Self {
+        Self(self.0.damage(amount))
+    }
+
+    /// 增减（返回新 `Health`，与旧接口一致）。
+    pub fn modified(self, amount: f64) -> Self {
+        Self(self.0.modified(amount))
+    }
+}
+
+impl std::ops::Deref for Health {
+    type Target = Pool;
+
+    fn deref(&self) -> &Pool {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Health {
+    fn deref_mut(&mut self) -> &mut Pool {
+        &mut self.0
+    }
+}
+
+impl From<Pool> for Health {
+    fn from(pool: Pool) -> Self {
+        Self(pool)
+    }
+}
+
+/// 法力值池（DsnE23；旧名 `Mana`）。
+///
+/// 改名是为了让"法力资源"与"魔法体系/法术"在讨论里不打架：`Mana` 是资源，
+/// 法术与精通是别的东西（DsnE25）。同样经 `Deref` 暴露 [`Pool`] 的字段与方法。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Mana(pub Pool);
+
+impl Mana {
+    /// 满池。
+    pub const fn new(max: f64) -> Self {
+        Self(Pool::new(max))
+    }
+}
+
+impl std::ops::Deref for Mana {
+    type Target = Pool;
+
+    fn deref(&self) -> &Pool {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Mana {
+    fn deref_mut(&mut self) -> &mut Pool {
+        &mut self.0
+    }
+}
+
+impl From<Pool> for Mana {
+    fn from(pool: Pool) -> Self {
+        Self(pool)
     }
 }
 

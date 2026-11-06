@@ -177,7 +177,7 @@ pub fn spawn_test_player(world: &mut World, pos: (usize, usize)) -> Entity {
     world.entity_mut(entity).insert((
         Player,
         MagicMastery(8.0),
-        Magic::new(20.0),
+        Mana::new(20.0),
         Level(1),
         Experience::new(0.0, 100.0),
         Idle,

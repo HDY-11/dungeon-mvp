@@ -26,7 +26,7 @@
 
 use bevy_ecs::prelude::*;
 use ecs_core::{
-    EventLog, Experience, FloorNumber, Health, Level, Magic, Map, MapMemory, MapSeed, MonsterKindId,
+    EventLog, Experience, FloorNumber, Health, Level, Mana, Map, MapMemory, MapSeed, MonsterKindId,
     Observable, Player, Position, Stairs, StatId, Stats, TurnManager, Viewshed, map_kind_for,
     monster_template,
 };
@@ -279,6 +279,20 @@ impl InventoryContext {
         self.targets.push(target);
     }
 
+    /// 带品质样式的行（DsnE23）：物品名按品质着色，其余列不受影响。
+    fn push_styled(
+        &mut self,
+        label: impl Into<String>,
+        detail: impl Into<String>,
+        target: InventoryTarget,
+        style: render_api::UiTextStyle,
+    ) {
+        self.push(label, detail, target);
+        if let Some(row) = self.list.items.last_mut() {
+            row.style = style;
+        }
+    }
+
     /// 夹取光标、标出选中行，并返回该行对应的目标（占位行/空栏 → `None`）。
     fn select(&mut self, cursor: usize) -> Option<InventoryTarget> {
         if self.list.items.is_empty() {
@@ -308,6 +322,16 @@ fn stack_label(world: &World, occupant: Entity) -> String {
     }
 }
 
+/// 物品行/名字的品质样式（DsnE23）：契约只带档位，颜色由后端调色板映射。
+///
+/// 非物品实体（理论上不该出现在容器里）回退普通样式。
+fn quality_style(world: &World, occupant: Entity) -> render_api::UiTextStyle {
+    world
+        .get::<ecs_core::Item>(occupant)
+        .map(|item| render_api::UiTextStyle::Quality(item.def().quality.rank()))
+        .unwrap_or_default()
+}
+
 /// 行囊实体（身体「背包」槽里的那件容器）。
 fn pack_entity_of(world: &World, player: Entity) -> Option<Entity> {
     world
@@ -331,10 +355,11 @@ fn body_context(world: &World, player: Entity) -> InventoryContext {
             continue;
         }
         let slot_name = body.def().slots[slot].name;
-        context.push(
+        context.push_styled(
             format!("{slot_name}：{}", stack_label(world, occupant)),
             item.def().desc,
             InventoryTarget::Body { slot },
+            quality_style(world, occupant),
         );
     }
     if context.targets.is_empty() {
@@ -374,10 +399,11 @@ fn pack_context(world: &World, player: Entity) -> InventoryContext {
         let Some(item) = world.get::<ecs_core::Item>(occupant) else {
             continue;
         };
-        context.push(
+        context.push_styled(
             stack_label(world, occupant),
             item.def().desc,
             InventoryTarget::Pack { slot },
+            quality_style(world, occupant),
         );
     }
     if context.targets.is_empty() {
@@ -402,10 +428,11 @@ fn corpse_context(world: &World, player: Entity) -> InventoryContext {
             if world.get::<ecs_core::Item>(occupant).is_none() {
                 continue;
             }
-            context.push(
+            context.push_styled(
                 stack_label(world, occupant),
                 "Enter 拿取",
                 InventoryTarget::Corpse { slot },
+                quality_style(world, occupant),
             );
         }
     }
@@ -426,10 +453,11 @@ fn ground_context(world: &World, player: Entity) -> InventoryContext {
         if world.get::<ecs_core::Item>(entity).is_none() {
             continue;
         }
-        context.push(
+        context.push_styled(
             stack_label(world, entity),
             "Enter 拿取",
             InventoryTarget::Ground { index },
+            quality_style(world, entity),
         );
     }
     if context.targets.is_empty() {
@@ -590,6 +618,12 @@ fn item_detail(
     };
     let mut detail = DetailView::new(title);
     detail.push_line(UiTextLine::plain(def.desc));
+    // 品质是蓝图字段（DsnE23）：UI 用契约档位着色，文字同时给出中文名，
+    // 黑白终端/色觉障碍也读得出来。
+    detail.push_line(UiTextLine::styled(
+        format!("品质：{}", def.quality.label()),
+        render_api::UiTextStyle::Quality(def.quality.rank()),
+    ));
     // 重量按**整堆**算（DsnE20）：单件重量 × 数量，与行囊载重同一口径。
     detail.push_line(UiTextLine::plain(format!(
         "重量：{:.1}",
@@ -1005,7 +1039,7 @@ fn build_hud(world: &mut World) -> HudView {
     let mut query = world.query_filtered::<
         (
             &Health,
-            Option<&Magic>,
+            Option<&Mana>,
             Option<&Experience>,
             Option<&Level>,
             Option<&Stats>,

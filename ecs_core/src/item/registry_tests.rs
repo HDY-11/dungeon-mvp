@@ -132,32 +132,32 @@ fn every_body_slot_has_something_that_fits() {
     }
 }
 
-/// 装备的修正必须**作用于它该作用的那一项**：武器加攻击、防具加防御。
+/// 装备的修正必须**作用于它该作用的那一项**：武器/戒指加攻击，其余部位加防御，
+/// 或者加生命/法力上限（DsnE23 允许装备撑血撑蓝）。
 ///
 /// 反例（这条用例存在的意义）：把皮甲的修正写成 `StatId::ATTACK`，玩家会变成"穿甲打得疼"，
 /// 而所有读取 `Defense` 的地方都看不出问题。
 #[test]
 fn equipment_modifiers_target_the_right_stat() {
+    use crate::rules::StatId;
+
     for def in items() {
         if !def.is_equipment() {
             continue;
         }
-        // 部位决定该加什么：手/戒指加攻击，其余部位加防御（踏水靴只无视、不加数值）。
+        // 部位决定该加什么：武器/戒指加攻击；其余部位加防御或上限。
         let offensive = def
             .tags
             .iter()
             .any(|tag| matches!(tag, crate::item::ItemTag::Weapon | crate::item::ItemTag::Ring));
         for modifier in def.modifiers() {
-            let expected = if offensive {
-                crate::rules::StatId::ATTACK
-            } else {
-                crate::rules::StatId::DEFENSE
-            };
-            if def.ignored_sources().next().is_some() {
-                continue;
-            }
-            assert_eq!(
-                modifier.stat, expected,
+            let allowed = matches!(
+                (offensive, modifier.stat),
+                (true, StatId::ATTACK)
+                    | (false, StatId::DEFENSE | StatId::MAX_HEALTH | StatId::MAX_MANA)
+            );
+            assert!(
+                allowed,
                 "{}（tags={:?}）的修正作用在 {:?}，与部位不符",
                 def.name, def.tags, modifier.stat
             );
@@ -316,7 +316,7 @@ fn table(items: &[&str]) -> String {
 /// 一行最小的合法材料（`extra` 用来覆盖单个字段）。
 fn material(id: u16, extra: &str) -> String {
     format!(
-        r#"{{"id":{id},"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"kind":{{"type":"material"}}{extra}}}"#
+        r#"{{"id":{id},"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"quality":"common","kind":{{"type":"material"}}{extra}}}"#
     )
 }
 
@@ -343,7 +343,7 @@ fn duplicate_or_unsorted_item_ids_are_rejected() {
 #[test]
 fn a_non_positive_weight_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":0.0,"max_stack":10,"kind":{"type":"material"}}"#,
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":0.0,"max_stack":10,"quality":"common","kind":{"type":"material"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("重量"), "错误应提到重量：{error}");
@@ -353,7 +353,7 @@ fn a_non_positive_weight_is_rejected() {
 #[test]
 fn a_negative_weight_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":-1.0,"max_stack":10,"kind":{"type":"material"}}"#,
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":-1.0,"max_stack":10,"quality":"common","kind":{"type":"material"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("重量"), "错误应提到重量：{error}");
@@ -369,7 +369,7 @@ fn an_unknown_tag_is_rejected() {
 #[test]
 fn an_unknown_pack_layout_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":1,"kind":{"type":"pack","layout":"chest"}}"#,
+        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"pack","layout":"chest"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("chest"), "错误应提到未知布局：{error}");
@@ -378,7 +378,7 @@ fn an_unknown_pack_layout_is_rejected() {
 #[test]
 fn equipment_and_packs_must_not_stack() {
     let json = table(&[
-        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":2,"kind":{"type":"pack","layout":"traveler_pack"}}"#,
+        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":2,"quality":"common","kind":{"type":"pack","layout":"traveler_pack"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("堆叠上限"), "错误应提到堆叠上限：{error}");
@@ -393,7 +393,7 @@ fn equipment_and_packs_must_not_stack() {
 #[test]
 fn behaviors_are_loaded_with_their_trigger_and_effects() {
     let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]}"#,
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]}"#,
     ]);
     let defs = load_items(&json).expect("合法的行为数据必须能加载");
     assert_eq!(
@@ -406,7 +406,7 @@ fn behaviors_are_loaded_with_their_trigger_and_effects() {
 #[test]
 fn a_consumable_without_a_use_behavior_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"}}"#,
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("use 行为"), "错误应提到缺少 use 行为：{error}");
@@ -415,7 +415,7 @@ fn a_consumable_without_a_use_behavior_is_rejected() {
 #[test]
 fn an_empty_behavior_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[]}]}"#,
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[]}]}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("空行为"), "错误应提到空行为：{error}");
@@ -444,7 +444,7 @@ fn an_equipped_behavior_on_a_non_equipment_is_rejected() {
 #[test]
 fn an_unknown_behavior_trigger_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"on_hit","effects":[]}]}"#,
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"on_hit","effects":[]}]}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("on_hit"), "错误应提到未知触发：{error}");
@@ -453,7 +453,7 @@ fn an_unknown_behavior_trigger_is_rejected() {
 #[test]
 fn a_heal_amount_must_be_positive() {
     let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":0.0}]}]}"#,
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":0.0}]}]}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("消耗效果"), "错误应提到消耗效果：{error}");
@@ -462,7 +462,7 @@ fn a_heal_amount_must_be_positive() {
 #[test]
 fn an_equipped_behavior_cannot_heal() {
     let json = table(&[
-        r#"{"id":0,"name":"测试护符","desc":"测试用","weight":1.0,"max_stack":1,"kind":{"type":"equipment"},"tags":["ring"],"behaviors":[{"trigger":"equipped","effects":[{"type":"heal","amount":2.0}]}]}"#,
+        r#"{"id":0,"name":"测试护符","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["ring"],"behaviors":[{"trigger":"equipped","effects":[{"type":"heal","amount":2.0}]}]}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("不支持回复"), "错误应指出效果不配对：{error}");
@@ -485,7 +485,7 @@ fn only_equipment_declares_a_positive_durability() {
 #[test]
 fn a_non_positive_durability_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试装备","desc":"测试用","weight":1.0,"max_stack":1,"durability_max":0.0,"kind":{"type":"equipment"}}"#,
+        r#"{"id":0,"name":"测试装备","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","durability_max":0.0,"kind":{"type":"equipment"}}"#,
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("耐久"), "错误应提到耐久：{error}");
@@ -496,4 +496,30 @@ fn a_durability_on_a_non_equipment_is_rejected() {
     let json = table(&[&material(5, r#","durability_max":10.0"#)]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("耐久"), "错误应提到耐久：{error}");
+}
+
+#[test]
+fn an_unknown_quality_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"quality":"mythic","kind":{"type":"material"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("quality") || error.contains("mythic"),
+        "错误应指向未知品质：{error}"
+    );
+}
+
+#[test]
+fn every_item_declares_a_quality() {
+    // 品质是蓝图字段（DsnE23）：内容里至少要覆盖到中间档，全部是默认值说明没人填。
+    let mut ranks = std::collections::BTreeSet::new();
+    for def in items() {
+        assert!(!def.quality.label().is_empty(), "{} 的品质没有名字", def.name);
+        ranks.insert(def.quality.rank());
+    }
+    assert!(
+        ranks.len() >= 3,
+        "物品品质应分布在多个档位，实际：{ranks:?}"
+    );
 }

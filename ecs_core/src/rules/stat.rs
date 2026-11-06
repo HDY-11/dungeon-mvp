@@ -49,15 +49,21 @@ impl StatId {
     pub const CRIT_RATE: Self = Self(4);
     /// 暴击伤害加成（暴击时伤害 × `1 + crit_damage`）。
     pub const CRIT_DAMAGE: Self = Self(5);
+    /// 生命上限的修正量（DsnE23）：基础曲线之外由装备/附魔追加。
+    pub const MAX_HEALTH: Self = Self(6);
+    /// 法力上限的修正量（DsnE23）。
+    pub const MAX_MANA: Self = Self(7);
 
     /// 当前词表里的全部属性。
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::ATTACK,
         Self::DEFENSE,
         Self::MOVE_SPEED,
         Self::ATTACK_SPEED,
         Self::CRIT_RATE,
         Self::CRIT_DAMAGE,
+        Self::MAX_HEALTH,
+        Self::MAX_MANA,
     ];
 
     /// 查这一项的定义；未知编号是程序错误（数据在加载期已校验）。
@@ -183,6 +189,24 @@ pub static STATS: &[StatDef] = &[
         is_ratio: false,
         min: 0.0,
         max: 10.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::MAX_HEALTH,
+        name: "max_health",
+        label: "生命上限",
+        is_ratio: false,
+        min: 0.0,
+        max: 9999.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::MAX_MANA,
+        name: "max_mana",
+        label: "法力上限",
+        is_ratio: false,
+        min: 0.0,
+        max: 9999.0,
         default: 0.0,
     },
 ];

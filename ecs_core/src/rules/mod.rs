@@ -12,9 +12,14 @@
 pub mod damage;
 pub mod modifier;
 pub mod stat;
+pub mod vitals;
 
 pub use damage::{CritProfile, MeleeBreakdown, MeleeInput, melee};
 pub use modifier::{
     EffectSource, Modifier, ModifierOp, ModifierOutcome, apply_modifiers, evaluate_modifiers, for_stat,
 };
 pub use stat::{STATS, StatDef, StatId, stat_by_name};
+pub use vitals::{
+    apply_maxima, hp_curve, max_health, max_mana, mp_curve, refresh_player_vitals,
+    refresh_vitals_system,
+};

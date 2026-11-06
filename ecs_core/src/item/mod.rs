@@ -48,6 +48,7 @@
 pub mod actions;
 pub mod container;
 pub mod loot;
+pub mod quality;
 pub mod registry;
 
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub use actions::{
     unequip_to_pack, use_from_pack,
 };
 pub use loot::{LootEntry, roll_loot};
+pub use quality::Quality;
 pub use registry::{
     Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ITEMS_SCHEMA_VERSION, ItemDef, ItemId,
     ItemKind, TRAVELER_PACK_ITEM, item_by_name, stack_weight,

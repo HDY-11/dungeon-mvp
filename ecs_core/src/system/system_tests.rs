@@ -7,9 +7,10 @@
 //! 以及 I90 的事件生命周期（旧事件不得在下一轮被重读）。
 
 use crate::system::run_settle_systems;
-use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
+use crate::balance::exp_to_next_level;
+use crate::rules::{hp_curve, mp_curve};
 use crate::components::{
-    EntityName, Experience, ExperienceReward, Health, Idle, Level, Magic, Position, Stats, Viewshed,
+    EntityName, Experience, ExperienceReward, Health, Idle, Level, Mana, Position, Stats, Viewshed,
 };
 use crate::events::{AttackIntentEvent, DeathEvent};
 use crate::map::Tile;
@@ -169,11 +170,11 @@ fn monster_death_rewards_exp_and_levels_up() {
     assert_eq!(exp.exp_to_next, exp_to_next_level(2));
 
     let health = world.get::<Health>(player).unwrap();
-    assert_eq!(health.max, max_hp_for(2, 4.0), "升级必须重算最大生命");
+    assert_eq!(health.max, hp_curve(2), "升级必须按等级曲线重算最大生命");
     assert_eq!(health.current, health.max, "升级必须回满生命");
-    let magic = world.get::<Magic>(player).unwrap();
-    assert_eq!(magic.max, max_mp_for(2, 8.0), "升级必须重算最大法力");
-    assert_eq!(magic.current, magic.max, "升级必须回满法力");
+    let mana = world.get::<Mana>(player).unwrap();
+    assert_eq!(mana.max, mp_curve(2), "升级必须按等级曲线重算最大法力");
+    assert_eq!(mana.current, mana.max, "升级必须回满法力");
 
     let log = world.resource::<EventLog>();
     assert!(
@@ -384,5 +385,9 @@ fn occupancy_tracks_actors_but_not_stairs() {
         None,
         "楼梯不得进入占用图（否则挡路）"
     );
-    assert_eq!(player_health(&world).current, 100.0);
+    // DsnE23：结算链里的上限写者会把测试场里手工塞的 100 血重算成 Lv.1 曲线，
+    // 并把 current 夹到新上限（不回血）。
+    let health = player_health(&world);
+    assert_eq!(health.max, hp_curve(1), "上限必须按等级曲线重算");
+    assert_eq!(health.current, hp_curve(1), "current 只能被夹取，不回血");
 }

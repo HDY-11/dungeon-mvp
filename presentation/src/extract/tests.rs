@@ -355,6 +355,21 @@ fn the_inventory_detail_describes_the_selected_item() {
         lines.iter().any(|line| line.starts_with("重量：")),
         "详情要标出重量（DsnE20）：{lines:?}"
     );
+    assert!(
+        lines.iter().any(|line| line.starts_with("品质：")),
+        "详情要标出品质（DsnE23）：{lines:?}"
+    );
+    let row = view
+        .context1
+        .items
+        .iter()
+        .find(|row| row.label.contains(sword_def.name))
+        .expect("身体栏要有剑这一行");
+    assert_eq!(
+        row.style,
+        render_api::UiTextStyle::Quality(sword_def.quality.rank()),
+        "物品行按品质着色"
+    );
     let tips: Vec<String> = view.tips.iter().map(|line| line.text()).collect();
     assert!(
         tips.iter().any(|line| line.contains("Enter 装/卸/拿")),

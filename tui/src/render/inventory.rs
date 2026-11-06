@@ -571,6 +571,15 @@ fn text_style(style: UiTextStyle) -> Style {
         UiTextStyle::Success => Style::default().fg(Color::Green),
         UiTextStyle::Selected => Style::default().bg(Color::Cyan).fg(Color::Black),
         UiTextStyle::Disabled => Style::default().fg(Color::DarkGray),
+        // 品质色（DsnE23）：0 粗劣灰 … 5 传说金；契约只给档位，调色板在这里。
+        UiTextStyle::Quality(0) => Style::default().fg(Color::DarkGray),
+        UiTextStyle::Quality(1) => Style::default().fg(Color::White),
+        UiTextStyle::Quality(2) => Style::default().fg(Color::Green),
+        UiTextStyle::Quality(3) => Style::default().fg(Color::LightBlue),
+        UiTextStyle::Quality(4) => Style::default().fg(Color::Magenta),
+        UiTextStyle::Quality(_) => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     }
 }
 

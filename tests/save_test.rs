@@ -1,20 +1,21 @@
-//! 存档 V2 的集成测试（DsnE19 / DsnE22 阶段 ④）。
+//! 存档 V3 的集成测试（DsnE19 / DsnE22 阶段 ④ / DsnE23）。
 //!
 //! 覆盖：投影 roundtrip（数值 + 身体槽 + 行囊嵌套物品 + 实例耐久）、楼层重建、版本/
 //! 文件/损坏/物品数据版本四类错误、模板装配与存档装配的一致性，以及 F5/F9 经
-//! `App::handle` 的端到端接线。
+//! `App::handle` 的端到端接线。V3 只存 `health/mana` 的 current，上限读档时按
+//! 等级曲线重算（DsnE23），所以 roundtrip 断言的是 current + 重算后的上限。
 
 use std::path::PathBuf;
 
 use bevy_ecs::prelude::*;
 use dungeon_app::App;
 use dungeon_app::save::{
-    self, ExpSave, ItemOverrides, ItemSave, PlayerSave, SaveError, SaveV2, VitSave,
+    self, ExpSave, ItemOverrides, ItemSave, PlayerSave, SaveError, SaveV3,
 };
 use ecs_core::{
     Amount, BODY, Container, Durability, Experience, FloorNumber, Health, ITEMS_SCHEMA_VERSION,
-    Item, ItemId, ItemTag, Level, Magic, MagicMastery, Map, Monster, Position, Stairs,
-    spawn_item_assembled,
+    Item, ItemId, ItemTag, Level, Mana, MagicMastery, Map, Monster, Pool, Position, Stairs,
+    hp_curve, mp_curve, spawn_item_assembled,
 };
 use render_api::{InputEvent, Key, KeyEvent};
 
@@ -56,10 +57,7 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
             Level(3),
             Experience::new(40.0, 100.0),
             Health::full(12.0, 38.0),
-            Magic {
-                current: 3.0,
-                max: 9.0,
-            },
+            Mana::from(Pool::full(3.0, 9.0)),
             MagicMastery(1.5),
         ));
 
@@ -100,9 +98,12 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
     assert_eq!(world.get::<Level>(player).unwrap().0, 3);
     assert_eq!(world.get::<Experience>(player).unwrap().exp, 40.0);
     let health = world.get::<Health>(player).unwrap();
-    assert_eq!((health.current, health.max), (12.0, 38.0));
-    let magic = world.get::<Magic>(player).unwrap();
-    assert_eq!((magic.current, magic.max), (3.0, 9.0));
+    // current 按存档还原；max 由等级曲线与装备修正重算（Lv3 → 56）。
+    assert_eq!(health.current, 12.0);
+    assert_eq!(health.max, hp_curve(3));
+    let mana = world.get::<Mana>(player).unwrap();
+    assert_eq!(mana.current, 3.0);
+    assert_eq!(mana.max, mp_curve(3));
     assert_eq!(world.get::<MagicMastery>(player).unwrap().0, 1.5);
 
     let body = world.get::<Container>(player).unwrap();
@@ -160,7 +161,7 @@ fn a_save_on_a_lower_floor_rebuilds_the_same_floor() {
 
 #[test]
 fn an_unknown_version_in_the_file_header_is_rejected() {
-    let save = SaveV2 {
+    let save = SaveV3 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -172,14 +173,8 @@ fn an_unknown_version_in_the_file_header_is_rejected() {
                 exp: 0.0,
                 exp_to_next: 100.0,
             },
-            health: VitSave {
-                current: 38.0,
-                max: 38.0,
-            },
-            magic: VitSave {
-                current: 9.0,
-                max: 9.0,
-            },
+            health: 38.0,
+            mana: 9.0,
             magic_mastery: 0.0,
             body: vec![None; BODY.len()],
         },
@@ -231,7 +226,7 @@ fn an_unknown_item_id_in_the_save_is_reported_as_corrupt() {
         overrides: ItemOverrides::default(),
         slots: None,
     });
-    let save = SaveV2 {
+    let save = SaveV3 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -243,14 +238,8 @@ fn an_unknown_item_id_in_the_save_is_reported_as_corrupt() {
                 exp: 0.0,
                 exp_to_next: 100.0,
             },
-            health: VitSave {
-                current: 38.0,
-                max: 38.0,
-            },
-            magic: VitSave {
-                current: 9.0,
-                max: 9.0,
-            },
+            health: 38.0,
+            mana: 9.0,
             magic_mastery: 0.0,
             body,
         },
@@ -301,7 +290,7 @@ fn an_old_v1_file_is_rejected_by_the_header_version() {
 
 #[test]
 fn a_save_with_a_different_items_schema_is_rejected() {
-    let save = SaveV2 {
+    let save = SaveV3 {
         items_schema: ITEMS_SCHEMA_VERSION + 1,
         map_seed: 1,
         floor: 1,
@@ -310,8 +299,8 @@ fn a_save_with_a_different_items_schema_is_rejected() {
             y: 1,
             level: 1,
             experience: ExpSave { exp: 0.0, exp_to_next: 100.0 },
-            health: VitSave { current: 38.0, max: 38.0 },
-            magic: VitSave { current: 9.0, max: 9.0 },
+            health: 38.0,
+            mana: 9.0,
             magic_mastery: 0.0,
             body: vec![None; BODY.len()],
         },
@@ -344,7 +333,7 @@ fn template_assembly_matches_save_assembly_when_there_are_no_overrides() {
         slots: None,
     });
 
-    let save = SaveV2 {
+    let save = SaveV3 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -353,8 +342,8 @@ fn template_assembly_matches_save_assembly_when_there_are_no_overrides() {
             y: 1,
             level: 1,
             experience: ExpSave { exp: 0.0, exp_to_next: 100.0 },
-            health: VitSave { current: 38.0, max: 38.0 },
-            magic: VitSave { current: 9.0, max: 9.0 },
+            health: 38.0,
+            mana: 9.0,
             magic_mastery: 0.0,
             body,
         },

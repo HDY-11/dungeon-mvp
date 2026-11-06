@@ -3,24 +3,27 @@
 //! 经验来源是 `DeathEvent`：每轮结算里 `death` 模块先发事件，本模块把它们
 //! 加成总经验发给玩家。**奖励数值随事件而来**，不需要任何旁路资源
 //! （旧 `PendingExp` 已随 Phase E 删除；见 `events.rs::DeathEvent` 的说明）。
+//!
+//! 升级只做两件事：清空阈值内的经验、把等级 +1；生命/法力的**上限**交给
+//! `rules::vitals::apply_maxima`（DsnE23 的唯一公式），这里只传 `restore = true`
+//! （存活升级回满，死亡不回——死亡在循环开头就被挡住了）。
 
-use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
+use crate::balance::exp_to_next_level;
 use crate::components::*;
+use crate::effect::EffectContext;
 use crate::entity_cls::Player;
 use crate::events::{DeathEvent, LevelUpEvent};
 use crate::resources::{EventLog, EventMessage};
-use crate::rules::StatId;
+use crate::rules::apply_maxima;
 use bevy_ecs::prelude::*;
 
-/// 升级玩家：经验/等级/生命/法力 + 重算上限所需的防御与法术精通。
+/// 升级玩家：经验/等级/生命/法力。上限不在这里算（DsnE23）。
 type ExpPlayer = (
     Entity,
     &'static mut Experience,
     &'static mut Level,
     &'static mut Health,
-    &'static mut Magic,
-    &'static Stats,
-    &'static MagicMastery,
+    &'static mut Mana,
 );
 
 /// 消费 `DeathEvent` 的经验奖励，累加到玩家身上并处理升级。
@@ -30,6 +33,7 @@ type ExpPlayer = (
 pub fn apply_exp_system(
     mut death_events: EventReader<DeathEvent>,
     mut players: Query<ExpPlayer, With<Player>>,
+    effects: EffectContext,
     mut event_log: ResMut<EventLog>,
     mut level_events: EventWriter<LevelUpEvent>,
 ) {
@@ -42,7 +46,7 @@ pub fn apply_exp_system(
         return;
     }
 
-    for (entity, mut exp, mut level, mut health, mut magic, stats, mastery) in players.iter_mut() {
+    for (entity, mut exp, mut level, mut health, mut mana) in players.iter_mut() {
         // 死人不吃经验（结算链是 `death → exp`，同轮里玩家可能刚被怪物打死）：
         // 若放行，升级会把 `health.current` 回满，HUD 上出现"死了却满血"，
         // 存档也会把尸体当活人写进盘。游戏结束后等级/经验都不该再变。
@@ -54,12 +58,15 @@ pub fn apply_exp_system(
             exp.exp = exp.overflow();
             level.0 += 1;
 
-            let max_hp = max_hp_for(level.0, stats.get(StatId::DEFENSE));
-            let max_mp = max_mp_for(level.0, mastery.0);
-            health.max = max_hp;
-            health.current = max_hp;
-            magic.max = max_mp;
-            magic.current = max_mp;
+            // 上限公式只有一个实现（DsnE23）：等级 + 装备/状态修正。
+            // 存活升级回满，与旧行为一致。
+            apply_maxima(
+                level.0,
+                &effects.collect_actor(entity),
+                &mut health,
+                &mut mana,
+                true,
+            );
             exp.exp_to_next = exp_to_next_level(level.0);
 
             log::debug!("升级: entity={entity:?} level={}", level.0);

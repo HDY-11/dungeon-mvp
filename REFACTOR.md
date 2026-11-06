@@ -54,9 +54,10 @@
 | M16 | **稠密属性表（DsnE22 阶段 ②b）**：六个数值组件（`Attack`/`Defense`/`MoveSpeed`/`AttackSpeed`/`CritRate`/`CritDamage`）并成一份 `Stats`（按 `StatId` 稠密存放，`get/set/from_pairs/with`）；词表补 `crit_rate`/`crit_damage` 与每项 `default`；`Stats::set` 是唯一区间夹取处（忽略 NaN，其余 clamp 到 `[min,max]`）；生成点与读取点（战斗/经验/行动速度/HUD/驱动器）全部迁移 | DsnE22 | 本次提交 |
 | M17 | **行为数据化（DsnE22 阶段 ③）**：`ItemDef.behaviors`（`trigger: Use/Equipped` + 效果列表）；`ConsumeEffect` 与 `ItemKind::Equipment.ignores` 退役，改由 `BehaviorEffect::{Heal, RestoreMagic, IgnoreSource}` 表达蘑菇/海藻/踏水靴；加载器按触发/效果矩阵校验（种类与触发配对、数值为正、空行为/未知触发拒绝）；求值侧与使用/拾取路由只读行为表；数据 schema 升 3 | DsnE22 / DsnE10 / Gm7 | 本次提交 |
 | M18 | **实例组件 + 存档 V2（DsnE22 阶段 ④）**：`ItemDef.durability_max`（数据 schema 升 4，只有装备可声明）；`Durability{current,max}` 稀疏组件；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走 `World`）；`SaveV2{items_schema,...}` + `ItemSave.overrides`（只存玩家造成的耐久差异），读档先按蓝图装配再套差异；`SAVE_VERSION=2`，旧 V1 与物品 schema 不一致都明确拒绝（MVP 不迁移）；背包详情显示耐久 | DsnE22 / DsnE19 / DsnE20 / Gm7 / Gm13 | 本次提交 |
+| M19 | **品质与生命/法力基线（DsnE23）**：`Quality` 六档（粗劣/普通/精良/稀有/史诗/传说）进蓝图与 `items.json`（schema 升 5），UI 按品质着色 + 详情「品质：」行（`UiTextStyle::Quality`，渲染契约 7）；通用 `Pool` + `Health`/`Mana` newtype（`Magic` 改名 `Mana`）；上限 = 等级曲线（40+8×(lv-1) / 12+2×(lv-1)）+ `max_health`/`max_mana` 修正，防御不再加血；`rules::vitals` 是唯一上限公式与写者（普通刷新只夹取、升级回满）；存档 V3 只存 `health/mana` current、读档重算上限 | DsnE23 / DsnE19 / DsnE22 / Gm4 / Gm7 / Gm13 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **276 passed**；`cargo test --workspace`
-29 目标 **557 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
+**当前基线（实测）：** `cargo test -p ecs_core` **294 passed**；`cargo test --workspace`
+29 目标 **575 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

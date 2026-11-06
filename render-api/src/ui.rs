@@ -26,6 +26,8 @@ pub enum PageKind {
 /// 文本语义样式。
 ///
 /// 后端把语义映射到自己的调色板；契约层不出现具体颜色值。
+/// [`UiTextStyle::Quality`] 携带品质档位（0=粗劣 … 5=传说，DsnE23），
+/// 具体颜色同样由后端决定。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum UiTextStyle {
     #[default]
@@ -38,6 +40,8 @@ pub enum UiTextStyle {
     Success,
     Selected,
     Disabled,
+    /// 物品品质色（0=粗劣/1=普通/2=精良/3=稀有/4=史诗/5=传说）。
+    Quality(u8),
 }
 
 /// 一段带样式的文本。

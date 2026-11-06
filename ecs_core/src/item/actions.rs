@@ -18,13 +18,14 @@
 //!
 //! 每次失败都回滚到"没发生"，所以调用方只需看 [`ItemActionError`]。
 
-use crate::components::{Health, Magic, Position};
+use crate::components::{Health, Mana, Position};
 use crate::entity_cls::Player;
 use crate::item::{
     Amount, BODY, BehaviorEffect, Container, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
     pack_slot_index, stack_weight,
 };
 use crate::resources::{EventLog, EventMessage};
+use crate::rules::refresh_player_vitals;
 use bevy_ecs::prelude::*;
 
 /// 动作失败的原因（每条都能给玩家一句话）。
@@ -120,6 +121,8 @@ pub fn equip_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemAc
         let _ = put_back(world, pack, pack_slot, item);
         return Err(ItemActionError::NotEquippable);
     }
+    // 装备可能带生命/法力上限修正（DsnE23），换完重算一次。
+    refresh_player_vitals(world);
     Ok(())
 }
 
@@ -141,6 +144,8 @@ pub fn unequip_to_pack(world: &mut World, body_slot: usize) -> Result<(), ItemAc
         let _ = put_into(world, player, body_slot, taken, def.tags);
         return Err(ItemActionError::NoRoom);
     }
+    // 卸下可能失去上限修正：重算一次，只夹取 current、不回血。
+    refresh_player_vitals(world);
     Ok(())
 }
 
@@ -280,6 +285,7 @@ pub fn take_from_ground(
             world,
             format!("你装备了{}（{}）", def.name, BODY.slots[slot].name),
         );
+        refresh_player_vitals(world);
         return Ok(id);
     }
 
@@ -549,7 +555,7 @@ fn apply_effects(
                 }
             }
             BehaviorEffect::RestoreMagic { amount } => {
-                let Some(mut magic) = world.get_mut::<Magic>(player) else {
+                let Some(mut magic) = world.get_mut::<Mana>(player) else {
                     continue;
                 };
                 if magic.current >= magic.max {

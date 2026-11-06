@@ -1,4 +1,4 @@
-//! 存档 V2：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19 / DsnE22 阶段 ④）。
+//! 存档 V3：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19 / DsnE22 阶段 ④ / DsnE23）。
 //!
 //! 只写"重开一局后无法重算"的状态：`map_seed`、楼层、玩家数值、身体容器树，
 //! 以及物品的**实例差异**（目前是耐久当前值）。地图 / 怪物 / 楼梯 / 地面物品 /
@@ -10,28 +10,32 @@
 //! 世界里有 `Entity` 引用与派生资源；直接 derive 会把它们也变成磁盘契约。
 //! 投影只写"玩家身上发生了什么"，形状小、能读懂、加字段时只需要管 `SAVE_VERSION`。
 //!
-//! # 文件格式（V2）
+//! # 文件格式（V3）
 //!
 //! ```text
-//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端，当前 2）
-//! 载荷：bincode(SaveV2)
-//! SaveV2 { items_schema, map_seed, floor, player: PlayerSave }
-//! PlayerSave { x, y, level, experience, health, magic, magic_mastery,
-//!              body: [Option<ItemSave>] }        // 身体七部位
+//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端，当前 3）
+//! 载荷：bincode(SaveV3)
+//! SaveV3 { items_schema, map_seed, floor, player: PlayerSave }
+//! PlayerSave { x, y, level, experience, health, mana, magic_mastery,
+//!              body: [Option<ItemSave>] }        // 身体七部位；health/mana 只存 current
 //! ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> }
 //! ItemOverrides { durability: Option<f32> }     // 只存玩家行为造成的差异
 //! ```
 //!
 //! 版本放在**文件头**而不是 bincode 载荷里：bincode 1.3 不是自描述格式，
 //! 结构一变旧档解不出来，如果版本在载荷里就永远读不到它，只能报"编码失败"。
-//! 头部先读、版本先判，才能给出"版本 1 不认识（当前 2）"这种可读错误。
+//! 头部先读、版本先判，才能给出"版本 1 不认识（当前 3）"这种可读错误。
+//!
+//! V3 只存 `health.current` / `mana.current`，**上限不存**（DsnE23）：
+//! 上限是"等级曲线 + 装备修正"，读档后按当前规则重算——否则改公式后旧档会
+//! 带着旧上限继续跑，出现"同一件装备两个上限"。
 //!
 //! `items_schema` 是物品数据的 schema 版本：与编译期内嵌的 `assets/items.json`
 //! 不一致时**拒绝读**（MVP 不保证跨内容版本，DsnE22 已拍板），避免把编号按
 //! 新含义解释成另一件物品。
 //!
 //! 读档 = `new_game(map_seed)` → `rebuild_floor`（若楼层 > 1）→ 按蓝图重新装配
-//! 物品实体、再套上实例差异 → 还原玩家数值。
+//! 物品实体、再套上实例差异 → 插回等级/经验 → 重算上限 → 还原 current。
 //! 丢在地上的东西不入档：读档后地面回到 `(seed, floor)` 的初始内容。
 //!
 //! 两个 V1 起就有的取舍（写进 DESIGN DsnE19）：
@@ -43,7 +47,7 @@ use std::path::{Path, PathBuf};
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
-use ecs_core::components::{Experience, Health, Level, Magic, MagicMastery, Position};
+use ecs_core::components::{Experience, Health, Level, Mana, MagicMastery, Position};
 use ecs_core::item::{
     Amount, BODY, Container, Durability, ITEMS_SCHEMA_VERSION, Item, ItemId, ItemTag,
     spawn_item_assembled,
@@ -52,8 +56,8 @@ use ecs_core::resources::{EventLog, EventMessage, FloorNumber, MapMemory, MapSee
 use ecs_core::world::query::player_entity;
 use serde::{Deserialize, Serialize};
 
-/// 当前存档格式版本。V2 = 物品实例差异（耐久）+ 物品数据 schema 校验。
-pub const SAVE_VERSION: u32 = 2;
+/// 当前存档格式版本。V3 = 生命/法力只存 current，上限读档时按 DsnE23 重算。
+pub const SAVE_VERSION: u32 = 3;
 
 /// 存档文件头的魔数：读档第一件事是确认"这确实是我们写的文件"。
 pub const FILE_MAGIC: [u8; 4] = *b"DNSV";
@@ -71,7 +75,7 @@ pub fn default_path() -> PathBuf {
 
 /// 存档根：物品数据版本、种子、楼层、玩家。文件格式版本在文件头里，不在这里。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SaveV2 {
+pub struct SaveV3 {
     /// 写档时 `assets/items.json` 的 schema 版本；读档不一致直接拒绝（MVP 不迁移）。
     pub items_schema: u32,
     /// 本局地图种子（决定所有楼层内容，DsnX17）。
@@ -88,8 +92,10 @@ pub struct PlayerSave {
     pub y: u16,
     pub level: u64,
     pub experience: ExpSave,
-    pub health: VitSave,
-    pub magic: VitSave,
+    /// 当前生命值（上限不入档，读档时按等级曲线 + 装备修正重算，DsnE23）。
+    pub health: f64,
+    /// 当前法力值（同上）。
+    pub mana: f64,
     pub magic_mastery: f64,
     /// 身体七部位的槽位（`None` = 空槽）；行囊在「背包」槽里，递归在 `ItemSave.slots`。
     pub body: Vec<Option<ItemSave>>,
@@ -100,13 +106,6 @@ pub struct PlayerSave {
 pub struct ExpSave {
     pub exp: f64,
     pub exp_to_next: f64,
-}
-
-/// 生命 / 法力：当前值与上限（上限是存档时的值，读档不重算）。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct VitSave {
-    pub current: f64,
-    pub max: f64,
 }
 
 /// 一件物品（以及它作为容器时的子树）。
@@ -181,7 +180,7 @@ pub fn write(world: &World, path: &Path) -> Result<(), SaveError> {
 }
 
 /// 读存档文件。先验文件头（magic + 版本），通过后才解 bincode 载荷。
-pub fn read(path: &Path) -> Result<SaveV2, SaveError> {
+pub fn read(path: &Path) -> Result<SaveV3, SaveError> {
     let bytes = std::fs::read(path).map_err(SaveError::Io)?;
     if bytes.len() < HEADER_LEN || bytes[..4] != FILE_MAGIC {
         return Err(SaveError::Corrupt("不是存档文件（文件头不对）".to_string()));
@@ -190,7 +189,7 @@ pub fn read(path: &Path) -> Result<SaveV2, SaveError> {
     if version != SAVE_VERSION {
         return Err(SaveError::UnsupportedVersion(version));
     }
-    let save: SaveV2 = bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)?;
+    let save: SaveV3 = bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)?;
     if save.items_schema != ITEMS_SCHEMA_VERSION {
         return Err(SaveError::ContentVersion {
             save: save.items_schema,
@@ -201,13 +200,13 @@ pub fn read(path: &Path) -> Result<SaveV2, SaveError> {
 }
 
 /// 从世界抽取存档投影（`write` 的前半段；测试可单独用）。
-pub fn capture(world: &World) -> Result<SaveV2, SaveError> {
+pub fn capture(world: &World) -> Result<SaveV3, SaveError> {
     let player = player_entity(world).ok_or(SaveError::NoPlayer)?;
     let corrupt = |why: &str| SaveError::Corrupt(why.to_string());
 
     let position = *world.get::<Position>(player).ok_or_else(|| corrupt("玩家没有位置"))?;
     let health = *world.get::<Health>(player).ok_or_else(|| corrupt("玩家没有生命"))?;
-    let magic = *world.get::<Magic>(player).ok_or_else(|| corrupt("玩家没有法力"))?;
+    let magic = *world.get::<Mana>(player).ok_or_else(|| corrupt("玩家没有法力"))?;
     let level = world.get::<Level>(player).ok_or_else(|| corrupt("玩家没有等级"))?.0;
     let experience = *world.get::<Experience>(player).ok_or_else(|| corrupt("玩家没有经验"))?;
     let magic_mastery = world
@@ -221,7 +220,7 @@ pub fn capture(world: &World) -> Result<SaveV2, SaveError> {
     let x = u16::try_from(position.x).map_err(|_| corrupt("玩家 x 坐标超出存档范围"))?;
     let y = u16::try_from(position.y).map_err(|_| corrupt("玩家 y 坐标超出存档范围"))?;
 
-    Ok(SaveV2 {
+    Ok(SaveV3 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: world.resource::<MapSeed>().0,
         floor: world.resource::<FloorNumber>().0,
@@ -233,14 +232,8 @@ pub fn capture(world: &World) -> Result<SaveV2, SaveError> {
                 exp: experience.exp,
                 exp_to_next: experience.exp_to_next,
             },
-            health: VitSave {
-                current: health.current,
-                max: health.max,
-            },
-            magic: VitSave {
-                current: magic.current,
-                max: magic.max,
-            },
+            health: health.current,
+            mana: magic.current,
             magic_mastery,
             body: container_to_save(world, body)?,
         },
@@ -303,9 +296,9 @@ fn item_to_save(world: &World, entity: Entity) -> Result<ItemSave, SaveError> {
 
 /// 按存档建一个世界：重新生成该层，再按蓝图装配物品、套实例差异、还原玩家数值。
 ///
-/// 版本校验在 [`read`] 里（文件头 + 物品数据 schema）。这里拿到的 `SaveV2`
+/// 版本校验在 [`read`] 里（文件头 + 物品数据 schema）。这里拿到的 `SaveV3`
 /// 已经是当前版本的形状。
-pub fn restore_to_world(save: &SaveV2) -> Result<World, SaveError> {
+pub fn restore_to_world(save: &SaveV3) -> Result<World, SaveError> {
     let mut world = ecs_core::new_game(save.map_seed);
 
     // 楼层：`new_game` 恒第 1 层。高于 1 层时改资源后重建一次——与 `descend`
@@ -346,13 +339,26 @@ pub fn restore_to_world(save: &SaveV2) -> Result<World, SaveError> {
             save.player.experience.exp,
             save.player.experience.exp_to_next,
         ),
-        Health::full(save.player.health.current, save.player.health.max),
-        Magic {
-            current: save.player.magic.current,
-            max: save.player.magic.max,
-        },
+        // 上限占位：紧接着按当前规则重算（DsnE23 的唯一上限公式）。
+        // 装备已经插回身体（上面 `body`），所以装备修正能算进去。
+        Health::new(1.0),
+        Mana::new(1.0),
         MagicMastery(save.player.magic_mastery),
     ));
+
+    ecs_core::refresh_player_vitals(&mut world);
+    {
+        let mut health = world
+            .get_mut::<Health>(player)
+            .ok_or_else(|| SaveError::Corrupt("读档后玩家没有生命".to_string()))?;
+        health.current = save.player.health.clamp(0.0, health.max);
+    }
+    {
+        let mut mana = world
+            .get_mut::<Mana>(player)
+            .ok_or_else(|| SaveError::Corrupt("读档后玩家没有法力".to_string()))?;
+        mana.current = save.player.mana.clamp(0.0, mana.max);
+    }
 
     // 位置变了：记忆与派生数据按"存档里的位置"重算，别把出生点周围当成探索过。
     world.insert_resource(MapMemory::new());

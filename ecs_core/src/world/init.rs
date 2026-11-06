@@ -7,7 +7,7 @@
 //! 本轮只做首次初始化；下楼（descend）留待后续。
 
 use crate::balance::{
-    PLAYER_ATTACK_SPEED, PLAYER_MOVE_SPEED, exp_to_next_level, max_hp_for, max_mp_for,
+    PLAYER_ATTACK_SPEED, PLAYER_MOVE_SPEED, exp_to_next_level,
 };
 use crate::components::*;
 use crate::entity_cls::*;
@@ -19,7 +19,7 @@ use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
 use crate::monster::{MonsterKindId, attach_abilities, monster_template, roll_one_kind};
 use crate::resources::*;
-use crate::rules::StatId;
+use crate::rules::{StatId, hp_curve, mp_curve};
 use crate::schedule::CoreInitSchedule;
 use crate::system::{
     build_core_schedule, fov_system, rebuild_occupancy_system, update_map_memory_system,
@@ -109,15 +109,16 @@ pub fn generate_map_system(mut map: ResMut<Map>, map_seed: Res<MapSeed>, floor: 
 /// 基础属性从阶段 ②b 起装在一份 `Stats` 里（DsnE22），不再分六个独立组件：
 /// 加属性只改属性词表与这里的装配，不改组件与查询。
 fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
-    let max_hp = max_hp_for(1, 4.0);
-    let max_mp = max_mp_for(1, 8.0);
+    // 上限 = 等级曲线 + 装备/状态修正（DsnE23）。新角色没有修正，就是 Lv.1 基线。
+    let max_hp = hp_curve(1);
+    let max_mp = mp_curve(1);
     (
         Player,
         // 占格是一种能力（`Blocks`）：玩家挡住格子。楼梯不挂它，所以仍可被站上去。
         Blocks,
         Position::new(pos.0, pos.1),
         Health::new(max_hp),
-        Magic::new(max_mp),
+        Mana::new(max_mp),
         Level(1),
         Experience::new(0.0, exp_to_next_level(1)),
         Stats::from_pairs([

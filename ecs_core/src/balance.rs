@@ -8,15 +8,9 @@ pub fn exp_to_next_level(level: u64) -> f64 {
     25.0 * lv.powf(1.5) + 10.0 * lv
 }
 
-/// 最大生命：`20 + level * 5 + defense * 2`。
-pub fn max_hp_for(level: u64, defense: f64) -> f64 {
-    20.0 + level as f64 * 5.0 + defense * 2.0
-}
-
-/// 最大法力：`5 + level * 3 + magic_mastery`。
-pub fn max_mp_for(level: u64, magic_mastery: f64) -> f64 {
-    5.0 + level as f64 * 3.0 + magic_mastery
-}
+// 生命/法力上限公式已迁到 `rules::vitals`（DsnE23）：等级曲线 + 属性修正，
+// 并且只在那里算一次。旧的 `max_hp_for(level, defense)` / `max_mp_for(level, mastery)`
+// 已删除——"防御顺带加血"是半成品口径。
 
 /// 行动耗时基准（AV 毫秒）。
 pub const UNARMED_ATTACK_DURATION: f64 = 300.0;
@@ -34,7 +28,8 @@ pub const FLEE_HP_RATIO_EXIT: f64 = 0.30;
 
 // ── 速度倍率（Phase D / REFACTOR.md §2.6） ───────────────
 //
-// 速度是**倍率组件**（`MoveSpeed` / `AttackSpeed`），`1.0` 为基准，越高越快：
+// 速度是 **Stats 里的属性**（`MOVE_SPEED` / `ATTACK_SPEED`，DsnE22 阶段 ②b），
+// `1.0` 为基准，越高越快：
 //
 // ```text
 // AV = base_duration / speed.clamp(MIN_SPEED, MAX_SPEED)
