@@ -339,7 +339,7 @@ fn the_inventory_detail_describes_the_selected_item() {
         "详情要带注册表里的一句话说明：{lines:?}"
     );
     assert!(
-        lines.iter().any(|line| line.contains(ecs_core::Stat::Attack.label())),
+        lines.iter().any(|line| line.contains(ecs_core::StatId::ATTACK.label())),
         "装备修正要出现在详情里：{lines:?}"
     );
     assert!(

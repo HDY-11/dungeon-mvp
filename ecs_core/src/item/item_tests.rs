@@ -14,7 +14,7 @@ use crate::components::{Health, Position};
 use crate::effect::EffectContext;
 use crate::events::{AttackEvent, AttackIntentEvent};
 use crate::map::Tile;
-use crate::rules::{Stat, apply_modifiers};
+use crate::rules::{StatId, apply_modifiers};
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
 use bevy_ecs::event::Events;
 use bevy_ecs::system::{RunSystemOnce, SystemState};
@@ -94,7 +94,7 @@ fn pack_count(world: &mut World, player: Entity, id: ItemId) -> u32 {
 }
 
 /// 求值侧的有效数值（与 `resolve_attack_system` 用的是同一条路径）。
-fn effective(world: &mut World, actor: Entity, stat: Stat, base: f64) -> f64 {
+fn effective(world: &mut World, actor: Entity, stat: StatId, base: f64) -> f64 {
     let mut state = SystemState::<EffectContext>::new(world);
     let mods = {
         let context = state.get(world);
@@ -301,18 +301,18 @@ fn items_on_other_cells_are_not_picked_up() {
 #[test]
 fn a_weapon_in_the_body_raises_the_effective_attack() {
     let (mut world, player) = open_world();
-    assert_eq!(effective(&mut world, player, Stat::Attack, 8.0), 8.0);
+    assert_eq!(effective(&mut world, player, StatId::ATTACK, 8.0), 8.0);
 
     place(&mut world, (10, 10), ItemId(0), 1);
     pickup(&mut world);
 
     assert_eq!(
-        effective(&mut world, player, Stat::Attack, 8.0),
+        effective(&mut world, player, StatId::ATTACK, 8.0),
         11.0,
         "锈铁剑 +3"
     );
     // 攻击加成**不许**漏进速度。
-    assert_eq!(effective(&mut world, player, Stat::MoveSpeed, 1.0), 1.0);
+    assert_eq!(effective(&mut world, player, StatId::MOVE_SPEED, 1.0), 1.0);
 }
 
 /// 防御加成：皮甲（躯干）→ 有效防御 = 4 + 4。
@@ -322,7 +322,7 @@ fn armor_in_the_body_raises_the_effective_defense() {
     place(&mut world, (10, 10), ItemId(2), 1);
     pickup(&mut world);
 
-    assert_eq!(effective(&mut world, player, Stat::Defense, 4.0), 8.0);
+    assert_eq!(effective(&mut world, player, StatId::DEFENSE, 4.0), 8.0);
 }
 
 /// 多件装备叠加：剑 + 戒指 = +5 攻击（两个不同部位）。
@@ -334,7 +334,7 @@ fn equipment_bonuses_stack_across_slots() {
     place(&mut world, (10, 10), ItemId(3), 1);
     pickup(&mut world);
 
-    assert_eq!(effective(&mut world, player, Stat::Attack, 8.0), 13.0);
+    assert_eq!(effective(&mut world, player, StatId::ATTACK, 8.0), 13.0);
 }
 
 /// 把物品移出身体槽位 → 加成**立刻**消失（槽位是唯一权威，不读副本）。
@@ -343,7 +343,7 @@ fn removing_the_item_from_the_body_removes_its_bonus() {
     let (mut world, player) = open_world();
     place(&mut world, (10, 10), ItemId(0), 1);
     pickup(&mut world);
-    assert_eq!(effective(&mut world, player, Stat::Attack, 8.0), 11.0);
+    assert_eq!(effective(&mut world, player, StatId::ATTACK, 8.0), 11.0);
 
     let sword = body_slot(&world, player, main_hand()).expect("主手有剑");
     world
@@ -351,7 +351,7 @@ fn removing_the_item_from_the_body_removes_its_bonus() {
         .expect("玩家有身体")
         .remove(sword);
 
-    assert_eq!(effective(&mut world, player, Stat::Attack, 8.0), 8.0);
+    assert_eq!(effective(&mut world, player, StatId::ATTACK, 8.0), 8.0);
 }
 
 /// 踏水靴：装进身体后求值侧收到"无视地形"那一桶。

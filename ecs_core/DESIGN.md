@@ -1517,7 +1517,8 @@ BlueprintRegistry (Resource，加载 + 校验)
    保持完全不变。验收：全表加载、校验失败用例、现有测试全绿。
 2. **动态属性**：`StatId` + `StatRegistry` + 稠密 `Stats` + `Modifier.op` 三档；
    迁移现有 4 个属性；求值、详情、HUD 全走注册表。验收：新增一条属性只改数据；
-   未知 StatId 报错；三档 op 求值测试。
+   未知 StatId 报错；三档 op 求值测试。拆成两片：**②a** 属性词表 + 算子（行为零
+   变化，数据 schema 升 2）；**②b** 稠密 `Stats` 组件 + `[min,max]` 夹取。
 3. **行为数据化**：先把蘑菇（Heal）、海藻（RestoreMagic）、踏水靴（ignores
    terrain）迁成 trigger → effects 三个切片；验收：与现有行为逐条等价，事件
    日志文案不变。
@@ -1535,12 +1536,19 @@ BlueprintRegistry (Resource，加载 + 校验)
 
 **状态：** 设计定稿（2026-11-06）。三点已拍板（m05120）。
 阶段 ① 数据外置**已落地**：物品表从 `registry.rs` 的 Rust 字面量搬到
-`ecs_core/assets/items.json`（`schema_version: 1`，`include_str!` 内嵌 + `LazyLock` 首次
-访问时加载），加载器逐行校验（schema 版本、编号严格递增、名字/描述非空、重量有限且
-`(0, 10]`、堆叠上限、装备/容器不可堆叠、攻速与消耗品数值为正、Pack 布局存在、未知字段/
-标签/类型直接报错）；`Stat`/`EffectSource`/`Modifier`/`ItemTag`/`ConsumeEffect` 加 serde
-（`Modifier.multiplier` 省略时中性）。类型形状与行为零变化，`ItemKind` 拆分留给阶段 ②。
-后续按 ①→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
+`ecs_core/assets/items.json`（`include_str!` 内嵌 + `LazyLock` 首次访问时加载），
+加载器逐行校验（schema 版本、编号严格递增、名字/描述非空、重量有限且 `(0, 10]`、
+堆叠上限、装备/容器不可堆叠、攻速与消耗品数值为正、Pack 布局存在、未知字段/
+标签/类型直接报错）；`Stat`/`EffectSource`/`Modifier`/`ItemTag`/`ConsumeEffect` 加 serde。
+阶段 ②a 属性词表**已落地**：新增 `rules/stat.rs`——`StatId(u16)` + 静态
+[`STATS`] 词表（`StatDef { id, name, label, is_ratio, min, max }`，数据里用名字
+序列化、未知名字加载期报错）；`Modifier` 从"两个数值位"改成**一条修正一个算子**
+（`op: Add | MultiplyBase | MultiplyTotal` + `value`），折叠式
+`(base + ΣAdd) × ΠMulBase × ΠMulTotal` 与旧口径逐值等价；数据 schema 升 2
+（`{"stat":"attack","source":"equipment","op":"add","value":3.0}`）；加载器拒绝
+未知属性、非有限修正值、非正乘区因子。当前词表仍在代码里（加属性 = 加一行表 +
+数据引用），把词表迁进数据留给后续阶段。阶段 ②b（稠密 `Stats` + `[min,max]` 夹取）
+待做。后续按 ①→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
 DsnE20（重量）· DsnE19（存档边界，V2 在这里扩展）· DsnE10（Modifier 求值）·

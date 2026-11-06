@@ -134,7 +134,7 @@ fn every_body_slot_has_something_that_fits() {
 
 /// 装备的修正必须**作用于它该作用的那一项**：武器加攻击、防具加防御。
 ///
-/// 反例（这条用例存在的意义）：把皮甲的修正写成 `Stat::Attack`，玩家会变成"穿甲打得疼"，
+/// 反例（这条用例存在的意义）：把皮甲的修正写成 `StatId::ATTACK`，玩家会变成"穿甲打得疼"，
 /// 而所有读取 `Defense` 的地方都看不出问题。
 #[test]
 fn equipment_modifiers_target_the_right_stat() {
@@ -149,9 +149,9 @@ fn equipment_modifiers_target_the_right_stat() {
             .any(|tag| matches!(tag, crate::item::ItemTag::Weapon | crate::item::ItemTag::Ring));
         for modifier in def.modifiers() {
             let expected = if offensive {
-                crate::rules::Stat::Attack
+                crate::rules::StatId::ATTACK
             } else {
-                crate::rules::Stat::Defense
+                crate::rules::StatId::DEFENSE
             };
             if !def.ignores().is_empty() {
                 continue;

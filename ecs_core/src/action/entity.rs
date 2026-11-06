@@ -52,7 +52,7 @@ use crate::events::{ActionFailedEvent, ActionSucceededEvent};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::OccupancyMap;
 use crate::effect::EffectContext;
-use crate::rules::{EffectSource, Modifier, Stat, apply_modifiers};
+use crate::rules::{EffectSource, Modifier, StatId, apply_modifiers};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
@@ -329,11 +329,11 @@ impl SpeedRule {
             // `Move`/`Attack` 是"倍率速度"路径：修正器作用在**速度**上。
             SpeedRule::Move => action_av(
                 base_duration,
-                modifiers.effective(Stat::MoveSpeed, speeds.move_speed, ignored),
+                modifiers.effective(StatId::MOVE_SPEED, speeds.move_speed, ignored),
             ),
             SpeedRule::Attack => action_av(
                 base_duration,
-                modifiers.effective(Stat::AttackSpeed, speeds.attack_speed, ignored),
+                modifiers.effective(StatId::ATTACK_SPEED, speeds.attack_speed, ignored),
             ),
             // `Fixed` 不吃任何速度（REFACTOR.md §11.6 第 4 项），因此也**不读修正器**：
             // 让 `Wait` 受地形减速影响是另一条设计决策，不该由这里顺手决定。
@@ -379,7 +379,7 @@ impl<'a> SpeedModifiers<'a> {
     /// **不在算法层做 clamp**：`clamp_speed` 仍由 `balance::action_av` 负责，
     /// 这里的职责只是把效果折算成"有效速度"这一个数。两处都夹会让
     /// "夹取发生了几次"变得不可读，也会掩盖 `MIN/MAX_SPEED` 的真实作用点。
-    pub fn effective(&self, stat: Stat, base: f64, ignored: &[EffectSource]) -> f64 {
+    pub fn effective(&self, stat: StatId, base: f64, ignored: &[EffectSource]) -> f64 {
         // 两个桶拼成一份列表再折叠："两个数据来源，一个答案"。
         // 用固定容量的小数组避免为每次 AV 计算分配 Vec（生成系统每轮都会调用）。
         match (self.actor.len(), self.cell.len()) {
@@ -1252,8 +1252,8 @@ mod tests {
     #[test]
     fn speed_modifiers_fold_into_the_speed_not_the_av() {
         let mods = [
-            Modifier::delta(Stat::MoveSpeed, EffectSource::Equipment, -0.25),
-            Modifier::scaled(Stat::MoveSpeed, EffectSource::Status, 0.5),
+            Modifier::delta(StatId::MOVE_SPEED, EffectSource::Equipment, -0.25),
+            Modifier::scaled(StatId::MOVE_SPEED, EffectSource::Status, 0.5),
         ];
         let bucket = SpeedModifiers {
             actor: &mods,
@@ -1264,7 +1264,7 @@ mod tests {
             attack_speed: 1.0,
         };
 
-        assert_eq!(bucket.effective(Stat::MoveSpeed, 1.0, &[]), 0.375);
+        assert_eq!(bucket.effective(StatId::MOVE_SPEED, 1.0, &[]), 0.375);
         assert_eq!(
             SpeedRule::Move.action_av(WANDER_DURATION, speeds, bucket),
             WANDER_DURATION / 0.375,
@@ -1278,8 +1278,8 @@ mod tests {
     /// 只有一个被丢掉的来源桶。
     #[test]
     fn ignoring_the_terrain_bucket_changes_the_av_without_any_special_case() {
-        let terrain = [Modifier::delta(Stat::MoveSpeed, EffectSource::Terrain, -0.5)];
-        let boots = [Modifier::delta(Stat::MoveSpeed, EffectSource::Equipment, 0.0)];
+        let terrain = [Modifier::delta(StatId::MOVE_SPEED, EffectSource::Terrain, -0.5)];
+        let boots = [Modifier::delta(StatId::MOVE_SPEED, EffectSource::Equipment, 0.0)];
         let cell = SpeedModifiers {
             actor: &boots,
             cell: &terrain,

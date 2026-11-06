@@ -12,9 +12,12 @@
 //!
 //! # 形状 vs 数据（DsnE22 阶段 ①）
 //!
-//! 这一轮只把**同一张表**从 Rust 字面量搬到数据文件：`ItemDef` / `ItemKind` / `Stat` /
+//! 这一轮只把**同一张表**从 Rust 字面量搬到数据文件：`ItemDef` / `ItemKind` / `StatId` /
 //! `EffectSource` / `ItemTag` 的类型形状不变，因此规则、拾取、界面、存档全部零改动。
 //! 后续阶段才会拆 `ItemKind`（② 属性词表、③ 行为数据化、④ 实例组件 + SaveV2）。
+//!
+//! 阶段 ②a 把修正器改成「一条修正一个算子」（`stat` / `source` / `op` / `value`），
+//! 数据 schema 随之升到 2：旧数据的 `base_delta` 写法不再被接受，加载期直接报错。
 //!
 //! 关键仍然是没有**中央分派**：代码里没有 `match item_id { .. }`，物品的行为由数据上的
 //! 标签/修正/效果决定。
@@ -37,7 +40,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 use crate::item::container::{ContainerDef, ItemTag, TRAVELER_PACK};
-use crate::rules::{EffectSource, Modifier};
+use crate::rules::{EffectSource, Modifier, ModifierOp};
 
 /// 旅者行囊的编号（初始化时给玩家挂一件，DsnE18）。
 pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
@@ -46,7 +49,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 1;
+pub const ITEMS_SCHEMA_VERSION: u32 = 2;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -334,6 +337,26 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             RawKind::Equipment { modifiers, ignores } => {
                 if max_stack != 1 {
                     return Err(format!("{label} 是装备，堆叠上限必须是 1"));
+                }
+                // 修正值必须是有限数；乘区因子还必须是正数（负因子会把"加速"变成
+                // "反向加速"，那属于没想清楚的内容，不该由加载器静默放过）。
+                for modifier in &modifiers {
+                    if !modifier.value.is_finite() {
+                        return Err(format!(
+                            "{label} 的修正值必须是有限数，实得 {}",
+                            modifier.value
+                        ));
+                    }
+                    if matches!(
+                        modifier.op,
+                        ModifierOp::MultiplyBase | ModifierOp::MultiplyTotal
+                    ) && modifier.value <= 0.0
+                    {
+                        return Err(format!(
+                            "{label} 的乘区修正必须是正数，实得 {}",
+                            modifier.value
+                        ));
+                    }
                 }
                 ItemKind::Equipment {
                     modifiers: leak_slice(modifiers),

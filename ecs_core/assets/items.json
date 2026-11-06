@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "items": [
     {
       "id": 0,
@@ -10,7 +10,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "attack", "source": "equipment", "base_delta": 3.0 }
+          { "stat": "attack", "source": "equipment", "op": "add", "value": 3.0 }
         ],
         "ignores": []
       },
@@ -26,7 +26,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "defense", "source": "equipment", "base_delta": 2.0 }
+          { "stat": "defense", "source": "equipment", "op": "add", "value": 2.0 }
         ],
         "ignores": []
       },
@@ -41,7 +41,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "defense", "source": "equipment", "base_delta": 4.0 }
+          { "stat": "defense", "source": "equipment", "op": "add", "value": 4.0 }
         ],
         "ignores": []
       },
@@ -56,7 +56,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "attack", "source": "equipment", "base_delta": 2.0 }
+          { "stat": "attack", "source": "equipment", "op": "add", "value": 2.0 }
         ],
         "ignores": []
       },
@@ -71,7 +71,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "defense", "source": "equipment", "base_delta": 1.0 }
+          { "stat": "defense", "source": "equipment", "op": "add", "value": 1.0 }
         ],
         "ignores": []
       },
@@ -140,7 +140,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "attack", "source": "equipment", "base_delta": 4.0 }
+          { "stat": "attack", "source": "equipment", "op": "add", "value": 4.0 }
         ],
         "ignores": []
       },
@@ -156,7 +156,7 @@
       "kind": {
         "type": "equipment",
         "modifiers": [
-          { "stat": "attack", "source": "equipment", "base_delta": 2.0 }
+          { "stat": "attack", "source": "equipment", "op": "add", "value": 2.0 }
         ],
         "ignores": []
       },

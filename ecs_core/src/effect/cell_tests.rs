@@ -64,8 +64,9 @@ fn neutral_cost_produces_no_modifier() {
     let slow = cell_attributes(&props_with_cost(2.0), None);
     let modifier = cell_speed_modifier(&slow).expect("两倍代价必须产生一条修正");
     assert_eq!(modifier.source, crate::rules::EffectSource::Terrain);
-    assert_eq!(modifier.multiplier, 0.5);
-    assert_eq!(modifier.base_delta, 0.0);
+    assert_eq!(modifier.stat, crate::rules::StatId::MOVE_SPEED);
+    assert_eq!(modifier.op, crate::rules::ModifierOp::MultiplyTotal);
+    assert_eq!(modifier.value, 0.5);
 }
 
 /// 地形自带的移动代价：**逐格钉死**（C5 起只有浅水非中性）。

@@ -169,7 +169,8 @@ fn collect_reads_cell_and_actor_sides_separately() {
         EffectSource::Terrain,
         "格子修正必须属于 Terrain 桶"
     );
-    assert_eq!(collected.cell[0].multiplier, 0.25);
+    assert_eq!(collected.cell[0].op, crate::rules::ModifierOp::MultiplyTotal);
+    assert_eq!(collected.cell[0].value, 0.25);
     assert_eq!(
         collected.ignored,
         vec![EffectSource::Terrain],
@@ -185,14 +186,14 @@ fn collect_reads_cell_and_actor_sides_separately() {
 /// 加任何分支，也没有新的组件类型语义——只是往世界里 spawn 了一个实体。
 #[test]
 fn a_status_effect_entity_contributes_to_the_actor_bucket() {
-    use crate::rules::{Modifier, Stat, apply_modifiers};
+    use crate::rules::{Modifier, StatId, apply_modifiers};
 
     let (mut world, player) = player_scene();
     // 一个"狂暴"：攻击 +7、来自状态效果（Gm5 的数值）。
     let buff = world
         .spawn((
             EffectOf(player),
-            EffectModifier::new(Modifier::delta(Stat::Attack, EffectSource::Status, 7.0)),
+            EffectModifier::new(Modifier::delta(StatId::ATTACK, EffectSource::Status, 7.0)),
         ))
         .id();
     world.run_schedule(crate::schedule::CoreSettleSchedule);
@@ -202,13 +203,13 @@ fn a_status_effect_entity_contributes_to_the_actor_bucket() {
 
     assert_eq!(actor_mods.len(), 1, "一条效果实体贡献一条修正");
     assert_eq!(
-        apply_modifiers(Stat::Attack, 8.0, &actor_mods, &[]),
+        apply_modifiers(StatId::ATTACK, 8.0, &actor_mods, &[]),
         15.0,
         "有效攻击 = 基础 8 + 狂暴 7"
     );
-    // 关键：这条修正**不会**漏进速度（`Stat` 维度的作用）。
+    // 关键：这条修正**不会**漏进速度（`StatId` 维度的作用）。
     assert_eq!(
-        apply_modifiers(Stat::MoveSpeed, 1.25, &actor_mods, &[]),
+        apply_modifiers(StatId::MOVE_SPEED, 1.25, &actor_mods, &[]),
         1.25,
         "攻击类 buff 不得改移速"
     );

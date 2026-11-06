@@ -5,14 +5,14 @@
 //! 1. **空修正器 = 零行为变化**（H8 的验收线）：把现有数值接上求值侧，
 //!    结果必须与没接之前逐值相等，连 NaN/inf 的兜底路径也不例外；
 //! 2. **过滤是数据**：无视某一类来源只影响该桶，"无视"本身不进规则分支；
-//! 3. **选择是数据**（2026-09 物品轮新增）：一条修正只作用于它声明的 `Stat`，
+//! 3. **选择是数据**（2026-09 物品轮新增）：一条修正只作用于它声明的 `StatId`，
 //!    攻击加成绝不混进速度——这条漏了不会报错，只会悄悄把数值算错。
 
 use super::*;
 
-/// 本模块绝大多数用例折算的是移动速度；单独给个短名字，避免每行都写 `Stat::MoveSpeed`
+/// 本模块绝大多数用例折算的是移动速度；单独给个短名字，避免每行都写 `StatId::MOVE_SPEED`
 /// 把"这条用例其实在测什么"淹掉。
-const SPEED: Stat = Stat::MoveSpeed;
+const SPEED: StatId = StatId::MOVE_SPEED;
 
 /// H8 验收：修正器为**空**时 `apply_modifiers` 必须逐值等于 `base`。
 ///
@@ -84,17 +84,35 @@ fn fold_order_is_delta_then_multiplier() {
     assert_eq!(apply_modifiers(SPEED, 1.0, &mods, &[]), 6.0);
 }
 
-/// 一条修正两个位同时生效（`Modifier` 的两个数值字段不是二选一）。
+/// 一条修正只带一个算子——旧实现的"同一条修正两个位"已经拆成两条修正，
+/// 加法与乘区跨修正叠加后结果不变。
 #[test]
-fn a_single_modifier_can_use_both_slots() {
-    let mods = [Modifier {
-        stat: SPEED,
-        source: EffectSource::Equipment,
-        base_delta: -1.0,
-        multiplier: 0.5,
-    }];
+fn add_and_multiply_compose_across_modifiers() {
+    let mods = [
+        Modifier::delta(SPEED, EffectSource::Equipment, -1.0),
+        Modifier::scaled(SPEED, EffectSource::Status, 0.5),
+    ];
     // (1.25 - 1.0) × 0.5 = 0.125（取值全为二进制可精确表示的数）
     assert_eq!(apply_modifiers(SPEED, 1.25, &mods, &[]), 0.125);
+}
+
+/// 两个乘区各自成积，并且都乘在"base + 加法汇总"之后。
+///
+/// `(2.0 + 1.0) × 3.0 × 0.5 = 4.5`——把"基础乘区"与"总乘区"分开的意义在于：
+/// 将来可以写"种族天性 ×3"而不与"总乘区 ×0.5"互相干扰；当前内容只用总乘区。
+#[test]
+fn the_two_multiplier_regions_compose_as_products() {
+    let mods = [
+        Modifier::delta(SPEED, EffectSource::Equipment, 1.0),
+        Modifier {
+            stat: SPEED,
+            source: EffectSource::Intrinsic,
+            op: ModifierOp::MultiplyBase,
+            value: 3.0,
+        },
+        Modifier::scaled(SPEED, EffectSource::Status, 0.5),
+    ];
+    assert_eq!(apply_modifiers(SPEED, 2.0, &mods, &[]), 4.5);
 }
 
 /// **"无视某类" = 丢掉那一桶**（DsnE10 第 ③ 步），只影响被无视的来源。
@@ -186,12 +204,12 @@ fn evaluate_reports_what_was_applied_and_what_was_ignored() {
 #[test]
 fn a_modifier_only_affects_the_stat_it_declares() {
     let mods = [
-        Modifier::delta(Stat::Attack, EffectSource::Equipment, 3.0),
+        Modifier::delta(StatId::ATTACK, EffectSource::Equipment, 3.0),
         Modifier::delta(SPEED, EffectSource::Equipment, -0.25),
     ];
 
     assert_eq!(
-        apply_modifiers(Stat::Attack, 8.0, &mods, &[]),
+        apply_modifiers(StatId::ATTACK, 8.0, &mods, &[]),
         11.0,
         "攻击吃攻击那一条"
     );
@@ -201,13 +219,13 @@ fn a_modifier_only_affects_the_stat_it_declares() {
         "速度只吃速度那一条，绝不把攻击的 +3 也算进来"
     );
     assert_eq!(
-        apply_modifiers(Stat::Defense, 4.0, &mods, &[]),
+        apply_modifiers(StatId::DEFENSE, 4.0, &mods, &[]),
         4.0,
         "没有任何一条作用于防御 → 逐值等于 base"
     );
 }
 
-/// `Stat` 与 `EffectSource` 是**正交**的两维：无视一个来源只丢那个来源，
+/// `StatId` 与 `EffectSource` 是**正交**的两维：无视一个来源只丢那个来源，
 /// 不会顺手丢掉"同一来源作用于别的项"的修正。
 ///
 /// 反例（这条用例存在的意义）：若有人把"无视地形"实现成"丢掉列表里第一段满足
@@ -216,7 +234,7 @@ fn a_modifier_only_affects_the_stat_it_declares() {
 fn source_filtering_and_stat_selection_do_not_interfere() {
     let mods = [
         Modifier::delta(SPEED, EffectSource::Terrain, -0.5),
-        Modifier::delta(Stat::Attack, EffectSource::Terrain, 2.0),
+        Modifier::delta(StatId::ATTACK, EffectSource::Terrain, 2.0),
         Modifier::delta(SPEED, EffectSource::Equipment, 0.25),
     ];
 
@@ -227,7 +245,7 @@ fn source_filtering_and_stat_selection_do_not_interfere() {
     );
     // 同一份 `ignored` 作用在攻击上：攻击的地形加成也被丢掉。
     assert_eq!(
-        apply_modifiers(Stat::Attack, 8.0, &mods, &[EffectSource::Terrain]),
+        apply_modifiers(StatId::ATTACK, 8.0, &mods, &[EffectSource::Terrain]),
         8.0
     );
 }
@@ -236,15 +254,15 @@ fn source_filtering_and_stat_selection_do_not_interfere() {
 #[test]
 fn for_stat_and_the_fold_agree_on_what_is_relevant() {
     let mods = [
-        Modifier::delta(Stat::Attack, EffectSource::Equipment, 3.0),
-        Modifier::scaled(Stat::Attack, EffectSource::Status, 1.5),
+        Modifier::delta(StatId::ATTACK, EffectSource::Equipment, 3.0),
+        Modifier::scaled(StatId::ATTACK, EffectSource::Status, 1.5),
         Modifier::delta(SPEED, EffectSource::Terrain, -0.5),
     ];
 
-    let selected: Vec<&Modifier> = for_stat(&mods, Stat::Attack).collect();
+    let selected: Vec<&Modifier> = for_stat(&mods, StatId::ATTACK).collect();
     assert_eq!(selected.len(), 2, "两条作用于攻击");
     assert_eq!(
-        evaluate_modifiers(Stat::Attack, 10.0, &mods, &[]).relevant,
+        evaluate_modifiers(StatId::ATTACK, 10.0, &mods, &[]).relevant,
         selected.len(),
         "分解读数里的 relevant 必须与 for_stat 一致"
     );
@@ -257,23 +275,25 @@ fn for_stat_and_the_fold_agree_on_what_is_relevant() {
 #[test]
 fn modifiers_describe_themselves() {
     assert_eq!(
-        Modifier::delta(Stat::Attack, EffectSource::Equipment, 1.0).describe(),
+        Modifier::delta(StatId::ATTACK, EffectSource::Equipment, 1.0).describe(),
         "攻击 +1"
     );
     assert_eq!(
-        Modifier::scaled(Stat::MoveSpeed, EffectSource::Terrain, 0.8).describe(),
+        Modifier::scaled(StatId::MOVE_SPEED, EffectSource::Terrain, 0.8).describe(),
         "移动速度 ×0.8"
     );
-    let both = Modifier {
-        stat: Stat::AttackSpeed,
-        source: EffectSource::Equipment,
-        base_delta: -2.0,
-        multiplier: 1.25,
-    };
-    assert_eq!(both.describe(), "攻击速度 -2 ×1.25");
-    // 两个位都中性时也要有可见的文字，避免详情里出现只有属性名的空行。
+    // 一个算子一个字段：加法与乘区各自描述自己那一位，不再拼在一行里。
     assert_eq!(
-        Modifier::delta(Stat::Defense, EffectSource::Equipment, 0.0).describe(),
+        Modifier::delta(StatId::ATTACK_SPEED, EffectSource::Equipment, -2.0).describe(),
+        "攻击速度 -2"
+    );
+    assert_eq!(
+        Modifier::scaled(StatId::ATTACK_SPEED, EffectSource::Equipment, 1.25).describe(),
+        "攻击速度 ×1.25"
+    );
+    // 中性值也要有可见文字，避免详情里出现只有属性名的空行。
+    assert_eq!(
+        Modifier::delta(StatId::DEFENSE, EffectSource::Equipment, 0.0).describe(),
         "防御 +0"
     );
 }
