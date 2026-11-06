@@ -770,12 +770,13 @@ fn kinds(world: &mut World) -> BTreeMap<String, usize> {
 }
 
 fn stat(world: &World, entity: Entity, which: &str) -> f64 {
+    let Some(stats) = world.get::<ecs_core::Stats>(entity) else {
+        return 0.0;
+    };
     match which {
-        "attack" => world.get::<ecs_core::Attack>(entity).map_or(0.0, |a| a.0),
-        "defense" => world.get::<ecs_core::Defense>(entity).map_or(0.0, |d| d.0),
-        "speed" => world
-            .get::<ecs_core::MoveSpeed>(entity)
-            .map_or(0.0, |s| s.0),
+        "attack" => stats.get(ecs_core::StatId::ATTACK),
+        "defense" => stats.get(ecs_core::StatId::DEFENSE),
+        "speed" => stats.get(ecs_core::StatId::MOVE_SPEED),
         _ => 0.0,
     }
 }

@@ -159,58 +159,90 @@ impl Experience {
 pub struct ExperienceReward(pub f64);
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Attack(pub f64);
-
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Defense(pub f64);
-
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct MagicMastery(pub f64);
 
-/// 移动速度倍率（Phase D / REFACTOR.md §2.6）：`1.0` 为基准，越高越快。
-///
-/// 作用于 `Move` / `Chase` / `Flee` / `Wander` 四类行动：
-/// `AV = base_duration / MoveSpeed`（clamp 见 [`crate::balance::MIN_SPEED`]）。
-/// 地形/负重/Buff 未来通过增删或改写这个组件影响移动节奏，
-/// 不需要再挤进一个聚合的“敏捷”数值。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct MoveSpeed(pub f64);
+// ── 动态属性（DsnE22 阶段 ②b） ──────────────────────
 
-/// 攻击速度倍率（Phase D / REFACTOR.md §2.6）：`1.0` 为基准，越高越快。
+/// actor 的**基础属性值**：按 [`StatId`] 稠密存放，是求值五步的 ① base。
 ///
-/// 作用于 `BasicAttack`：`AV = UNARMED_ATTACK_DURATION / AttackSpeed`。
-/// 武器攻速（I67）未来接到这里，不改生成/执行链路。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct AttackSpeed(pub f64);
-
-/// 两个速度组件的装配束：**只是打包，不是新组件**。
+/// # 为什么不是"每属性一个组件"
 ///
-/// 玩家组件束已经到 16 个元素，而 bevy_ecs 0.16 的元组 `Bundle` 只实现到
-/// **15** 元（`bevy_ecs/src/bundle.rs` 的 `all_tuples!(tuple_impl, 0, 15, B)`），
-/// 再加两个组件直接编译失败。用 derive 出来的具名 Bundle 打包，可以把
-/// 「一个实体上的组件数」和「元组元数上限」解耦——实体上仍然挂着两个
-/// 独立组件（`MoveSpeed` / `AttackSpeed`），查询照旧。
-#[derive(Bundle, Debug, Clone, Copy)]
-pub struct Speed {
-    pub move_speed: MoveSpeed,
-    pub attack_speed: AttackSpeed,
+/// 阶段 ② 之前，攻击/防御/移动速度/攻击速度/暴击率/暴击伤害是六个独立组件。
+/// 每加一项属性都要加组件、加查询、改所有生成点；属性是长尾内容，这条成本线会
+/// 一直涨。现在换成一份稠密表：`get(StatId) -> f64` / `set(StatId, value)`，
+/// 加属性只改词表（`rules/stat.rs`）与数据，查询与系统不动。
+///
+/// # 区间
+///
+/// [`Stats::set`] 按词表里的 `[min, max]` 夹取，并忽略 NaN——属性的合法区间是
+/// **数据**（DsnE22 已拍板），夹取只有这一处，避免每个写入点各自 clamp。
+/// `get` 返回的就是已夹取过的值；派生值（修正折叠后）不在本结构的职责内，
+/// 它们由规则层与 `balance` 的 clamp 负责。
+///
+/// # 与"物品实体上的 Stats"的关系
+///
+/// 同一套词表将来既服务 actor 也服务物品实例（DsnE22 决策 3）。本阶段先落 actor
+/// 侧：物品的加成仍走 `Modifier`，物品的基础值还不是数值（阶段 ③/④ 再迁）。
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Stats {
+    /// 按 `StatId.0` 下标存放，长度 = `STATS.len()`。
+    values: Vec<f64>,
 }
 
-impl Speed {
-    /// 移动与攻击同速（基准 `1.0`）。
-    pub const fn uniform(speed: f64) -> Self {
+impl Stats {
+    /// 全默认值（默认值来自词表 [`crate::rules::STATS`]）。
+    pub fn new() -> Self {
         Self {
-            move_speed: MoveSpeed(speed),
-            attack_speed: AttackSpeed(speed),
+            values: crate::rules::STATS.iter().map(|def| def.default).collect(),
         }
+    }
+
+    /// 从若干 `(属性, 基础值)` 对构造；未列出的属性用词表默认值。
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (crate::rules::StatId, f64)>) -> Self {
+        let mut stats = Self::new();
+        for (stat, value) in pairs {
+            stats.set(stat, value);
+        }
+        stats
+    }
+
+    /// 读一项属性（值已按词表区间夹取过）。
+    pub fn get(&self, stat: crate::rules::StatId) -> f64 {
+        let def = stat.def();
+        self.values
+            .get(stat.0 as usize)
+            .copied()
+            .unwrap_or(def.default)
+    }
+
+    /// 写一项属性：非有限值中的 NaN 被忽略，其余按 `[min, max]` 夹取。
+    ///
+    /// 忽略 NaN 而不是夹成 min：NaN 是"谁都没想到的写法"，静默变成 0 会掩盖 bug；
+    /// 保留旧值至少让行为可解释，测试也能直接断言这条口径。
+    pub fn set(&mut self, stat: crate::rules::StatId, value: f64) {
+        if value.is_nan() {
+            return;
+        }
+        let def = stat.def();
+        let index = stat.0 as usize;
+        if index >= self.values.len() {
+            self.values.resize(index + 1, def.default);
+        }
+        self.values[index] = value.clamp(def.min, def.max);
+    }
+
+    /// 链式构造：`Stats::new().with(StatId::ATTACK, 8.0)`。
+    pub fn with(mut self, stat: crate::rules::StatId, value: f64) -> Self {
+        self.set(stat, value);
+        self
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct CritRate(pub f64);
-
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct CritDamage(pub f64);
+impl Default for Stats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ── 通用数据组件 ─────────────────────────────────────
 
@@ -345,3 +377,7 @@ pub struct Wander;
 /// 标记与"玩家关注了谁"是两件事：关注集属于 UI 状态（`PageStack`），不写进世界。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Observable;
+
+#[cfg(test)]
+#[path = "components_tests.rs"]
+mod tests;

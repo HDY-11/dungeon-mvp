@@ -19,6 +19,7 @@ use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
 use crate::monster::{MonsterKindId, attach_abilities, monster_template, roll_one_kind};
 use crate::resources::*;
+use crate::rules::StatId;
 use crate::schedule::CoreInitSchedule;
 use crate::system::{
     build_core_schedule, fov_system, rebuild_occupancy_system, update_map_memory_system,
@@ -105,10 +106,8 @@ pub fn generate_map_system(mut map: ResMut<Map>, map_seed: Res<MapSeed>, floor: 
 
 /// 玩家初始组件束。
 ///
-/// **注意元组元数上限**：bevy_ecs 0.16 的元组 `Bundle` 只实现到 15 元
-/// （`all_tuples!(tuple_impl, 0, 15, B)`），所以基础束必须留在 15 个元素以内；
-/// 需要更多组件时不能往元组里加，要先打包成具名 Bundle
-/// （见 [`crate::components::Speed`]）或拆成两次 `insert`。
+/// 基础属性从阶段 ②b 起装在一份 `Stats` 里（DsnE22），不再分六个独立组件：
+/// 加属性只改属性词表与这里的装配，不改组件与查询。
 fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
     let max_hp = max_hp_for(1, 4.0);
     let max_mp = max_mp_for(1, 8.0);
@@ -121,15 +120,15 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
         Magic::new(max_mp),
         Level(1),
         Experience::new(0.0, exp_to_next_level(1)),
-        Attack(8.0),
-        Defense(4.0),
+        Stats::from_pairs([
+            (StatId::ATTACK, 8.0),
+            (StatId::DEFENSE, 4.0),
+            (StatId::MOVE_SPEED, PLAYER_MOVE_SPEED),
+            (StatId::ATTACK_SPEED, PLAYER_ATTACK_SPEED),
+            (StatId::CRIT_RATE, 0.05),
+            (StatId::CRIT_DAMAGE, 0.50),
+        ]),
         MagicMastery(8.0),
-        Speed {
-            move_speed: MoveSpeed(PLAYER_MOVE_SPEED),
-            attack_speed: AttackSpeed(PLAYER_ATTACK_SPEED),
-        },
-        CritRate(0.05),
-        CritDamage(0.50),
         EntityName("冒险者".into()),
     )
 }
@@ -355,15 +354,8 @@ fn monster_base_bundle(
         stats.health,
         Level(stats.level),
         stats.experience_reward,
-        stats.attack,
-        stats.defense,
+        stats.stats,
         stats.magic_mastery,
-        Speed {
-            move_speed: stats.move_speed,
-            attack_speed: stats.attack_speed,
-        },
-        stats.crit_rate,
-        stats.crit_damage,
     )
 }
 

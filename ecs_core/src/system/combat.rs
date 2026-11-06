@@ -25,7 +25,7 @@ use bevy_ecs::prelude::*;
 ///
 /// # 装备加成在哪一步生效
 ///
-/// 读的是**有效**攻击/防御：`Attack` 组件是基础值，装备带来的修正由
+/// 读的是**有效**攻击/防御：`Stats` 里的基础值，装备带来的修正由
 /// [`EffectContext::collect_actor`] 收成一份 `&[Modifier]`，再按 [`StatId::ATTACK`] /
 /// [`StatId::DEFENSE`] 折叠（求值五步的第 ②–⑤ 步）。所以"一把 +3 的剑"与"一条 +3 的
 /// buff"在规则层完全同构，这里不需要知道加成从哪来。
@@ -35,9 +35,7 @@ use bevy_ecs::prelude::*;
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_system(
     mut attack_intents: EventReader<AttackIntentEvent>,
-    attacks: Query<&Attack>,
-    defenses: Query<&Defense>,
-    crits: Query<(&CritRate, &CritDamage)>,
+    stats: Query<&Stats>,
     names: Query<&EntityName>,
     effects: EffectContext,
     mut rng: ResMut<GameRng>,
@@ -47,13 +45,23 @@ pub fn resolve_attack_system(
     for intent in attack_intents.read() {
         let attacker_mods = effects.collect_actor(intent.attacker);
         let defender_mods = effects.collect_actor(intent.target);
-        let base_attack = attacks.get(intent.attacker).map(|a| a.0).unwrap_or(0.0);
-        let base_defense = defenses.get(intent.target).map(|d| d.0).unwrap_or(0.0);
+        let attacker_stats = stats.get(intent.attacker).ok();
+        let defender_stats = stats.get(intent.target).ok();
+        let base_attack = attacker_stats
+            .map(|s| s.get(StatId::ATTACK))
+            .unwrap_or(0.0);
+        let base_defense = defender_stats
+            .map(|s| s.get(StatId::DEFENSE))
+            .unwrap_or(0.0);
         let attack = apply_modifiers(StatId::ATTACK, base_attack, &attacker_mods, &[]);
         let defense = apply_modifiers(StatId::DEFENSE, base_defense, &defender_mods, &[]);
-        let (crit_rate, crit_damage) = crits
-            .get(intent.attacker)
-            .map(|(r, d)| (r.0, d.0))
+        let (crit_rate, crit_damage) = attacker_stats
+            .map(|s| {
+                (
+                    s.get(StatId::CRIT_RATE),
+                    s.get(StatId::CRIT_DAMAGE),
+                )
+            })
             .unwrap_or((0.0, 0.0));
         let crit_roll = rng.random_f64();
         let result = compute_melee_damage(attack, defense, crit_rate, crit_damage, crit_roll);

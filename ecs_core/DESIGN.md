@@ -1541,14 +1541,20 @@ BlueprintRegistry (Resource，加载 + 校验)
 堆叠上限、装备/容器不可堆叠、攻速与消耗品数值为正、Pack 布局存在、未知字段/
 标签/类型直接报错）；`Stat`/`EffectSource`/`Modifier`/`ItemTag`/`ConsumeEffect` 加 serde。
 阶段 ②a 属性词表**已落地**：新增 `rules/stat.rs`——`StatId(u16)` + 静态
-[`STATS`] 词表（`StatDef { id, name, label, is_ratio, min, max }`，数据里用名字
+[`STATS`] 词表（`StatDef { id, name, label, is_ratio, min, max, default }`，数据里用名字
 序列化、未知名字加载期报错）；`Modifier` 从"两个数值位"改成**一条修正一个算子**
 （`op: Add | MultiplyBase | MultiplyTotal` + `value`），折叠式
 `(base + ΣAdd) × ΠMulBase × ΠMulTotal` 与旧口径逐值等价；数据 schema 升 2
 （`{"stat":"attack","source":"equipment","op":"add","value":3.0}`）；加载器拒绝
 未知属性、非有限修正值、非正乘区因子。当前词表仍在代码里（加属性 = 加一行表 +
-数据引用），把词表迁进数据留给后续阶段。阶段 ②b（稠密 `Stats` + `[min,max]` 夹取）
-待做。后续按 ①→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
+数据引用），把词表迁进数据留给后续阶段。阶段 ②b 稠密属性表**已落地**：六个独立组件
+（`Attack`/`Defense`/`MoveSpeed`/`AttackSpeed`/`CritRate`/`CritDamage`）并成一份
+`Stats` 组件（按 `StatId` 下标稠密存放，`get`/`set`/`from_pairs`/`with`）；词表补
+`crit_rate`（[0,1]）与 `crit_damage`（[0,10]，是暴击伤害**加成**）、每项加 `default`
+（未装配基准）；`set` 是唯一的夹取缝（忽略 NaN，其余按 `[min,max]` clamp）。
+生成点（玩家/怪物/测试/驱动器）与读取点（战斗、经验、行动速度、HUD）全部改走
+`Stats`；物品的数值加成仍走 `Modifier`（阶段 ③/④ 再迁物品基础值）。
+后续按 ③→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
 DsnE20（重量）· DsnE19（存档边界，V2 在这里扩展）· DsnE10（Modifier 求值）·

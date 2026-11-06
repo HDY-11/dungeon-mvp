@@ -107,9 +107,14 @@ fn stats_expose_template_speeds() {
     for kind in ALL_KINDS {
         let template = monster_template(kind);
         let stats = template.stats(3);
-        assert_eq!(stats.move_speed.0, template.speeds.move_speed, "{kind:?}");
         assert_eq!(
-            stats.attack_speed.0, template.speeds.attack_speed,
+            stats.stats.get(crate::rules::StatId::MOVE_SPEED),
+            template.speeds.move_speed,
+            "{kind:?}"
+        );
+        assert_eq!(
+            stats.stats.get(crate::rules::StatId::ATTACK_SPEED),
+            template.speeds.attack_speed,
             "{kind:?}"
         );
     }

@@ -9,7 +9,7 @@
 //!   [`crate::world_loop::new_game`]。
 //! - [`spawn_test_actor`] 只给最小组件束，能力组件不默认插入——测试按需
 //!   `world.entity_mut(e).insert(CanWander)`，避免“悄悄授予能力”掩盖断言。
-//! - 速度按 Phase D 的 `MoveSpeed` / `AttackSpeed` 显式传入（基准 `1.0`），
+//! - 速度按 `Stats` 里的 `MOVE_SPEED` / `ATTACK_SPEED` 显式传入（基准 `1.0`），
 //!   不再经由旧敏捷换算——测试要断言的是「速度 → AV」本身，
 //!   中间隔一层已删除的敏捷公式只会让断言失去意义。
 //! - [`world_snapshot`] 给确定性测试用全量快照，比较用 `assert_eq!` 即可。
@@ -19,6 +19,7 @@ use crate::entity_cls::{Monster, Player, Stairs};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, Tile};
 use crate::monster::MonsterKindId;
 use crate::resources::OccupancyMap;
+use crate::rules::StatId;
 use crate::world::init::{WorldInitConfig, insert_core_resources};
 use bevy_ecs::prelude::*;
 
@@ -136,9 +137,11 @@ pub fn single_tile_scene() -> (World, Entity) {
     (world, player)
 }
 
-/// 最小行动者组件束：位置 / 生命 / 攻防 / 速度 / 暴击 / 命名。
+/// 最小行动者组件束：位置 / 生命 / 基础属性（攻防速暴）/ 命名。
 ///
 /// 不插入 `Idle`、不插入任何 `Can*`：行动状态与能力由测试自己给。
+/// 基础属性从 DsnE22 阶段 ②b 起装在一份 `Stats` 里——要改某项数值，
+/// 用 `world.get_mut::<Stats>(entity)` 调 `set`，不要再插入新组件。
 pub fn spawn_test_actor(
     world: &mut World,
     pos: (usize, usize),
@@ -152,26 +155,27 @@ pub fn spawn_test_actor(
             Blocks,
             Position::new(pos.0, pos.1),
             Health::new(hp),
-            Attack(attack),
-            Defense(0.0),
-            MoveSpeed(move_speed),
-            AttackSpeed(attack_speed),
-            CritRate(0.0),
-            CritDamage(0.0),
+            Stats::from_pairs([
+                (StatId::ATTACK, attack),
+                (StatId::MOVE_SPEED, move_speed),
+                (StatId::ATTACK_SPEED, attack_speed),
+            ]),
             EntityName("测试目标".into()),
         ))
         .id()
 }
 
-/// 最小玩家组件束：`spawn_test_actor` + `Player` + 升级链路所需的完整数值组件。
+/// 最小玩家组件束：`spawn_test_actor` + `Player` + 升级链路所需的完整数值。
 ///
-/// 特意带齐 `Defense` / `MagicMastery`：`apply_exp_system` 升级时会用它们重算
-/// HP/MP 上限，缺组件会让测试静默跳过升级。
+/// 特意带齐防御 / `MagicMastery`：`apply_exp_system` 升级时会用它们重算
+/// HP/MP 上限，缺数值会让测试静默跳过升级。
 pub fn spawn_test_player(world: &mut World, pos: (usize, usize)) -> Entity {
     let entity = spawn_test_actor(world, pos, 100.0, 10.0, 1.0, 1.0);
+    if let Some(mut stats) = world.get_mut::<Stats>(entity) {
+        stats.set(StatId::DEFENSE, 4.0);
+    }
     world.entity_mut(entity).insert((
         Player,
-        Defense(4.0),
         MagicMastery(8.0),
         Magic::new(20.0),
         Level(1),
@@ -184,7 +188,7 @@ pub fn spawn_test_player(world: &mut World, pos: (usize, usize)) -> Entity {
 /// 最小怪物组件束：`spawn_test_actor` + `Monster` + 怪物种类身份。
 ///
 /// 速度固定为基准 `1.0`（移动/攻击同速）：绝大多数用例不关心节奏，
-/// 需要特定速度的用例自己 `insert(MoveSpeed(..))` 覆盖。
+/// 需要特定速度的用例自己改 `Stats`（`get_mut::<Stats>(e).set(..)`）。
 pub fn spawn_test_monster(
     world: &mut World,
     kind: MonsterKindId,
@@ -212,8 +216,8 @@ pub fn kill_entity(world: &mut World, attacker: Entity, target: Entity) -> bool 
             return true;
         }
         let damage = 100.0 * 10f64.powi(attempt as i32);
-        if let Some(mut attack) = world.get_mut::<Attack>(attacker) {
-            attack.0 = damage;
+        if let Some(mut stats) = world.get_mut::<Stats>(attacker) {
+            stats.set(StatId::ATTACK, damage);
         }
         world
             .resource_mut::<bevy_ecs::event::Events<AttackIntentEvent>>()
@@ -283,9 +287,7 @@ fn collect_monster_snapshots(world: &World) -> Vec<MonsterSnapshot> {
             &MonsterKindId,
             &Position,
             &Health,
-            &Attack,
-            &MoveSpeed,
-            &AttackSpeed,
+            &Stats,
             Option<&Level>,
             Option<&ExperienceReward>,
         )>()
@@ -293,18 +295,16 @@ fn collect_monster_snapshots(world: &World) -> Vec<MonsterSnapshot> {
 
     let mut monsters: Vec<MonsterSnapshot> = query
         .iter(world)
-        .map(
-            |(kind, pos, health, attack, move_speed, attack_speed, level, reward)| MonsterSnapshot {
-                kind: *kind,
-                pos: pos.to_tuple(),
-                hp: (health.current, health.max),
-                attack: attack.0,
-                move_speed: move_speed.0,
-                attack_speed: attack_speed.0,
-                level: level.map(|l| l.0).unwrap_or(0),
-                exp_reward: reward.map(|r| r.0).unwrap_or(0.0),
-            },
-        )
+        .map(|(kind, pos, health, stats, level, reward)| MonsterSnapshot {
+            kind: *kind,
+            pos: pos.to_tuple(),
+            hp: (health.current, health.max),
+            attack: stats.get(StatId::ATTACK),
+            move_speed: stats.get(StatId::MOVE_SPEED),
+            attack_speed: stats.get(StatId::ATTACK_SPEED),
+            level: level.map(|l| l.0).unwrap_or(0),
+            exp_reward: reward.map(|r| r.0).unwrap_or(0.0),
+        })
         .collect();
     monsters.sort_by(|a, b| {
         (a.pos, a.kind, a.attack.to_bits()).cmp(&(b.pos, b.kind, b.attack.to_bits()))

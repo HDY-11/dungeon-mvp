@@ -186,7 +186,9 @@ fn player_defeats_an_adjacent_monster() {
         pos.y = py;
     }
     world.resource_mut::<Map>().tiles[py][px + 1] = Tile::Floor;
-    world.entity_mut(target).insert((Health::new(6.0), ecs_core::Defense(0.0)));
+    world
+        .entity_mut(target)
+        .insert((Health::new(6.0), ecs_core::Stats::new()));
     // 关键：玩家行动生成读的是占用图，手工搬动实体后必须重建，
     // 否则“走向怪物格”不会被识别为攻击声明（只是失败的移动）。
     ecs_core::system::run_settle_systems(&mut world);
@@ -325,7 +327,10 @@ fn player_death_ends_the_game() {
         health.current = 1.0;
         health.max = 1.0;
     }
-    world.entity_mut(player).insert(ecs_core::MoveSpeed(0.25));
+    world
+        .get_mut::<ecs_core::Stats>(player)
+        .expect("玩家必须有 Stats")
+        .set(ecs_core::StatId::MOVE_SPEED, 0.25);
 
     let monster = {
         let mut query = world
@@ -343,7 +348,10 @@ fn player_death_ends_the_game() {
     // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
     // 速度改成**下限** `MIN_SPEED`：玩家的 AV 被拉到最长（800ms 等待 ×4），
     // 怪物一定先手，用最少的轮数钉住「怪物先动手」这一前提。
-    world.entity_mut(monster).insert(ecs_core::MoveSpeed(ecs_core::MIN_SPEED));
+    world
+        .get_mut::<ecs_core::Stats>(monster)
+        .expect("怪物必须有 Stats")
+        .set(ecs_core::StatId::MOVE_SPEED, ecs_core::MIN_SPEED);
     // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
     ecs_core::system::run_settle_systems(&mut world);
 

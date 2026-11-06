@@ -43,9 +43,8 @@ use crate::balance::{
     WANDER_DURATION, action_av,
 };
 use crate::components::{
-    ActionTimer, Active, AttackSpeed, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase,
-    Failure, Flee, Health, Idle, LastKnownPlayerPos, Move, MoveSpeed, Position, Ready, Viewshed,
-    Wait, Wander,
+    ActionTimer, Active, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase, Failure, Flee,
+    Health, Idle, LastKnownPlayerPos, Move, Position, Ready, Stats, Viewshed, Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent};
@@ -80,18 +79,13 @@ type AiActor<C> = (
     Or<(With<Idle>, With<Failure>)>,
 );
 
-/// 玩家路径的 actor 数据：实体 id + 位置 + 两个速度。
-type PlayerActorData = (
-    Entity,
-    &'static Position,
-    Option<&'static MoveSpeed>,
-    Option<&'static AttackSpeed>,
-);
+/// 玩家路径的 actor 数据：实体 id + 位置 + 基础属性（速度在 `Stats` 里）。
+type PlayerActorData = (Entity, &'static Position, Option<&'static Stats>);
 
-/// 一个 AI actor 的数据：实体 id + 移动速度 + 所在格。
+/// 一个 AI actor 的数据：实体 id + 基础属性 + 所在格。
 ///
-/// 用 `Option<&MoveSpeed>` 而不是必需组件——理由见 [`actor_speeds`]：
-/// 必需组件会让漏挂速度的 actor 直接从查询里消失（LESSONS.md LECS21）。
+/// 用 `Option<&Stats>` 而不是必需组件——理由见 [`actor_speeds`]：
+/// 必需组件会让漏挂属性的 actor 直接从查询里消失（LESSONS.md LECS21）。
 ///
 /// `&Position` 是 `&'static`（必需）：收桶要读**脚下这一格的**修正（`EffectContext::collect`），
 /// 没有位置就没有格子可言。缺位置的 actor 本来也无法执行移动类行动，
@@ -99,7 +93,7 @@ type PlayerActorData = (
 ///
 /// `With<C>` / `Without<Active>` / `Or<..>` 是 **filter**，不能写进数据元组，
 /// 所以必须与 [`AiActor`] 一起作为 `Query` 的两个泛型参数给出去。
-type AiActorData = (Entity, Option<&'static MoveSpeed>, &'static Position);
+type AiActorData = (Entity, Option<&'static Stats>, &'static Position);
 
 /// 仲裁的输入：尚未激活的候选（优先级 + 归属）。
 ///
@@ -281,9 +275,9 @@ impl ActionName {
 /// 也就不存在「固定耗时却读了某个速度」的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpeedRule {
-    /// 读 `MoveSpeed`：`Move` / `Chase` / `Flee` / `Wander`。
+    /// 读 `Stats` 里的 `MOVE_SPEED`：`Move` / `Chase` / `Flee` / `Wander`。
     Move,
-    /// 读 `AttackSpeed`：`BasicAttack`。
+    /// 读 `Stats` 里的 `ATTACK_SPEED`：`BasicAttack`。
     Attack,
     /// 固定耗时、不受任何速度影响：`Wait`（REFACTOR.md §11.6 第 4 项）。
     Fixed,
@@ -394,38 +388,34 @@ impl<'a> SpeedModifiers<'a> {
     }
 }
 
-/// 速度组件缺失时的回退值（= 基准 1.0）。
+/// 速度属性缺失时的回退值（= 基准 1.0）。
 ///
-/// 生成系统用 `Option<&MoveSpeed>` 查询而不是必需组件：**Bevy 的查询遇到
+/// 生成系统用 `Option<&Stats>` 查询而不是必需组件：**Bevy 的查询遇到
 /// 不匹配的 archetype 会静默返回空**（LESSONS.md LECS21）。若写成必需组件，
-/// 一个漏挂速度组件的 actor 会直接从 AI 里消失、既不行动也不报错；
+/// 一个漏挂 `Stats` 的 actor 会直接从 AI 里消失、既不行动也不报错；
 /// 回退到基准 + 告警则让这种漏挂可见且不至于卡死行为。
 const FALLBACK_SPEED: f64 = 1.0;
 
-/// 解析 actor 的速度组件；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
+/// 从 `Stats` 解析 actor 的两个速度；缺失时告警并回退到基准 [`FALLBACK_SPEED`]。
 ///
 /// 缺失**不应**被静默忽略（LESSONS.md LECS21 的同类问题：查询不匹配就是静静地
-/// 什么都不做），所以回退前先告警，让「漏挂速度组件」在日志里可见。
-fn actor_speeds(
-    actor: Entity,
-    move_speed: Option<&MoveSpeed>,
-    attack_speed: Option<&AttackSpeed>,
-) -> ActorSpeeds {
+/// 什么都不做），所以回退前先告警，让「漏挂 Stats」在日志里可见。
+fn actor_speeds(actor: Entity, stats: Option<&Stats>) -> ActorSpeeds {
+    let speed_or_fallback = |stat: StatId| {
+        stats.map_or_else(
+            || {
+                log::warn!(
+                    "actor={actor:?} 缺少 Stats，按基准 {FALLBACK_SPEED} 计算 AV（缺 {}）",
+                    stat.label()
+                );
+                FALLBACK_SPEED
+            },
+            |stats| stats.get(stat),
+        )
+    };
     ActorSpeeds {
-        move_speed: move_speed.map_or_else(
-            || {
-                log::warn!("actor={actor:?} 缺少 MoveSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
-                FALLBACK_SPEED
-            },
-            |speed| speed.0,
-        ),
-        attack_speed: attack_speed.map_or_else(
-            || {
-                log::warn!("actor={actor:?} 缺少 AttackSpeed，按基准 {FALLBACK_SPEED} 计算 AV");
-                FALLBACK_SPEED
-            },
-            |speed| speed.0,
-        ),
+        move_speed: speed_or_fallback(StatId::MOVE_SPEED),
+        attack_speed: speed_or_fallback(StatId::ATTACK_SPEED),
     }
 }
 
@@ -439,7 +429,7 @@ pub fn wander_generation_system(
     actors: Query<AiActorData, AiActor<CanWander>>,
     effects: EffectContext,
 ) {
-    for (actor, move_speed, position) in &actors {
+    for (actor, stats, position) in &actors {
         let collected = effects.collect(actor, position.to_tuple());
         commands.spawn((
             ActionOf(actor),
@@ -449,7 +439,7 @@ pub fn wander_generation_system(
             ActionTimer {
                 remaining_av: SpeedRule::Move.action_av_ignoring(
                     WANDER_DURATION,
-                    actor_speeds(actor, move_speed, None),
+                    actor_speeds(actor, stats),
                     SpeedModifiers {
                         actor: &collected.actor,
                         cell: &collected.cell,
@@ -469,10 +459,10 @@ pub fn wander_generation_system(
 /// 以及给 §3.6.4「每个行为一个生成系统」提供第二个样本。
 pub fn flee_generation_system(
     mut commands: Commands,
-    actors: Query<(Entity, Option<&MoveSpeed>, &Health, &Position), AiActor<CanFlee>>,
+    actors: Query<(Entity, Option<&Stats>, &Health, &Position), AiActor<CanFlee>>,
     effects: EffectContext,
 ) {
-    for (actor, move_speed, health, position) in &actors {
+    for (actor, stats, health, position) in &actors {
         if health.ratio() >= FLEE_HP_RATIO {
             continue;
         }
@@ -485,7 +475,7 @@ pub fn flee_generation_system(
             ActionTimer {
                 remaining_av: SpeedRule::Move.action_av_ignoring(
                     FLEE_DURATION,
-                    actor_speeds(actor, move_speed, None),
+                    actor_speeds(actor, stats),
                     SpeedModifiers {
                         actor: &collected.actor,
                         cell: &collected.cell,
@@ -518,7 +508,7 @@ pub fn wait_generation_system(
             ActionTimer {
                 remaining_av: SpeedRule::Fixed.action_av(
                     WAIT_DURATION,
-                    actor_speeds(actor, None, None),
+                    actor_speeds(actor, None),
                     SpeedModifiers::EMPTY,
                 ),
             },
@@ -545,7 +535,7 @@ pub fn chase_generation_system(
     };
     let player_position = player_position.to_tuple();
 
-    for (actor, move_speed, position) in &actors {
+    for (actor, stats, position) in &actors {
         let can_see = viewsheds
             .get(actor)
             .ok()
@@ -566,7 +556,7 @@ pub fn chase_generation_system(
             ActionTimer {
                 remaining_av: SpeedRule::Move.action_av_ignoring(
                     CHASE_DURATION,
-                    actor_speeds(actor, move_speed, None),
+                    actor_speeds(actor, stats),
                     SpeedModifiers {
                         actor: &collected.actor,
                         cell: &collected.cell,
@@ -647,7 +637,7 @@ pub fn player_action_generation_system(
         return;
     };
 
-    let Ok((player, position, move_speed, attack_speed)) = players.single() else {
+    let Ok((player, position, stats)) = players.single() else {
         log::warn!("玩家请求无法处理（玩家不存在或已有行动）: {command:?}");
         return;
     };
@@ -713,7 +703,7 @@ pub fn player_action_generation_system(
     };
     let remaining_av = rule.action_av_ignoring(
         duration,
-        actor_speeds(player, move_speed, attack_speed),
+        actor_speeds(player, stats),
         SpeedModifiers {
             actor: &collected.actor,
             cell: &collected.cell,

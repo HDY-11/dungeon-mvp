@@ -23,8 +23,9 @@
 //! # 边界
 //!
 //! [`StatDef::min`] / [`StatDef::max`] 是"这项数值的合法区间"（DsnE22 已拍板：
-//! 属性值必须是 `[min, max]` 内的有限数）。本阶段只把区间写进词表；**夹取**要等
-//! 稠密 `Stats` 组件落地（阶段 ②b）时在写入/读档的一条缝上做，避免现在到处散 clamp。
+//! 属性值必须是 `[min, max]` 内的有限数）。阶段 ②b 起，夹取在
+//! [`crate::components::Stats::set`] 这一条缝上做——写属性的地方不再各自 clamp。
+//! 基准值（[`StatDef::default`]）也在这里，`Stats::new()` 按词表逐项落默认。
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -44,9 +45,20 @@ impl StatId {
     pub const MOVE_SPEED: Self = Self(2);
     /// 攻击速度（倍率）。
     pub const ATTACK_SPEED: Self = Self(3);
+    /// 暴击率（概率，`[0, 1]`）。
+    pub const CRIT_RATE: Self = Self(4);
+    /// 暴击伤害加成（暴击时伤害 × `1 + crit_damage`）。
+    pub const CRIT_DAMAGE: Self = Self(5);
 
     /// 当前词表里的全部属性。
-    pub const ALL: [Self; 4] = [Self::ATTACK, Self::DEFENSE, Self::MOVE_SPEED, Self::ATTACK_SPEED];
+    pub const ALL: [Self; 6] = [
+        Self::ATTACK,
+        Self::DEFENSE,
+        Self::MOVE_SPEED,
+        Self::ATTACK_SPEED,
+        Self::CRIT_RATE,
+        Self::CRIT_DAMAGE,
+    ];
 
     /// 查这一项的定义；未知编号是程序错误（数据在加载期已校验）。
     ///
@@ -84,6 +96,11 @@ impl StatId {
     pub fn max(self) -> f64 {
         self.def().max
     }
+
+    /// 未装配时的基准值（`Stats::new()` 用它初始化）。
+    pub fn default_value(self) -> f64 {
+        self.def().default
+    }
 }
 
 /// 一项属性的定义（词表的一行）。
@@ -100,10 +117,12 @@ pub struct StatDef {
     pub label: &'static str,
     /// 倍率型（速度）还是绝对值型（攻防）——只影响显示说明。
     pub is_ratio: bool,
-    /// 合法区间下界（阶段 ②b 起在 `Stats` 上夹取）。
+    /// 合法区间下界（阶段 ②b 起在 `Stats::set` 上夹取）。
     pub min: f64,
     /// 合法区间上界。
     pub max: f64,
+    /// 未装配时的基准值（`Stats::new()` 初始化值）。
+    pub default: f64,
 }
 
 /// 属性词表。
@@ -119,6 +138,7 @@ pub static STATS: &[StatDef] = &[
         is_ratio: false,
         min: 0.0,
         max: 1000.0,
+        default: 0.0,
     },
     StatDef {
         id: StatId::DEFENSE,
@@ -127,6 +147,7 @@ pub static STATS: &[StatDef] = &[
         is_ratio: false,
         min: 0.0,
         max: 1000.0,
+        default: 0.0,
     },
     StatDef {
         id: StatId::MOVE_SPEED,
@@ -135,6 +156,7 @@ pub static STATS: &[StatDef] = &[
         is_ratio: true,
         min: 0.05,
         max: 20.0,
+        default: 1.0,
     },
     StatDef {
         id: StatId::ATTACK_SPEED,
@@ -143,6 +165,25 @@ pub static STATS: &[StatDef] = &[
         is_ratio: true,
         min: 0.05,
         max: 20.0,
+        default: 1.0,
+    },
+    StatDef {
+        id: StatId::CRIT_RATE,
+        name: "crit_rate",
+        label: "暴击率",
+        is_ratio: false,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::CRIT_DAMAGE,
+        name: "crit_damage",
+        label: "暴击伤害",
+        is_ratio: false,
+        min: 0.0,
+        max: 10.0,
+        default: 0.0,
     },
 ];
 

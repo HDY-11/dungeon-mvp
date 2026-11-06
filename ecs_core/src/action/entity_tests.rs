@@ -153,6 +153,15 @@ fn poc_actor(world: &mut World, pos: (usize, usize)) -> Entity {
     actor
 }
 
+/// 覆盖测试 actor 的两项速度属性（DsnE22 阶段 ②b：数值在 `Stats` 里，不再有独立组件）。
+fn set_speeds(world: &mut World, entity: Entity, move_speed: f64, attack_speed: f64) {
+    let mut stats = world
+        .get_mut::<Stats>(entity)
+        .expect("测试 actor 必须带 Stats");
+    stats.set(StatId::MOVE_SPEED, move_speed);
+    stats.set(StatId::ATTACK_SPEED, attack_speed);
+}
+
 /// 只跑生成系统（不经仲裁），用于验证“生成不写 actor 状态”。
 ///
 /// **显式列出三个生成系统**：Phase C 会逐个加进来，漏加一处会让相应用例在
@@ -2323,17 +2332,15 @@ fn actions_of<T: Component>(world: &mut World, actor: Entity) -> Vec<Entity> {
 /// D5：真实生成/挂载出的行动，其 AV 必须等于「基础耗时 ÷ 该行动类别对应速度」。
 ///
 /// 公式本身已由 `entity.rs` 里的纯函数用例钉住；这条钉的是**接线**：
-/// 生成系统真的读了 `MoveSpeed` / `AttackSpeed`，而 `Wait` 真的没读任何速度。
+/// 生成系统真的读了 `Stats` 里的 `MOVE_SPEED` / `ATTACK_SPEED`，而 `Wait` 真的没读任何速度。
 ///
-/// 移动速度与攻击速度刻意取不同值（1.6 / 0.8）：若生成系统读错组件，
+/// 移动速度与攻击速度刻意取不同值（1.6 / 0.8）：若生成系统读错属性，
 /// 断言会立刻失败，而不是"碰巧数值相等"地通过。
 #[test]
 fn generated_actions_read_their_category_speed() {
     let (mut world, _player) = poc_world();
     let monster = poc_actor(&mut world, (5, 5));
-    world
-        .entity_mut(monster)
-        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+    set_speeds(&mut world, monster, 1.6, 0.8);
 
     // 一轮生成同时拿到 Wander（Move 类）与 Wait（Fixed 类）。
     let generated = run_generation_and_collect(&mut world);
@@ -2361,7 +2368,7 @@ fn generated_actions_read_their_category_speed() {
     assert_eq!(
         timer_of(&world, wander),
         WANDER_DURATION / 1.6,
-        "Wander 必须读 MoveSpeed"
+        "Wander 必须读 MOVE_SPEED"
     );
     assert_eq!(
         timer_of(&world, wait),
@@ -2370,15 +2377,13 @@ fn generated_actions_read_their_category_speed() {
     );
 }
 
-/// D5：玩家路径同样按类别取速度——同一个 actor、同一套速度，
-/// 换的只是行动类别，AV 就应当从 `MoveSpeed` 切到 `AttackSpeed`。
+/// D5：玩家路径同样按类别取速度——同一个 actor、同一套基础属性，
+/// 换的只是行动类别，AV 就应当从 `MOVE_SPEED` 切到 `ATTACK_SPEED`。
 #[test]
 fn player_actions_read_their_category_speed() {
     // 平地向右走一步：Move 类。
     let (mut world, player) = player_move_scene((10, 10));
-    world
-        .entity_mut(player)
-        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+    set_speeds(&mut world, player, 1.6, 0.8);
     world.resource_mut::<PlayerActionRequest>().command =
         Some(PlayerCommand::Move { dx: 1, dy: 0 });
     let _ = world.run_system_once(player_action_generation_system);
@@ -2387,7 +2392,7 @@ fn player_actions_read_their_category_speed() {
     assert_eq!(
         timer_of(&world, move_action),
         UNARMED_ATTACK_DURATION / 1.6,
-        "玩家移动读 MoveSpeed"
+        "玩家移动读 MOVE_SPEED"
     );
 
     // 目标格被怪物占据：同一输入改判为攻击，AV 必须改用 AttackSpeed。
@@ -2400,9 +2405,7 @@ fn player_actions_read_their_category_speed() {
         1.0,
     );
     crate::system::run_settle_systems(&mut world);
-    world
-        .entity_mut(player)
-        .insert((MoveSpeed(1.6), AttackSpeed(0.8)));
+    set_speeds(&mut world, player, 1.6, 0.8);
     world.resource_mut::<PlayerActionRequest>().command =
         Some(PlayerCommand::Move { dx: 1, dy: 0 });
     let _ = world.run_system_once(player_action_generation_system);
@@ -2414,7 +2417,7 @@ fn player_actions_read_their_category_speed() {
     assert_eq!(
         timer_of(&world, attack_action),
         UNARMED_ATTACK_DURATION / 0.8,
-        "攻击读 AttackSpeed，而不是 MoveSpeed"
+        "攻击读 ATTACK_SPEED，而不是 MOVE_SPEED"
     );
 }
 
@@ -2427,8 +2430,8 @@ fn faster_monster_gets_its_action_ready_first() {
     let (mut world, _player) = poc_world();
     let fast = poc_actor(&mut world, (5, 5));
     let slow = poc_actor(&mut world, (20, 20));
-    world.entity_mut(fast).insert(MoveSpeed(2.0));
-    world.entity_mut(slow).insert(MoveSpeed(0.5));
+    set_speeds(&mut world, fast, 2.0, 1.0);
+    set_speeds(&mut world, slow, 0.5, 1.0);
 
     // 只跑**游荡**生成 + 仲裁。不跑 `run_generation_systems`（它还会生成 Wait，
     // 让本用例要观察的对象多一个变量），也不跑执行——`tick_action_timers_system`

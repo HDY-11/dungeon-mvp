@@ -17,6 +17,7 @@
 use crate::components::*;
 use crate::item::{ItemId, LootEntry};
 use crate::map::MapKind;
+use crate::rules::StatId;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -203,20 +204,16 @@ pub struct MonsterTemplate {
 /// `magic: Magic` 恒为 `0.0` 的占位——没有任何系统读怪物的 `Magic`，
 /// 它唯一的效果是让"怪物也有蓝条"这个不存在的设计看起来存在。
 /// 需要蓝条的物种（法系怪，H10 之后）应在 spawn 时按需 `insert`，不是每只怪都带一个 0。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MonsterStats {
     pub level: u64,
     pub health: Health,
     pub experience_reward: ExperienceReward,
-    pub attack: Attack,
-    pub defense: Defense,
+    /// 基础属性（DsnE22 阶段 ②b）：攻击/防御/速度/暴击一次装进稠密表。
+    pub stats: Stats,
     /// 保留：法术精通是**每物种**的平衡数值（1–4），H10 的技能层会读它。
     /// 与已删除的 `Magic` 占位不同——它是真数据，只是暂时没有读者。
     pub magic_mastery: MagicMastery,
-    pub move_speed: MoveSpeed,
-    pub attack_speed: AttackSpeed,
-    pub crit_rate: CritRate,
-    pub crit_damage: CritDamage,
 }
 
 impl MonsterTemplate {
@@ -232,13 +229,15 @@ impl MonsterTemplate {
             level,
             health: Health::new(hp),
             experience_reward: ExperienceReward(exp),
-            attack: Attack(attack),
-            defense: Defense(self.defense),
+            stats: Stats::from_pairs([
+                (StatId::ATTACK, attack),
+                (StatId::DEFENSE, self.defense),
+                (StatId::MOVE_SPEED, self.speeds.move_speed),
+                (StatId::ATTACK_SPEED, self.speeds.attack_speed),
+                (StatId::CRIT_RATE, self.crit_rate),
+                (StatId::CRIT_DAMAGE, self.crit_damage),
+            ]),
             magic_mastery: MagicMastery(self.magic_mastery),
-            move_speed: MoveSpeed(self.speeds.move_speed),
-            attack_speed: AttackSpeed(self.speeds.attack_speed),
-            crit_rate: CritRate(self.crit_rate),
-            crit_damage: CritDamage(self.crit_damage),
         }
     }
 

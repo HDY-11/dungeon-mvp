@@ -9,6 +9,7 @@ use crate::components::*;
 use crate::entity_cls::Player;
 use crate::events::{DeathEvent, LevelUpEvent};
 use crate::resources::{EventLog, EventMessage};
+use crate::rules::StatId;
 use bevy_ecs::prelude::*;
 
 /// 升级玩家：经验/等级/生命/法力 + 重算上限所需的防御与法术精通。
@@ -18,7 +19,7 @@ type ExpPlayer = (
     &'static mut Level,
     &'static mut Health,
     &'static mut Magic,
-    &'static Defense,
+    &'static Stats,
     &'static MagicMastery,
 );
 
@@ -41,7 +42,7 @@ pub fn apply_exp_system(
         return;
     }
 
-    for (entity, mut exp, mut level, mut health, mut magic, defense, mastery) in players.iter_mut() {
+    for (entity, mut exp, mut level, mut health, mut magic, stats, mastery) in players.iter_mut() {
         // 死人不吃经验（结算链是 `death → exp`，同轮里玩家可能刚被怪物打死）：
         // 若放行，升级会把 `health.current` 回满，HUD 上出现"死了却满血"，
         // 存档也会把尸体当活人写进盘。游戏结束后等级/经验都不该再变。
@@ -53,7 +54,7 @@ pub fn apply_exp_system(
             exp.exp = exp.overflow();
             level.0 += 1;
 
-            let max_hp = max_hp_for(level.0, defense.0);
+            let max_hp = max_hp_for(level.0, stats.get(StatId::DEFENSE));
             let max_mp = max_mp_for(level.0, mastery.0);
             health.max = max_hp;
             health.current = max_hp;

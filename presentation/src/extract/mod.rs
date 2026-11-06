@@ -26,9 +26,9 @@
 
 use bevy_ecs::prelude::*;
 use ecs_core::{
-    Attack, Defense, EventLog, Experience, FloorNumber, Health, Level, Magic, Map, MapMemory,
-    MapSeed, MonsterKindId, Observable, Player, Position, Stairs, TurnManager, Viewshed,
-    map_kind_for, monster_template,
+    EventLog, Experience, FloorNumber, Health, Level, Magic, Map, MapMemory, MapSeed, MonsterKindId,
+    Observable, Player, Position, Stairs, StatId, Stats, TurnManager, Viewshed, map_kind_for,
+    monster_template,
 };
 use render_api::{
     EntityId, EntityView, EventLine, HudView, InfoView, LogLevel, MapView, Meter, SceneFrame,
@@ -1000,14 +1000,13 @@ fn build_hud(world: &mut World) -> HudView {
             Option<&Magic>,
             Option<&Experience>,
             Option<&Level>,
-            Option<&Attack>,
-            Option<&Defense>,
+            Option<&Stats>,
             Option<&ecs_core::EntityName>,
         ),
         With<Player>,
     >();
 
-    let Some((health, magic, exp, level, attack, defense, name)) = query.iter(world).next() else {
+    let Some((health, magic, exp, level, stats, name)) = query.iter(world).next() else {
         return HudView {
             floor,
             map_kind,
@@ -1027,8 +1026,12 @@ fn build_hud(world: &mut World) -> HudView {
         exp: exp
             .map(|e| Meter::new(e.exp as f32, e.exp_to_next as f32))
             .unwrap_or_default(),
-        attack: attack.map(|a| a.0 as f32).unwrap_or_default(),
-        defense: defense.map(|d| d.0 as f32).unwrap_or_default(),
+        attack: stats
+            .map(|s| s.get(StatId::ATTACK) as f32)
+            .unwrap_or_default(),
+        defense: stats
+            .map(|s| s.get(StatId::DEFENSE) as f32)
+            .unwrap_or_default(),
         extra_lines: {
             let mut lines = goal_line(world);
             lines.extend(player_status_lines(world));

@@ -9,8 +9,7 @@
 use crate::system::run_settle_systems;
 use crate::balance::{exp_to_next_level, max_hp_for, max_mp_for};
 use crate::components::{
-    Defense, EntityName, Experience, ExperienceReward, Health, Idle, Level, Magic, Position,
-    Viewshed,
+    EntityName, Experience, ExperienceReward, Health, Idle, Level, Magic, Position, Stats, Viewshed,
 };
 use crate::events::{AttackIntentEvent, DeathEvent};
 use crate::map::Tile;
@@ -47,7 +46,7 @@ fn despawn_all<T: Component>(world: &mut World) {
 fn settle_does_not_reapply_old_events() {
     let mut world = crate::world_loop::new_game(42);
     let attacker = spawn_test_attacker(&mut world, 10.0);
-    let target = world.spawn((Health::new(100.0), Defense(0.0))).id();
+    let target = world.spawn((Health::new(100.0), Stats::new())).id();
 
     world
         .resource_mut::<Events<AttackIntentEvent>>()
@@ -73,7 +72,7 @@ fn settle_does_not_reapply_old_events() {
 fn attack_applies_damage_once() {
     let mut world = crate::world_loop::new_game(42);
     let attacker = spawn_test_attacker(&mut world, 10.0);
-    let target = world.spawn((Health::new(100.0), Defense(0.0))).id();
+    let target = world.spawn((Health::new(100.0), Stats::new())).id();
 
     world
         .resource_mut::<Events<AttackIntentEvent>>()
