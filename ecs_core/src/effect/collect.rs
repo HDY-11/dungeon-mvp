@@ -21,9 +21,9 @@ use crate::effect::cell::{
     CellAttributes, CellEffects, CellMoveCost, cell_attributes, cell_speed_modifier,
 };
 use crate::effect::{EffectModifier, IgnoresSource, OwnedEffects};
-use crate::item::{Container, Item, ItemTag};
+use crate::item::{Container, Item, ItemTag, WeaponProgress};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
-use crate::rules::{EffectSource, Modifier};
+use crate::rules::{EffectSource, Modifier, StatId};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 
@@ -62,6 +62,8 @@ pub struct EffectContext<'w, 's> {
     cell_costs: Query<'w, 's, &'static CellMoveCost>,
     equipped: Query<'w, 's, &'static Container>,
     equipped_items: Query<'w, 's, &'static Item>,
+    /// 武器实体的额外成长修正（DsnE24 阶段 ②）：等级带来的攻击加成在这里合成。
+    weapon_progress: Query<'w, 's, &'static WeaponProgress>,
     /// 效果实体身上的修正（将来的 buff：`(EffectOf(actor), Modifier)`）。
     ///
     /// 现在**没有生产者**（中毒只按 AV 掉血，不给修正），但读取口先就位：
@@ -149,7 +151,41 @@ impl EffectContext<'_, '_> {
         for def in self.equipped_defs(actor) {
             mods.extend_from_slice(def.modifiers());
         }
+        // 武器等级（DsnE24 阶段 ②）：等级加成不是蓝图静态修正，按实例等级现场合成一条
+        // 装备来源的加法修正——求值侧仍然只看见 `Modifier`，没有"武器特例"分支。
+        if let Ok(body) = self.equipped.get(actor) {
+            for (_, occupant) in body.iter() {
+                let Ok(item) = self.equipped_items.get(occupant) else {
+                    continue;
+                };
+                let def = item.def();
+                let Some(growth) = def.weapon_growth else {
+                    continue;
+                };
+                let level = self
+                    .weapon_progress
+                    .get(occupant)
+                    .map(|progress| progress.level)
+                    .unwrap_or(1);
+                let bonus = growth.attack_bonus(level);
+                if bonus > 0.0 {
+                    mods.push(Modifier::delta(StatId::ATTACK, EffectSource::Equipment, bonus));
+                }
+            }
+        }
         mods
+    }
+
+    /// 主手武器实体（用来加经验）；没装备武器时 `None`。
+    pub fn main_hand_weapon_entity(&self, actor: Entity) -> Option<Entity> {
+        let body = self.equipped.get(actor).ok()?;
+        body.iter().find_map(|(_, occupant)| {
+            let item = self.equipped_items.get(occupant).ok()?;
+            item.def()
+                .tags
+                .contains(&ItemTag::Weapon)
+                .then_some(occupant)
+        })
     }
 
     /// 主手武器的定义；没装备武器时 `None`。
@@ -173,10 +209,22 @@ impl EffectContext<'_, '_> {
 
     /// 主手武器的力量加成上限 S_m（DsnE24）；空手时由调用方用
     /// [`crate::balance::UNARMED_STRENGTH_CAP`] 兜底。
+    ///
+    /// 这是**基础上限 + 等级加成**：武器升级会放宽能吃的力量（成长曲线管这件事）。
     pub fn main_hand_strength_cap(&self, actor: Entity) -> Option<f64> {
-        self.main_hand_weapon(actor)
-            .and_then(|def| def.strength_cap)
-            .map(f64::from)
+        let weapon = self.main_hand_weapon_entity(actor)?;
+        let def = self.equipped_items.get(weapon).ok()?.def();
+        let base = def.strength_cap?;
+        let level = self
+            .weapon_progress
+            .get(weapon)
+            .map(|progress| progress.level)
+            .unwrap_or(1);
+        let bonus = def
+            .weapon_growth
+            .map(|growth| growth.strength_cap_bonus(level))
+            .unwrap_or(0.0);
+        Some(f64::from(base) + bonus)
     }
 
     /// 收桶：脚下这一格的修正 + actor 自带的修正 + 忽略表。

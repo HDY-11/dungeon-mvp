@@ -391,3 +391,54 @@ fn occupancy_tracks_actors_but_not_stairs() {
     assert_eq!(health.max, hp_curve(1), "上限必须按等级曲线重算");
     assert_eq!(health.current, hp_curve(1), "current 只能被夹取，不回血");
 }
+
+/// DsnE24 阶段 ②：造成的伤害会喂给主手武器的养成进度，升级时记一条事件。
+#[test]
+fn damage_feeds_the_main_hand_weapons_growth() {
+    use crate::item::{BODY, Container, ItemTag, spawn_item_assembled};
+
+    let mut world = crate::world_loop::new_game(42);
+    let player = player_entity(&world).expect("新游戏必须有玩家");
+
+    // 装备一把锈铁剑，并把它的经验预置到"再挨一下就该升级"的位置。
+    let sword = spawn_item_assembled(&mut world, crate::item::ItemId(0), 1);
+    let weapon_slot = BODY
+        .slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ItemTag::Weapon]))
+        .expect("身体必须有一个武器槽");
+    world
+        .get_mut::<Container>(player)
+        .expect("玩家有身体容器")
+        .insert(weapon_slot, sword, crate::item::ItemId(0).def().tags)
+        .expect("武器槽接受剑");
+    world
+        .get_mut::<crate::item::WeaponProgress>(sword)
+        .expect("武器装配带养成进度")
+        .exp = 25.0;
+
+    let target = world
+        .spawn((Health::new(100.0), Stats::new(), EntityName("木桩".into())))
+        .id();
+    world
+        .resource_mut::<Events<AttackIntentEvent>>()
+        .send(AttackIntentEvent {
+            attacker: player,
+            target,
+        });
+    run_settle_systems(&mut world);
+
+    let progress = world
+        .get::<crate::item::WeaponProgress>(sword)
+        .expect("剑还在主手上");
+    assert_eq!(progress.level, 2, "一次伤害应该跨过 30 点门槛升到 2 级");
+    assert!(progress.exp < 30.0, "升级后剩余经验应小于下一级门槛");
+    assert!(
+        world
+            .resource::<EventLog>()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("升到了 2 级")),
+        "升级应写进事件栏（玩家要能看见）"
+    );
+}

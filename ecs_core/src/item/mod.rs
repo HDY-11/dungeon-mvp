@@ -66,7 +66,7 @@ pub use loot::{LootEntry, roll_loot};
 pub use quality::Quality;
 pub use registry::{
     Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ITEMS_SCHEMA_VERSION, ItemDef, ItemId,
-    ItemKind, TRAVELER_PACK_ITEM, item_by_name, stack_weight,
+    ItemKind, TRAVELER_PACK_ITEM, WeaponGrowth, item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
@@ -172,6 +172,57 @@ impl Durability {
     }
 }
 
+/// 武器的养成进度（实例数据，DsnE24 阶段 ②）。
+///
+/// 只出现在武器上：模板装配时是 1 级 0 经验，经验由"造成伤害"获得（品质作倍率，
+/// 见 [`Quality::exp_factor`]）；存档只保存等级与经验这两个玩家造成的差异，
+/// 上限/攻击加成等派生值永远从蓝图 `WeaponGrowth` 重算。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct WeaponProgress {
+    /// 当前等级（从 1 起）。
+    pub level: u32,
+    /// 当前等级内的累积经验；满级后归零。
+    pub exp: f64,
+}
+
+impl WeaponProgress {
+    /// 模板装配：1 级、0 经验。
+    pub const fn new() -> Self {
+        Self { level: 1, exp: 0.0 }
+    }
+
+    /// 记入经验并处理升级；返回本次升了几级（0 = 没升）。
+    ///
+    /// 一次伤害可能跨多级（深层大伤害），所以循环扣门槛；满级后经验清零，
+    /// 避免界面显示"满级 9999 经验"。
+    pub fn add_exp(&mut self, amount: f64, growth: &WeaponGrowth) -> u32 {
+        if !amount.is_finite() || amount <= 0.0 {
+            return 0;
+        }
+        self.exp += amount;
+        let mut gained = 0;
+        while self.level < growth.max_level {
+            let need = growth.exp_to_next(self.level);
+            if !need.is_finite() || self.exp < need {
+                break;
+            }
+            self.exp -= need;
+            self.level += 1;
+            gained += 1;
+        }
+        if self.level >= growth.max_level {
+            self.exp = 0.0;
+        }
+        gained
+    }
+}
+
+impl Default for WeaponProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 物品实体装配器：让系统里的 `Commands` 与读档时的 `World` 共用同一段装配代码。
 ///
 /// 不写成两个 `spawn_item` 是因为"物品蓝图 → 实体组件"必须只有一条实现
@@ -197,6 +248,9 @@ impl ItemSpawner for Commands<'_, '_> {
         if let Some(max) = def.durability_max {
             self.entity(entity).insert(Durability::new(max));
         }
+        if def.weapon_growth.is_some() {
+            self.entity(entity).insert(WeaponProgress::new());
+        }
     }
 }
 
@@ -212,6 +266,9 @@ impl ItemSpawner for World {
         }
         if let Some(max) = def.durability_max {
             self.entity_mut(entity).insert(Durability::new(max));
+        }
+        if def.weapon_growth.is_some() {
+            self.entity_mut(entity).insert(WeaponProgress::new());
         }
     }
 }

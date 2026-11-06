@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "items": [
     {
       "id": 0,
@@ -17,7 +17,8 @@
       },
       "tags": ["weapon"],
       "weapon_speed_ms": 300.0,
-      "strength_cap": 6.0
+      "strength_cap": 6.0,
+      "weapon_growth": { "max_level": 5, "attack_per_level": 1.0, "strength_cap_per_level": 0.5, "exp_base": 30.0 }
     },
     {
       "id": 1,
@@ -160,7 +161,8 @@
       },
       "tags": ["weapon"],
       "weapon_speed_ms": 450.0,
-      "strength_cap": 10.0
+      "strength_cap": 10.0,
+      "weapon_growth": { "max_level": 5, "attack_per_level": 1.2, "strength_cap_per_level": 0.8, "exp_base": 35.0 }
     },
     {
       "id": 24,
@@ -178,7 +180,8 @@
       },
       "tags": ["weapon"],
       "weapon_speed_ms": 200.0,
-      "strength_cap": 3.0
+      "strength_cap": 3.0,
+      "weapon_growth": { "max_level": 5, "attack_per_level": 0.8, "strength_cap_per_level": 0.3, "exp_base": 25.0 }
     },
     {
       "id": 25,

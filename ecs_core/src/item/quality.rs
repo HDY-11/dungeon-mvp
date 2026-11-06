@@ -79,6 +79,22 @@ impl Quality {
         }
     }
 
+    /// 武器养成时的 EXP 倍率（DsnE24 阶段 ②）：品质越高，升级越慢。
+    ///
+    /// 口径是「EXP 增速 ∝ 1/品质」的离散版：粗劣 1.25×、普通 1×、精良 0.85×、
+    /// 稀有 0.7×、史诗 0.55×、传说 0.4×。品质同时影响基础数值预算，所以这把倍率
+    /// 只是"同一份伤害能换来多少养成进度"，不改变掉落/伤害本身。
+    pub const fn exp_factor(self) -> f64 {
+        match self {
+            Self::Coarse => 1.25,
+            Self::Common => 1.0,
+            Self::Fine => 0.85,
+            Self::Rare => 0.7,
+            Self::Epic => 0.55,
+            Self::Legendary => 0.4,
+        }
+    }
+
     /// 由排序键反查档位（越界返回 `None`）。
     pub const fn from_rank(rank: u8) -> Option<Self> {
         match rank {
@@ -139,5 +155,18 @@ mod tests {
             Quality::Epic => "epic",
             Quality::Legendary => "legendary",
         }
+    }
+
+    #[test]
+    fn higher_quality_grows_slower() {
+        for pair in Quality::ALL.windows(2) {
+            assert!(
+                pair[0].exp_factor() > pair[1].exp_factor(),
+                "{:?} 的 EXP 倍率应高于 {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert_eq!(Quality::Common.exp_factor(), 1.0);
     }
 }

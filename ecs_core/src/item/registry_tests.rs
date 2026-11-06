@@ -167,6 +167,58 @@ fn a_non_positive_strength_cap_is_rejected() {
     assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
 }
 
+/// 武器必须声明成长曲线，非武器必须不给（DsnE24 阶段 ②）。
+///
+/// 与力量上限同一条道理：武器漏写成长曲线 = 它永远不会升级；非武器写了又会让
+/// 装配桥挂上一条永远不会涨的经验条。两个方向都在加载期挡住，这里再钉住数值口径。
+#[test]
+fn only_main_hand_weapons_carry_a_growth_curve() {
+    for def in items() {
+        assert_eq!(
+            def.weapon_growth.is_some(),
+            def.weapon_speed_ms.is_some(),
+            "{}：成长曲线与武器攻速必须同时有/同时无",
+            def.name
+        );
+        if let Some(growth) = def.weapon_growth {
+            assert_eq!(growth.max_level, 5, "{} 的等级上限口径是 5 级", def.name);
+            assert!(growth.exp_base > 0.0, "{} 的升级基础经验必须为正", def.name);
+        }
+    }
+    // 三把武器的成长参数与 GAME.md Gm7 对齐（每级攻击 / 每级力量上限 / 基础经验）。
+    assert_eq!(ItemId(0).def().weapon_growth.unwrap().attack_per_level, 1.0);
+    assert_eq!(ItemId(23).def().weapon_growth.unwrap().attack_per_level, 1.2);
+    assert_eq!(ItemId(24).def().weapon_growth.unwrap().attack_per_level, 0.8);
+}
+
+#[test]
+fn a_weapon_without_a_growth_curve_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":3.0}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("成长曲线"), "错误应提到成长曲线：{error}");
+}
+
+#[test]
+fn a_growth_curve_on_a_non_weapon_is_rejected() {
+    let json = table(&[&material(
+        5,
+        r#","weapon_growth":{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":30.0}"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("成长曲线"), "错误应提到成长曲线：{error}");
+}
+
+#[test]
+fn a_non_positive_exp_base_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":3.0,"weapon_growth":{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":0.0}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("升级基础经验"), "错误应提到基础经验：{error}");
+}
+
 /// 身体每个部位**都至少有一件**能穿的装备：否则玩家会遇到"这个部位永远是空的"。
 ///
 /// 这条与 `every_equippable_item_fits_exactly_one_body_slot`（正向）互补：

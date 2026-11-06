@@ -1263,8 +1263,8 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - **仍未做**：箱类容器（等放置/交互）、实例数据（耐久等，第③片）。
 <!-- &/DsnE18 -->
 
-<!-- &DsnE19  存档 V3：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异/当前生命法力；F5/F9 -->
-### DsnE19 存档 V3：投影式快照（seed + floor + 玩家容器树 + 物品实例差异 + 当前生命法力）
+<!-- &DsnE19  存档 V4：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异（耐久、武器等级经验）/当前生命法力；F5/F9 -->
+### DsnE19 存档 V4：投影式快照（seed + floor + 玩家容器树 + 物品实例差异 + 当前生命法力）
 
 **决策**
 
@@ -1277,11 +1277,12 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 
    ```text
    文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
-   载荷：bincode(SaveV3)
-   SaveV3 { items_schema, map_seed, floor, player: PlayerSave }
+   载荷：bincode(SaveV4)
+   SaveV4 { items_schema, map_seed, floor, player: PlayerSave }
    PlayerSave { x, y, level, experience, health, mana, magic_mastery, body: [Option<ItemSave>] }  // health/mana 只存 current
    ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> } // 容器树递归
-   ItemOverrides { durability: Option<f32> }   // 只存玩家造成的实例差异（DsnE22 阶段 ④）
+   ItemOverrides { durability: Option<f32>, weapon: Option<WeaponSave> }
+   WeaponSave { level, exp }                   // 武器养成进度（DsnE24 阶段 ②）
    ```
 
    `items_schema` 是物品数据版本（`ecs_core/assets/items.json` 的 `schema_version`）：读档时
@@ -1297,10 +1298,13 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    （已杀的怪物会回来、已捡走的地面物品会重刷）；想要"保留中途进度"得等 V2 的地面/怪物差异段。
    另有两个有意的取舍：**不存 `GameRng`**（读档后随机流从该层开局重来，与"一直玩下去"会分叉，
    这也是"进层检查点"比"随时存档"更自然的另一个理由）。
-   V2 只补存"玩家造成的物品实例差异"（目前是耐久当前值），地面物品与怪物差异仍然不入档。
+   V2 只补存"玩家造成的物品实例差异"（目前是耐久当前值与武器等级/经验），地面物品与怪物
+   差异仍然不入档。
    V3（DsnE23）起**生命/法力只存 current、不存上限**：上限是"等级曲线 + 装备修正"的派生
    数据，读档时按当前规则重算——否则改公式后旧档会带着旧上限继续跑，出现"同一件装备两个
    上限"。这条替代了 V2 的"上限按值存"取舍。
+   V4（DsnE24 阶段 ②）把武器养成等级/经验放进 `ItemOverrides.weapon`：它们由玩家行为改变，
+   无法重算；等级带来的攻击/力量上限同样是派生值，读档按蓝图重算。
 4. **load 复用初始化与下楼代码，不另写生成管线。** `new_game(map_seed)` 起世界 →
    `FloorNumber = floor` 后走一次"重建层内容"（与 `descend` 共用的函数）→ 还原玩家与容器树。
    任何"重建层"的修正都同时修到下楼与读档两条路径。
@@ -1311,15 +1315,17 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    `describe()`，统一写 `EventLog`。失败静默 = 玩家以为存上了。
 7. **死亡状态不可存。** `game_over` 时拒绝存档，避免存出"读档即死"的档。
 
-**状态：** 实现（V3）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV3`；手写投影、
-`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides{durability}`；玩家
-`health/mana` 只存 current，读档按 DsnE23 的单一上限公式重算后夹取）、统一装配桥
-`spawn_item_assembled` 同时服务系统与读档、`App` 的 F5/F9 接线、`tests/save_test.rs`
-10 条（roundtrip / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
-F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 3`；旧 V1/V2 文件被版本头直接拒绝，
-`items_schema` 不一致报 `ContentVersion`（MVP 不迁移，DsnE22 已拍板第 3 条）。
+**状态：** 实现（V4）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV4`；手写投影、
+`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides { durability, weapon }`；
+玩家 `health/mana` 只存 current，读档按 DsnE23 的单一上限公式重算后夹取）、统一装配桥
+`spawn_item_assembled` 同时服务系统与读档（武器装配自动带 1 级 0 经验，读档再套等级/经验，
+不合法进度报 `Corrupt`）、`App` 的 F5/F9 接线、`tests/save_test.rs`
+11 条（roundtrip / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
+非法养成进度 / F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 4`；旧 V1/V2/V3
+文件被版本头直接拒绝，`items_schema` 不一致报 `ContentVersion`（MVP 不迁移，DsnE22 已拍板第 3 条）。
 **关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
-DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）|
+DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）| DsnE22 阶段 ④（实例差异形状）|
+DsnE24 阶段 ②（武器养成进度）|
 `ecs_core/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
 <!-- &/DsnE19 -->
 
@@ -1663,18 +1669,28 @@ DsnX17（确定性）· Gm4 / Gm7 / Gm13。
    "公式内容不变"为前提；本条目正是改公式内容，前提消失。结算链路本来就只有一个调用点
    （`system/combat.rs`），直接走 `rules::melee(MeleeInput)`；DsnE9 的**形状**决策
    （结构化输入 + 因子分解）继续有效，因子分解增加了护甲/抗性/力量项。
-7. **武器成长（阶段 ②，未落地）。** 方向：武器实例带 `WeaponProgress { exp, level }`
-   （蓝图定义曲线与断点，实例只存数值差异——沿用 DsnE22 的 overrides 形状，存档升 V4）；
-   等级提高攻击加成与 `strength_cap`，断点触发的副词条/附带效果写进蓝图数据；EXP 由
-   "造成伤害"获得、品质作倍率。该阶段与"武器数值加进实例"一起做，不在本条目假装完成。
+7. **武器成长（阶段 ②）。** 武器实例带 `WeaponProgress { level, exp }`（1 级 0 经验起），
+   蓝图声明 `WeaponGrowth { max_level, attack_per_level, strength_cap_per_level, exp_base }`
+   （数据 schema 升 7）；实例只存等级与经验这两个玩家造成的差异（沿用 DsnE22 的 overrides
+   形状，存档升 V4）。等级带来的攻击/力量上限是**派生值**，装配时按蓝图重算；EXP 由
+   "造成伤害 × 品质倍率"获得，升级门槛 `exp_base × 等级^1.5`；升级在事件栏记一条。
+   断点触发的副词条/附带效果留给后续内容，不写在本次实现里。
 
 **状态：** 阶段 ①（物理伤害管线）已落地：`rules::damage` 重写（`MeleeInput { attack,
 strength, strength_cap, damage_bonus, defense, physical_resist, crit, crit_roll }`、
 `MeleeBreakdown` 五域分解）、`STATS` 新增 `strength/damage_bonus/physical_resist/
 magic_resist`、`ItemDef::strength_cap`（数据 schema 升 6，只有武器可声明且必须声明）、
 `EffectContext::main_hand_weapon` 提供力量上限、战斗系统按新公式结算；旧标量适配器删除。
-阶段 ②（武器 EXP/等级实例）未落地。
+
+阶段 ②（武器成长）已落地：`ItemDef::weapon_growth`（`WeaponGrowth`，数据 schema 升 7，
+只有武器可声明且必须声明，各值加载期校验）、`WeaponProgress` 实例组件（唯一装配桥
+`ItemSpawner::insert_blueprint_parts` 插 1 级 0 经验）、`Quality::exp_factor` 品质倍率
+（粗劣 1.25 → 传说 0.4）、`apply_damage_system` 按"伤害 × 倍率"记经验并在升级时写事件、
+`EffectContext::collect_actor` 把等级攻击加成合成一条装备 `Modifier`、
+`main_hand_strength_cap` 加上等级成长；存档 V4 用 `ItemOverrides.weapon = WeaponSave
+{ level, exp }` 保存，读档先按蓝图装配再套进度，不合法进度报 `Corrupt`。
+断点/副词条/附带效果仍属未做内容（后续内容阶段追加到 `WeaponGrowth` 形状）。
 
 **关联：** DsnE9（结构化输入形状）· DsnE10（修正器求值）· DsnE22（蓝图/实例/存档边界）·
-DsnE23（属性词表与品质）· Gm2 / Gm4 / Gm7 / Gm8。
+DsnE23（属性词表与品质）· DsnE19（存档 V4 记武器养成进度）· Gm2 / Gm4 / Gm7 / Gm8 / Gm13。
 <!-- &/DsnE24 -->

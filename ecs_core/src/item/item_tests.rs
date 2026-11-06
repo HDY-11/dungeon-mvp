@@ -685,3 +685,49 @@ fn durable_items_are_assembled_at_full_durability() {
     let mushroom = spawn_item_assembled(&mut world, ItemId(25), 3);
     assert!(world.get::<Durability>(mushroom).is_none(), "蘑菇没有耐久");
 }
+
+#[test]
+fn weapons_are_assembled_at_level_one_with_no_experience() {
+    let mut world = World::new();
+    let sword = spawn_item_assembled(&mut world, ItemId(0), 1);
+    let progress = *world
+        .get::<WeaponProgress>(sword)
+        .expect("有成长曲线的武器装配时应带养成进度");
+    assert_eq!((progress.level, progress.exp), (1, 0.0));
+
+    let mushroom = spawn_item_assembled(&mut world, ItemId(25), 3);
+    assert!(
+        world.get::<WeaponProgress>(mushroom).is_none(),
+        "非武器没有养成进度"
+    );
+}
+
+#[test]
+fn weapon_experience_levels_up_across_the_curved_threshold_and_caps() {
+    let growth = ItemId(0).def().weapon_growth.expect("锈铁剑有成长曲线");
+    let mut progress = WeaponProgress::new();
+
+    // 差一点不升。
+    let first = growth.exp_to_next(1);
+    assert_eq!(progress.add_exp(first - 0.1, &growth), 0);
+    assert_eq!(progress.level, 1);
+
+    // 补上最后一点 → 恰好升 1 级，剩余经验 = 多出来的部分。
+    assert_eq!(progress.add_exp(0.1, &growth), 1);
+    assert_eq!(progress.level, 2);
+    assert!(progress.exp.abs() < 1e-9, "刚好跨过门槛，不该有剩余经验");
+
+    // 一次给一大笔可以连升；到上限后停住、经验清零、再给也不再涨。
+    let huge = growth.exp_to_next(2) + growth.exp_to_next(3) + growth.exp_to_next(4) + 1.0;
+    progress.add_exp(huge, &growth);
+    assert_eq!(progress.level, growth.max_level, "等级上限是 5");
+    assert_eq!(progress.exp, 0.0, "满级后经验清零");
+    assert_eq!(progress.add_exp(999.0, &growth), 0, "满级不再升级");
+
+    // 非正/非有限经验一律忽略。
+    let mut fresh = WeaponProgress::new();
+    assert_eq!(fresh.add_exp(0.0, &growth), 0);
+    assert_eq!(fresh.add_exp(-5.0, &growth), 0);
+    assert_eq!(fresh.add_exp(f64::NAN, &growth), 0);
+    assert_eq!((fresh.level, fresh.exp), (1, 0.0));
+}

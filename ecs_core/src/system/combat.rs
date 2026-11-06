@@ -8,6 +8,7 @@ use crate::balance::UNARMED_STRENGTH_CAP;
 use crate::components::*;
 use crate::effect::EffectContext;
 use crate::events::{AttackEvent, AttackIntentEvent};
+use crate::item::{Container, Item, ItemTag, WeaponProgress};
 use crate::resources::{EventLog, EventMessage, GameRng};
 use crate::rules::{CritProfile, MeleeInput, StatId, apply_modifiers, melee};
 use bevy_ecs::prelude::*;
@@ -137,14 +138,78 @@ pub fn resolve_attack_system(
     }
 }
 
-/// 消费 `AttackEvent`，把伤害扣到目标身上。
+/// 消费 `AttackEvent`，把伤害扣到目标身上；同时给攻击者的主手武器记养成经验。
+///
+/// 经验量 = 造成的伤害 × 物品品质的 EXP 倍率（DsnE24 阶段 ②）：品质越高升级越慢，
+/// 于是"打同样的伤害，粗劣武器更快追上高等级"。只有**造成伤害**才给经验，
+/// 空挥/未命中（未来有闪避时）不给。
 pub fn apply_damage_system(
     mut attack_events: EventReader<AttackEvent>,
     mut healths: Query<&mut Health>,
+    bodies: Query<&Container>,
+    items: Query<&Item>,
+    mut weapons: Query<&mut WeaponProgress>,
+    mut event_log: ResMut<EventLog>,
 ) {
     for event in attack_events.read() {
         if let Ok(mut health) = healths.get_mut(event.target) {
             *health = health.damage(event.damage);
         }
+        award_weapon_exp(
+            &bodies,
+            &items,
+            &mut weapons,
+            &mut event_log,
+            event.attacker,
+            event.damage,
+        );
+    }
+}
+
+/// 找攻击者主手槽里的武器（与 `EffectContext::main_hand_weapon_entity` 同口径）。
+///
+/// 这里不直接用 `EffectContext`：它内部持着 `&WeaponProgress` 的只读查询，
+/// 与本系统的 `&mut WeaponProgress` 会在运行时查询冲突（B0001），所以只取需要的
+/// 两个只读查询（身体容器 + 物品实体），mut 查询保持独立。
+fn main_hand_weapon(
+    bodies: &Query<&Container>,
+    items: &Query<&Item>,
+    actor: Entity,
+) -> Option<(Entity, &'static crate::item::ItemDef)> {
+    let body = bodies.get(actor).ok()?;
+    body.iter().find_map(|(_, occupant)| {
+        let item = items.get(occupant).ok()?;
+        let def = item.def();
+        def.tags
+            .contains(&ItemTag::Weapon)
+            .then_some((occupant, def))
+    })
+}
+
+/// 把一次伤害记到主手武器上，并在升级时记一条事件。
+fn award_weapon_exp(
+    bodies: &Query<&Container>,
+    items: &Query<&Item>,
+    weapons: &mut Query<&mut WeaponProgress>,
+    event_log: &mut EventLog,
+    attacker: Entity,
+    damage: f64,
+) {
+    let Some((weapon, def)) = main_hand_weapon(bodies, items, attacker) else {
+        return;
+    };
+    let Some(growth) = def.weapon_growth else {
+        return;
+    };
+    let Ok(mut progress) = weapons.get_mut(weapon) else {
+        return;
+    };
+    let amount = damage.max(0.0) * def.quality.exp_factor();
+    let gained = progress.add_exp(amount, &growth);
+    if gained > 0 {
+        event_log.push(EventMessage::item(format!(
+            "{} 升到了 {} 级（+{gained}）",
+            def.name, progress.level
+        )));
     }
 }

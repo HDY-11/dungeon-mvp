@@ -50,7 +50,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 6;
+pub const ITEMS_SCHEMA_VERSION: u32 = 7;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -151,6 +151,45 @@ pub enum ItemKind {
 /// 一件装备可以有修正而没有耗时（盾牌），也可以只有耗时（空手）而没有物品。
 /// 空手口径见 [`crate::balance::UNARMED_ATTACK_DURATION`]。
 ///
+/// **武器成长曲线**（DsnE24 阶段 ②）：蓝图数据，实例只存当前等级与累积经验。
+///
+/// 曲线本身不包含"当前值"——`WeaponProgress` 是物品实体上的稀疏实例组件；升级时
+/// 攻击加成与力量上限由这里按等级算出（见 [`crate::item::WeaponProgress`]），
+/// 存档只存等级与经验这两个玩家造成的差异。
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WeaponGrowth {
+    /// 等级上限（所有武器共用同一上限口径，Gm7）。
+    pub max_level: u32,
+    /// 每升一级增加的基础攻击（直接进 `attack` 属性）。
+    pub attack_per_level: f32,
+    /// 每升一级增加的力量上限 S_m。
+    pub strength_cap_per_level: f32,
+    /// 升到 2 级所需经验（`exp_to_next(1)`）；更高等级按 `level^1.5` 放大。
+    pub exp_base: f32,
+}
+
+impl WeaponGrowth {
+    /// 从当前等级升到下一级所需经验；已满级时返回 `f64::INFINITY`。
+    pub fn exp_to_next(&self, level: u32) -> f64 {
+        if level >= self.max_level {
+            return f64::INFINITY;
+        }
+        let level = f64::from(level.max(1));
+        (f64::from(self.exp_base) * level.powf(1.5)).max(1.0)
+    }
+
+    /// 等级带来的额外攻击（1 级为 0）。
+    pub fn attack_bonus(&self, level: u32) -> f64 {
+        f64::from(self.attack_per_level) * f64::from(level.saturating_sub(1))
+    }
+
+    /// 等级带来的额外力量上限（1 级为 0）。
+    pub fn strength_cap_bonus(&self, level: u32) -> f64 {
+        f64::from(self.strength_cap_per_level) * f64::from(level.saturating_sub(1))
+    }
+}
+
 /// 一件物品的定义（GAME.md Gm7 表格的一行）。
 #[derive(Debug, Clone, Copy)]
 pub struct ItemDef {
@@ -196,6 +235,10 @@ pub struct ItemDef {
     /// "一把武器能吃多少力量"因此是蓝图数据，不是全局系数。空手用
     /// [`crate::balance::UNARMED_STRENGTH_CAP`]；非武器为 `None`。
     pub strength_cap: Option<f32>,
+    /// 武器成长曲线（DsnE24 阶段 ②）：武器必须声明、非武器不能声明。
+    ///
+    /// 实例的等级/经验在 `WeaponProgress` 组件里；这里是蓝图侧的曲线与上限。
+    pub weapon_growth: Option<WeaponGrowth>,
 }
 
 impl ItemDef {
@@ -324,6 +367,8 @@ struct RawItem {
     weapon_speed_ms: Option<f64>,
     #[serde(default)]
     strength_cap: Option<f32>,
+    #[serde(default)]
+    weapon_growth: Option<WeaponGrowth>,
 }
 
 /// 数据文件里的一条行为（DsnE22 阶段 ③）。
@@ -384,6 +429,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             weapon_speed_ms,
             strength_cap,
             durability_max,
+            weapon_growth,
         } = raw;
         if let Some(previous) = previous_id
             && id <= previous
@@ -429,6 +475,40 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
         }
         if weapon_speed_ms.is_none() && strength_cap.is_some() {
             return Err(format!("{label} 不是武器，不能声明力量上限"));
+        }
+        // 成长曲线与武器同真同假（DsnE24 阶段 ②）：武器不声明成长就无法升级；
+        // 非武器声明了又会让装配桥挂上一个永远不会涨的经验条。
+        if let Some(growth) = weapon_growth {
+            if growth.max_level < 1 {
+                return Err(format!(
+                    "{label} 的武器等级上限必须至少为 1，实得 {}",
+                    growth.max_level
+                ));
+            }
+            if !growth.attack_per_level.is_finite() || growth.attack_per_level < 0.0 {
+                return Err(format!(
+                    "{label} 的每级攻击必须是有限的非负数，实得 {}",
+                    growth.attack_per_level
+                ));
+            }
+            if !growth.strength_cap_per_level.is_finite() || growth.strength_cap_per_level < 0.0 {
+                return Err(format!(
+                    "{label} 的每级力量上限必须是有限的非负数，实得 {}",
+                    growth.strength_cap_per_level
+                ));
+            }
+            if !growth.exp_base.is_finite() || growth.exp_base <= 0.0 {
+                return Err(format!(
+                    "{label} 的升级基础经验必须是正的有限数，实得 {}",
+                    growth.exp_base
+                ));
+            }
+        }
+        if weapon_speed_ms.is_some() && weapon_growth.is_none() {
+            return Err(format!("{label} 是武器，必须声明成长曲线（DsnE24）"));
+        }
+        if weapon_speed_ms.is_none() && weapon_growth.is_some() {
+            return Err(format!("{label} 不是武器，不能声明成长曲线"));
         }
 
         let (kind, is_consumable, is_equipment) = match kind {
@@ -505,6 +585,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             tags: leak_slice(tags),
             weapon_speed_ms,
             strength_cap,
+            weapon_growth,
         });
     }
     Ok(defs)
