@@ -50,7 +50,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 5;
+pub const ITEMS_SCHEMA_VERSION: u32 = 6;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -190,6 +190,12 @@ pub struct ItemDef {
     pub tags: &'static [ItemTag],
     /// 作为主手武器时的攻击耗时（毫秒）；非武器为 `None`。
     pub weapon_speed_ms: Option<f64>,
+    /// 作为主手武器时的**力量加成上限 S_m**（DsnE24）。
+    ///
+    /// 只有武器声明且必须声明：基础伤害里的力量项按 `min(力量, 这个值)` 封顶，
+    /// "一把武器能吃多少力量"因此是蓝图数据，不是全局系数。空手用
+    /// [`crate::balance::UNARMED_STRENGTH_CAP`]；非武器为 `None`。
+    pub strength_cap: Option<f32>,
 }
 
 impl ItemDef {
@@ -316,6 +322,8 @@ struct RawItem {
     tags: Vec<ItemTag>,
     #[serde(default)]
     weapon_speed_ms: Option<f64>,
+    #[serde(default)]
+    strength_cap: Option<f32>,
 }
 
 /// 数据文件里的一条行为（DsnE22 阶段 ③）。
@@ -374,6 +382,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             behaviors,
             tags,
             weapon_speed_ms,
+            strength_cap,
             durability_max,
         } = raw;
         if let Some(previous) = previous_id
@@ -407,6 +416,19 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             && (!speed.is_finite() || speed <= 0.0)
         {
             return Err(format!("{label} 的武器攻速必须是正的有限数，实得 {speed}"));
+        }
+        // 武器与力量上限必须同真同假（DsnE24）：漏写会让力量项静默变成 0，
+        // 非武器写了又会让加载器以为它能吃力量。两个方向都在加载期挡住。
+        if let Some(cap) = strength_cap
+            && (!cap.is_finite() || cap <= 0.0)
+        {
+            return Err(format!("{label} 的力量上限必须是正的有限数，实得 {cap}"));
+        }
+        if weapon_speed_ms.is_some() && strength_cap.is_none() {
+            return Err(format!("{label} 是武器，必须声明力量上限（DsnE24）"));
+        }
+        if weapon_speed_ms.is_none() && strength_cap.is_some() {
+            return Err(format!("{label} 不是武器，不能声明力量上限"));
         }
 
         let (kind, is_consumable, is_equipment) = match kind {
@@ -482,6 +504,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             behaviors,
             tags: leak_slice(tags),
             weapon_speed_ms,
+            strength_cap,
         });
     }
     Ok(defs)

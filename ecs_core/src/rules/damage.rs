@@ -1,76 +1,88 @@
-//! 近战伤害：**结构化输入 + 因子分解返回**（DESIGN DsnE9 / Phase H2）。
+//! 近战伤害：**结构化输入 + 因子分解返回**（DESIGN DsnE9 形状 / DsnE24 内容）。
 //!
-//! # 为什么改形状
-//!
-//! 旧签名是 5 个裸标量：
+//! # 口径（DsnE24 阶段 ①，GAME.md Gm2）
 //!
 //! ```text
-//! compute_melee_damage(attack, defense, crit_rate, crit_damage, crit_roll) -> MeleeResult { damage, is_crit }
+//! 基础值   = 攻击力 + min(力量, 武器力量上限) × φ
+//! 增伤域   = 1 + 伤害加成
+//! 暴击域   = 暴击 ? 1 + 暴击伤害 : 1
+//! 护甲域   = δ / (目标有效防御 + δ)                 // δ = ARMOR_DELTA
+//! 抗性域   = 1 - 物理抗性                          // 独立乘区，上限 75%
+//! 最终伤害 = max(1, 基础值 × 增伤域 × 暴击域 × 护甲域 × 抗性域)
 //! ```
 //!
-//! 它**恰好表达"减一次防、乘一次暴击"**：每新增一个伤害修正（装备、Buff、技能、
-//! 生物范畴的固有性质）都要改签名 + 改所有调用点；返回类型也只有最终值，
-//! 没有各因子的分解，因此日志无法解释"为什么是这个数"，也没有"按因子触发"的落点。
+//! 与旧口径 `max(攻击 − 防御, 1)` 的差别：防御从**减法**变成**护甲曲线**（防御 0 不减伤、
+//! 防御 = δ 时减伤一半、每点防御让有效生命线性增长），并新增力量、增伤、抗性三个域。
+//! 公式里的常数/系数都在 [`crate::balance`]，这里只表达"因子怎么乘"。
 //!
-//! 改后的形状（**公式与数值均未改动**）：
+//! # 输入按来源分组
 //!
-//! - **输入按来源分组**（[`MeleeInput`]）：攻击方数值 / 受击方数值 / 随机输入；
-//! - **返回因子分解**（[`MeleeBreakdown`]）：各因子 + 最终值。
+//! - **攻击方**：`attack / strength / strength_cap / damage_bonus / crit`；
+//! - **受击方**：`defense / physical_resist`；
+//! - **随机输入**：`crit_roll`（由系统层从 `GameRng` 取）。
 //!
-//! # 形状 vs 内容（红线）
+//! 新增一类伤害修正时，改的是结构体字段，不是所有调用点的参数表。
 //!
-//! `基础值 = max(攻击 − 防御, 1)` 与 `暴击 → × (1 + 暴击伤害)` 是**当前实现的口径**，
-//! 本阶段只把它**原样搬进新结构**。分区（有哪些因子）、系数（防御系数、
-//! 增伤分区的叠加方式）**全部待定，属 GAME.md**：
+//! # 下限在最终值上
 //!
-//! - 要改成 `attack * 攻击系数 − defense * 防御系数` 之类的形式 → [`MeleeInput`]
-//!   已经是"按来源分组的输入"，加字段即可，**不必再动签名与调用点**；
-//! - 要按因子触发效果 → [`MeleeBreakdown`] 已经带上 `crit_multiplier`，
-//!   可直接判"这一击是否吃到了暴击分区"。
+//! `max(1, …)` 放在五个域乘完之后：高护甲/高抗性只把伤害压到 1，不会出现 0 或负伤害；
+//! 基础值本身不单独设下限（否则"防御越高反而打得更痛"这类反直觉会出现）。
 //!
-//! # 随机数仍在系统层取
+//! # 非有限值的口径
 //!
-//! `crit_roll` 由调用方从 `GameRng` 取（沿用既有做法），因此本函数保持**纯函数**：
-//! 同样输入必得同样输出，可在无 ECS 的单测里逐条钉住。
+//! 各输入先做 `max(0)` / `min` 清理：NaN 会落到"最保守的 0"，`inf` 会被上限或护甲曲线
+//! 吃掉；最终仍保证 `damage >= 1` 且有限（除攻击力为 `inf` 这种构造性输入外）。
 
-/// 近战伤害的输入，**按来源分组**（DsnE9 第 1 条）。
-///
-/// 分三组而不是一串裸标量：调用点因此可读（谁是谁一目了然），
-/// 且新增一类输入时**改的是结构体字段，不是所有调用点的参数表**。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeleeInput {
-    /// 攻击方数值。
-    pub attack: f64,
-    /// 受击方数值。
-    pub defense: f64,
-    /// 受击方的暴击参数（暴击率与暴击伤害加成）。
-    pub target_crit: CritProfile,
-    /// 随机输入：由系统层从 `GameRng` 取的 `[0, 1)` 掷数。
-    pub crit_roll: f64,
-}
+use crate::balance::{ARMOR_DELTA, STRENGTH_TO_DAMAGE};
 
 /// 暴击参数：暴击率与暴击伤害加成。
-///
-/// 单独成结构体而不是两个字段：它总是一起被读取、一起被替换
-/// （换武器/换 Buff 时两者同时变），拆开会让"忘记同步另一个"变成可能。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CritProfile {
-    /// 暴击率（`crit_rate > crit_roll` 即暴击）。
+    /// 暴击率（`rate > crit_roll` 即暴击）。
     pub rate: f64,
     /// 暴击伤害加成（暴击时伤害 × `1 + damage`）。
     pub damage: f64,
 }
 
-/// 伤害的**因子分解**（DsnE9 第 2 条）：数值链路要能回答"它从哪来"。
+/// 近战伤害的输入，**按来源分组**。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeleeInput {
+    /// 攻击方有效攻击力（基础 + 装备 + Buff 修正）。
+    pub attack: f64,
+    /// 攻击方有效力量。
+    pub strength: f64,
+    /// 攻击方主手武器的力量上限 S_m（空手用 `UNARMED_STRENGTH_CAP`）。
+    pub strength_cap: f64,
+    /// 攻击方伤害加成 p_d（乘区 `1 + p_d`）。
+    pub damage_bonus: f64,
+    /// 受击方有效防御力。
+    pub defense: f64,
+    /// 受击方物理抗性（`[0, 0.75]`，乘区 `1 - r`）。
+    pub physical_resist: f64,
+    /// 攻击方的暴击参数。
+    pub crit: CritProfile,
+    /// 随机输入：由系统层从 `GameRng` 取的 `[0, 1)` 掷数。
+    pub crit_roll: f64,
+}
+
+/// 伤害的**因子分解**：数值链路要能回答"它从哪来"。
 ///
-/// 三个真实消费者：战斗日志（解释这个数）、调试面板、未来"按因子触发"的效果。
+/// 消费者：战斗日志（解释这个数）、调试面板、未来"按因子触发"的效果。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeleeBreakdown {
-    /// 暴击前的伤害：`max(attack − defense, 1)`。
+    /// 力量转成的那部分基础伤害（已按 `strength_cap` 封顶）。
+    pub strength_bonus: f64,
+    /// 暴击/护甲/抗性之前的伤害：`攻击力 + strength_bonus`。
     pub base: f64,
+    /// 增伤域 `1 + damage_bonus`。
+    pub damage_multiplier: f64,
     /// 本次的暴击倍率（未暴击为 `1.0`）。
     pub crit_multiplier: f64,
-    /// 最终伤害 = `base * crit_multiplier`。
+    /// 护甲域 `δ / (防御 + δ)`。
+    pub armor_multiplier: f64,
+    /// 抗性域 `1 - 物理抗性`。
+    pub resistance_multiplier: f64,
+    /// 最终伤害（五个域乘完后的下限 1）。
     pub damage: f64,
     /// 本次是否暴击。
     pub is_crit: bool,
@@ -83,25 +95,79 @@ impl MeleeBreakdown {
     /// （见 `damage_tests.rs` 的 `factors_reconstruct_the_final_damage`），
     /// 而不是靠实现者自觉。
     pub fn recompute(&self) -> f64 {
-        self.base * self.crit_multiplier
+        (self.base
+            * self.damage_multiplier
+            * self.crit_multiplier
+            * self.armor_multiplier
+            * self.resistance_multiplier)
+            .max(1.0)
     }
 }
 
-/// 计算一次近战的结果（**公式与数值与本阶段之前完全一致**）。
+/// 护甲域：`δ / (防御 + δ)`。
+///
+/// 防御 0 → 1.0（不减伤）；防御 = δ → 0.5；防御越大越接近 0 但永不为负。
+/// 负防御按 0 处理；非有限值按 0 处理（NaN 防御不放大伤害）。
+pub fn armor_multiplier(defense: f64) -> f64 {
+    let defense = finite_at_least_zero(defense);
+    ARMOR_DELTA / (defense + ARMOR_DELTA)
+}
+
+/// 把抗性收进 `[0, 0.75]`；NaN 按 0（不额外减伤），`+inf` 夹到上限 75%。
+pub fn clamp_resistance(value: f64) -> f64 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 0.75)
+    }
+}
+
+/// 把参与乘法的输入清理到"合理的方向"：
+///
+/// - `NaN` 落到 0（最保守的取值，不放大也不缩小伤害）；
+/// - 负值抬到 0；
+/// - `+inf` **保留**：无限防御经护甲曲线得到 0 减伤、无限攻击得到无限伤害，
+///   这类构造性输入应保持其原有语义，而不是被静默改成 0。
+fn finite_at_least_zero(value: f64) -> f64 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.max(0.0)
+    }
+}
+
+/// 计算一次近战的结果。
 ///
 /// 纯函数：不碰 `World`、不取随机数（`crit_roll` 由调用方给）、不发事件。
 pub fn melee(input: MeleeInput) -> MeleeBreakdown {
-    let base = (input.attack - input.defense).max(1.0);
-    let is_crit = input.target_crit.rate > input.crit_roll;
+    let attack = finite_at_least_zero(input.attack);
+    let strength = finite_at_least_zero(input.strength);
+    let strength_cap = finite_at_least_zero(input.strength_cap);
+    let strength_bonus = strength.min(strength_cap) * STRENGTH_TO_DAMAGE;
+    let base = attack + strength_bonus;
+
+    let damage_multiplier = 1.0 + finite_at_least_zero(input.damage_bonus);
+    let is_crit = input.crit.rate > input.crit_roll;
     let crit_multiplier = if is_crit {
-        1.0 + input.target_crit.damage.max(0.0)
+        1.0 + finite_at_least_zero(input.crit.damage)
     } else {
         1.0
     };
+    let armor_multiplier = armor_multiplier(input.defense);
+    let resistance_multiplier = 1.0 - clamp_resistance(input.physical_resist);
+
+    let damage = (base * damage_multiplier * crit_multiplier * armor_multiplier
+        * resistance_multiplier)
+        .max(1.0);
+
     MeleeBreakdown {
+        strength_bonus,
         base,
+        damage_multiplier,
         crit_multiplier,
-        damage: base * crit_multiplier,
+        armor_multiplier,
+        resistance_multiplier,
+        damage,
         is_crit,
     }
 }

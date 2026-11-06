@@ -8,6 +8,27 @@ pub fn exp_to_next_level(level: u64) -> f64 {
     25.0 * lv.powf(1.5) + 10.0 * lv
 }
 
+// ── 物理伤害（DsnE24 阶段 ①） ───────────────────────────
+//
+// 口径（GAME.md Gm2）：
+//
+// ```text
+// 基础值   = 攻击力 + min(力量, 武器力量上限) × φ
+// 最终伤害 = max(1, 基础值 × 增伤域 × 暴击域 × 护甲域 × 抗性域)
+// ```
+
+/// 护甲曲线常数 δ：`减伤 = δ / (防御 + δ)`。
+///
+/// 取 4 与 GAME.md Gm4 的"防御 4 → 减伤 50%"对齐；换成别的数时只需改这里。
+pub const ARMOR_DELTA: f64 = 4.0;
+
+/// 力量转化系数 φ：每点有效力量转成多少点基础伤害。
+pub const STRENGTH_TO_DAMAGE: f64 = 0.5;
+
+/// 空手时的力量加成上限 S_m（没有武器时不像武器那样封顶）。
+pub const UNARMED_STRENGTH_CAP: f64 = 4.0;
+
+
 // 生命/法力上限公式已迁到 `rules::vitals`（DsnE23）：等级曲线 + 属性修正，
 // 并且只在那里算一次。旧的 `max_hp_for(level, defense)` / `max_mp_for(level, mastery)`
 // 已删除——"防御顺带加血"是半成品口径。

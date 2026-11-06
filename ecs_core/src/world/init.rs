@@ -128,6 +128,9 @@ fn player_base_bundle(pos: (usize, usize)) -> impl Bundle {
             (StatId::ATTACK_SPEED, PLAYER_ATTACK_SPEED),
             (StatId::CRIT_RATE, 0.05),
             (StatId::CRIT_DAMAGE, 0.50),
+            // 力量 4：空手/低上限武器能吃到 +2 基础伤害；换成高上限武器或
+            // 后续加力量成长才会拉开差距（DsnE24）。
+            (StatId::STRENGTH, 4.0),
         ]),
         MagicMastery(8.0),
         EntityName("冒险者".into()),

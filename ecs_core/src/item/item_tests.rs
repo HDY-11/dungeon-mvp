@@ -395,6 +395,26 @@ fn the_weapon_replaces_the_attack_duration() {
     assert_eq!(hammer, Some(450.0), "石锤 450ms");
 }
 
+/// 力量上限来自主手武器的蓝图（DsnE24）：空手没有上限，装备后读武器声明值。
+#[test]
+fn the_weapon_supplies_the_strength_cap() {
+    let (mut world, player) = open_world();
+    let unarmed = {
+        let mut state = SystemState::<EffectContext>::new(&mut world);
+        state.get(&world).main_hand_strength_cap(player)
+    };
+    assert_eq!(unarmed, None, "空手没有武器上限，用 balance 的默认值");
+
+    place(&mut world, (10, 10), ItemId(0), 1); // 锈铁剑 6
+    pickup(&mut world);
+
+    let sword = {
+        let mut state = SystemState::<EffectContext>::new(&mut world);
+        state.get(&world).main_hand_strength_cap(player)
+    };
+    assert_eq!(sword, Some(6.0), "锈铁剑的力量上限是 6");
+}
+
 // ── 3. 掉落落地 ──────────────────────────────────────
 
 /// 怪物死亡 → 按模板掉落表掉东西在它倒下的那一格。

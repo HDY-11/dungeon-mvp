@@ -152,15 +152,31 @@ impl EffectContext<'_, '_> {
         mods
     }
 
+    /// 主手武器的定义；没装备武器时 `None`。
+    ///
+    /// 主手槽只接受带 `Weapon` 标签的物品（DsnE18 的 `BODY` 过滤表），所以这里
+    /// 按标签找即可，不需要再查槽位下标——"哪一把是主手"由身体容器的槽位唯一决定。
+    pub fn main_hand_weapon(&self, actor: Entity) -> Option<&'static crate::item::ItemDef> {
+        self.equipped_defs(actor)
+            .into_iter()
+            .find(|def| def.tags.contains(&ItemTag::Weapon))
+    }
+
     /// 主手武器的攻击耗时（毫秒）；没装备武器时 `None`（用空手基准）。
     ///
     /// GAME.md Gm7「武器攻速」：`AV = 武器 speed ÷ 攻击速度`。武器覆盖的是**基础耗时**，
     /// 不是速度——所以石锤与匕首的区别在于"每一击要多久"，而不是"速度倍率多少"。
     pub fn main_hand_weapon_speed(&self, actor: Entity) -> Option<f64> {
-        self.equipped_defs(actor)
-            .into_iter()
-            .find(|def| def.tags.contains(&ItemTag::Weapon))
+        self.main_hand_weapon(actor)
             .and_then(|def| def.weapon_speed_ms)
+    }
+
+    /// 主手武器的力量加成上限 S_m（DsnE24）；空手时由调用方用
+    /// [`crate::balance::UNARMED_STRENGTH_CAP`] 兜底。
+    pub fn main_hand_strength_cap(&self, actor: Entity) -> Option<f64> {
+        self.main_hand_weapon(actor)
+            .and_then(|def| def.strength_cap)
+            .map(f64::from)
     }
 
     /// 收桶：脚下这一格的修正 + actor 自带的修正 + 忽略表。

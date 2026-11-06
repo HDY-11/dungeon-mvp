@@ -115,6 +115,58 @@ fn only_main_hand_weapons_carry_a_swing_speed() {
     assert_eq!(ItemId(23).def().weapon_speed_ms, Some(450.0), "石锤 450ms");
 }
 
+/// 武器必须声明力量上限，非武器必须不给：`strength_cap` 与"是不是主手武器"同真同假（DsnE24）。
+///
+/// 漏写会让力量项静默变成 0（玩家以为力量有用、实际没有）；非武器写了又会让加载器
+/// 以为它能吃力量。两个方向都在加载期挡住，这里顺带钉住三把武器的数值口径。
+#[test]
+fn only_main_hand_weapons_carry_a_strength_cap() {
+    for def in items() {
+        assert_eq!(
+            def.strength_cap.is_some(),
+            def.weapon_speed_ms.is_some(),
+            "{}：力量上限与武器攻速必须同时有/同时无",
+            def.name
+        );
+        if let Some(cap) = def.strength_cap {
+            assert!(
+                cap.is_finite() && cap > 0.0,
+                "{} 的力量上限必须是正的有限数",
+                def.name
+            );
+        }
+    }
+    // 三档：匕首吃得少、锈铁剑中等、石锤最能吃力量（Gm2 武器表）。
+    assert_eq!(ItemId(24).def().strength_cap, Some(3.0), "匕首 3");
+    assert_eq!(ItemId(0).def().strength_cap, Some(6.0), "锈铁剑 6");
+    assert_eq!(ItemId(23).def().strength_cap, Some(10.0), "石锤 10");
+}
+
+#[test]
+fn a_weapon_without_a_strength_cap_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
+}
+
+#[test]
+fn a_strength_cap_on_a_non_weapon_is_rejected() {
+    let json = table(&[&material(5, r#","strength_cap":3.0"#)]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
+}
+
+#[test]
+fn a_non_positive_strength_cap_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":0.0}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
+}
+
 /// 身体每个部位**都至少有一件**能穿的装备：否则玩家会遇到"这个部位永远是空的"。
 ///
 /// 这条与 `every_equippable_item_fits_exactly_one_body_slot`（正向）互补：

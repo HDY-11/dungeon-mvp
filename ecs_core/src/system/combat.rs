@@ -4,12 +4,12 @@
 //! `AttackTarget`）：它只声明「谁打谁」（`AttackIntentEvent`），不算伤害、不扣血。
 //! 这里负责把意图变成结果，于是「伤害只结算一次」这件事只有一个地方需要保证（I90）。
 
-use crate::combat::compute_melee_damage;
+use crate::balance::UNARMED_STRENGTH_CAP;
 use crate::components::*;
 use crate::effect::EffectContext;
 use crate::events::{AttackEvent, AttackIntentEvent};
 use crate::resources::{EventLog, EventMessage, GameRng};
-use crate::rules::{StatId, apply_modifiers};
+use crate::rules::{CritProfile, MeleeInput, StatId, apply_modifiers, melee};
 use bevy_ecs::prelude::*;
 
 /// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
@@ -53,8 +53,35 @@ pub fn resolve_attack_system(
         let base_defense = defender_stats
             .map(|s| s.get(StatId::DEFENSE))
             .unwrap_or(0.0);
+        let base_strength = attacker_stats
+            .map(|s| s.get(StatId::STRENGTH))
+            .unwrap_or(0.0);
+        let base_damage_bonus = attacker_stats
+            .map(|s| s.get(StatId::DAMAGE_BONUS))
+            .unwrap_or(0.0);
+        let base_physical_resist = defender_stats
+            .map(|s| s.get(StatId::PHYSICAL_RESIST))
+            .unwrap_or(0.0);
         let attack = apply_modifiers(StatId::ATTACK, base_attack, &attacker_mods, &[]);
         let defense = apply_modifiers(StatId::DEFENSE, base_defense, &defender_mods, &[]);
+        let strength = apply_modifiers(StatId::STRENGTH, base_strength, &attacker_mods, &[]);
+        let damage_bonus = apply_modifiers(
+            StatId::DAMAGE_BONUS,
+            base_damage_bonus,
+            &attacker_mods,
+            &[],
+        );
+        let physical_resist = apply_modifiers(
+            StatId::PHYSICAL_RESIST,
+            base_physical_resist,
+            &defender_mods,
+            &[],
+        );
+        // 力量上限由主手武器决定（DsnE24）：蓝图上每把武器一个旋钮；
+        // 空手用 `UNARMED_STRENGTH_CAP`，避免"没武器反而无限吃力量"。
+        let strength_cap = effects
+            .main_hand_strength_cap(intent.attacker)
+            .unwrap_or(UNARMED_STRENGTH_CAP);
         let (crit_rate, crit_damage) = attacker_stats
             .map(|s| {
                 (
@@ -64,12 +91,29 @@ pub fn resolve_attack_system(
             })
             .unwrap_or((0.0, 0.0));
         let crit_roll = rng.random_f64();
-        let result = compute_melee_damage(attack, defense, crit_rate, crit_damage, crit_roll);
+        let result = melee(MeleeInput {
+            attack,
+            strength,
+            strength_cap,
+            damage_bonus,
+            defense,
+            physical_resist,
+            crit: CritProfile {
+                rate: crit_rate,
+                damage: crit_damage,
+            },
+            crit_roll,
+        });
 
         log::debug!(
-            "伤害结算: attacker={:?}, target={:?}, attack={attack:.2}(基础 {base_attack:.2}), defense={defense:.2}(基础 {base_defense:.2}), damage={:.2}, crit={}",
+            "伤害结算: attacker={:?}, target={:?}, attack={attack:.2}(基础 {base_attack:.2}), strength={strength:.2}/{strength_cap:.2}, defense={defense:.2}(基础 {base_defense:.2}), base={:.2}, 增伤={:.2}, 暴击={:.2}, 护甲={:.2}, 抗性={:.2}, damage={:.2}, crit={}",
             intent.attacker,
             intent.target,
+            result.base,
+            result.damage_multiplier,
+            result.crit_multiplier,
+            result.armor_multiplier,
+            result.resistance_multiplier,
             result.damage,
             result.is_crit
         );

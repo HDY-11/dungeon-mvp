@@ -53,9 +53,17 @@ impl StatId {
     pub const MAX_HEALTH: Self = Self(6);
     /// 法力上限的修正量（DsnE23）。
     pub const MAX_MANA: Self = Self(7);
+    /// 力量（DsnE24）：物理伤害的加成项，按武器上限封顶。
+    pub const STRENGTH: Self = Self(8);
+    /// 伤害加成（DsnE24）：乘区 `1 + damage_bonus`，物理/魔法共用。
+    pub const DAMAGE_BONUS: Self = Self(9);
+    /// 物理抗性（DsnE24）：独立乘区 `1 - physical_resist`，上限 75%。
+    pub const PHYSICAL_RESIST: Self = Self(10);
+    /// 魔法抗性（DsnE24）：先建词表，法术阶段接进魔法伤害。
+    pub const MAGIC_RESIST: Self = Self(11);
 
     /// 当前词表里的全部属性。
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 12] = [
         Self::ATTACK,
         Self::DEFENSE,
         Self::MOVE_SPEED,
@@ -64,6 +72,10 @@ impl StatId {
         Self::CRIT_DAMAGE,
         Self::MAX_HEALTH,
         Self::MAX_MANA,
+        Self::STRENGTH,
+        Self::DAMAGE_BONUS,
+        Self::PHYSICAL_RESIST,
+        Self::MAGIC_RESIST,
     ];
 
     /// 查这一项的定义；未知编号是程序错误（数据在加载期已校验）。
@@ -207,6 +219,42 @@ pub static STATS: &[StatDef] = &[
         is_ratio: false,
         min: 0.0,
         max: 9999.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::STRENGTH,
+        name: "strength",
+        label: "力量",
+        is_ratio: false,
+        min: 0.0,
+        max: 1000.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::DAMAGE_BONUS,
+        name: "damage_bonus",
+        label: "伤害加成",
+        is_ratio: true,
+        min: 0.0,
+        max: 10.0,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::PHYSICAL_RESIST,
+        name: "physical_resist",
+        label: "物理抗性",
+        is_ratio: true,
+        min: 0.0,
+        max: 0.75,
+        default: 0.0,
+    },
+    StatDef {
+        id: StatId::MAGIC_RESIST,
+        name: "magic_resist",
+        label: "魔法抗性",
+        is_ratio: true,
+        min: 0.0,
+        max: 0.75,
         default: 0.0,
     },
 ];

@@ -1,18 +1,17 @@
-//! 近战规则：相邻判定与伤害/暴击计算。
+//! 近战规则：相邻判定与目标存活。
 //!
 //! 这里只有**纯函数**：不碰 `World`、不发事件、不改状态。结算链路是
 //! `AttackIntentEvent -> resolve_attack_system`（`system/combat.rs`）；
 //! 「能不能打」由校验器 `action::validation::validate_basic_attack_system` 来问。
 //! 两者共用本模块的规则，因此「能不能打」与「打出多少」各只有一份实现。
+//!
+//! 数值类规则（攻击/防御/力量/暴击/护甲/抗性的折叠）不在这里——DsnE24 阶段 ① 之后
+//! 统一在 [`crate::rules::damage`]；旧的 `compute_melee_damage` 标量适配器随公式改写
+//! 删除（DsnE24 决策 6）。
+//!
+//! [`crate::rules::damage`]: crate::rules::damage
 
 use crate::components::*;
-
-/// 伤害与暴击的计算结果。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeleeResult {
-    pub damage: f64,
-    pub is_crit: bool,
-}
 
 /// 目标当前是否可被近战攻击（纯组件版）。
 ///
@@ -21,36 +20,4 @@ pub struct MeleeResult {
 /// [`Health::is_alive`] 组成，与旧 `World` 版语义一致。
 pub fn can_attack_positions(attacker: Position, target: Position, target_health: &Health) -> bool {
     attacker.is_near(target) && target_health.is_alive()
-}
-
-/// 根据攻击/防御与暴击参数计算最终伤害（**兼容形状**）。
-///
-/// **Phase H2 之后真正的实现是 [`crate::rules::melee`]**（结构化输入 + 因子分解返回）。
-/// 本函数保留为**薄适配器**，好处有二：
-///
-/// 1. 结算链路（`system/combat.rs`）不必为了"改形状"而一起改；
-/// 2. 「新口径与旧口径逐值一致」这条 H2 验收，可以由**旧实现本身**当基准来断言
-///    （见 `rules/damage_tests.rs`）——比拿一堆硬编码期望值更可靠。
-///
-/// 想拿因子分解（日志/调试/按因子触发）的调用方直接用 [`crate::rules::melee`]。
-pub fn compute_melee_damage(
-    attack: f64,
-    defense: f64,
-    crit_rate: f64,
-    crit_damage: f64,
-    crit_roll: f64,
-) -> MeleeResult {
-    let breakdown = crate::rules::melee(crate::rules::MeleeInput {
-        attack,
-        defense,
-        target_crit: crate::rules::CritProfile {
-            rate: crit_rate,
-            damage: crit_damage,
-        },
-        crit_roll,
-    });
-    MeleeResult {
-        damage: breakdown.damage,
-        is_crit: breakdown.is_crit,
-    }
 }
