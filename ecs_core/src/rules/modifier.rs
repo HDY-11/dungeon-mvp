@@ -50,11 +50,14 @@
 //! `base`——这条保证"接上求值侧"本身不改变任何现有行为，由 `rules_tests.rs` 的
 //! parity 用例钉住。
 
+use serde::{Deserialize, Serialize};
+
 /// 修正**作用于哪一项**数值（求值第 ④ 步的选择键）。
 ///
 /// 这一维只回答"加到谁身上"，不回答"谁加的"（那是 [`EffectSource`]）。
 /// `#[non_exhaustive]`：可修正的数值会随内容增补（法术强度、暴击率…）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Stat {
     /// 近战攻击力。
@@ -100,7 +103,8 @@ impl Stat {
 /// 且**不动** [`apply_modifiers`] 的折叠逻辑——这正是把它做成"数据"的收益。
 ///
 /// `#[non_exhaustive]`：桶集合预期会随内容设计增补；这样加桶不会破坏下游的穷尽匹配。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum EffectSource {
     /// actor 自身的固有值（基准属性，不是"效果"）。
@@ -133,16 +137,23 @@ impl EffectSource {
 ///
 /// 两个位**同时存在**而不是"二选一"，因为同一条效果两种都可能需要
 /// （例："移动速度 -1 且额外 ×0.8"）。取值属内容，本结构只保证它们有位置可放。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Modifier {
     /// 作用于哪一项数值。
     pub stat: Stat,
     /// 这条修正由哪一类来源产生（过滤按它做）。
     pub source: EffectSource,
-    /// **基础值修正位**：加在 base 上（可为负）。
+    /// **基础值修正位**：加在 base 上（可为负）。数据里省略按 `0.0`。
+    #[serde(default)]
     pub base_delta: f64,
-    /// **乘区位**：作为独立因子相乘（`1.0` = 不改变）。
+    /// **乘区位**：作为独立因子相乘（`1.0` = 不改变）。数据里省略按中性值。
+    #[serde(default = "neutral_multiplier")]
     pub multiplier: f64,
+}
+
+/// `multiplier` 在数据里省略时的中性值（`1.0`）。
+fn neutral_multiplier() -> f64 {
+    1.0
 }
 
 impl Modifier {

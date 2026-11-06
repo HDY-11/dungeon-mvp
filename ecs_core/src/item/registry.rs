@@ -1,22 +1,23 @@
-//! 物品注册表：**一张静态表 + 一个 ID**（GAME.md Gm7）。
+//! 物品注册表：**一份数据文件 + 一个 ID**（GAME.md Gm7，DESIGN DsnE22）。
 //!
-//! # 为什么是 Rust 静态表，不是运行时加载的 JSON
+//! # 数据在文件，加载在启动期
 //!
-//! 旧实现（`archive/dungeon-core/src/items.rs`）把物品定义放在 `assets/items.json`，运行时读成
-//! `ItemRegistry`（`OnceLock` 全局单例）。这套东西的成本全在**边界**上：读文件失败怎么办、
-//! ID 指向不存在的物品怎么办、JSON 里写错的槽位谁来发现——每一条都要在运行期兜。
+//! 物品的数值、效果、重量、可装位标签全部写在 `ecs_core/assets/items.json` 里；构建时
+//! `include_str!` 内嵌进二进制，第一次访问 [`ITEMS`] 时解析并**逐行校验**。运行时没有
+//! "读文件失败"这条路径，但"数据写错了"会在启动/测试期直接报错，而不是变成某个玩家手里
+//! "捡不起来"的装备。
 //!
-//! 本项目已经在两处做过同样的选择并拿到收益：`TILE_PROPS`（地形属性，ECS31）与
-//! `MonsterTemplate`（物种一行，ECS32）。物品表照抄这个形状：
+//! 为什么是 JSON 而不是别的格式：`serde_json` 已经是本 crate 的依赖（存档投影也用 serde），
+//! 不再引新依赖；数据量是几十行，可读性优先。
 //!
-//! | | JSON 注册表 | 静态表（本模块） |
-//! |---|---|---|
-//! | 加一件物品 | 改 JSON + 重启加载 | 加一行常量 |
-//! | 引用不存在的物品 | 运行期 `Option`/兜底 | **编译期**就写不出来（`&'static ItemDef`） |
-//! | 表本身的完整性 | 只有运行时知道 | 一条 `/tests` 用例枚举所有行 |
+//! # 形状 vs 数据（DsnE22 阶段 ①）
 //!
-//! **条目本身仍然是数据**：数值写在表里、代码里没有 `match item_id { .. }`。
-//! 这与"数据驱动"不矛盾——数据可以编译进二进制，关键是没有**中央分派**。
+//! 这一轮只把**同一张表**从 Rust 字面量搬到数据文件：`ItemDef` / `ItemKind` / `Stat` /
+//! `EffectSource` / `ItemTag` 的类型形状不变，因此规则、拾取、界面、存档全部零改动。
+//! 后续阶段才会拆 `ItemKind`（② 属性词表、③ 行为数据化、④ 实例组件 + SaveV2）。
+//!
+//! 关键仍然是没有**中央分派**：代码里没有 `match item_id { .. }`，物品的行为由数据上的
+//! 标签/修正/效果决定。
 //!
 //! # 编号
 //!
@@ -26,23 +27,58 @@
 //!
 //! # 加一件物品要改几处（LECS22）
 //!
-//! 1. 本文件加一行 [`ItemDef`]（顺带回答"它授予什么"：修正 / 效果 / 配方）；
+//! 1. `assets/items.json` 的 `items` 数组加一行；
 //! 2. 想让它掉出来 → 在 `monster/template.rs` 对应物种的 `loot` 里加一条。
 //!
 //! 第 2 步是可选的（很多物品只由模板/配方产出）。**不需要**改任何系统。
 
+use std::sync::LazyLock;
+
+use serde::Deserialize;
+
 use crate::item::container::{ContainerDef, ItemTag, TRAVELER_PACK};
+use crate::rules::{EffectSource, Modifier};
 
 /// 旅者行囊的编号（初始化时给玩家挂一件，DsnE18）。
 pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
-use crate::rules::{Modifier, Stat, EffectSource};
+
+/// 物品数据文件的 schema 版本（DsnE22 的两层版本之一：数据版本）。
+///
+/// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
+/// 不做兼容推断。
+pub const ITEMS_SCHEMA_VERSION: u32 = 1;
+
+/// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
+const MAX_ITEM_WEIGHT: f32 = 10.0;
+
+/// 内嵌的物品数据（构建期进二进制，无运行期文件 I/O）。
+static ITEMS_JSON: &str = include_str!("../../assets/items.json");
+
+/// **物品注册表**（GAME.md Gm7）：首次访问时从内嵌 JSON 加载并校验。
+///
+/// 加载失败直接 panic：数据文件是编译进二进制的，启动期都过不去的表不该带病运行。
+pub static ITEMS: LazyLock<&'static [ItemDef]> = LazyLock::new(|| {
+    let loaded = load_items(ITEMS_JSON).unwrap_or_else(|error| {
+        panic!("物品数据加载失败（ecs_core/assets/items.json）：{error}")
+    });
+    let leaked: &'static mut [ItemDef] = Box::leak(loaded.into_boxed_slice());
+    &*leaked
+});
+
+/// 物品表（只读）。数据来自内嵌的 `assets/items.json`，首次访问时解析并校验。
+pub fn items() -> &'static [ItemDef] {
+    *ITEMS
+}
 
 /// 消耗品的效果（GAME.md Gm7「消耗品」）。
 ///
 /// 做成**闭合小词表**而不是"一串操作"：消耗品都是即时的一次性效果，
 /// 一旦需要"持续发生的事"，它就该走技能三层结构的第 ③ 层（效果实体），
 /// 而不是往这里加字段（DESIGN DsnE11）。
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// 数据文件里写成 `{"heal": 6.0}` / `{"restore_magic": 4.0}`（DsnE22 阶段 ①）。
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConsumeEffect {
     /// 回复生命（受上限钳制；满血时不消耗）。
     Heal(f64),
@@ -89,7 +125,7 @@ pub enum ItemKind {
 /// 一件装备可以有修正而没有耗时（盾牌），也可以只有耗时（空手）而没有物品。
 /// 空手口径见 [`crate::balance::UNARMED_ATTACK_DURATION`]。
 ///
-/// 一件物品的静态定义（GAME.md Gm7 表格的一行）。
+/// 一件物品的定义（GAME.md Gm7 表格的一行）。
 #[derive(Debug, Clone, Copy)]
 pub struct ItemDef {
     /// 编号（与 GAME.md 表格一致）。
@@ -168,11 +204,11 @@ pub struct ItemId(pub u16);
 impl ItemId {
     /// 查表拿到定义。**编号必须是表里存在的行**——不存在就是编码错误。
     ///
-    /// 返回 `&'static ItemDef` 而不是 `Option`：`ItemId` 只由本模块的常量产生
+    /// 返回 `&'static ItemDef` 而不是 `Option`：`ItemId` 只由数据与常量产生
     /// （表外编号要靠 `ItemId(999)` 手写），所以这里 panic 是"你写了一个不存在的号"，
     /// 而不是"玩家数据坏了"。`every_item_id_resolves` 枚举全表，确认没有漏行。
     pub fn def(self) -> &'static ItemDef {
-        ITEMS
+        items()
             .iter()
             .find(|item| item.id == self)
             .unwrap_or_else(|| panic!("物品编号 {} 不在注册表里", self.0))
@@ -180,299 +216,185 @@ impl ItemId {
 
     /// 编号是否存在（给 `TryFrom`/反序列化这类外部输入用）。
     pub fn exists(self) -> bool {
-        ITEMS.iter().any(|item| item.id == self)
+        items().iter().any(|item| item.id == self)
     }
 }
 
-// ── 修正器常量（装备加成） ───────────────────────────
+// ── 数据文件 → 运行期静态表 ─────────────────────────
 //
-// 数值来源：GAME.md Gm7「武器攻速」与 Gm4「装备加成」。
-// 写成常量而不是直接内联进表，是为了让"哪几件装备用同一个加成"一眼可见。
+// 两段式：先按 DTO 解析成"拥有所有权的数据"，全部校验通过后再 leak 成 `&'static`。
+// 校验失败时不会留下半张表，也不会把未通过检查的行 leak 出去。
 
-/// 锈铁剑：攻击 +3（基准武器，300ms）。
-const SWORD_MODS: &[Modifier] = &[Modifier::delta(Stat::Attack, EffectSource::Equipment, 3.0)];
-/// 石锤：攻击 +4，但慢（450ms）。
-const HAMMER_MODS: &[Modifier] = &[Modifier::delta(Stat::Attack, EffectSource::Equipment, 4.0)];
-/// 匕首：攻击 +2，但快（200ms）。
-const DAGGER_MODS: &[Modifier] = &[Modifier::delta(Stat::Attack, EffectSource::Equipment, 2.0)];
-/// 木盾：防御 +2（Gm4 只说"提供防御加成"，取值属内容，本轮试调）。
-const SHIELD_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::Equipment, 2.0)];
-/// 皮甲：防御 +4。
-const ARMOR_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::Equipment, 4.0)];
-/// 攻击戒指：攻击 +2。
-const RING_MODS: &[Modifier] = &[Modifier::delta(Stat::Attack, EffectSource::Equipment, 2.0)];
-/// 皮帽：防御 +1（头部装备，取值属内容）。
-const HAT_MODS: &[Modifier] = &[Modifier::delta(Stat::Defense, EffectSource::Equipment, 1.0)];
+/// 数据文件顶层（`assets/items.json`）。
+#[derive(Debug, Deserialize)]
+struct RawTable {
+    schema_version: u32,
+    items: Vec<RawItem>,
+}
 
-/// 踏水靴：移动速度 +0，但**无视地形**那一桶（C4/C5 的内容，泥潭与浅水的代价对它无效）。
-const BOOTS_MODS: &[Modifier] = &[];
+/// 数据文件里的一行。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawItem {
+    id: u16,
+    name: String,
+    desc: String,
+    weight: f32,
+    max_stack: u32,
+    kind: RawKind,
+    #[serde(default)]
+    tags: Vec<ItemTag>,
+    #[serde(default)]
+    weapon_speed_ms: Option<f64>,
+}
 
-// ── 物品表 ──────────────────────────────────────────
-//
-// 顺序按编号排列（便于与 GAME.md 对照）；`every_item_row_matches_game_doc` 校验
-// 表里每一行都写了与文档一致的编号，`item_ids_are_unique_and_sorted` 校验不重不漏。
+/// 物品类型（数据里用 `"type"` 区分，DsnE22 阶段 ① 的过渡形状）。
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawKind {
+    Equipment {
+        #[serde(default)]
+        modifiers: Vec<Modifier>,
+        #[serde(default)]
+        ignores: Vec<EffectSource>,
+    },
+    Consumable {
+        effect: ConsumeEffect,
+    },
+    Material,
+    Pack {
+        layout: String,
+    },
+}
 
-/// **物品注册表**（GAME.md Gm7）。加物品 = 加一行。
-pub const ITEMS: &[ItemDef] = &[
-    ItemDef {
-        id: ItemId(0),
-        name: "锈铁剑",
-        desc: "一把生锈的铁剑。",
-        weight: 3.0,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: SWORD_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Weapon],
-        weapon_speed_ms: Some(300.0),
-    },
-    ItemDef {
-        id: ItemId(1),
-        name: "木盾",
-        desc: "简陋的木盾。",
-        weight: 2.5,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: SHIELD_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Shield],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(2),
-        name: "皮甲",
-        desc: "轻便皮甲。",
-        weight: 5.0,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: ARMOR_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Chest],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(3),
-        name: "攻击戒指",
-        desc: "攻击之戒。",
-        weight: 0.1,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: RING_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Ring],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(4),
-        name: "皮帽",
-        desc: "缝得粗糙的皮帽。聊胜于无。",
-        weight: 0.3,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: HAT_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Head],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(10),
-        name: "生物血肉",
-        desc: "怪物的血肉，散发出腥臭味。",
-        weight: 0.5,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(11),
-        name: "破布",
-        desc: "破烂的布料，没什么用。",
-        weight: 0.2,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(12),
-        name: "坚硬木棍",
-        desc: "还算结实的木棍，可以当柴烧。",
-        weight: 0.8,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(13),
-        name: "染血兽牙",
-        desc: "沾满血迹的尖牙，散发出危险的气息。",
-        weight: 0.2,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(14),
-        name: "黑色甲壳",
-        desc: "变异蝎子的坚硬外壳。",
-        weight: 1.0,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(18),
-        name: "石子",
-        desc: "边缘锋利的石块，适合投掷。",
-        weight: 0.2,
-        max_stack: 20,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(23),
-        name: "石锤",
-        desc: "沉重的石制战锤，挥舞缓慢但势大力沉。",
-        weight: 6.0,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: HAMMER_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Weapon],
-        weapon_speed_ms: Some(450.0),
-    },
-    ItemDef {
-        id: ItemId(24),
-        name: "匕首",
-        desc: "轻巧的短刃，出手极快但伤害有限。",
-        weight: 1.0,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: DAGGER_MODS,
-            ignores: &[],
-        },
-        tags: &[ItemTag::Weapon],
-        weapon_speed_ms: Some(200.0),
-    },
-    ItemDef {
-        id: ItemId(25),
-        name: "蘑菇",
-        desc: "繁茂洞穴的荧光蘑菇。食用回复少量生命。",
-        weight: 0.1,
-        max_stack: 20,
-        kind: ItemKind::Consumable(ConsumeEffect::Heal(6.0)),
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(26),
-        name: "苔藓",
-        desc: "潮湿的苔藓，散发着泥土的气息。",
-        weight: 0.1,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(27),
-        name: "孢子囊",
-        desc: "蘑菇傀儡体内取出的孢子囊。",
-        weight: 0.3,
-        max_stack: 9,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(28),
-        name: "贝壳",
-        desc: "地海常见的硬壳。",
-        weight: 0.2,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(29),
-        name: "珍珠",
-        desc: "洞穴蟹体内孕育的稀有珍珠。",
-        weight: 0.1,
-        max_stack: 9,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(30),
-        name: "鱼骨",
-        desc: "洞穴鱼的骨架，细长而尖锐。",
-        weight: 0.2,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(31),
-        name: "鳗皮",
-        desc: "深鳗的皮革，湿滑坚韧。",
-        weight: 0.5,
-        max_stack: 64,
-        kind: ItemKind::Material,
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(32),
-        name: "海藻",
-        desc: "地海的海藻。食用回复少量法力。",
-        weight: 0.1,
-        max_stack: 20,
-        kind: ItemKind::Consumable(ConsumeEffect::RestoreMagic(4.0)),
-        tags: &[],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(40),
-        name: "踏水靴",
-        desc: "鞋底刻着水纹的旧靴子。走泥潭与浅水如履平地。",
-        weight: 0.8,
-        max_stack: 1,
-        kind: ItemKind::Equipment {
-            modifiers: BOOTS_MODS,
-            ignores: &[EffectSource::Terrain],
-        },
-        tags: &[ItemTag::Feet],
-        weapon_speed_ms: None,
-    },
-    ItemDef {
-        id: ItemId(41),
-        name: "旅者行囊",
-        desc: "用了很多年的粗布行囊，能塞下不少东西。",
-        weight: 1.0,
-        max_stack: 1,
-        kind: ItemKind::Pack(&TRAVELER_PACK),
-        tags: &[ItemTag::Pack],
-        weapon_speed_ms: None,
-    },
-];
+/// 解析并校验一份物品数据。
+///
+/// 校验是**加载期**的：编号顺序、空名、重量范围、堆叠上限、装备/容器不可堆叠、
+/// 攻速与消耗品数值为正、Pack 布局存在。每条失败都带编号与名字，报错直接指到数据行。
+fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
+    let table: RawTable =
+        serde_json::from_str(json).map_err(|error| format!("JSON 解析失败：{error}"))?;
+    if table.schema_version != ITEMS_SCHEMA_VERSION {
+        return Err(format!(
+            "数据 schema 版本 {} 不被支持（本程序只认 {ITEMS_SCHEMA_VERSION}）",
+            table.schema_version
+        ));
+    }
+    if table.items.is_empty() {
+        return Err("物品表为空".to_string());
+    }
+
+    let mut defs = Vec::with_capacity(table.items.len());
+    let mut previous_id: Option<u16> = None;
+    for raw in table.items {
+        let RawItem {
+            id,
+            name,
+            desc,
+            weight,
+            max_stack,
+            kind,
+            tags,
+            weapon_speed_ms,
+        } = raw;
+        if let Some(previous) = previous_id
+            && id <= previous
+        {
+            return Err(format!(
+                "物品编号必须严格递增：{id} 排在 {previous} 之后（重复或乱序）"
+            ));
+        }
+        previous_id = Some(id);
+
+        let label = format!("编号 {id}（{name}）");
+        if name.trim().is_empty() {
+            return Err(format!("编号 {id} 的名字为空"));
+        }
+        if desc.trim().is_empty() {
+            return Err(format!("{label} 的描述为空"));
+        }
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(format!("{label} 的重量必须是正的有限数，实得 {weight}"));
+        }
+        if weight > MAX_ITEM_WEIGHT {
+            return Err(format!(
+                "{label} 的重量 {weight} 超过了单件上限 {MAX_ITEM_WEIGHT}"
+            ));
+        }
+        if max_stack == 0 {
+            return Err(format!("{label} 的堆叠上限必须至少为 1"));
+        }
+        if let Some(speed) = weapon_speed_ms
+            && (!speed.is_finite() || speed <= 0.0)
+        {
+            return Err(format!("{label} 的武器攻速必须是正的有限数，实得 {speed}"));
+        }
+
+        let kind = match kind {
+            RawKind::Equipment { modifiers, ignores } => {
+                if max_stack != 1 {
+                    return Err(format!("{label} 是装备，堆叠上限必须是 1"));
+                }
+                ItemKind::Equipment {
+                    modifiers: leak_slice(modifiers),
+                    ignores: leak_slice(ignores),
+                }
+            }
+            RawKind::Consumable { effect } => {
+                let amount = match effect {
+                    ConsumeEffect::Heal(amount) | ConsumeEffect::RestoreMagic(amount) => amount,
+                };
+                if !amount.is_finite() || amount <= 0.0 {
+                    return Err(format!(
+                        "{label} 的消耗品效果必须是正的有限数，实得 {amount}"
+                    ));
+                }
+                ItemKind::Consumable(effect)
+            }
+            RawKind::Material => ItemKind::Material,
+            RawKind::Pack { layout } => {
+                if max_stack != 1 {
+                    return Err(format!("{label} 是容器类，堆叠上限必须是 1"));
+                }
+                let def = container_layout(&layout)
+                    .ok_or_else(|| format!("{label} 引用了未知的容器布局「{layout}」"))?;
+                ItemKind::Pack(def)
+            }
+        };
+
+        defs.push(ItemDef {
+            id: ItemId(id),
+            name: leak_str(name),
+            desc: leak_str(desc),
+            weight,
+            max_stack,
+            kind,
+            tags: leak_slice(tags),
+            weapon_speed_ms,
+        });
+    }
+    Ok(defs)
+}
+
+/// 容器布局的名字 → 布局表（数据里只写名字，实现在 `container.rs`）。
+fn container_layout(name: &str) -> Option<&'static ContainerDef> {
+    match name {
+        "traveler_pack" => Some(&TRAVELER_PACK),
+        _ => None,
+    }
+}
+
+fn leak_str(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
+}
+
+fn leak_slice<T>(values: Vec<T>) -> &'static [T] {
+    Box::leak(values.into_boxed_slice())
+}
 
 /// 按名字查（配置与测试用；运行期一律走 [`ItemId`]）。
 pub fn item_by_name(name: &str) -> Option<&'static ItemDef> {
-    ITEMS.iter().find(|item| item.name == name)
+    items().iter().find(|item| item.name == name)
 }
 
 /// 一件（堆）物品的总重：每单位重量 × 数量。

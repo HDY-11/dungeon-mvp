@@ -8,8 +8,9 @@ use super::*;
 
 /// 每一行的 `id` 都必须与"它所在的位置"一致（表里第 i 行 = 第 i 个 `ItemDef`）。
 ///
-/// 这条守的是**编号与表的对应关系**：`ITEMS` 是手写的常量数组，没有东西阻止
-/// 有人把 `ItemId(25)` 写成 `ItemId(23)`——那样两行会撞号，而 `def()` 只会返回先找到的那个。
+/// 这条守的是**编号与表的对应关系**：`ITEMS` 来自内嵌的 `assets/items.json`，加载器
+/// 保证编号严格递增，但没有东西阻止有人把 `ItemId(25)` 改成 `ItemId(23)`——那样清单与
+/// 数据就对不上了（`def()` 只会返回先找到的那个）。
 ///
 /// 注意它是**手工镜像清单**，不读 `GAME.md`（门禁也不解析文档表格，见 AUDIT-data D14）：
 /// 改内容时 GAME.md 与这张清单要一起改，单改文档不会让这条测试变红。
@@ -42,8 +43,9 @@ fn every_item_row_matches_the_pinned_list() {
         (41, "旅者行囊"),
     ];
 
-    assert_eq!(ITEMS.len(), doc_ids.len(), "表里有未登记的行（或漏了行）");
-    for (def, (id, name)) in ITEMS.iter().zip(doc_ids) {
+    let all = items();
+    assert_eq!(all.len(), doc_ids.len(), "表里有未登记的行（或漏了行）");
+    for (def, (id, name)) in all.iter().zip(doc_ids) {
         assert_eq!(def.id.0, *id, "{} 的编号与 GAME.md 不一致", def.name);
         assert_eq!(def.name, *name, "编号 {id} 的显示名与 GAME.md 不一致");
     }
@@ -52,8 +54,9 @@ fn every_item_row_matches_the_pinned_list() {
 /// 编号唯一：撞号会让 `ItemId::def()` 只返回靠前那一行，另一行永远查不到。
 #[test]
 fn item_ids_are_unique() {
-    for (index, def) in ITEMS.iter().enumerate() {
-        for other in &ITEMS[index + 1..] {
+    let all = items();
+    for (index, def) in all.iter().enumerate() {
+        for other in &all[index + 1..] {
             assert_ne!(def.id, other.id, "编号 {} 撞车", def.id.0);
         }
     }
@@ -62,7 +65,7 @@ fn item_ids_are_unique() {
 /// 每一行的编号都能反查到自己（`def()` 的往返一致性）。
 #[test]
 fn every_item_id_resolves() {
-    for def in ITEMS {
+    for def in items() {
         assert_eq!(def.id.def().name, def.name, "编号 {} 反查失败", def.id.0);
         assert!(def.id.exists());
     }
@@ -76,7 +79,7 @@ fn every_item_id_resolves() {
 /// 否则背包会被一串 ×1 塞满（Gm7 的 `max_stack` 说的就是这件事）。
 #[test]
 fn single_items_are_equipment_or_containers() {
-    for def in ITEMS {
+    for def in items() {
         if def.max_stack == 1 {
             assert!(
                 def.is_equipment() || def.container_def().is_some(),
@@ -97,7 +100,7 @@ fn single_items_are_equipment_or_containers() {
 /// 武器必须给出攻击耗时，非武器必须不给：`weapon_speed_ms` 与"是不是主手武器"同真同假。
 #[test]
 fn only_main_hand_weapons_carry_a_swing_speed() {
-    for def in ITEMS {
+    for def in items() {
         let is_weapon = def.tags.contains(&crate::item::ItemTag::Weapon);
         assert_eq!(
             def.weapon_speed_ms.is_some(),
@@ -122,7 +125,7 @@ fn every_body_slot_has_something_that_fits() {
 
     for slot in BODY.slots {
         assert!(
-            ITEMS.iter().any(|def| slot.accept.accepts(def.tags)),
+            items().iter().any(|def| slot.accept.accepts(def.tags)),
             "部位「{}」没有任何物品穿得进去",
             slot.name
         );
@@ -135,7 +138,7 @@ fn every_body_slot_has_something_that_fits() {
 /// 而所有读取 `Defense` 的地方都看不出问题。
 #[test]
 fn equipment_modifiers_target_the_right_stat() {
-    for def in ITEMS {
+    for def in items() {
         if !def.is_equipment() {
             continue;
         }
@@ -171,7 +174,7 @@ fn equipment_modifiers_target_the_right_stat() {
 /// 消耗品必须带效果、非消耗品必须不带：`Consumable` 这个变体不该是空壳。
 #[test]
 fn consumables_always_do_something() {
-    for def in ITEMS {
+    for def in items() {
         if let ItemKind::Consumable(effect) = def.kind {
             let amount = match effect {
                 ConsumeEffect::Heal(amount) | ConsumeEffect::RestoreMagic(amount) => amount,
@@ -229,7 +232,7 @@ fn items_can_be_looked_up_by_name() {
 fn every_equippable_item_fits_exactly_one_body_slot() {
     use crate::item::container::BODY;
 
-    for def in ITEMS {
+    for def in items() {
         let fits: Vec<&str> = BODY
             .slots
             .iter()
@@ -259,7 +262,7 @@ fn every_equippable_item_fits_exactly_one_body_slot() {
 /// 每件物品都必须有正重量（DsnE20）：0 重会让"载重"这条规则对某些物品形同虚设。
 #[test]
 fn every_item_has_a_positive_weight() {
-    for def in ITEMS {
+    for def in items() {
         assert!(def.weight > 0.0, "{} 的重量必须为正", def.name);
         assert!(
             def.weight <= 10.0,
@@ -277,4 +280,96 @@ fn stack_weight_scales_with_count() {
     let three = crate::item::stack_weight(ItemId(25), 3);
     assert!((three - one * 3.0).abs() < 1e-6, "蘑菇 ×3 = {three}");
     assert!((crate::item::stack_weight(ItemId(0), 1) - 3.0).abs() < 1e-6);
+}
+
+// ── 数据加载（DsnE22 阶段 ①） ──────────────────────
+//
+// 下面这些用例喂的是**最小 JSON 片段**，不是数据文件本身：加载器的每一条校验
+// 都必须能被单独触发，否则"写错数据会报错"只是口号。
+
+/// 内嵌数据本身必须能通过加载器（启动期 panic 的同一路径）。
+#[test]
+fn the_embedded_data_file_loads() {
+    let defs = load_items(include_str!("../../assets/items.json"))
+        .expect("内嵌物品数据必须能加载");
+    assert_eq!(defs.len(), 23, "数据文件的行数应与 GAME.md 物品表一致");
+}
+
+/// 用最小表包一层 JSON（`items` 片段由调用方给）。
+fn table(items: &[&str]) -> String {
+    format!(
+        r#"{{"schema_version":{ITEMS_SCHEMA_VERSION},"items":[{}]}}"#,
+        items.join(",")
+    )
+}
+
+/// 一行最小的合法材料（`extra` 用来覆盖单个字段）。
+fn material(id: u16, extra: &str) -> String {
+    format!(
+        r#"{{"id":{id},"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"kind":{{"type":"material"}}{extra}}}"#
+    )
+}
+
+#[test]
+fn an_unsupported_schema_version_is_rejected() {
+    let json = r#"{"schema_version":999,"items":[]}"#;
+    let error = load_items(json).unwrap_err();
+    assert!(error.contains("999"), "错误应提到版本号：{error}");
+}
+
+#[test]
+fn an_empty_item_table_is_rejected() {
+    let error = load_items(&table(&[])).unwrap_err();
+    assert!(error.contains("为空"), "错误应说明表为空：{error}");
+}
+
+#[test]
+fn duplicate_or_unsorted_item_ids_are_rejected() {
+    let json = table(&[&material(5, ""), &material(3, "")]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("严格递增"), "错误应说明编号顺序：{error}");
+}
+
+#[test]
+fn a_non_positive_weight_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":0.0,"max_stack":10,"kind":{"type":"material"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("重量"), "错误应提到重量：{error}");
+}
+
+/// 负重量（方向与 0 相反，但走同一条校验）。
+#[test]
+fn a_negative_weight_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":-1.0,"max_stack":10,"kind":{"type":"material"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("重量"), "错误应提到重量：{error}");
+}
+
+#[test]
+fn an_unknown_tag_is_rejected() {
+    let json = table(&[&material(0, r#","tags":["laser"]"#)]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("laser"), "错误应提到未知标签：{error}");
+}
+
+#[test]
+fn an_unknown_pack_layout_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":1,"kind":{"type":"pack","layout":"chest"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("chest"), "错误应提到未知布局：{error}");
+}
+
+#[test]
+fn equipment_and_packs_must_not_stack() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":2,"kind":{"type":"pack","layout":"traveler_pack"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("堆叠上限"), "错误应提到堆叠上限：{error}");
 }

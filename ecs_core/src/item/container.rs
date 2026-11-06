@@ -40,6 +40,7 @@
 //! （`world::transfer::would_nest` 一类函数），否则会出现无法遍历、也无法保存的结构。
 
 use bevy_ecs::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// 物品的**可装位标签**：回答"这件东西能装进哪类槽位"。
 ///
@@ -47,7 +48,8 @@ use bevy_ecs::prelude::*;
 /// 本枚举回答"它能进哪个部位"。战士的剑与法杖都是 `Weapon`，但用法不同。
 ///
 /// **只增不改**：标签是数据，改一个旧值等于让所有旧存档里的物品换了个部位。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ItemTag {
     /// 头部（头盔、帽子）。
     Head,

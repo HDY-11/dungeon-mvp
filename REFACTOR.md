@@ -49,9 +49,10 @@
 | M11 | **信息栏观察候选**：`Observable` 显式标记（怪物/楼梯/地面物品/尸体，容器内容不标）；信息栏契约 `InfoView{entries,selected}`（契约 5），presentation 按「近→远、同距方位顺时针（正上=0）」排序；`PageStack.info_cursor` 选行、地图反色高亮 | DsnE21 / DsnA4 / Gm14 | 本次提交 |
 | M12 | **地面全显式拾取**：`pickup_system` 退出结算链（踩上不再自动捡）；新核心动作 `take_from_ground(world, index)`（空部位装备 / 消耗品按需用 1 / 其余进行囊，超重与满格留原地）；背包页「地面」栏 + `InventoryTarget::Ground` + `Enter` 拿取；playthrough 改为显式拾取 | DsnE21 / DsnE20 / Gm7 | 本次提交 |
 | M13 | **背包 3×3 网格**：契约 `InventoryView` 换成 Nav1/Nav2/Context1/Context2/Detail/Tip（契约 6，DsnA5）；Nav1=身体/行囊、Nav2=尸体/地面（按脚下情况出现）；4 焦点顺时针（Nav2 不存在时跳过）、`←/→` 切页签、`↑/↓` 选行；每条 Context 保留光标；tui 网格渲染（详情先右侧后底部、窄屏 Context 堆叠）| DsnE21 / DsnA5 / Gm7 | 本次提交 |
+| M14 | **物品数据外置（DsnE22 阶段 ①）**：物品表搬到 `ecs_core/assets/items.json`（`schema_version` 1，`include_str!` 内嵌 + `LazyLock`），加载器逐行校验（编号顺序/名字/重量/堆叠/攻速/消耗品数值/Pack 布局/未知字段）；`Stat`/`EffectSource`/`Modifier`/`ItemTag`/`ConsumeEffect` 加 serde；类型形状与行为零变化 | DsnE22 / DsnE20 / Gm7 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **242 passed**；`cargo test --workspace`
-29 目标 **520 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
+**当前基线（实测）：** `cargo test -p ecs_core` **251 passed**；`cargo test --workspace`
+29 目标 **529 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

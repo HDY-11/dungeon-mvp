@@ -340,7 +340,8 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 <!-- &Gm7  物品注册表 / 掉落表 / 背包 / 地面刷新 / 消耗品已迁移；合成待做 -->
 ## Gm7 掉落物系统
 
-> **已迁移（2026-09 物品轮）**：物品注册表（`ecs_core/src/item/registry.rs` 的 `ITEMS`，
+> **已迁移（2026-09 物品轮；2026-11 数据外置）**：物品注册表（数据文件
+> `ecs_core/assets/items.json`，构建期 `include_str!` 内嵌、启动期加载校验，
 > 编号与本表一一对应）、堆叠与背包、七个身体部位、怪物掉落表（`MonsterTemplate.loot`，
 > 数据在 `monster/template.rs` 的 `*_LOOT` 常量）、地面刷新、消耗品、背包界面（R2 收尾）。
 > **仍未迁移**：合成（模板碎片 19–22 不在注册表里）。
@@ -372,13 +373,15 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 
 本系统的物品 ID 化、ItemStack、物品注册表和 LootTable 设计参考了 **Minecraft Java Edition 1.16+** 的物品系统架构：
 
-- **Registry 模式**：物品定义存放在 JSON 中，通过 `usize` ID 索引。运行时加载为 `ItemRegistry`（OnceLock 全局单例）
-- **ItemStack**：背包中不存完整的物品定义，只存 `(item_id, count)` 对。堆叠上限由物品定义中的 `max_stack` 控制（装备 1，材料 64）
+- **Registry 模式**：物品定义存放在 `assets/items.json`，构建期内嵌、首次访问时加载成
+  静态表（`LazyLock`），按 `ItemId` 索引；数据带 `schema_version`，加载期逐行校验（DsnE22）
+- **ItemStack**：背包中不存完整的物品定义，只存物品实体与 `Amount` 数量。堆叠上限由物品定义中的 `max_stack` 控制（装备 1，材料 64）
 - **LootTable**：怪物挂载 `LootTable` 组件，死亡时掷骰决定掉落。每次 roll 各条目独立判定
 
 ### 物品注册表
 
-物品定义的可执行权威是 `ecs_core/src/item/registry.rs` 的 `ITEMS`（`assets/items.json` 为早期设计参考；编号与数值一律以 `ITEMS` 为准）：
+物品定义的可执行权威是 `ecs_core/assets/items.json`（`schema_version` 为 1；构建期内嵌、
+启动期加载校验，`ecs_core/src/item/registry.rs` 的 `ITEMS` 是加载结果）。改数据后需要重新构建：
 
 | ID | 名称 | 描述 | 重量 | 堆叠 | 身体部位 |
 |---|---|---|---|---|---|
