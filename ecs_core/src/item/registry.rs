@@ -49,7 +49,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 2;
+pub const ITEMS_SCHEMA_VERSION: u32 = 3;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -73,29 +73,53 @@ pub fn items() -> &'static [ItemDef] {
     *ITEMS
 }
 
-/// 消耗品的效果（GAME.md Gm7「消耗品」）。
+/// 行为的**触发时机**（数据里写 `"trigger": "use"` / `"equipped"`）。
 ///
-/// 做成**闭合小词表**而不是"一串操作"：消耗品都是即时的一次性效果，
-/// 一旦需要"持续发生的事"，它就该走技能三层结构的第 ③ 层（效果实体），
-/// 而不是往这里加字段（DESIGN DsnE11）。
-///
-/// 数据文件里写成 `{"heal": 6.0}` / `{"restore_magic": 4.0}`（DsnE22 阶段 ①）。
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+/// 触发时机是解释器唯一认识的入口词表：加新触发时机 = 加一个变体 + 一个解释它的系统，
+/// 而不是往 `ItemKind` 里加字段（DsnE22）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ConsumeEffect {
-    /// 回复生命（受上限钳制；满血时不消耗）。
-    Heal(f64),
-    /// 回复法力（受上限钳制；满蓝时不消耗）。
-    RestoreMagic(f64),
+pub enum BehaviorTrigger {
+    /// 玩家主动使用这一件（消耗品路径；资源已满时不消耗）。
+    Use,
+    /// 装备在身上时持续生效（被动路径）。
+    Equipped,
 }
 
-impl ConsumeEffect {
+/// 行为产生的一条**效果**（数据里用 `"type"` 区分）。
+///
+/// 效果词表是解释器的"动词"；加新效果 = 加一个变体 + 一个应用它的函数。
+/// 不支持的效果写法在加载期被拒绝（见 `load_items` 的触发/效果矩阵校验），
+/// 所以运行期不需要 `match` 兜底分支。
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BehaviorEffect {
+    /// 回复生命（受上限钳制；满血时不生效）。
+    Heal { amount: f64 },
+    /// 回复法力（受上限钳制；满蓝时不生效）。
+    RestoreMagic { amount: f64 },
+    /// 让持有者求值时丢掉指定来源桶（"无视地形减速"）。
+    IgnoreSource { source: EffectSource },
+}
+
+impl BehaviorEffect {
     pub fn describe(self) -> String {
         match self {
-            ConsumeEffect::Heal(amount) => format!("回复 {amount:.0} 点生命"),
-            ConsumeEffect::RestoreMagic(amount) => format!("回复 {amount:.0} 点法力"),
+            BehaviorEffect::Heal { amount } => format!("回复 {amount:.0} 点生命"),
+            BehaviorEffect::RestoreMagic { amount } => format!("回复 {amount:.0} 点法力"),
+            BehaviorEffect::IgnoreSource { source } => format!("无视{}来源", source.label()),
         }
     }
+}
+
+/// 一个行为 = **触发时机 + 效果列表**（数据里是一段数组）。
+///
+/// 这是"配置只描述、逻辑在系统"的分界：注册表只存这张表，
+/// 什么时候、按什么顺序应用效果由消费它的系统决定。
+#[derive(Debug, Clone, Copy)]
+pub struct Behavior {
+    pub trigger: BehaviorTrigger,
+    pub effects: &'static [BehaviorEffect],
 }
 
 /// 物品种类：**它是什么**，以及它带来什么。
@@ -105,13 +129,11 @@ impl ConsumeEffect {
 /// 在规则层看起来完全一样。
 #[derive(Debug, Clone, Copy)]
 pub enum ItemKind {
-    /// 可装备：**部位由 `tags` 决定**（DsnE18），这里只写它带来的修正与无视的来源桶。
-    Equipment {
-        modifiers: &'static [Modifier],
-        ignores: &'static [EffectSource],
-    },
-    /// 可食用/饮用：一次性回复。
-    Consumable(ConsumeEffect),
+    /// 可装备：**部位由 `tags` 决定**（DsnE18），修正写在这里；
+    /// "无视来源桶"这类被动行为写进 [`ItemDef::behaviors`]（DsnE22 阶段 ③）。
+    Equipment { modifiers: &'static [Modifier] },
+    /// 可食用/饮用：一次性使用，效果在 [`ItemDef::behaviors`] 的 `Use` 行里。
+    Consumable,
     /// 材料：只是合成原料，没有直接效果。
     Material,
     /// 容器类：这件物品**自己是一个容器**（行囊、背包…）。
@@ -144,6 +166,11 @@ pub struct ItemDef {
     pub max_stack: u32,
     /// 种类与效果。
     pub kind: ItemKind,
+    /// **行为**：触发时机 + 效果列表（DsnE22 阶段 ③）。
+    ///
+    /// 主动使用（回血/回蓝）与被动装备（无视地形）都写在这里；
+    /// 规则层只解释这张表，不认识具体是哪件物品。
+    pub behaviors: &'static [Behavior],
     /// **可装位标签**（DsnE18 的过滤词汇）：这件东西能进哪些部位的槽位。
     ///
     /// 空 = 任何有过滤的槽位都不收（材料、消耗品、模板）。身体各部位的 `SlotAccept::Only`
@@ -164,6 +191,11 @@ impl ItemDef {
         matches!(self.kind, ItemKind::Equipment { .. })
     }
 
+    /// 是不是消耗品（主动使用会应用 [`ItemDef::use_effects`]）。
+    pub const fn is_consumable(&self) -> bool {
+        matches!(self.kind, ItemKind::Consumable)
+    }
+
     /// 这件物品自带容器布局（行囊类）；否则 `None`。
     pub const fn container_def(&self) -> Option<&'static ContainerDef> {
         match self.kind {
@@ -177,25 +209,43 @@ impl ItemDef {
     /// 返回静态切片而不是 `Vec`：求值侧每轮都要读它，不该为静态表分配内存。
     pub const fn modifiers(&self) -> &'static [Modifier] {
         match self.kind {
-            ItemKind::Equipment { modifiers, .. } => modifiers,
+            ItemKind::Equipment { modifiers } => modifiers,
             _ => &[],
         }
     }
 
-    /// 这件装备声明"无视"的来源桶（非装备为空）。
-    pub const fn ignores(&self) -> &'static [EffectSource] {
-        match self.kind {
-            ItemKind::Equipment { ignores, .. } => ignores,
-            _ => &[],
-        }
+    /// 这件装备声明"无视"的来源桶（非装备/无声明为空）。
+    ///
+    /// 数据来源是 [`ItemDef::behaviors`] 里 `Equipped` 行的 `IgnoreSource` 效果；
+    /// 这层迭代器只是把静态表投影成求值侧要的形状（DsnE22 阶段 ③）。
+    pub fn ignored_sources(&self) -> impl Iterator<Item = EffectSource> + 'static {
+        let behaviors: &'static [Behavior] = self.behaviors;
+        behaviors
+            .iter()
+            .filter(|behavior| behavior.trigger == BehaviorTrigger::Equipped)
+            .flat_map(|behavior| behavior.effects.iter())
+            .filter_map(|effect| match effect {
+                BehaviorEffect::IgnoreSource { source } => Some(*source),
+                _ => None,
+            })
     }
 
-    /// 消耗品的效果（非消耗品为 `None`）。
-    pub const fn consume_effect(&self) -> Option<ConsumeEffect> {
-        match self.kind {
-            ItemKind::Consumable(effect) => Some(effect),
-            _ => None,
-        }
+    /// 主动使用时应用的效果（按数据顺序）。
+    ///
+    /// 加载期已保证非消耗品没有 `Use` 行为、消耗品至少有一条。
+    pub fn use_effects(&self) -> impl Iterator<Item = BehaviorEffect> + 'static {
+        let behaviors: &'static [Behavior] = self.behaviors;
+        behaviors
+            .iter()
+            .filter(|behavior| behavior.trigger == BehaviorTrigger::Use)
+            .flat_map(|behavior| behavior.effects.iter().copied())
+    }
+
+    /// 是否有指定触发时机的行为（空表 = 没有）。
+    pub fn has_behavior(&self, trigger: BehaviorTrigger) -> bool {
+        self.behaviors
+            .iter()
+            .any(|behavior| behavior.trigger == trigger && !behavior.effects.is_empty())
     }
 }
 
@@ -246,24 +296,30 @@ struct RawItem {
     max_stack: u32,
     kind: RawKind,
     #[serde(default)]
+    behaviors: Vec<RawBehavior>,
+    #[serde(default)]
     tags: Vec<ItemTag>,
     #[serde(default)]
     weapon_speed_ms: Option<f64>,
 }
 
-/// 物品类型（数据里用 `"type"` 区分，DsnE22 阶段 ① 的过渡形状）。
+/// 数据文件里的一条行为（DsnE22 阶段 ③）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBehavior {
+    trigger: BehaviorTrigger,
+    effects: Vec<BehaviorEffect>,
+}
+
+/// 物品类型（数据里用 `"type"` 区分）。
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum RawKind {
     Equipment {
         #[serde(default)]
         modifiers: Vec<Modifier>,
-        #[serde(default)]
-        ignores: Vec<EffectSource>,
     },
-    Consumable {
-        effect: ConsumeEffect,
-    },
+    Consumable,
     Material,
     Pack {
         layout: String,
@@ -273,7 +329,9 @@ enum RawKind {
 /// 解析并校验一份物品数据。
 ///
 /// 校验是**加载期**的：编号顺序、空名、重量范围、堆叠上限、装备/容器不可堆叠、
-/// 攻速与消耗品数值为正、Pack 布局存在。每条失败都带编号与名字，报错直接指到数据行。
+/// 攻速数值为正、Pack 布局存在，以及**行为矩阵**（触发时机与效果必须配对，
+/// 消耗品必须有 `use` 行为、只有装备能写 `equipped` 行为）。每条失败都带编号与名字，
+/// 报错直接指到数据行。
 fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
     let table: RawTable =
         serde_json::from_str(json).map_err(|error| format!("JSON 解析失败：{error}"))?;
@@ -297,6 +355,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             weight,
             max_stack,
             kind,
+            behaviors,
             tags,
             weapon_speed_ms,
         } = raw;
@@ -333,8 +392,8 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             return Err(format!("{label} 的武器攻速必须是正的有限数，实得 {speed}"));
         }
 
-        let kind = match kind {
-            RawKind::Equipment { modifiers, ignores } => {
+        let (kind, is_consumable, is_equipment) = match kind {
+            RawKind::Equipment { modifiers } => {
                 if max_stack != 1 {
                     return Err(format!("{label} 是装备，堆叠上限必须是 1"));
                 }
@@ -358,32 +417,35 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
                         ));
                     }
                 }
-                ItemKind::Equipment {
-                    modifiers: leak_slice(modifiers),
-                    ignores: leak_slice(ignores),
-                }
+                (
+                    ItemKind::Equipment {
+                        modifiers: leak_slice(modifiers),
+                    },
+                    false,
+                    true,
+                )
             }
-            RawKind::Consumable { effect } => {
-                let amount = match effect {
-                    ConsumeEffect::Heal(amount) | ConsumeEffect::RestoreMagic(amount) => amount,
-                };
-                if !amount.is_finite() || amount <= 0.0 {
-                    return Err(format!(
-                        "{label} 的消耗品效果必须是正的有限数，实得 {amount}"
-                    ));
-                }
-                ItemKind::Consumable(effect)
-            }
-            RawKind::Material => ItemKind::Material,
+            RawKind::Consumable => (ItemKind::Consumable, true, false),
+            RawKind::Material => (ItemKind::Material, false, false),
             RawKind::Pack { layout } => {
                 if max_stack != 1 {
                     return Err(format!("{label} 是容器类，堆叠上限必须是 1"));
                 }
                 let def = container_layout(&layout)
                     .ok_or_else(|| format!("{label} 引用了未知的容器布局「{layout}」"))?;
-                ItemKind::Pack(def)
+                (ItemKind::Pack(def), false, false)
             }
         };
+        validate_behaviors(&label, is_consumable, is_equipment, &behaviors)?;
+        let behaviors = leak_slice(
+            behaviors
+                .into_iter()
+                .map(|behavior| Behavior {
+                    trigger: behavior.trigger,
+                    effects: leak_slice(behavior.effects),
+                })
+                .collect(),
+        );
 
         defs.push(ItemDef {
             id: ItemId(id),
@@ -392,11 +454,76 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             weight,
             max_stack,
             kind,
+            behaviors,
             tags: leak_slice(tags),
             weapon_speed_ms,
         });
     }
     Ok(defs)
+}
+
+/// 行为矩阵校验（DsnE22 阶段 ③）：触发时机决定它能带哪些效果。
+///
+/// - `use`：只能出现在消耗品上，效果只能是 `heal` / `restore_magic`，数值为正有限数；
+/// - `equipped`：只能出现在装备上，效果只能是 `ignore_source`。
+///
+/// 解释器因此不需要"未知组合"的兜底分支；写错的数据在启动期就被挡住。
+fn validate_behaviors(
+    label: &str,
+    is_consumable: bool,
+    is_equipment: bool,
+    behaviors: &[RawBehavior],
+) -> Result<(), String> {
+    let mut use_behaviors = 0;
+    for behavior in behaviors {
+        if behavior.effects.is_empty() {
+            return Err(format!("{label} 有一条空行为（没有效果）"));
+        }
+        match behavior.trigger {
+            BehaviorTrigger::Use => {
+                if !is_consumable {
+                    return Err(format!("{label} 不是消耗品，不能写 use 行为"));
+                }
+                use_behaviors += 1;
+                for effect in &behavior.effects {
+                    match effect {
+                        BehaviorEffect::Heal { amount }
+                        | BehaviorEffect::RestoreMagic { amount } => {
+                            if !amount.is_finite() || *amount <= 0.0 {
+                                return Err(format!(
+                                    "{label} 的消耗效果必须是正的有限数，实得 {amount}"
+                                ));
+                            }
+                        }
+                        BehaviorEffect::IgnoreSource { .. } => {
+                            return Err(format!(
+                                "{label} 的 use 行为不支持 ignore_source（那是被动效果）"
+                            ));
+                        }
+                    }
+                }
+            }
+            BehaviorTrigger::Equipped => {
+                if !is_equipment {
+                    return Err(format!("{label} 不是装备，不能写 equipped 行为"));
+                }
+                for effect in &behavior.effects {
+                    match effect {
+                        BehaviorEffect::IgnoreSource { .. } => {}
+                        BehaviorEffect::Heal { .. } | BehaviorEffect::RestoreMagic { .. } => {
+                            return Err(format!(
+                                "{label} 的 equipped 行为不支持回复效果（目前没有持续恢复）"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if is_consumable && use_behaviors == 0 {
+        return Err(format!("{label} 是消耗品，但没有任何 use 行为"));
+    }
+    Ok(())
 }
 
 /// 容器布局的名字 → 布局表（数据里只写名字，实现在 `container.rs`）。

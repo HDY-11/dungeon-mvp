@@ -153,7 +153,7 @@ fn equipment_modifiers_target_the_right_stat() {
             } else {
                 crate::rules::StatId::DEFENSE
             };
-            if !def.ignores().is_empty() {
+            if def.ignored_sources().next().is_some() {
                 continue;
             }
             assert_eq!(
@@ -171,16 +171,26 @@ fn equipment_modifiers_target_the_right_stat() {
     }
 }
 
-/// 消耗品必须带效果、非消耗品必须不带：`Consumable` 这个变体不该是空壳。
+/// 消耗品必须有 `use` 行为、非消耗品必须没有：`Consumable` 这个变体不该是空壳。
+///
+/// 加载器已经守着这条（`validate_behaviors`），这里再从**表本身**读一遍，
+/// 防止将来有人放宽加载器却漏掉语义。
 #[test]
 fn consumables_always_do_something() {
     for def in items() {
-        if let ItemKind::Consumable(effect) = def.kind {
-            let amount = match effect {
-                ConsumeEffect::Heal(amount) | ConsumeEffect::RestoreMagic(amount) => amount,
-            };
-            assert!(amount > 0.0, "{} 的回复量必须为正", def.name);
-            assert!(!effect.describe().is_empty());
+        if def.is_consumable() {
+            let effects: Vec<BehaviorEffect> = def.use_effects().collect();
+            assert!(!effects.is_empty(), "{} 是消耗品却没有 use 行为", def.name);
+            for effect in effects {
+                assert!(!effect.describe().is_empty(), "{} 的效果没有描述", def.name);
+            }
+        } else {
+            assert_eq!(
+                def.use_effects().count(),
+                0,
+                "{} 不是消耗品却带 use 行为",
+                def.name
+            );
         }
     }
 }
@@ -192,12 +202,12 @@ fn consumables_always_do_something() {
 #[test]
 fn consumable_values_match_the_design_doc() {
     assert_eq!(
-        ItemId(25).def().consume_effect(),
-        Some(ConsumeEffect::Heal(6.0))
+        ItemId(25).def().use_effects().collect::<Vec<_>>(),
+        vec![BehaviorEffect::Heal { amount: 6.0 }]
     );
     assert_eq!(
-        ItemId(32).def().consume_effect(),
-        Some(ConsumeEffect::RestoreMagic(4.0))
+        ItemId(32).def().use_effects().collect::<Vec<_>>(),
+        vec![BehaviorEffect::RestoreMagic { amount: 4.0 }]
     );
 }
 
@@ -209,8 +219,8 @@ fn trail_boots_only_ignore_the_terrain_bucket() {
     assert_eq!(boots.tags, &[crate::item::ItemTag::Feet]);
     assert!(boots.modifiers().is_empty(), "踏水靴不该加任何数值");
     assert_eq!(
-        boots.ignores(),
-        &[crate::rules::EffectSource::Terrain],
+        boots.ignored_sources().collect::<Vec<_>>(),
+        vec![crate::rules::EffectSource::Terrain],
         "踏水靴的无视桶必须恰好是地形"
     );
 }
@@ -372,4 +382,88 @@ fn equipment_and_packs_must_not_stack() {
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("堆叠上限"), "错误应提到堆叠上限：{error}");
+}
+
+// ── 行为数据（DsnE22 阶段 ③） ──────────────────────
+//
+// 行为 = 触发时机 + 效果列表。加载器守住触发/效果矩阵，
+// 所以运行期的解释器不需要"未知组合"的兜底分支。
+
+/// 行为能原样读出来：`use` + `heal`。
+#[test]
+fn behaviors_are_loaded_with_their_trigger_and_effects() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]}"#,
+    ]);
+    let defs = load_items(&json).expect("合法的行为数据必须能加载");
+    assert_eq!(
+        defs[0].use_effects().collect::<Vec<_>>(),
+        vec![BehaviorEffect::Heal { amount: 2.0 }]
+    );
+    assert!(defs[0].ignored_sources().next().is_none());
+}
+
+#[test]
+fn a_consumable_without_a_use_behavior_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("use 行为"), "错误应提到缺少 use 行为：{error}");
+}
+
+#[test]
+fn an_empty_behavior_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[]}]}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("空行为"), "错误应提到空行为：{error}");
+}
+
+#[test]
+fn a_use_behavior_on_a_non_consumable_is_rejected() {
+    let json = table(&[&material(
+        0,
+        r#","behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("不是消耗品"), "错误应指出种类不符：{error}");
+}
+
+#[test]
+fn an_equipped_behavior_on_a_non_equipment_is_rejected() {
+    let json = table(&[&material(
+        0,
+        r#","behaviors":[{"trigger":"equipped","effects":[{"type":"ignore_source","source":"terrain"}]}]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("不是装备"), "错误应指出种类不符：{error}");
+}
+
+#[test]
+fn an_unknown_behavior_trigger_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"on_hit","effects":[]}]}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("on_hit"), "错误应提到未知触发：{error}");
+}
+
+#[test]
+fn a_heal_amount_must_be_positive() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":0.0}]}]}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("消耗效果"), "错误应提到消耗效果：{error}");
+}
+
+#[test]
+fn an_equipped_behavior_cannot_heal() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试护符","desc":"测试用","weight":1.0,"max_stack":1,"kind":{"type":"equipment"},"tags":["ring"],"behaviors":[{"trigger":"equipped","effects":[{"type":"heal","amount":2.0}]}]}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("不支持回复"), "错误应指出效果不配对：{error}");
 }

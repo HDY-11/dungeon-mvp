@@ -343,7 +343,8 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 > **已迁移（2026-09 物品轮；2026-11 数据外置）**：物品注册表（数据文件
 > `ecs_core/assets/items.json`，构建期 `include_str!` 内嵌、启动期加载校验，
 > 编号与本表一一对应）、堆叠与背包、七个身体部位、怪物掉落表（`MonsterTemplate.loot`，
-> 数据在 `monster/template.rs` 的 `*_LOOT` 常量）、地面刷新、消耗品、背包界面（R2 收尾）。
+> 数据在 `monster/template.rs` 的 `*_LOOT` 常量）、地面刷新、消耗品、背包界面（R2 收尾）；
+> 行为数据（消耗品的 `use` 效果、踏水靴的 `equipped` 无视地形，DsnE22 阶段 ③）也已在数据文件里。
 > **仍未迁移**：合成（模板碎片 19–22 不在注册表里）。
 > 当前口径：**地面物品全显式**——踩上去不捡，按 `e` 打开背包页在「地面」栏里按 `Enter` 拿；
 > 拿起来后装备槽空自动装备，否则进行囊；消耗品在对应资源不满时**自动使用**（Gm7「地面物品」）。
@@ -364,8 +365,9 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 
 > 实现：`ecs_core/src/item/mod.rs` / `ecs_core/src/item/container.rs`。装备存于**身体容器
 > （BODY）的槽位**；槽位是数据，`EquippedBy` 实体关系已退役（DsnE18 第①片）。求值层遍历
-> 身体槽位、按物品编号查注册表取加成；拥有者死亡时，身上的装备由死亡系统放进尸体容器
-> （见「尸体与搜刮」）。
+> 身体槽位、按物品编号查注册表取加成；"无视地形"写在物品数据的 `equipped` 行为里
+> （DsnE22 阶段 ③），求值层只解释行为表、不认识踏水靴这个编号。拥有者死亡时，身上的装备由
+> 死亡系统放进尸体容器（见「尸体与搜刮」）。
 
 
 
@@ -380,7 +382,7 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 
 ### 物品注册表
 
-物品定义的可执行权威是 `ecs_core/assets/items.json`（`schema_version` 为 1；构建期内嵌、
+物品定义的可执行权威是 `ecs_core/assets/items.json`（`schema_version` 为 3；构建期内嵌、
 启动期加载校验，`ecs_core/src/item/registry.rs` 的 `ITEMS` 是加载结果）。改数据后需要重新构建：
 
 | ID | 名称 | 描述 | 重量 | 堆叠 | 身体部位 |
@@ -488,6 +490,7 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 ### 消耗品（DsnE7）✅已迁移
 
 > 已实现：蘑菇 `Heal(6)`、海藻 `RestoreMagic(4)`；拿到时若对应资源未满自动使用 1 个，也可在背包页（`e`）按 `r` 使用。
+> 效果写在 `assets/items.json` 的行为数据里（`use` 触发 + `heal`/`restore_magic` 效果，DsnE22 阶段 ③）；
 > 对应资源满时不用；回复量受上限钳制。
 
 | 物品 | 效果 | 备注 |

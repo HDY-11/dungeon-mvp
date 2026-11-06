@@ -21,7 +21,7 @@
 use crate::components::{Health, Magic, Position};
 use crate::entity_cls::Player;
 use crate::item::{
-    Amount, BODY, Container, ConsumeEffect, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
+    Amount, BODY, BehaviorEffect, Container, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
     pack_slot_index, stack_weight,
 };
 use crate::resources::{EventLog, EventMessage};
@@ -165,10 +165,10 @@ pub fn use_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemActi
     let pack = pack_entity(world, player)?;
     let item = slot_of(world, pack, pack_slot)?;
     let def = item_def(world, item)?;
-    let Some(effect) = def.consume_effect() else {
+    if !def.is_consumable() {
         return Err(ItemActionError::NotUsable);
-    };
-    if !apply_effect(world, player, effect) {
+    }
+    if !apply_effects(world, player, def.use_effects()) {
         return Err(ItemActionError::NotUsable);
     }
     let remaining = world.get::<Amount>(item).map(|amount| amount.0).unwrap_or(1);
@@ -284,9 +284,7 @@ pub fn take_from_ground(
     }
 
     // ② 消耗品：现在用得上就用 1 个，用不上就进行囊。
-    if let Some(effect) = def.consume_effect()
-        && apply_effect(world, player, effect)
-    {
+    if def.is_consumable() && apply_effects(world, player, def.use_effects()) {
         push_log(world, format!("你使用了{}", def.name));
         if amount <= 1 {
             world.despawn(entity);
@@ -527,30 +525,44 @@ fn put_back(
     put_into(world, container, free, item, tags)
 }
 
-/// 应用一次消耗品效果；返回是否真的生效（资源已满 = 没生效）。
-fn apply_effect(world: &mut World, player: Entity, effect: ConsumeEffect) -> bool {
-    match effect {
-        ConsumeEffect::Heal(amount) => {
-            let Some(mut health) = world.get_mut::<Health>(player) else {
-                return false;
-            };
-            if health.current >= health.max {
-                return false;
+/// 应用一组行为效果；返回是否至少有一条生效（资源已满 = 没生效）。
+///
+/// 被动效果（`IgnoreSource`）不该走到这里——加载期的行为矩阵保证 `Use` 行只含主动效果；
+/// 真的走到也按"没生效"处理，避免同一件物品因为被动声明而被消耗。
+fn apply_effects(
+    world: &mut World,
+    player: Entity,
+    effects: impl IntoIterator<Item = BehaviorEffect>,
+) -> bool {
+    let mut applied = false;
+    for effect in effects {
+        applied |= match effect {
+            BehaviorEffect::Heal { amount } => {
+                let Some(mut health) = world.get_mut::<Health>(player) else {
+                    continue;
+                };
+                if health.current >= health.max {
+                    false
+                } else {
+                    health.current = (health.current + amount).min(health.max);
+                    true
+                }
             }
-            health.current = (health.current + amount).min(health.max);
-            true
-        }
-        ConsumeEffect::RestoreMagic(amount) => {
-            let Some(mut magic) = world.get_mut::<Magic>(player) else {
-                return false;
-            };
-            if magic.current >= magic.max {
-                return false;
+            BehaviorEffect::RestoreMagic { amount } => {
+                let Some(mut magic) = world.get_mut::<Magic>(player) else {
+                    continue;
+                };
+                if magic.current >= magic.max {
+                    false
+                } else {
+                    magic.current = (magic.current + amount).min(magic.max);
+                    true
+                }
             }
-            magic.current = (magic.current + amount).min(magic.max);
-            true
-        }
+            BehaviorEffect::IgnoreSource { .. } => false,
+        };
     }
+    applied
 }
 
 /// 物品编号的便捷查询（供调用方记日志）。

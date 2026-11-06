@@ -63,7 +63,8 @@ pub use actions::{
 };
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{
-    ConsumeEffect, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM, item_by_name, stack_weight,
+    Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM,
+    item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。

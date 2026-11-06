@@ -597,7 +597,7 @@ fn item_detail(
     )));
 
     match def.kind {
-        ecs_core::ItemKind::Equipment { modifiers, ignores } => {
+        ecs_core::ItemKind::Equipment { modifiers } => {
             detail.push_line(UiTextLine::plain("类型：装备"));
             if let Some(ms) = def.weapon_speed_ms {
                 detail.push_line(UiTextLine::plain(format!("主手攻速：{ms:.0}ms")));
@@ -605,13 +605,14 @@ fn item_detail(
             for modifier in modifiers {
                 detail.push_line(UiTextLine::plain(modifier.describe()));
             }
+            let ignores: Vec<&str> = def.ignored_sources().map(|source| source.label()).collect();
             if !ignores.is_empty() {
-                let names: Vec<&str> = ignores.iter().map(|source| source.label()).collect();
-                detail.push_line(UiTextLine::plain(format!("无视：{}", names.join("、"))));
+                detail.push_line(UiTextLine::plain(format!("无视：{}", ignores.join("、"))));
             }
         }
-        ecs_core::ItemKind::Consumable(effect) => {
-            detail.push_line(UiTextLine::plain(format!("使用：{}", effect.describe())));
+        ecs_core::ItemKind::Consumable => {
+            let effects: Vec<String> = def.use_effects().map(|effect| effect.describe()).collect();
+            detail.push_line(UiTextLine::plain(format!("使用：{}", effects.join("、"))));
         }
         ecs_core::ItemKind::Material => {
             detail.push_line(UiTextLine::plain("材料：合成原料"));

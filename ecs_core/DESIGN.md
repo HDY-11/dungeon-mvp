@@ -1554,6 +1554,15 @@ BlueprintRegistry (Resource，加载 + 校验)
 （未装配基准）；`set` 是唯一的夹取缝（忽略 NaN，其余按 `[min,max]` clamp）。
 生成点（玩家/怪物/测试/驱动器）与读取点（战斗、经验、行动速度、HUD）全部改走
 `Stats`；物品的数值加成仍走 `Modifier`（阶段 ③/④ 再迁物品基础值）。
+阶段 ③ 行为数据化**已落地**：`ItemDef` 增加 `behaviors: &'static [Behavior]`
+（`Behavior { trigger: Use | Equipped, effects }`）；删掉 `ConsumeEffect` 与
+`ItemKind::Equipment.ignores`，改由 `BehaviorEffect::{Heal, RestoreMagic,
+IgnoreSource}` 表达全部三条现有行为（蘑菇/海藻的 `use` 回复、踏水靴的
+`equipped` 无视地形）；加载器按**触发/效果矩阵**校验（`use` 只能出现在消耗品上且
+只能带回复效果、`equipped` 只能出现在装备上且只能带 `ignore_source`、消耗品必须
+至少有一条 `use` 行为、空行为与未知触发/效果直接拒绝），所以解释器不需要兜底分支。
+求值侧（`EffectContext::ignored_sources`）与使用/拾取路由改为读行为表，
+不再认识具体物品编号；数据 schema 升 3。下一步 = ④ 实例组件 + SaveV2。
 后续按 ③→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·

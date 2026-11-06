@@ -92,8 +92,9 @@ impl EffectContext<'_, '_> {
     ///
     /// 两个来源都要读，因为它们走的是**两条不同**的归属关系（ECS42 定案）：
     /// - `EffectOf` 实体（状态效果）：自己带 [`IgnoresSource`]；
-    /// - `EquippedBy` 实体（装备）：无视声明写在**注册表**那一行（`ItemDef::ignores`），
-    ///   所以这里查的是物品定义，而不是"装备名下有个效果实体"。
+    /// - 装备：无视声明写在**注册表那一行**的行为数据里（`Equipped` 触发的
+    ///   `IgnoreSource` 效果，DsnE22 阶段 ③），所以这里查的是物品定义，
+    ///   而不是"装备名下有个效果实体"。
     fn ignored_sources(&self, actor: Entity) -> Vec<EffectSource> {
         let mut ignored = Vec::new();
         if let Ok(owned) = self.owned.get(actor) {
@@ -106,9 +107,9 @@ impl EffectContext<'_, '_> {
             }
         }
         for def in self.equipped_defs(actor) {
-            for source in def.ignores() {
-                if !ignored.contains(source) {
-                    ignored.push(*source);
+            for source in def.ignored_sources() {
+                if !ignored.contains(&source) {
+                    ignored.push(source);
                 }
             }
         }
