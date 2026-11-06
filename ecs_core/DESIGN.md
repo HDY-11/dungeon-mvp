@@ -26,7 +26,7 @@
 | 移动与写入权 | DsnE14 · DsnE15 |
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
-| 物品与装备 | DsnE16 · DsnE18 · DsnE20 |
+| 物品与装备 | DsnE16 · DsnE18 · DsnE20 · DsnE22 |
 | 存档与读档 | DsnE19 |
 | 事件时间轴与界面 | DsnE21 |
 | 楼层与推进 | DsnE17 |
@@ -1426,3 +1426,115 @@ Tip           Tip           Tip
 **关联：** DsnA2（四栏布局与焦点）· DsnE18（容器/槽位/地面不是容器）·
 DsnE19（存档边界）· GAME.md Gm14（界面）
 <!-- &/DsnE21 -->
+
+<!-- &DsnE22  物品系统重构：蓝图（数据）→ 唯一装配桥 → ECS 实体（组件）；动态在数据与实例，组件类型保持静态 -->
+### DsnE22 物品系统重构：蓝图、装配与实例组件
+
+**背景**
+
+用户判断（m05071 / m05072）：物品是本作主要机制与玩法载体，属性结构必然是
+"长尾专用多、高频通用少"；当前 `ItemDef` 静态表 + `ItemKind` 枚举 + `Stat`
+四变体无法负载未来内容，必然要动一次物品系统。约束两条：与 ECS 相适应
+（主体逻辑在系统中，与数据紧耦合的逻辑可留在方法里）、与丰富属性相适应
+（结构体加字段与"预制体静态表"本质相同，必须用动态类型）。用户提出的形态：
+动态类型、序列化/反序列化、重建物品实体与属性组件、逻辑在系统；前两个是
+"动态预制体库"，第三个是桥。
+
+我的拆解（m05075）：封闭性有三层——`ItemKind` 枚举、`Stat` 词表、
+`ITEMS` 编译进二进制。路线 A（bevy_reflect 运行时组件）能拿编辑器/Mod 级
+灵活，但 ECS 查询仍是静态的、存档 Entity 重映射被 DsnX10 否掉；路线 C
+（嵌入式脚本）调试、确定性、存档成本都高；选 **B：数据驱动定义 + 系统解释**。
+用户 m05076 确认 B，并补充"组件按需从存档读取或从模板建立，用版本号保证一致性"。
+
+外部参考（m05079 的判断，未另做探索式调研）：Minecraft Java 1.20.5+ 的
+data components（物品 = 原型 + 组件补丁、组件类型代码注册而取值由数据供给、
+`attribute_modifiers` 的 add / multiply_base / multiply_total 三档操作、
+`!` 显式移除、未知组件报错）在**语义层**验证了"原型 + 补丁"与三档 op；
+Bedrock 的 item components JSON 验证"配置只描述"。实现技术（DFU Codec、
+网络同步、DataFixer）不借鉴。
+
+**决策**
+
+1. **模型固定为三段：蓝图（数据）→ 装配（唯一桥）→ ECS 实体（组件）。**
+   蓝图只描述、不出现控制流；行为语义在系统；装配函数是唯一把蓝图翻译成
+   组件的地方，模板与存档共用它——禁止第二套"从存档直接灌组件"的路径，
+   否则两条路迟早分叉。
+2. **动态性放在数据与实例，不放在 Rust 类型上。** 不做运行时注册的组件类型
+   （那需要反射，且系统查询依旧静态）；加属性、加效果 = 改数据；加全新组件
+   语义 = 加代码，并在数据里留 id 占位。
+3. **属性用动态词表 + 稠密组件，不做"每属性一个组件"。**
+   `StatId(u16)` + `StatRegistry`（`StatDef { key, label, default, min, max }`）；
+   物品实体挂稳定的 `Stats`（按 StatId 稠密存放基础值）与
+   `Modifiers(Vec<Modifier { stat, op: Add | MulBase | MulTotal, value }>)`。
+   `ItemKind` 枚举退役，换成 `Traits(Vec<TraitId>)` + 结构组件（Container 等）。
+   理由：`Query<&AttackBonus>` 式写法会让每加一个属性都改代码，且每个物品的
+   archetype 数量爆炸。
+4. **行为是声明式数据。** `BehaviorDef { id, trigger: OnUse | OnEquip | OnHit |
+   OnTurn, effects: [Effect] }`；`Effect` 是白名单指令（加修正、伤害、治疗、
+   给状态、生成实体、写事件、条件分支）。表达力上限：能用"触发 → 效果列表"
+   表达则进数据，否则写系统并留数据 id 占位；解释器不做成小型脚本语言。
+5. **装配时机是"进入世界那一刻"，不做惰性。** 开局、刷怪掉落、下楼重建、
+   读档都立即装配好组件；惰性首次查询时建会让执行顺序影响结果，破坏 DsnX17
+   的确定性。UI 缓存只能是缓存层。
+6. **实例差异只存玩家造成的部分。** 稀疏实例组件（耐久、充能、附魔等）在装配
+   时挂；存档存 `blueprint_id + overrides + save_schema_version`，基础数值永远
+   跟蓝图走。读档后内容更新会让老物品按新蓝图解释——这是取舍，要写进文档。
+7. **堆叠规则提前钉死。** 同蓝图且实例差异等价才可合并；默认"实例差异非空"
+   的物品不堆叠（有耐久差异的武器不叠），需要时再按白名单放宽。否则容器、
+   拾取、存档三处会各写一套合并逻辑（Minecraft 的"组件等价才叠"是同一结论）。
+8. **版本号分两层，作用不同。** 数据 schema 版本（蓝图文件头；未知版本 =
+   启动失败）；存档格式版本（`SAVE_VERSION` 升到 v2，读档时迁移或明确拒绝）。
+   蓝图 id 只增不删，删除留墓碑——否则老存档引用会静默变义。
+9. **加载期校验，失败即启动失败。** id 唯一、引用存在、数值有限且在
+   `[min, max]`、trigger / effect 在白名单、容器蓝图无环；确定性要求数组而非
+   HashMap 迭代、effect 保持声明顺序。
+10. **不开放 `custom_data` 式自由 blob。** 长尾属性走词表、新数据加显式字段；
+   自由 blob 等于给自己开一个绕过校验的后门（MC 需要它服务 Mod 生态，我们
+   不需要）。
+
+**形状**
+
+```text
+BlueprintRegistry (Resource，加载 + 校验)
+  StatRegistry: StatId -> StatDef { key, label, default, min, max }
+  BehaviorDef: id, trigger, effects: [Effect]
+  ItemBlueprint: id, name, desc, tags, weight, max_stack,
+                 stats: [(StatId, f32)], behaviors: [BehaviorId],
+                 container: Option<ContainerDefId>
+
+物品实体:
+  BlueprintRef(BlueprintId) · Amount · Stats{ values } · Modifiers
+  · Traits · Container(可选) · Durability / Charges…（稀疏实例组件）
+
+装配: assemble(blueprint, overrides) -> 组件集合         // 唯一桥
+存档: { blueprint_id, overrides, save_schema_version }   // 不存 Entity、不存全量组件
+```
+
+**分阶段迁移（每阶段独立过 gate）**
+
+1. **数据外置**：`ITEMS` 常量 → `items.ron`（默认 `include_str!` 内嵌 + 可选
+   外置路径），补加载/校验/测试链路；`ItemId` 语义改 `BlueprintId`；行为与数值
+   保持完全不变。验收：全表加载、校验失败用例、现有测试全绿。
+2. **动态属性**：`StatId` + `StatRegistry` + 稠密 `Stats` + `Modifier.op` 三档；
+   迁移现有 4 个属性；求值、详情、HUD 全走注册表。验收：新增一条属性只改数据；
+   未知 StatId 报错；三档 op 求值测试。
+3. **行为数据化**：先把蘑菇（Heal）、海藻（RestoreMagic）、踏水靴（ignores
+   terrain）迁成 trigger → effects 三个切片；验收：与现有行为逐条等价，事件
+   日志文案不变。
+4. **实例组件 + SaveV2**：耐久等稀疏组件；存档 v2（blueprint + overrides +
+   schema_version）。验收：不变量测试「模板装配 == 存档装配（无差异时）」、
+   版本不符拒绝/迁移测试、老存档读入提示。
+
+**待拍板（用户）**
+
+1. 蓝图 id 是否允许运行时热加？建议只允许构建期注册（确定性与存档契约）。
+2. 属性值是否只允许有限 f32 且在 `[min, max]` 内？建议是。
+3. 存档跨内容版本："尽力继续"（建议，UI 提示内容已更新）还是"版本不符拒绝读"？
+
+**状态：** 设计定稿，未动代码。四个阶段在决策 1–3 拍板后按 1→4 顺序落地，
+每阶段更新本条目状态段与 `REFACTOR.md`。
+
+**关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
+DsnE20（重量）· DsnE19（存档边界，V2 在这里扩展）· DsnE10（Modifier 求值）·
+DsnX17（确定性）。
+<!-- &/DsnE22 -->
