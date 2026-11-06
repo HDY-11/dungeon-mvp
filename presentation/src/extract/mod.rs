@@ -595,6 +595,13 @@ fn item_detail(
         "重量：{:.1}",
         ecs_core::stack_weight(def.id, amount)
     )));
+    // 实例数据（DsnE22 阶段 ④）：耐久是实体上的稀疏组件，不是蓝图字段。
+    if let Some(durability) = world.get::<ecs_core::Durability>(occupant) {
+        detail.push_line(UiTextLine::plain(format!(
+            "耐久：{:.0}/{:.0}",
+            durability.current, durability.max
+        )));
+    }
 
     match def.kind {
         ecs_core::ItemKind::Equipment { modifiers } => {

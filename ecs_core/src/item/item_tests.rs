@@ -654,3 +654,14 @@ fn every_item_is_either_on_the_ground_or_in_a_container() {
         );
     }
 }
+
+#[test]
+fn durable_items_are_assembled_at_full_durability() {
+    let mut world = World::new();
+    let sword = spawn_item_assembled(&mut world, ItemId(0), 1);
+    let durability = *world.get::<Durability>(sword).expect("剑的蓝图声明了耐久");
+    assert_eq!((durability.current, durability.max), (40.0, 40.0));
+
+    let mushroom = spawn_item_assembled(&mut world, ItemId(25), 3);
+    assert!(world.get::<Durability>(mushroom).is_none(), "蘑菇没有耐久");
+}

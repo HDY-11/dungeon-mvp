@@ -53,9 +53,10 @@
 | M15 | **属性词表 + 修正算子（DsnE22 阶段 ②a）**：`Stat` 枚举退役 → `rules/stat.rs` 的 `StatId(u16)` + `STATS` 词表（数据里按名字序列化，未知名字加载期报错）；`Modifier` 改为「一条修正一个算子」（`Add` / `MultiplyBase` / `MultiplyTotal` + `value`），折叠 `(base+ΣAdd)×ΠMulBase×ΠMulTotal` 与旧口径逐值等价；物品数据 schema 升 2，加载器拒绝未知属性/非有限值/非正乘区因子 | DsnE22 / DsnE10 | 本次提交 |
 | M16 | **稠密属性表（DsnE22 阶段 ②b）**：六个数值组件（`Attack`/`Defense`/`MoveSpeed`/`AttackSpeed`/`CritRate`/`CritDamage`）并成一份 `Stats`（按 `StatId` 稠密存放，`get/set/from_pairs/with`）；词表补 `crit_rate`/`crit_damage` 与每项 `default`；`Stats::set` 是唯一区间夹取处（忽略 NaN，其余 clamp 到 `[min,max]`）；生成点与读取点（战斗/经验/行动速度/HUD/驱动器）全部迁移 | DsnE22 | 本次提交 |
 | M17 | **行为数据化（DsnE22 阶段 ③）**：`ItemDef.behaviors`（`trigger: Use/Equipped` + 效果列表）；`ConsumeEffect` 与 `ItemKind::Equipment.ignores` 退役，改由 `BehaviorEffect::{Heal, RestoreMagic, IgnoreSource}` 表达蘑菇/海藻/踏水靴；加载器按触发/效果矩阵校验（种类与触发配对、数值为正、空行为/未知触发拒绝）；求值侧与使用/拾取路由只读行为表；数据 schema 升 3 | DsnE22 / DsnE10 / Gm7 | 本次提交 |
+| M18 | **实例组件 + 存档 V2（DsnE22 阶段 ④）**：`ItemDef.durability_max`（数据 schema 升 4，只有装备可声明）；`Durability{current,max}` 稀疏组件；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走 `World`）；`SaveV2{items_schema,...}` + `ItemSave.overrides`（只存玩家造成的耐久差异），读档先按蓝图装配再套差异；`SAVE_VERSION=2`，旧 V1 与物品 schema 不一致都明确拒绝（MVP 不迁移）；背包详情显示耐久 | DsnE22 / DsnE19 / DsnE20 / Gm7 / Gm13 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **272 passed**；`cargo test --workspace`
-29 目标 **550 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
+**当前基线（实测）：** `cargo test -p ecs_core` **276 passed**；`cargo test --workspace`
+29 目标 **557 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

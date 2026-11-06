@@ -1261,8 +1261,8 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - **仍未做**：箱类容器（等放置/交互）、实例数据（耐久等，第③片）。
 <!-- &/DsnE18 -->
 
-<!-- &DsnE19  存档 V1：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树；F5/F9 -->
-### DsnE19 存档 V1：投影式快照（seed + floor + 玩家容器树）
+<!-- &DsnE19  存档 V2：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异；F5/F9 -->
+### DsnE19 存档 V2：投影式快照（seed + floor + 玩家容器树 + 物品实例差异）
 
 **决策**
 
@@ -1275,21 +1275,28 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 
    ```text
    文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
-   载荷：bincode(SaveV1)
-   SaveV1 { map_seed, floor, player: PlayerSave }
+   载荷：bincode(SaveV2)
+   SaveV2 { items_schema, map_seed, floor, player: PlayerSave }
    PlayerSave { x, y, level, experience, health, magic, magic_mastery, body: [Option<ItemSave>] }
-   ItemSave   { id, count, slots: Option<[Option<ItemSave>]> }   // 容器树递归
+   ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> } // 容器树递归
+   ItemOverrides { durability: Option<f32> }   // 只存玩家造成的实例差异（DsnE22 阶段 ④）
    ```
+
+   `items_schema` 是物品数据版本（`ecs_core/assets/items.json` 的 `schema_version`）：读档时
+   与编译期内嵌的 `ITEMS_SCHEMA_VERSION` 不等就报错，避免把旧数据装配成新实体。
 
    `Entity` 不上盘；容器槽位本身是数据（DsnE18），树直接摊平。版本放在**文件头**而不是
    bincode 载荷里：bincode 1.3 不是自描述格式，结构一变旧档就解不出来——版本若在载荷里，
    读旧档时永远走不到它，只能报"编码失败"。头部先读、版本先判，才能报"版本 2 不认识（当前 1）"。
+   V2 起 `items_schema` 也进载荷：物品数据版本与编进来的一致才读，否则明确报错（MVP 不做
+   迁移，见 DsnE22 已拍板第 3 条）。
 3. **不进档的东西（以及代价）。** 地面物品不入档：玩家丢在地上的东西读档后消失，地面回到
    `(seed, floor)` 的初始内容——这是 DsnE17 的直接推论。同理，**中途存档读回的是该层初始状态**
    （已杀的怪物会回来、已捡走的地面物品会重刷）；想要"保留中途进度"得等 V2 的地面/怪物差异段。
    另有两个有意的取舍：**不存 `GameRng`**（读档后随机流从该层开局重来，与"一直玩下去"会分叉，
    这也是"进层检查点"比"随时存档"更自然的另一个理由）；**生命/法力上限按值存**（当前没有
    "重算上限"的系统；将来装备/buff 能改上限时，要么存"基础值+修正"、要么先实现单一写入者）。
+   V2 只补存"玩家造成的物品实例差异"（目前是耐久当前值），地面物品与怪物差异仍然不入档。
 4. **load 复用初始化与下楼代码，不另写生成管线。** `new_game(map_seed)` 起世界 →
    `FloorNumber = floor` 后走一次"重建层内容"（与 `descend` 共用的函数）→ 还原玩家与容器树。
    任何"重建层"的修正都同时修到下楼与读档两条路径。
@@ -1300,10 +1307,12 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    `describe()`，统一写 `EventLog`。失败静默 = 玩家以为存上了。
 7. **死亡状态不可存。** `game_over` 时拒绝存档，避免存出"读档即死"的档。
 
-**状态：** 实现（第③片的存档部分）。落地：`src/save.rs`（文件头 magic+version、手写投影、
-`restore_to_world` 复用 `rebuild_floor`）、`App` 的 F5/F9 接线、`tests/save_test.rs` 7 条
-（roundtrip / 楼层重建 / 版本 / magic / 未知编号 / 缺文件 / F5-F9 端到端）。实例数据（耐久等）
-未做，V2 时 `SAVE_VERSION` +1、在 `read` 里做迁移。
+**状态：** 实现（V2）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV2`；手写投影、
+`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides{durability}`）、
+统一装配桥 `spawn_item_assembled` 同时服务系统与读档、`App` 的 F5/F9 接线、`tests/save_test.rs`
+10 条（roundtrip 含耐久 / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
+F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 2`；旧 V1 文件被版本头直接拒绝，
+`items_schema` 不一致报 `ContentVersion`（MVP 不迁移，DsnE22 已拍板第 3 条）。
 **关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
 DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）|
 `ecs_core/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
@@ -1512,9 +1521,9 @@ BlueprintRegistry (Resource，加载 + 校验)
 
 **分阶段迁移（每阶段独立过 gate）**
 
-1. **数据外置**：`ITEMS` 常量 → `items.ron`（默认 `include_str!` 内嵌 + 可选
-   外置路径），补加载/校验/测试链路；`ItemId` 语义改 `BlueprintId`；行为与数值
-   保持完全不变。验收：全表加载、校验失败用例、现有测试全绿。
+1. **数据外置**：`ITEMS` 常量 → 数据文件（实现用 `assets/items.json`：`serde_json` 已是依赖），
+   默认 `include_str!` 内嵌 + 可选外置路径，补加载/校验/测试链路；`ItemId` 语义改
+   `BlueprintId`；行为与数值保持完全不变。验收：全表加载、校验失败用例、现有测试全绿。
 2. **动态属性**：`StatId` + `StatRegistry` + 稠密 `Stats` + `Modifier.op` 三档；
    迁移现有 4 个属性；求值、详情、HUD 全走注册表。验收：新增一条属性只改数据；
    未知 StatId 报错；三档 op 求值测试。拆成两片：**②a** 属性词表 + 算子（行为零
@@ -1562,8 +1571,14 @@ IgnoreSource}` 表达全部三条现有行为（蘑菇/海藻的 `use` 回复、
 只能带回复效果、`equipped` 只能出现在装备上且只能带 `ignore_source`、消耗品必须
 至少有一条 `use` 行为、空行为与未知触发/效果直接拒绝），所以解释器不需要兜底分支。
 求值侧（`EffectContext::ignored_sources`）与使用/拾取路由改为读行为表，
-不再认识具体物品编号；数据 schema 升 3。下一步 = ④ 实例组件 + SaveV2。
-后续按 ③→④ 顺序落地，每阶段更新本条目状态段与 `REFACTOR.md`。
+不再认识具体物品编号；数据 schema 升 3。
+阶段 ④ 实例组件 + SaveV2 **已落地**：`ItemDef.durability_max`（数据 schema 升 4，只有装备
+可声明、加载器校验为正有限数）、`Durability { current, max }` 稀疏组件（装配时满值、夹在
+`[0, max]`）；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走
+`World`）；存档升 `SaveV2`（`items_schema` + `ItemSave.overrides`，只存玩家造成的耐久差异），
+读档先按蓝图装配再套差异；`SAVE_VERSION = 2`，旧 V1 档被版本头拒绝、`items_schema` 不一致
+报 `ContentVersion`（MVP 不迁移）。验收不变量测试「无 overrides 时模板装配 == 存档装配」已落地。
+四阶段全部完成；后续长尾内容（附魔/充能/磨损规则等）走同一形状增量加，不改结构。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
 DsnE20（重量）· DsnE19（存档边界，V2 在这里扩展）· DsnE10（Modifier 求值）·

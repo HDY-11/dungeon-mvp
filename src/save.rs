@@ -1,33 +1,40 @@
-//! 存档 V1：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19）。
+//! 存档 V2：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19 / DsnE22 阶段 ④）。
 //!
-//! 只写"重开一局后无法重算"的状态：`map_seed`、楼层、玩家数值与身体容器树。
-//! 地图 / 怪物 / 楼梯 / 地面物品 / 格子效果都由 `(map_seed, floor)` 重新生成
-//! （DsnE17），所以磁盘上**没有 `Entity`**，也不存这些派生内容。
+//! 只写"重开一局后无法重算"的状态：`map_seed`、楼层、玩家数值、身体容器树，
+//! 以及物品的**实例差异**（目前是耐久当前值）。地图 / 怪物 / 楼梯 / 地面物品 /
+//! 格子效果都由 `(map_seed, floor)` 重新生成（DsnE17），所以磁盘上**没有 `Entity`**，
+//! 也不存这些派生内容；物品的基础数值永远跟蓝图（`assets/items.json`）走。
 //!
 //! # 为什么不是 `derive(Serialize)` 整个世界
 //!
 //! 世界里有 `Entity` 引用与派生资源；直接 derive 会把它们也变成磁盘契约。
 //! 投影只写"玩家身上发生了什么"，形状小、能读懂、加字段时只需要管 `SAVE_VERSION`。
 //!
-//! # 文件格式
+//! # 文件格式（V2）
 //!
 //! ```text
-//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
-//! 载荷：bincode(SaveV1)
-//! SaveV1 { map_seed, floor, player: PlayerSave }
+//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端，当前 2）
+//! 载荷：bincode(SaveV2)
+//! SaveV2 { items_schema, map_seed, floor, player: PlayerSave }
 //! PlayerSave { x, y, level, experience, health, magic, magic_mastery,
 //!              body: [Option<ItemSave>] }        // 身体七部位
-//! ItemSave   { id, count, slots: Option<[Option<ItemSave>]> }  // 容器树递归
+//! ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> }
+//! ItemOverrides { durability: Option<f32> }     // 只存玩家行为造成的差异
 //! ```
 //!
 //! 版本放在**文件头**而不是 bincode 载荷里：bincode 1.3 不是自描述格式，
 //! 结构一变旧档解不出来，如果版本在载荷里就永远读不到它，只能报"编码失败"。
-//! 头部先读、版本先判，才能给出"版本 2 不认识（当前 1）"这种可读错误。
+//! 头部先读、版本先判，才能给出"版本 1 不认识（当前 2）"这种可读错误。
 //!
-//! 读档 = `new_game(map_seed)` → `rebuild_floor`（若楼层 > 1）→ 还原玩家与容器树。
+//! `items_schema` 是物品数据的 schema 版本：与编译期内嵌的 `assets/items.json`
+//! 不一致时**拒绝读**（MVP 不保证跨内容版本，DsnE22 已拍板），避免把编号按
+//! 新含义解释成另一件物品。
+//!
+//! 读档 = `new_game(map_seed)` → `rebuild_floor`（若楼层 > 1）→ 按蓝图重新装配
+//! 物品实体、再套上实例差异 → 还原玩家数值。
 //! 丢在地上的东西不入档：读档后地面回到 `(seed, floor)` 的初始内容。
 //!
-//! 两个 V1 有意的取舍（写进 DESIGN DsnE19）：
+//! 两个 V1 起就有的取舍（写进 DESIGN DsnE19）：
 //! - **不存 `GameRng`**：读档后随机流从该层开局重来，与"继续玩"会分叉；
 //! - **不存回合计数**：`TurnManager` 本来就没有回合数，只有 game_over/wants_quit。
 
@@ -37,13 +44,16 @@ use std::path::{Path, PathBuf};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 use ecs_core::components::{Experience, Health, Level, Magic, MagicMastery, Position};
-use ecs_core::item::{Amount, BODY, Container, Item, ItemId, ItemTag};
+use ecs_core::item::{
+    Amount, BODY, Container, Durability, ITEMS_SCHEMA_VERSION, Item, ItemId, ItemTag,
+    spawn_item_assembled,
+};
 use ecs_core::resources::{EventLog, EventMessage, FloorNumber, MapMemory, MapSeed, VisibleMemory};
 use ecs_core::world::query::player_entity;
 use serde::{Deserialize, Serialize};
 
-/// 当前存档格式版本。加实例数据（耐久等）时 +1，并在 [`read`] 里做迁移。
-pub const SAVE_VERSION: u32 = 1;
+/// 当前存档格式版本。V2 = 物品实例差异（耐久）+ 物品数据 schema 校验。
+pub const SAVE_VERSION: u32 = 2;
 
 /// 存档文件头的魔数：读档第一件事是确认"这确实是我们写的文件"。
 pub const FILE_MAGIC: [u8; 4] = *b"DNSV";
@@ -59,9 +69,11 @@ pub fn default_path() -> PathBuf {
     PathBuf::from(SAVE_FILE)
 }
 
-/// 存档根：种子、楼层、玩家。版本在文件头里，不在这里。
+/// 存档根：物品数据版本、种子、楼层、玩家。文件格式版本在文件头里，不在这里。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SaveV1 {
+pub struct SaveV2 {
+    /// 写档时 `assets/items.json` 的 schema 版本；读档不一致直接拒绝（MVP 不迁移）。
+    pub items_schema: u32,
     /// 本局地图种子（决定所有楼层内容，DsnX17）。
     pub map_seed: u64,
     /// 玩家所在楼层（从 1 开始）。
@@ -104,8 +116,17 @@ pub struct ItemSave {
     pub id: u16,
     /// 这一堆的数量（不堆叠的物品为 1）。
     pub count: u32,
+    /// 与蓝图不同的实例数据（DsnE22 阶段 ④）：只写玩家行为造成的差异。
+    pub overrides: ItemOverrides,
     /// 自带的容器槽位（行囊类）；`None` = 它不是容器。
     pub slots: Option<Vec<Option<ItemSave>>>,
+}
+
+/// 一件物品的实例差异。空白（全部 `None`）= 与模板装配完全一致。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct ItemOverrides {
+    /// 耐久当前值；`None` = 满耐久（模板装配值）。
+    pub durability: Option<f32>,
 }
 
 /// 存档失败的原因。玩家要能看懂（`describe` 写进 `EventLog`）。
@@ -114,6 +135,8 @@ pub enum SaveError {
     Io(std::io::Error),
     Encode(bincode::Error),
     UnsupportedVersion(u32),
+    /// 存档里的物品数据版本与当前内嵌数据不一致（MVP 不做迁移）。
+    ContentVersion { save: u32, current: u32 },
     NoPlayer,
     GameOver,
     Corrupt(String),
@@ -128,6 +151,9 @@ impl SaveError {
             SaveError::UnsupportedVersion(version) => {
                 format!("存档版本 {version} 不认识（当前版本 {SAVE_VERSION}）")
             }
+            SaveError::ContentVersion { save, current } => format!(
+                "存档的物品数据版本 {save} 与当前内嵌数据版本 {current} 不一致，无法读取"
+            ),
             SaveError::NoPlayer => "找不到玩家".to_string(),
             SaveError::GameOver => "你已经死了，不能存档".to_string(),
             SaveError::Corrupt(why) => format!("存档损坏：{why}"),
@@ -155,7 +181,7 @@ pub fn write(world: &World, path: &Path) -> Result<(), SaveError> {
 }
 
 /// 读存档文件。先验文件头（magic + 版本），通过后才解 bincode 载荷。
-pub fn read(path: &Path) -> Result<SaveV1, SaveError> {
+pub fn read(path: &Path) -> Result<SaveV2, SaveError> {
     let bytes = std::fs::read(path).map_err(SaveError::Io)?;
     if bytes.len() < HEADER_LEN || bytes[..4] != FILE_MAGIC {
         return Err(SaveError::Corrupt("不是存档文件（文件头不对）".to_string()));
@@ -164,11 +190,18 @@ pub fn read(path: &Path) -> Result<SaveV1, SaveError> {
     if version != SAVE_VERSION {
         return Err(SaveError::UnsupportedVersion(version));
     }
-    bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)
+    let save: SaveV2 = bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)?;
+    if save.items_schema != ITEMS_SCHEMA_VERSION {
+        return Err(SaveError::ContentVersion {
+            save: save.items_schema,
+            current: ITEMS_SCHEMA_VERSION,
+        });
+    }
+    Ok(save)
 }
 
 /// 从世界抽取存档投影（`write` 的前半段；测试可单独用）。
-pub fn capture(world: &World) -> Result<SaveV1, SaveError> {
+pub fn capture(world: &World) -> Result<SaveV2, SaveError> {
     let player = player_entity(world).ok_or(SaveError::NoPlayer)?;
     let corrupt = |why: &str| SaveError::Corrupt(why.to_string());
 
@@ -188,7 +221,8 @@ pub fn capture(world: &World) -> Result<SaveV1, SaveError> {
     let x = u16::try_from(position.x).map_err(|_| corrupt("玩家 x 坐标超出存档范围"))?;
     let y = u16::try_from(position.y).map_err(|_| corrupt("玩家 y 坐标超出存档范围"))?;
 
-    Ok(SaveV1 {
+    Ok(SaveV2 {
+        items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: world.resource::<MapSeed>().0,
         floor: world.resource::<FloorNumber>().0,
         player: PlayerSave {
@@ -240,6 +274,13 @@ fn item_to_save(world: &World, entity: Entity) -> Result<ItemSave, SaveError> {
         )));
     }
     let count = world.get::<Amount>(entity).map(|amount| amount.0).unwrap_or(1);
+    let durability = world.get::<Durability>(entity).map(|durability| durability.current);
+    if durability.is_some() && item.def().durability_max.is_none() {
+        return Err(SaveError::Corrupt(format!(
+            "物品 {} 带着实例耐久，但蓝图里没有耐久",
+            item.id.0
+        )));
+    }
     let container_def = item.def().container_def();
     let slots = match (world.get::<Container>(entity), container_def) {
         (Some(container), Some(_)) => Some(container_to_save(world, container)?),
@@ -255,14 +296,16 @@ fn item_to_save(world: &World, entity: Entity) -> Result<ItemSave, SaveError> {
     Ok(ItemSave {
         id: item.id.0,
         count,
+        overrides: ItemOverrides { durability },
         slots,
     })
 }
 
-/// 按存档建一个世界：重新生成该层，再还原玩家与容器树。
+/// 按存档建一个世界：重新生成该层，再按蓝图装配物品、套实例差异、还原玩家数值。
 ///
-/// 版本校验在 [`read`] 里（文件头）。这里拿到的 `SaveV1` 已经是当前版本的形状。
-pub fn restore_to_world(save: &SaveV1) -> Result<World, SaveError> {
+/// 版本校验在 [`read`] 里（文件头 + 物品数据 schema）。这里拿到的 `SaveV2`
+/// 已经是当前版本的形状。
+pub fn restore_to_world(save: &SaveV2) -> Result<World, SaveError> {
     let mut world = ecs_core::new_game(save.map_seed);
 
     // 楼层：`new_game` 恒第 1 层。高于 1 层时改资源后重建一次——与 `descend`
@@ -319,7 +362,8 @@ pub fn restore_to_world(save: &SaveV1) -> Result<World, SaveError> {
     Ok(world)
 }
 
-/// 把一件存档物品造成实体（含子容器）。子物品的过滤与注册表一致。
+/// 把一件存档物品造成实体（含子容器）：先按蓝图**装配**（与系统里的 `spawn_item`
+/// 同一条实现），再套上存档记录的实例差异。
 fn spawn_from_save(world: &mut World, data: &ItemSave) -> Result<Entity, SaveError> {
     let id = ItemId(data.id);
     if !id.exists() {
@@ -330,7 +374,19 @@ fn spawn_from_save(world: &mut World, data: &ItemSave) -> Result<Entity, SaveErr
     }
     let def = id.def();
     let count = data.count.max(1);
-    let entity = world.spawn((Item::new(id), Amount::new(count))).id();
+    let entity = spawn_item_assembled(world, id, count);
+
+    if let Some(current) = data.overrides.durability {
+        let max = def.durability_max.ok_or_else(|| {
+            SaveError::Corrupt(format!(
+                "存档里物品 {} 有耐久差异，但蓝图没有声明耐久",
+                data.id
+            ))
+        })?;
+        world
+            .entity_mut(entity)
+            .insert(Durability::with_current(current, max));
+    }
 
     let Some(slots) = &data.slots else {
         if def.container_def().is_some() {

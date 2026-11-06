@@ -1,16 +1,20 @@
-//! 存档 V1 的集成测试（DsnE19）。
+//! 存档 V2 的集成测试（DsnE19 / DsnE22 阶段 ④）。
 //!
-//! 覆盖：投影 roundtrip（数值 + 身体槽 + 行囊嵌套物品）、楼层重建、版本/文件/损坏
-//! 三类错误，以及 F5/F9 经 `App::handle` 的端到端接线。
+//! 覆盖：投影 roundtrip（数值 + 身体槽 + 行囊嵌套物品 + 实例耐久）、楼层重建、版本/
+//! 文件/损坏/物品数据版本四类错误、模板装配与存档装配的一致性，以及 F5/F9 经
+//! `App::handle` 的端到端接线。
 
 use std::path::PathBuf;
 
 use bevy_ecs::prelude::*;
 use dungeon_app::App;
-use dungeon_app::save::{self, ExpSave, ItemSave, PlayerSave, SaveError, SaveV1, VitSave};
+use dungeon_app::save::{
+    self, ExpSave, ItemOverrides, ItemSave, PlayerSave, SaveError, SaveV2, VitSave,
+};
 use ecs_core::{
-    Amount, BODY, Container, Experience, FloorNumber, Health, Item, ItemId, ItemTag, Level, Magic,
-    MagicMastery, Map, Monster, Position, Stairs,
+    Amount, BODY, Container, Durability, Experience, FloorNumber, Health, ITEMS_SCHEMA_VERSION,
+    Item, ItemId, ItemTag, Level, Magic, MagicMastery, Map, Monster, Position, Stairs,
+    spawn_item_assembled,
 };
 use render_api::{InputEvent, Key, KeyEvent};
 
@@ -29,11 +33,9 @@ fn body_slot_for(tag: ItemTag) -> usize {
         .expect("身体必须有能接受该标签的槽位")
 }
 
-/// 直接造一个物品实体（测试里绕过 `Commands`）。
+/// 直接造一个物品实体（测试里绕过 `Commands`）：走蓝图装配，耐久等实例组件自动带上。
 fn spawn_item(world: &mut World, id: u16, count: u32) -> Entity {
-    world
-        .spawn((Item::new(ItemId(id)), Amount::new(count)))
-        .id()
+    spawn_item_assembled(world, ItemId(id), count)
 }
 
 fn count_monsters(world: &mut World) -> usize {
@@ -68,6 +70,11 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
             .expect("玩家有身体容器")
             .insert(main_hand, sword, ItemId(0).def().tags)
             .expect("主手槽接受武器");
+        // 实例数据：剑的耐久磨到 17（蓝图满值是 40），存档要记住这个差异。
+        world
+            .get_mut::<Durability>(sword)
+            .expect("蓝图带耐久的物品装配时应有 Durability")
+            .current = 17.0;
 
         let mushroom = spawn_item(world, 25, 3);
         let pack = world
@@ -103,6 +110,8 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
         .slot(body_slot_for(ItemTag::Weapon))
         .expect("主手槽里还有剑");
     assert_eq!(world.get::<Item>(sword).unwrap().id, ItemId(0));
+    let durability = world.get::<Durability>(sword).expect("读档后剑仍有耐久");
+    assert_eq!((durability.current, durability.max), (17.0, 40.0));
 
     let pack = body
         .slot(ecs_core::pack_slot_index())
@@ -111,6 +120,10 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
     let mushroom = pack.slot(0).expect("行囊第 0 格里有蘑菇");
     assert_eq!(world.get::<Item>(mushroom).unwrap().id, ItemId(25));
     assert_eq!(world.get::<Amount>(mushroom).unwrap().0, 3);
+    assert!(
+        world.get::<Durability>(mushroom).is_none(),
+        "蘑菇没有耐久这回事"
+    );
 }
 
 #[test]
@@ -147,7 +160,8 @@ fn a_save_on_a_lower_floor_rebuilds_the_same_floor() {
 
 #[test]
 fn an_unknown_version_in_the_file_header_is_rejected() {
-    let save = SaveV1 {
+    let save = SaveV2 {
+        items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
         player: PlayerSave {
@@ -214,9 +228,11 @@ fn an_unknown_item_id_in_the_save_is_reported_as_corrupt() {
     body[0] = Some(ItemSave {
         id: 9999,
         count: 1,
+        overrides: ItemOverrides::default(),
         slots: None,
     });
-    let save = SaveV1 {
+    let save = SaveV2 {
+        items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
         player: PlayerSave {
@@ -266,4 +282,100 @@ fn f5_and_f9_reload_the_game_through_the_keyboard() {
     let reloaded = ecs_core::player_entity(app.world()).expect("读档后仍有玩家");
     assert_eq!(app.world().get::<Level>(reloaded).unwrap().0, 5);
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_old_v1_file_is_rejected_by_the_header_version() {
+    let path = temp_path("v1");
+    let mut bytes = save::FILE_MAGIC.to_vec();
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    std::fs::write(&path, bytes).expect("写文件");
+    let result = save::read(&path);
+    let _ = std::fs::remove_file(&path);
+
+    match result {
+        Err(SaveError::UnsupportedVersion(1)) => {}
+        other => panic!("期望 V1 被版本头拒绝，实际：{other:?}"),
+    }
+}
+
+#[test]
+fn a_save_with_a_different_items_schema_is_rejected() {
+    let save = SaveV2 {
+        items_schema: ITEMS_SCHEMA_VERSION + 1,
+        map_seed: 1,
+        floor: 1,
+        player: PlayerSave {
+            x: 1,
+            y: 1,
+            level: 1,
+            experience: ExpSave { exp: 0.0, exp_to_next: 100.0 },
+            health: VitSave { current: 38.0, max: 38.0 },
+            magic: VitSave { current: 9.0, max: 9.0 },
+            magic_mastery: 0.0,
+            body: vec![None; BODY.len()],
+        },
+    };
+    let mut bytes = save::FILE_MAGIC.to_vec();
+    bytes.extend_from_slice(&save::SAVE_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&bincode::serialize(&save).expect("编码载荷"));
+    let path = temp_path("items-schema");
+    std::fs::write(&path, bytes).expect("写文件");
+    let result = save::read(&path);
+    let _ = std::fs::remove_file(&path);
+
+    match result {
+        Err(SaveError::ContentVersion { save, current }) => {
+            assert_eq!(save, ITEMS_SCHEMA_VERSION + 1);
+            assert_eq!(current, ITEMS_SCHEMA_VERSION);
+        }
+        other => panic!("期望物品数据版本被拒绝，实际：{other:?}"),
+    }
+}
+
+#[test]
+fn template_assembly_matches_save_assembly_when_there_are_no_overrides() {
+    let weapon_slot = body_slot_for(ItemTag::Weapon);
+    let mut body = vec![None; BODY.len()];
+    body[weapon_slot] = Some(ItemSave {
+        id: 0,
+        count: 1,
+        overrides: ItemOverrides::default(),
+        slots: None,
+    });
+
+    let save = SaveV2 {
+        items_schema: ITEMS_SCHEMA_VERSION,
+        map_seed: 1,
+        floor: 1,
+        player: PlayerSave {
+            x: 1,
+            y: 1,
+            level: 1,
+            experience: ExpSave { exp: 0.0, exp_to_next: 100.0 },
+            health: VitSave { current: 38.0, max: 38.0 },
+            magic: VitSave { current: 9.0, max: 9.0 },
+            magic_mastery: 0.0,
+            body,
+        },
+    };
+    let mut world = save::restore_to_world(&save).expect("还原世界");
+    let player = ecs_core::player_entity(&world).expect("有玩家");
+    let restored = world
+        .get::<Container>(player)
+        .expect("身体容器")
+        .slot(weapon_slot)
+        .expect("主手有剑");
+    let fresh = spawn_item_assembled(&mut world, ItemId(0), 1);
+
+    let restored_durability = world.get::<Durability>(restored).expect("存档装配带耐久");
+    let fresh_durability = world.get::<Durability>(fresh).expect("模板装配带耐久");
+    assert_eq!(
+        restored_durability, fresh_durability,
+        "没有实例差异时，存档装配必须与模板装配完全一致"
+    );
+    assert_eq!(
+        (restored_durability.current, restored_durability.max),
+        (40.0, 40.0)
+    );
 }

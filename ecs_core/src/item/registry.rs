@@ -49,7 +49,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。
-pub const ITEMS_SCHEMA_VERSION: u32 = 3;
+pub const ITEMS_SCHEMA_VERSION: u32 = 4;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -162,6 +162,12 @@ pub struct ItemDef {
     /// 每单位重量（DsnE20）。行囊载重上限就是靠它算出来的；
     /// 重量是**派生数据**，不进存档（读档后用注册表重算）。
     pub weight: f32,
+    /// 耐久上限（实例数据，DsnE22 阶段 ④）：`Some` 的物品装配时带
+    /// [`Durability`](crate::item::Durability)，存档只保存"当前值"这一差异；
+    /// `None` = 没有耐久这回事（消耗品/材料/行囊/无耐久装备）。
+    ///
+    /// 目前数据里只有装备能声明；磨损规则尚未接入。
+    pub durability_max: Option<f32>,
     /// 堆叠上限（装备恒为 1）。
     pub max_stack: u32,
     /// 种类与效果。
@@ -298,6 +304,8 @@ struct RawItem {
     #[serde(default)]
     behaviors: Vec<RawBehavior>,
     #[serde(default)]
+    durability_max: Option<f32>,
+    #[serde(default)]
     tags: Vec<ItemTag>,
     #[serde(default)]
     weapon_speed_ms: Option<f64>,
@@ -358,6 +366,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             behaviors,
             tags,
             weapon_speed_ms,
+            durability_max,
         } = raw;
         if let Some(previous) = previous_id
             && id <= previous
@@ -437,6 +446,12 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             }
         };
         validate_behaviors(&label, is_consumable, is_equipment, &behaviors)?;
+        if let Some(max) = durability_max && (!max.is_finite() || max <= 0.0) {
+            return Err(format!("{label} 的耐久上限必须是正的有限数，实得 {max}"));
+        }
+        if durability_max.is_some() && !is_equipment {
+            return Err(format!("{label} 不是装备，不能声明耐久上限"));
+        }
         let behaviors = leak_slice(
             behaviors
                 .into_iter()
@@ -452,6 +467,7 @@ fn load_items(json: &str) -> Result<Vec<ItemDef>, String> {
             name: leak_str(name),
             desc: leak_str(desc),
             weight,
+            durability_max,
             max_stack,
             kind,
             behaviors,

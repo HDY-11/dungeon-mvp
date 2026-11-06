@@ -467,3 +467,33 @@ fn an_equipped_behavior_cannot_heal() {
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("不支持回复"), "错误应指出效果不配对：{error}");
 }
+
+#[test]
+fn only_equipment_declares_a_positive_durability() {
+    let sword = ItemId(0).def();
+    assert_eq!(sword.durability_max, Some(40.0), "锈铁剑应该有耐久上限");
+    assert_eq!(ItemId(25).def().durability_max, None, "蘑菇没有耐久");
+
+    for def in items() {
+        if let Some(max) = def.durability_max {
+            assert!(def.is_equipment(), "{} 不是装备却声明了耐久", def.name);
+            assert!(max.is_finite() && max > 0.0, "{} 的耐久上限必须为正", def.name);
+        }
+    }
+}
+
+#[test]
+fn a_non_positive_durability_is_rejected() {
+    let json = table(&[
+        r#"{"id":0,"name":"测试装备","desc":"测试用","weight":1.0,"max_stack":1,"durability_max":0.0,"kind":{"type":"equipment"}}"#,
+    ]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("耐久"), "错误应提到耐久：{error}");
+}
+
+#[test]
+fn a_durability_on_a_non_equipment_is_rejected() {
+    let json = table(&[&material(5, r#","durability_max":10.0"#)]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("耐久"), "错误应提到耐久：{error}");
+}

@@ -63,8 +63,8 @@ pub use actions::{
 };
 pub use loot::{LootEntry, roll_loot};
 pub use registry::{
-    Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ItemDef, ItemId, ItemKind, TRAVELER_PACK_ITEM,
-    item_by_name, stack_weight,
+    Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ITEMS_SCHEMA_VERSION, ItemDef, ItemId,
+    ItemKind, TRAVELER_PACK_ITEM, item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
@@ -129,16 +129,104 @@ impl GroundItemAt {
     }
 }
 
-/// 造一件物品实体（不含位置）：`Item + Amount`，行囊类物品还会带上自己的 `Container`。
+/// 物品实例的耐久（实例数据的第一项，DsnE22 阶段 ④）。
+///
+/// 只出现在蓝图声明了 `durability_max` 的物品上（稀疏组件）：模板装配时插满，
+/// 存档只保存"与蓝图不同的部分"（当前值）。磨损规则尚未接入——本阶段先把
+/// "实例数据进得了档、读档后与模板装配一致"这条地基落下来。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Durability {
+    pub current: f32,
+    pub max: f32,
+}
+
+impl Durability {
+    /// 满耐久（模板装配时用）。
+    pub fn new(max: f32) -> Self {
+        let max = max.max(0.0);
+        Self { current: max, max }
+    }
+
+    /// 带当前值（读档套用 overrides 时用）：当前值夹在 `[0, max]`。
+    pub fn with_current(current: f32, max: f32) -> Self {
+        let max = max.max(0.0);
+        Self {
+            current: if current.is_finite() {
+                current.clamp(0.0, max)
+            } else {
+                max
+            },
+            max,
+        }
+    }
+
+    /// 当前值占上限的比例；上限为 0 时按"满"处理。
+    pub fn ratio(self) -> f32 {
+        if self.max <= 0.0 {
+            1.0
+        } else {
+            self.current / self.max
+        }
+    }
+}
+
+/// 物品实体装配器：让系统里的 `Commands` 与读档时的 `World` 共用同一段装配代码。
+///
+/// 不写成两个 `spawn_item` 是因为"物品蓝图 → 实体组件"必须只有一条实现
+/// （DsnE22：装配是蓝图与 ECS 之间的唯一桥）；读档走 `World` 只是为了绕开
+/// `Commands` 的生命周期。
+pub trait ItemSpawner {
+    /// 只造基础组件（`Item + Amount`）。
+    fn spawn_item_base(&mut self, id: ItemId, count: u32) -> Entity;
+    /// 按蓝图补上可选组件（容器布局、满耐久……）。
+    fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId);
+}
+
+impl ItemSpawner for Commands<'_, '_> {
+    fn spawn_item_base(&mut self, id: ItemId, count: u32) -> Entity {
+        self.spawn((Item::new(id), Amount::new(count))).id()
+    }
+
+    fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId) {
+        let def = id.def();
+        if let Some(layout) = def.container_def() {
+            self.entity(entity).insert(Container::new(layout));
+        }
+        if let Some(max) = def.durability_max {
+            self.entity(entity).insert(Durability::new(max));
+        }
+    }
+}
+
+impl ItemSpawner for World {
+    fn spawn_item_base(&mut self, id: ItemId, count: u32) -> Entity {
+        self.spawn((Item::new(id), Amount::new(count))).id()
+    }
+
+    fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId) {
+        let def = id.def();
+        if let Some(layout) = def.container_def() {
+            self.entity_mut(entity).insert(Container::new(layout));
+        }
+        if let Some(max) = def.durability_max {
+            self.entity_mut(entity).insert(Durability::new(max));
+        }
+    }
+}
+
+/// 按蓝图装配一件物品实体（唯一入口）。
+pub fn spawn_item_assembled<S: ItemSpawner>(spawner: &mut S, id: ItemId, count: u32) -> Entity {
+    let entity = spawner.spawn_item_base(id, count);
+    spawner.insert_blueprint_parts(entity, id);
+    entity
+}
+
+/// 造一件物品实体（不含位置）：`Item + Amount` + 蓝图声明的实例组件。
 ///
 /// "物品出现"的**唯一入口**（地上、容器里都走它）：于是"物品实体一定带 `Item + Amount`"
-/// 与"行囊一定带 `Container`"都是结构保证。
+/// 与"行囊一定带 `Container`"都是结构保证。读档走 [`spawn_item_assembled`] 的 `World` 实现。
 pub fn spawn_item(commands: &mut Commands, id: ItemId, count: u32) -> Entity {
-    let mut entity = commands.spawn((Item::new(id), Amount::new(count)));
-    if let Some(def) = id.def().container_def() {
-        entity.insert(Container::new(def));
-    }
-    entity.id()
+    spawn_item_assembled(commands, id, count)
 }
 
 /// 在地上放一堆物品，返回实体。
