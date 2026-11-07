@@ -54,7 +54,9 @@ pub use visual::*;
 ///    焦点位 [`InventoryFocus`] 四个顺时针轮转）：旧后端的两栏 `panels` 形状被替换（DsnA5）。
 /// 7：新增品质文本样式 [`UiTextStyle::Quality`]（DsnE23）：物品名按品质着色，
 ///    颜色由后端映射，属于影响渲染语义的变更。
-pub const CONTRACT_VERSION: u32 = 7;
+/// 8：新增 [`SceneFrame::events_scroll`]（DsnA6）：事件栏可以向上翻历史，
+///    后端必须按偏移裁窗口而不是永远画最后 N 行。
+pub const CONTRACT_VERSION: u32 = 8;
 
 /// 常用类型预导出。
 pub mod prelude {
@@ -92,6 +94,6 @@ mod tests {
 
     #[test]
     fn contract_version_is_pinned() {
-        assert_eq!(CONTRACT_VERSION, 7, "契约版本变更必须同步此断言");
+        assert_eq!(CONTRACT_VERSION, 8, "契约版本变更必须同步此断言");
     }
 }

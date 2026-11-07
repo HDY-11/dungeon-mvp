@@ -207,6 +207,18 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                     _ => {}
                 }
             }
+            // 事件栏聚焦时 ↑/↓ 翻历史（只是看，不选中任何条目；DsnE21 决策 4）。
+            // 同样不驱动玩家移动。
+            if matches!(input.page, render_api::PageKind::Game)
+                && input.pane_focus == render_api::Pane::Events
+            {
+                match other {
+                    // `dy` 是"向上滚的行数"：↑ 看更早的，↓ 回到最新。
+                    Key::Up => return InputOutcome::Ui(UiIntent::ScrollEvents { dy: 1 }),
+                    Key::Down => return InputOutcome::Ui(UiIntent::ScrollEvents { dy: -1 }),
+                    _ => {}
+                }
+            }
             // 覆盖页打开时，移动/等待键不该同时驱动世界——否则按方向键翻看
             // 地形会把玩家走出去（旧实现没有覆盖页，所以没这个问题）。
             if in_overlay {

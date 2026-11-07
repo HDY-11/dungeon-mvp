@@ -273,10 +273,21 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
 /// 画事件栏：一条"截止现在"的时间轴（DsnE21）。
 ///
 /// 已落定事实在前（旧→新）、进行中的行动在后（剩余时间降序），栏底即 0 刻度；
-/// 自动贴底显示最新。进行中行用暗色，和"已经发生完"一眼分得开。
+/// 默认自动贴底显示最新（`events_scroll == 0`）。焦点在事件栏时可以向上翻
+/// 历史（DsnA6）：`events_scroll` 是从底部往上裁掉的行数，标题上标出当前偏移，
+/// 滚回 0 就恢复跟随最新。
 fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
-    let inner_height = usize::from(area.height.saturating_sub(2));
+    let inner_height = usize::from(area.height.saturating_sub(2)).max(1);
     let mut lines: Vec<Line> = Vec::new();
+
+    // 偏移超过可滚范围时按上限夹取（页栈只记"想滚多少"，上限由可见高度决定）。
+    let max_scroll = scene.events.len().saturating_sub(inner_height);
+    let scroll = scene.events_scroll.min(max_scroll);
+    let title = if scroll > 0 {
+        format!("事件 ↑{scroll}")
+    } else {
+        "事件".to_string()
+    };
 
     if scene.events.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -284,8 +295,9 @@ fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let start = scene.events.len().saturating_sub(inner_height.max(1));
-        for line in &scene.events[start..] {
+        let end = scene.events.len() - scroll;
+        let start = end.saturating_sub(inner_height);
+        for line in &scene.events[start..end] {
             let mut style = Style::default().fg(crate::catalog::log_color(line.level));
             if line.running {
                 // 进行中：暗一点，表示"还没落定"；剩余 AV 已经写在文案里。
@@ -296,7 +308,7 @@ fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     }
 
     frame.render_widget(
-        Paragraph::new(lines).block(pane_block("事件", scene.focus == Pane::Events)),
+        Paragraph::new(lines).block(pane_block(&title, scene.focus == Pane::Events)),
         area,
     );
 }

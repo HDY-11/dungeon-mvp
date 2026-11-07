@@ -63,6 +63,11 @@ pub enum UiIntent {
     CyclePaneFocus,
     /// 信息栏移动选中行（`dy` 为 ±1；焦点在信息栏时方向键改为选行）。
     MoveInfoCursor { dy: i32 },
+    /// 事件栏滚动的行数（正数 = 向更早的事件滚动；0 = 贴着最新事件）。
+    ///
+    /// 事件栏只滚动、不选中（DsnE21 决策 4）：焦点在事件栏时 ↑/↓ 翻历史，
+    /// 最新一条永远在栏底；滚离底部时暂停自动跟随，滚回 0 恢复。
+    ScrollEvents { dy: i32 },
     /// 用户确认退出。
     ConfirmQuit,
     /// 用户取消退出。
@@ -92,6 +97,8 @@ pub struct PageStack {
     inventory_context2_cursor: usize,
     /// 信息栏的选中行（只列视野内的观察候选；夹取发生在提取时）。
     info_cursor: usize,
+    /// 事件栏滚动的行数（0 = 贴底/最新；夹取发生在渲染时）。
+    events_scroll: usize,
     /// 游戏画面的面板焦点（Tab 顺时针轮转）。
     pane_focus: Pane,
 }
@@ -109,6 +116,7 @@ impl PageStack {
             inventory_context1_cursor: 0,
             inventory_context2_cursor: 0,
             info_cursor: 0,
+            events_scroll: 0,
             pane_focus: Pane::Camera,
         }
     }
@@ -116,6 +124,11 @@ impl PageStack {
     /// 信息栏的选中行（提取时按候选数量夹取）。
     pub const fn info_cursor(&self) -> usize {
         self.info_cursor
+    }
+
+    /// 事件栏向上滚了多少行（0 = 贴着最新事件；渲染时按行数夹取）。
+    pub const fn events_scroll(&self) -> usize {
+        self.events_scroll
     }
 
     /// 当前面板焦点。
@@ -330,6 +343,15 @@ impl PageStack {
                 }
                 let next = (self.info_cursor as i32 + dy).max(0);
                 self.info_cursor = next as usize;
+                true
+            }
+            UiIntent::ScrollEvents { dy } => {
+                // 事件栏只滚动不选中（DsnE21 决策 4）。行数由本帧的事件决定，
+                // 这里只记偏移；夹取在渲染时按可见高度做。
+                if !self.is_game() || self.pane_focus != Pane::Events {
+                    return false;
+                }
+                self.events_scroll = (self.events_scroll as i32 + dy).max(0) as usize;
                 true
             }
             UiIntent::ClosePage => {

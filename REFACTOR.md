@@ -57,9 +57,10 @@
 | M19 | **品质与生命/法力基线（DsnE23）**：`Quality` 六档（粗劣/普通/精良/稀有/史诗/传说）进蓝图与 `items.json`（schema 升 5），UI 按品质着色 + 详情「品质：」行（`UiTextStyle::Quality`，渲染契约 7）；通用 `Pool` + `Health`/`Mana` newtype（`Magic` 改名 `Mana`）；上限 = 等级曲线（40+8×(lv-1) / 12+2×(lv-1)）+ `max_health`/`max_mana` 修正，防御不再加血；`rules::vitals` 是唯一上限公式与写者（普通刷新只夹取、升级回满）；存档 V3 只存 `health/mana` current、读档重算上限 | DsnE23 / DsnE19 / DsnE22 / Gm4 / Gm7 / Gm13 | 本次提交 |
 | M20 | **物理伤害五域管线（DsnE24 阶段 ①）**：`base = 攻击力 + min(力量, 主手武器力量上限)×0.5`；护甲域 `4/(防御+4)`（曲线非减法）；增伤/暴击/护甲/抗性四域相乘，最终 `max(1, …)`；词表补 `strength`/`damage_bonus`/`physical_resist`/`magic_resist`；`ItemDef.strength_cap` 进蓝图（武器必须声明，schema 升 6，三把武器 6/10/3，空手 4）；旧 `combat::compute_melee_damage` 适配器退役；GAME.md Gm2 公式整段换口径 | DsnE24 / DsnE9 / Gm2 / Gm4 / Gm7 / Gm8 / Gm9 | 本次提交 |
 | M21 | **武器成长与存档 V4（DsnE24 阶段 ②）**：`WeaponGrowth { max_level, attack_per_level, strength_cap_per_level, exp_base }` 进蓝图（数据 schema 升 7，只有武器声明且必须声明）；`WeaponProgress { level, exp }` 实例组件（唯一装配桥插 1 级 0 经验）；经验 = 造成的伤害 × `Quality::exp_factor`（粗劣 1.25 → 传说 0.4），门槛 `exp_base × 等级^1.5`，升级写事件；等级攻击加成经 `EffectContext` 合成装备 `Modifier`，力量上限加等级成长；存档 V4 用 `ItemOverrides.weapon` 存等级/经验、非法进度报 `Corrupt`，旧 V1/V2/V3 拒绝；GAME.md Gm7 新增「武器成长」小节 | DsnE24 / DsnE19 / DsnE23 / Gm2 / Gm7 / Gm13 | 本次提交 |
+| M22 | **设计补齐：审计后修掉的三处缺口**（1）事件栏滚动（DsnE21 决策 4 / DsnA6）：`PageStack.events_scroll` + `UiIntent::ScrollEvents`、`SceneFrame.events_scroll`（契约 8）、tui 按偏移裁窗口并在标题标 `↑N`；（2）同格多具尸体分组（DsnE21 决策 7）：`take_from_corpse(world, corpse, slot)` 按实体编号升序取下标，背包「尸体」页签每具一个不可操作标题行；（3）`take_from_ground` 拆堆改走唯一装配桥 `spawn_item_assembled`，不再手工拼物品实体。同时同步 DsnE16/17/18 的陈旧状态段与代价段 | DsnE21 / DsnA6 / DsnE22 / DsnE16 / DsnE17 / DsnE18 / Gm7 / Gm14 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **309 passed**；`cargo test --workspace`
-29 目标 **591 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
+**当前基线（实测）：** `cargo test -p ecs_core` **310 passed**；`cargo test --workspace`
+29 目标 **598 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（待本轮最终复跑）。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

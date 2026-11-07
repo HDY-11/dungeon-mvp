@@ -22,7 +22,7 @@ use crate::components::{Health, Mana, Position};
 use crate::entity_cls::Player;
 use crate::item::{
     Amount, BODY, BehaviorEffect, Container, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
-    pack_slot_index, stack_weight,
+    pack_slot_index, spawn_item_assembled, stack_weight,
 };
 use crate::resources::{EventLog, EventMessage};
 use crate::rules::refresh_player_vitals;
@@ -186,18 +186,29 @@ pub fn use_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemActi
     Ok(())
 }
 
-/// 把脚下尸体第 `corpse_slot` 格的物品拿进行囊。
+/// 把脚下第 `corpse_index` 具尸体（同格多具时按实体编号升序）第 `corpse_slot` 格的物品
+/// 拿进行囊。
 ///
 /// 尸体**不再自动搜刮**（玩家反馈：默认全拾取太粗暴）：踩上去什么都不发生，
 /// 打开背包页在「脚下」面板里自己翻。并堆 / 开新格沿用行囊同一套规则，
 /// 任一失败都把东西放回尸体，保证"要么拿走、要么还在原地"。
-pub fn take_from_corpse(world: &mut World, corpse_slot: usize) -> Result<ItemId, ItemActionError> {
+///
+/// 同格可能有多具尸体（比如一次群殴后）：`corpse_index` 与背包页「尸体」栏的分组顺序
+/// 同源（都按实体编号升序），所以玩家选中的那一行就是真正被翻的那具。
+pub fn take_from_corpse(
+    world: &mut World,
+    corpse_index: usize,
+    corpse_slot: usize,
+) -> Result<ItemId, ItemActionError> {
     let player = player_entity(world)?;
     let position = world
         .get::<Position>(player)
         .map(Position::to_tuple)
         .ok_or(ItemActionError::NoPlayer)?;
-    let corpse = corpse_underfoot(world, position).ok_or(ItemActionError::NoCorpse)?;
+    let corpse = corpses_underfoot(world, position)
+        .get(corpse_index)
+        .copied()
+        .ok_or(ItemActionError::NoCorpse)?;
     let item = slot_of(world, corpse, corpse_slot)?;
     let def = item_def(world, item)?;
     let id = def.id;
@@ -358,10 +369,9 @@ pub fn take_from_ground(
             world.entity_mut(entity).remove::<GroundItemAt>();
             put_into(world, pack, slot, entity, tags)?;
         } else {
-            let holder = world.spawn((Item::new(id), Amount::new(put))).id();
-            if let Some(layout) = def.container_def() {
-                world.entity_mut(holder).insert(Container::new(layout));
-            }
+            // 拆堆出来的那一半也必须走唯一装配桥（DsnE22 阶段 ④）：现在都是无实例数据的
+            // 可堆叠物，但桥一旦被绕过，将来给可堆叠物加实例组件时就会漏装。
+            let holder = spawn_item_assembled(world, id, put);
             put_into(world, pack, slot, holder, tags)?;
         }
         left -= put;
@@ -395,13 +405,19 @@ fn push_log(world: &mut World, text: impl Into<String>) {
 }
 
 
-/// 玩家脚下那具尸体（`Position` 相同且带 `Corpse`）。
-fn corpse_underfoot(world: &mut World, at: (usize, usize)) -> Option<Entity> {
+/// 玩家脚下同格的全部尸体（`Position` 相同且带 `Corpse`），按实体编号升序。
+///
+/// 顺序被两处共用：背包页「尸体」栏的分组标题顺序，与 [`take_from_corpse`] 的
+/// `corpse_index`。只在这里排一次，两边就不会错位。
+fn corpses_underfoot(world: &mut World, at: (usize, usize)) -> Vec<Entity> {
     let mut query = world.query_filtered::<(Entity, &Position), With<crate::monster::Corpse>>();
-    query
+    let mut corpses: Vec<Entity> = query
         .iter(world)
-        .find(|(_, position)| position.to_tuple() == at)
+        .filter(|(_, position)| position.to_tuple() == at)
         .map(|(entity, _)| entity)
+        .collect();
+    corpses.sort_by_key(|entity| entity.to_bits());
+    corpses
 }
 
 // ── 小工具（每个都只借一次 World，避免同时可变借用两个容器） ──

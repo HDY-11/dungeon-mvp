@@ -132,6 +132,8 @@ pub fn extract_scene_frame(
         hud: build_hud(world),
         info: build_info(world, pages.info_cursor()),
         events: build_events(world, config),
+        // 事件栏的滚动属于 UI 状态，页栈只存偏移；可滚上限由 tui 按可见高度夹取。
+        events_scroll: pages.events_scroll(),
         // 先留空，等其余字段就位后再算：Look 页的地形详情**从本帧快照读**，
         // 而不是回头再查一次世界——那样会出现「页栈显示的地形与地图不一致」。
         ui: render_api::UiView::Game,
@@ -162,7 +164,7 @@ pub fn inventory_nav2_tabs(world: &World) -> Vec<render_api::InventoryNav> {
         return Vec::new();
     };
     let mut tabs = Vec::new();
-    if corpse_underfoot(world, player).is_some() {
+    if !corpses_underfoot(world, player).is_empty() {
         tabs.push(InventoryNav::Corpse);
     }
     if !ground_items_underfoot(world, player).is_empty() {
@@ -247,7 +249,9 @@ pub fn inventory_view(world: &World, pages: &PageStack) -> render_api::Inventory
 /// 数行数，空栏或占位行就会让"选中的行"和"动的槽"错位一格。
 struct InventoryContext {
     list: render_api::ListView,
-    targets: Vec<InventoryTarget>,
+    /// 与 `list.items` 逐行对齐：普通行 = `Some(目标)`，分组标题行 = `None`
+    /// （只有同格多具尸体时才有标题行，标题本身不可操作）。
+    targets: Vec<Option<InventoryTarget>>,
 }
 
 impl InventoryContext {
@@ -276,7 +280,15 @@ impl InventoryContext {
         self.list
             .items
             .push(render_api::ListItemView::new(label).with_detail(detail));
-        self.targets.push(target);
+        self.targets.push(Some(target));
+    }
+
+    /// 分组标题行（同格多具尸体时用）：不可操作，只为把几具尸体的物品分开。
+    fn push_header(&mut self, label: impl Into<String>) {
+        self.list
+            .items
+            .push(render_api::ListItemView::new(label).with_disabled());
+        self.targets.push(None);
     }
 
     /// 带品质样式的行（DsnE23）：物品名按品质着色，其余列不受影响。
@@ -293,7 +305,7 @@ impl InventoryContext {
         }
     }
 
-    /// 夹取光标、标出选中行，并返回该行对应的目标（占位行/空栏 → `None`）。
+    /// 夹取光标、标出选中行，并返回该行对应的目标（占位行/标题行/空栏 → `None`）。
     fn select(&mut self, cursor: usize) -> Option<InventoryTarget> {
         if self.list.items.is_empty() {
             self.list
@@ -302,7 +314,7 @@ impl InventoryContext {
         }
         let index = cursor.min(self.list.items.len() - 1);
         self.list.selected = index;
-        self.targets.get(index).copied()
+        self.targets.get(index).copied().flatten()
     }
 }
 
@@ -412,37 +424,60 @@ fn pack_context(world: &World, player: Entity) -> InventoryContext {
     context
 }
 
-/// 尸体栏（Nav2 的「尸体」页签）：脚下那具尸体容器的内容。
+/// 尸体栏（Nav2 的「尸体」页签）：脚下所有尸体容器的内容。
+///
+/// 同格多具尸体时按"分组标题"列出（DsnE21 决策 7）：标题行不可操作，组内每行对应
+/// `InventoryTarget::Corpse { corpse, slot }`，`corpse` 是 [`corpses_underfoot`] 的下标，
+/// 与核心动作 `take_from_corpse` 的 `corpse_index` 同源。
 fn corpse_context(world: &World, player: Entity) -> InventoryContext {
-    let Some(corpse) = corpse_underfoot(world, player) else {
+    let corpses = corpses_underfoot(world, player);
+    let Some(first) = corpses.first() else {
         return InventoryContext::placeholder("脚下", "（脚下没有尸体）");
     };
-    let name = world
-        .get::<ecs_core::monster::Corpse>(corpse)
-        .map(|corpse| corpse.display_name())
-        .unwrap_or_else(|| "尸体".to_string());
-    let mut context = InventoryContext::new(format!("脚下：{name}"));
+    let grouped = corpses.len() > 1;
+    let title = if grouped {
+        format!("脚下：{} 具尸体", corpses.len())
+    } else {
+        format!("脚下：{}", corpse_name(world, *first))
+    };
+    let mut context = InventoryContext::new(title);
     context.list.footer = "Enter 拿取".to_string();
-    if let Some(container) = world.get::<ecs_core::Container>(corpse) {
-        for (slot, occupant) in container.iter() {
-            if world.get::<ecs_core::Item>(occupant).is_none() {
-                continue;
+    for (corpse_index, corpse) in corpses.iter().enumerate() {
+        if grouped {
+            context.push_header(corpse_name(world, *corpse));
+        }
+        if let Some(container) = world.get::<ecs_core::Container>(*corpse) {
+            for (slot, occupant) in container.iter() {
+                if world.get::<ecs_core::Item>(occupant).is_none() {
+                    continue;
+                }
+                context.push_styled(
+                    stack_label(world, occupant),
+                    "Enter 拿取",
+                    InventoryTarget::Corpse {
+                        corpse: corpse_index,
+                        slot,
+                    },
+                    quality_style(world, occupant),
+                );
             }
-            context.push_styled(
-                stack_label(world, occupant),
-                "Enter 拿取",
-                InventoryTarget::Corpse { slot },
-                quality_style(world, occupant),
-            );
         }
     }
-    if context.targets.is_empty() {
+    if !context.targets.iter().any(Option::is_some) {
         context
             .list
             .items
             .push(render_api::ListItemView::new("（尸体上没东西）"));
     }
     context
+}
+
+/// 尸体的显示名（注册表/组件缺失时回退）。
+fn corpse_name(world: &World, corpse: Entity) -> String {
+    world
+        .get::<ecs_core::monster::Corpse>(corpse)
+        .map(|corpse| corpse.display_name())
+        .unwrap_or_else(|| "尸体".to_string())
 }
 
 /// 地面栏（Nav2 的「地面」页签）：脚下同格的地面物品，行序=实体 id 升序。
@@ -489,17 +524,25 @@ fn pack_load(world: &World, pack: &ecs_core::Container) -> (f32, Option<f32>) {
     (weight, pack.max_weight())
 }
 
-/// 玩家**脚下**那具尸体（同一格、带容器）。没尸体就没有 Nav2 的「尸体」页签。
-fn corpse_underfoot(world: &World, player: Entity) -> Option<Entity> {
-    let here = world.get::<Position>(player)?.to_tuple();
-    world.iter_entities().find_map(|entity| {
-        entity.get::<ecs_core::monster::Corpse>()?;
-        if !entity.contains::<ecs_core::Container>() {
-            return None;
-        }
-        let position = entity.get::<Position>()?;
-        (position.to_tuple() == here).then(|| entity.id())
-    })
+/// 玩家**脚下**的全部尸体（同一格、带容器），按实体编号升序。
+///
+/// 顺序与核心动作 `take_from_corpse` 的 `corpse_index` 同源；同格多具尸体时
+/// 背包页按这个顺序分组列出。没尸体就没有 Nav2 的「尸体」页签。
+fn corpses_underfoot(world: &World, player: Entity) -> Vec<Entity> {
+    let Some(here) = world.get::<Position>(player).map(Position::to_tuple) else {
+        return Vec::new();
+    };
+    let mut corpses: Vec<Entity> = world
+        .iter_entities()
+        .filter_map(|entity| {
+            entity.get::<ecs_core::monster::Corpse>()?;
+            entity.contains::<ecs_core::Container>().then_some(())?;
+            let position = entity.get::<Position>()?;
+            (position.to_tuple() == here).then(|| entity.id())
+        })
+        .collect();
+    corpses.sort_by_key(|entity| entity.to_bits());
+    corpses
 }
 
 /// 玩家脚下同格的地面物品（按实体 id 升序，与 `take_from_ground` 的下标一致）。
@@ -527,8 +570,8 @@ pub enum InventoryTarget {
     Body { slot: usize },
     /// 行囊第 `slot` 格。
     Pack { slot: usize },
-    /// 脚下尸体第 `slot` 格。
-    Corpse { slot: usize },
+    /// 脚下尸体第 `slot` 格（多具尸体时 `corpse` 是分组下标）。
+    Corpse { corpse: usize, slot: usize },
     /// 脚下地面物品第 `index` 件（排序键=实体 id，与核心动作一致）。
     Ground { index: usize },
 }
@@ -583,8 +626,8 @@ fn occupant_for(world: &World, player: Entity, target: InventoryTarget) -> Optio
             let pack = body.slot(ecs_core::item::pack_slot_index())?;
             world.get::<ecs_core::Container>(pack)?.slot(slot)
         }
-        InventoryTarget::Corpse { slot } => {
-            let corpse = corpse_underfoot(world, player)?;
+        InventoryTarget::Corpse { corpse, slot } => {
+            let corpse = corpses_underfoot(world, player).get(corpse).copied()?;
             world.get::<ecs_core::Container>(corpse)?.slot(slot)
         }
         InventoryTarget::Ground { index } => {
@@ -683,12 +726,12 @@ fn item_detail(
                 "r 使用    d 丢弃".to_string()
             };
         }
-        InventoryTarget::Corpse { slot } => {
-            let corpse_name = corpse_underfoot(world, player)
-                .and_then(|corpse| world.get::<ecs_core::monster::Corpse>(corpse))
-                .map(|corpse| corpse.display_name())
+        InventoryTarget::Corpse { corpse, slot } => {
+            let name = corpses_underfoot(world, player)
+                .get(corpse)
+                .map(|corpse| corpse_name(world, *corpse))
                 .unwrap_or_else(|| "尸体".to_string());
-            detail.push_line(UiTextLine::plain(format!("脚下：{corpse_name}")));
+            detail.push_line(UiTextLine::plain(format!("脚下：{name}")));
             detail.push_line(UiTextLine::plain(format!("尸体第 {} 格", slot + 1)));
             detail.footer = "Enter 拿取".to_string();
         }

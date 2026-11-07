@@ -291,6 +291,30 @@ fn arrow_keys_select_info_rows_only_when_the_info_pane_is_focused() {
     assert!(up.ui_intent().is_none());
 }
 
+/// 焦点在事件栏时，↑/↓ 变成"向上/向下翻历史"的意图；不影响玩家移动，
+/// 也不和信息栏的选行混淆（DsnE21 决策 4 / DsnA6）。
+#[test]
+fn arrow_keys_scroll_events_only_when_the_events_pane_is_focused() {
+    let input = ctx(PageKind::Game).with_pane_focus(render_api::Pane::Events);
+    let up = map_input_event(key(Key::Up), &input);
+    assert!(up.command().is_none(), "事件栏焦点时 ↑ 不得驱动世界");
+    assert_eq!(up.ui_intent(), Some(UiIntent::ScrollEvents { dy: 1 }));
+    let down = map_input_event(key(Key::Down), &input);
+    assert!(down.command().is_none(), "事件栏焦点时 ↓ 不得驱动世界");
+    assert_eq!(down.ui_intent(), Some(UiIntent::ScrollEvents { dy: -1 }));
+
+    // `j/k` 仍留给移动：焦点只是"看"，别把走路键也接管掉。
+    let walking = map_input_event(key(Key::Char('k')), &input);
+    assert!(walking.command().is_some(), "事件栏焦点时 k 仍是移动");
+
+    // 信息栏焦点时 ↑ 是选行，不是滚事件。
+    let info = ctx(PageKind::Game).with_pane_focus(render_api::Pane::Info);
+    assert_eq!(
+        map_input_event(key(Key::Up), &info).ui_intent(),
+        Some(UiIntent::MoveInfoCursor { dy: -1 })
+    );
+}
+
 /// `apply_ui_intent` 是唯一能移动 Look 光标的地方（它带世界尺寸）。
 #[test]
 fn apply_ui_intent_moves_the_look_cursor() {

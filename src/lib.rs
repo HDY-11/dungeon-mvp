@@ -238,8 +238,8 @@ impl App {
         };
         use presentation::InventoryTarget;
         // 脚下尸体/地面只认"拿取"：进/用/丢都说不通。这是把自动拾取改成显式动作的入口。
-        if let (UiIntent::InventoryConfirm, InventoryTarget::Corpse { slot }) = (intent, target) {
-            match ecs_core::take_from_corpse(&mut self.world, slot) {
+        if let (UiIntent::InventoryConfirm, InventoryTarget::Corpse { corpse, slot }) = (intent, target) {
+            match ecs_core::take_from_corpse(&mut self.world, corpse, slot) {
                 Ok(id) => log::info!("从尸体上拿起了{}", id.def().name),
                 Err(error) => log::info!("背包动作失败：{}", error.describe()),
             }

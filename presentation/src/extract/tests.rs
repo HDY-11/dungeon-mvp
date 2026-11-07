@@ -304,6 +304,97 @@ fn the_inventory_page_lists_ground_items_underfoot() {
     assert!(detail.footer.contains("Enter 拾取"));
 }
 
+/// 同格多具尸体：Nav2 只有一个「尸体」页签，内容栏按实体编号分组，
+/// 分组标题行不可操作，物品行带对应尸体的下标（DsnE21 决策 7）。
+#[test]
+fn multiple_corpses_are_grouped_under_headers() {
+    let mut world = new_game(2026);
+    let player = {
+        let mut query = world.query_filtered::<Entity, With<ecs_core::Player>>();
+        query.iter(&world).next().expect("有玩家")
+    };
+    let here = world
+        .get::<ecs_core::Position>(player)
+        .expect("玩家有位置")
+        .to_tuple();
+    // 两具尸体都踩在脚下；名字故意不同，便于断言分组标题。
+    let (_first, _second) = {
+        let mut add = |name: &'static str, id: u16| {
+            let item = world
+                .spawn((ecs_core::Item::new(ecs_core::ItemId(id)), ecs_core::Amount::new(1)))
+                .id();
+            let mut container = ecs_core::Container::new(&ecs_core::CORPSE);
+            container.insert(0, item, &[]).expect("尸体格子无过滤");
+            world
+                .spawn((
+                    ecs_core::monster::Corpse::new(
+                        ecs_core::monster::MonsterKindId::Goblin,
+                        name,
+                    ),
+                    ecs_core::Position::new(here.0, here.1),
+                    container,
+                ))
+                .id()
+        };
+        (add("哥布林", 24), add("老鼠", 23))
+    };
+
+    let mut pages = PageStack::new();
+    pages.open_inventory();
+    let nav2_len = inventory_nav2_tabs(&world).len();
+    pages.set_inventory_nav2_len(nav2_len);
+    assert_eq!(
+        pages.inventory_nav2_selected(),
+        0,
+        "只有一个「尸体」页签，两具尸体在内容栏里分组"
+    );
+    let view = inventory_view(&world, &pages);
+    assert_eq!(view.nav2, vec![render_api::InventoryNav::Corpse]);
+    assert!(
+        view.context2.title.contains("2 具尸体"),
+        "标题要说明脚下有几具：{}",
+        view.context2.title
+    );
+    let labels: Vec<&str> = view
+        .context2
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["哥布林的尸体", "匕首", "老鼠的尸体", "石锤"],
+        "多具尸体按实体编号分组列出"
+    );
+    assert!(view.context2.items[0].disabled, "分组标题不可操作");
+    assert!(!view.context2.items[1].disabled, "物品行可操作");
+
+    // 焦点移到脚下内容栏，逐行检查目标：标题行没有目标，物品行带尸体下标。
+    pages.apply(UiIntent::CycleInventoryFocus);
+    pages.apply(UiIntent::CycleInventoryFocus);
+    assert_eq!(pages.inventory_focus(), render_api::InventoryFocus::Context2);
+    assert_eq!(inventory_target(&world, &pages), None, "标题行不可操作");
+    pages.apply(UiIntent::MoveInventoryCursor { dx: 0, dy: 1 });
+    assert_eq!(
+        inventory_target(&world, &pages),
+        Some(InventoryTarget::Corpse {
+            corpse: 0,
+            slot: 0
+        })
+    );
+    pages.apply(UiIntent::MoveInventoryCursor { dx: 0, dy: 1 });
+    assert_eq!(inventory_target(&world, &pages), None, "第二具尸体的标题行");
+    pages.apply(UiIntent::MoveInventoryCursor { dx: 0, dy: 1 });
+    assert_eq!(
+        inventory_target(&world, &pages),
+        Some(InventoryTarget::Corpse {
+            corpse: 1,
+            slot: 0
+        }),
+        "第三件物品属于第二具尸体"
+    );
+}
+
 /// 背包页详情面板（R2 收尾）：选中身体里的剑 → 名字/说明/修正/部位/动作提示。
 #[test]
 fn the_inventory_detail_describes_the_selected_item() {
@@ -542,6 +633,40 @@ fn events_keep_the_most_recent_facts_in_chronological_order() {
     assert_eq!(frame.events[0].level, render_api::LogLevel::Danger);
     assert_eq!(frame.events[1].level, render_api::LogLevel::System);
     assert!(frame.events.iter().all(|line| !line.running));
+}
+
+/// 事件栏滚动偏移属于 UI 状态：从页栈提取到帧里，后端按它裁窗口（DsnA6）。
+#[test]
+fn the_events_scroll_offset_comes_from_the_page_stack() {
+    let mut world = new_game(11);
+    let mut pages = PageStack::new();
+    let config = ExtractConfig::default();
+
+    // 焦点默认在摄像机：滚事件意图不生效，帧里偏移是 0。
+    assert!(!pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    assert_eq!(
+        extract_scene_frame(&mut world, &config, &pages, 1).events_scroll,
+        0
+    );
+
+    // Tab 三次到事件栏，再 ↑ 两次：偏移跟着页栈走。
+    for _ in 0..3 {
+        pages.apply(UiIntent::CyclePaneFocus);
+    }
+    pages.apply(UiIntent::ScrollEvents { dy: 2 });
+    assert_eq!(pages.events_scroll(), 2);
+    assert_eq!(
+        extract_scene_frame(&mut world, &config, &pages, 2).events_scroll,
+        2
+    );
+
+    // 覆盖页打开时滚事件不生效，偏移保持。
+    pages.apply(UiIntent::OpenInventory);
+    assert!(!pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    assert_eq!(
+        extract_scene_frame(&mut world, &config, &pages, 3).events_scroll,
+        2
+    );
 }
 
 /// 进行中的行动排在已落定事实之后，并按剩余时间降序（栏底即 0 刻度）。

@@ -623,6 +623,37 @@ fn tab_cycles_the_four_pane_focus_on_screen() {
     }
 }
 
+/// 事件栏聚焦时 ↑ 只翻历史，不驱动玩家移动（端到端，DsnA6）。
+#[test]
+fn arrow_keys_in_the_events_pane_scroll_without_moving_the_player() {
+    use render_api::Pane;
+
+    let mut app = quiet_app(2026);
+    let before = presentation::player_position(app.world_mut()).expect("玩家有位置");
+
+    // 摄像机 → 信息 → 状态 → 事件。
+    for _ in 0..3 {
+        assert!(app.handle(key(Key::Tab)), "Tab 应当被游戏页消费");
+    }
+    assert_eq!(app.refresh().focus, Pane::Events);
+    assert_eq!(
+        app.frame().events_scroll,
+        0,
+        "开局事件栏贴着最新事件"
+    );
+
+    assert!(app.handle(key(Key::Up)), "事件栏焦点时 ↑ 应被消费");
+    let frame = app.refresh();
+    assert_eq!(frame.focus, Pane::Events, "翻历史不该切走焦点");
+    assert_eq!(frame.events_scroll, 1, "↑ 应当向上滚一行");
+
+    assert!(app.handle(key(Key::Down)), "事件栏焦点时 ↓ 应被消费");
+    assert_eq!(app.refresh().events_scroll, 0, "↓ 回到最新就恢复贴底");
+
+    let after = presentation::player_position(app.world_mut()).expect("玩家有位置");
+    assert_eq!(before, after, "事件栏翻历史不得驱动玩家移动");
+}
+
 /// 信息栏聚焦时 ↑↓ 只选行，不驱动玩家移动（端到端）。
 #[test]
 fn arrow_keys_in_the_info_pane_do_not_move_the_player() {

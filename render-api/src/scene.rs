@@ -467,6 +467,11 @@ pub struct SceneFrame {
     /// 事件栏的一列（DsnE21）：已落定事实在前（旧→新），进行中的行动在后
     /// （剩余时间降序），栏底即 0 刻度。
     pub events: Vec<EventLine>,
+    /// 事件栏向上滚了多少行（DsnA6）：0 = 贴底/跟随最新，正数 = 看更早的。
+    ///
+    /// 这是 **UI 状态**（由 `PageStack` 持有并每帧提取）；后端只按它裁窗口，
+    /// 可滚上限由后端按可见高度夹取。
+    pub events_scroll: usize,
     pub ui: UiView,
     pub game_over: bool,
     pub quit_requested: bool,

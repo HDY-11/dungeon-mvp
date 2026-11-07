@@ -308,6 +308,38 @@ fn pane_focus_does_not_cycle_while_a_page_is_open() {
     assert_eq!(pages.pane_focus(), render_api::Pane::Camera);
 }
 
+/// 事件栏的滚动只在焦点位于事件栏时生效；向上累计、向下夹到 0（贴底）。
+#[test]
+fn events_scroll_only_moves_with_the_events_pane_focused() {
+    let mut pages = PageStack::new();
+    assert!(
+        !pages.apply(UiIntent::ScrollEvents { dy: 1 }),
+        "摄像机焦点不滚事件"
+    );
+    assert_eq!(pages.events_scroll(), 0);
+
+    pages.apply(UiIntent::CyclePaneFocus); // → Info
+    assert!(!pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    pages.apply(UiIntent::CyclePaneFocus); // → Status
+    assert!(!pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    pages.apply(UiIntent::CyclePaneFocus); // → Events
+    assert_eq!(pages.pane_focus(), render_api::Pane::Events);
+
+    assert!(pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    assert_eq!(pages.events_scroll(), 1);
+    assert!(pages.apply(UiIntent::ScrollEvents { dy: 3 }));
+    assert_eq!(pages.events_scroll(), 4);
+    // 向下滚过头夹到 0：0 = 贴底/恢复跟随最新。
+    assert!(pages.apply(UiIntent::ScrollEvents { dy: -9 }));
+    assert_eq!(pages.events_scroll(), 0);
+
+    // 覆盖页打开时，滚事件意图也不该被消费。
+    assert!(pages.apply(UiIntent::ScrollEvents { dy: 2 }));
+    pages.apply(UiIntent::OpenInventory);
+    assert!(!pages.apply(UiIntent::ScrollEvents { dy: 1 }));
+    assert_eq!(pages.events_scroll(), 2);
+}
+
 /// 信息栏选行只在焦点位于信息栏、且游戏页未开覆盖页时生效。
 #[test]
 fn info_cursor_moves_only_with_the_info_pane_focused() {

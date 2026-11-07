@@ -10,7 +10,7 @@
 
 **归属范围：** 渲染契约的决策：视图模型边界、字段语义与版本策略。
 
-**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA5 五条）。
+**编号：** `DsnA1` 起逐个递增（DsnA1–DsnA6 六条）。
 判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
 
 ---
@@ -21,11 +21,12 @@
 
 | 主题 | 条目 |
 |---|---|
-| 渲染契约 | DsnA1 · DsnA2 · DsnA3 · DsnA4 · DsnA5 |
+| 渲染契约 | DsnA1 · DsnA2 · DsnA3 · DsnA4 · DsnA5 · DsnA6 |
 | 界面几何与焦点 | DsnA2 |
 | 事件行与时间轴 | DsnA3 |
 | 信息栏 | DsnA4 |
 | 背包网格 | DsnA5 |
+| 事件栏滚动 | DsnA6 |
 
 
 <!-- &DsnA1  后端无关只读契约 SceneFrame/VisualKey/UiView/InputEvent；tui 不依赖 ecs_core -->
@@ -225,6 +226,42 @@ Context 与 `InventoryTarget`、tui 网格渲染器（页签/两条 Context/右�
 **关联：** DsnA1（渲染契约）· DsnA2（四栏布局与焦点）·
 ecs_core/DESIGN.md DsnE21 · GAME.md Gm7（背包）
 <!-- &/DsnA5 -->
+
+---
+
+<!-- &DsnA6  事件栏滚动：SceneFrame.events_scroll 只给偏移，窗口由后端按可见高度裁；0 = 贴底跟随最新；CONTRACT_VERSION 8 -->
+### DsnA6 事件栏滚动偏移（已落地，契约版本 8）
+
+**决策**
+
+事件栏可以向上翻历史（DsnE21 决策 4），但"滚了多少"是 **UI 状态**，不该由后端自己记：
+
+- `SceneFrame.events_scroll: usize`：0 = 贴底/跟随最新，`n` = 从底部往上裁掉 `n` 行；
+  正数表示玩家正在看更早的事件。
+- `PageStack.events_scroll` + `UiIntent::ScrollEvents { dy }`（presentation）持有意图：
+  焦点在事件栏时 `↑` 加偏移、`↓` 减偏移，下界夹到 0；离开事件栏/打开覆盖页时不再消费。
+- 后端（tui）按**可见高度**夹取：`scroll = min(events_scroll, len - inner_height)`，
+  画 `events[len-scroll-height .. len-scroll]`；偏移 > 0 时标题标出 `↑N`，
+  让玩家知道"现在看的不是最新"。
+- `CONTRACT_VERSION` 由 7 升到 8。
+
+**背景（舍弃的方案）**
+
+- **后端自己记滚动**：滚到哪是玩家输入的结果，属于 UI 状态；记在后端会与页栈/键盘
+  路由分叉（重绘或换后端时丢失）。
+- **选中某条历史事件**：事件栏 V1 只读不选中（DsnE21 决策 4）；选中需要"事件 id →
+  行为"的语义，留给以后。
+- **让页面栈自己去数事件行数**：页栈不读世界（DsnX14），行数只有本帧的提取层知道，
+  所以页栈只存"想滚多少"，夹取在渲染时做。
+
+**状态**
+
+已落地：`SceneFrame.events_scroll` 与 `CONTRACT_VERSION 8`、`PageStack.events_scroll` +
+`ScrollEvents` 意图与按键映射、presentation 提取层透传、tui 按偏移裁窗口并在标题标
+`↑N`；单测覆盖"只在事件栏焦点生效/下界 0/窗口上移/越界夹取/端到端不移动玩家"。
+
+**关联：** DsnA1 · DsnA2（焦点）· DsnA3（事件行）· ecs_core/DESIGN.md DsnE21 · GAME.md Gm14
+<!-- &/DsnA6 -->
 
 
 

@@ -216,7 +216,7 @@ fn taking_from_a_corpse_moves_the_item_into_the_pack() {
     let (mut world, player) = world_with_player();
     let (corpse, dagger) = corpse_underfoot_with(&mut world, player, ItemId(24));
 
-    let taken = take_from_corpse(&mut world, 0).expect("可以拿");
+    let taken = take_from_corpse(&mut world, 0, 0).expect("可以拿");
 
     assert_eq!(taken, ItemId(24));
     assert_eq!(
@@ -243,12 +243,12 @@ fn taking_from_a_corpse_moves_the_item_into_the_pack() {
 fn taking_from_a_corpse_reports_missing_corpse_and_empty_slot() {
     let (mut world, player) = world_with_player();
     assert_eq!(
-        take_from_corpse(&mut world, 0),
+        take_from_corpse(&mut world, 0, 0),
         Err(ItemActionError::NoCorpse)
     );
     let _ = corpse_underfoot_with(&mut world, player, ItemId(24));
     assert_eq!(
-        take_from_corpse(&mut world, 3),
+        take_from_corpse(&mut world, 0, 3),
         Err(ItemActionError::EmptySlot),
         "尸体只有 4 格，第 4 格（下标 3）是空的"
     );
@@ -271,7 +271,7 @@ fn a_full_pack_keeps_the_corpse_item_in_place() {
     }
 
     assert_eq!(
-        take_from_corpse(&mut world, 0),
+        take_from_corpse(&mut world, 0, 0),
         Err(ItemActionError::NoRoom)
     );
     assert!(
@@ -281,6 +281,48 @@ fn a_full_pack_keeps_the_corpse_item_in_place() {
         "拿不动时匕首必须回到尸体原位"
     );
     assert!(world.get_entity(dagger).is_ok());
+}
+
+/// 同格多具尸体：下标按实体编号升序，拿第二具不会动第一具（DsnE21 决策 7）。
+#[test]
+fn multiple_corpses_underfoot_are_addressed_by_stable_index() {
+    let (mut world, player) = world_with_player();
+    let (first, dagger) = corpse_underfoot_with(&mut world, player, ItemId(24));
+    let (second, hammer) = corpse_underfoot_with(&mut world, player, ItemId(23));
+
+    assert_eq!(
+        take_from_corpse(&mut world, 2, 0),
+        Err(ItemActionError::NoCorpse),
+        "没有第三具尸体"
+    );
+    assert_eq!(
+        take_from_corpse(&mut world, 1, 0).expect("第二具尸体"),
+        ItemId(23)
+    );
+    assert_eq!(
+        world.get::<Container>(second).expect("第二具").used(),
+        0,
+        "被翻的那具清空"
+    );
+    assert_eq!(
+        world.get::<Container>(first).expect("第一具").used(),
+        1,
+        "另一具尸体不该被动"
+    );
+    let pack = pack_of(&world, player);
+    assert!(
+        world
+            .get::<Container>(pack)
+            .is_some_and(|pack| pack.contains(hammer)),
+        "石锤进同一个行囊实体"
+    );
+    assert!(
+        !world
+            .get::<Container>(pack)
+            .expect("行囊")
+            .contains(dagger),
+        "没被选中的尸体物品不动"
+    );
 }
 
 // ── 载重（DsnE20）：槽位空着也可能背不动 ──
@@ -334,7 +376,7 @@ fn taking_a_corpse_item_that_would_overweight_the_pack_is_refused() {
     fill_pack_with_swords(&mut world, pack, 6); // 18.0；石锤 6.0 → 24.0 > 20.0
 
     assert_eq!(
-        take_from_corpse(&mut world, 0),
+        take_from_corpse(&mut world, 0, 0),
         Err(ItemActionError::Overweight)
     );
     assert!(

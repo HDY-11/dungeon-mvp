@@ -575,6 +575,43 @@ fn the_events_panel_renders_the_timeline_in_order() {
     assert!(!text.contains("日志"), "不应再有「日志」标题");
 }
 
+/// 事件栏滚动（DsnA6）：向上翻时窗口整体上移，最新一条滚出画面，
+/// 标题标出当前偏移；滚动值超过可滚范围时按上限夹取。
+#[test]
+fn the_events_panel_scrolls_up_to_earlier_events() {
+    let mut scene = base_scene();
+    scene.events = (1..=40)
+        .map(|index| EventLine::done(LogLevel::System, format!("事件{index:02}")))
+        .collect();
+    scene.focus = Pane::Events;
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+    let text = buffer_text_compact(&terminal);
+    assert!(text.contains("事件40"), "默认贴底：最新事件可见");
+    assert!(!text.contains("事件01"), "默认不显示最早事件");
+
+    scene.events_scroll = 5;
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+    let text = buffer_text_compact(&terminal);
+    assert!(!text.contains("事件40"), "上滚后最新事件滚出画面: {text}");
+    assert!(text.contains("事件35"), "窗口整体上移: {text}");
+    assert!(text.contains("事件↑5"), "标题要标出偏移: {text}");
+
+    // 偏移申请超过上限：按 `len - height` 夹取，不会画到空白或越界。
+    scene.events_scroll = 9999;
+    terminal
+        .draw(|frame| render_frame(frame, &scene, None))
+        .expect("绘制不得失败");
+    let text = buffer_text_compact(&terminal);
+    assert!(text.contains("事件01"), "夹取到最旧一页: {text}");
+    assert!(text.contains("事件↑30"), "偏移按可见高度夹取: {text}");
+}
+
 /// 未实现页给占位提示，而不是空白或崩溃。
 #[test]
 fn unimplemented_pages_show_a_placeholder() {
