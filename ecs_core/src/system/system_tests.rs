@@ -137,6 +137,9 @@ fn monster_death_rewards_exp_and_levels_up() {
     run_settle_systems(&mut world);
 
     let monster_name = world.get::<EntityName>(monster).unwrap().0.clone();
+    // DsnE25：升级不再回满——记下升级前的当前值，升级后应当保持原值、只重算上限。
+    let health_current_before = world.get::<Health>(player).unwrap().current;
+    let mana_current_before = world.get::<Mana>(player).unwrap().current;
     assert!(kill_entity(&mut world, player, monster), "怪物应当被打死");
 
     assert!(world.get_entity(monster).is_err(), "死亡怪物必须被 despawn");
@@ -171,10 +174,16 @@ fn monster_death_rewards_exp_and_levels_up() {
 
     let health = world.get::<Health>(player).unwrap();
     assert_eq!(health.max, hp_curve(2), "升级必须按等级曲线重算最大生命");
-    assert_eq!(health.current, health.max, "升级必须回满生命");
+    assert_eq!(
+        health.current, health_current_before,
+        "升级不回满：当前生命保持原值（DsnE25）"
+    );
     let mana = world.get::<Mana>(player).unwrap();
     assert_eq!(mana.max, mp_curve(2), "升级必须按等级曲线重算最大法力");
-    assert_eq!(mana.current, mana.max, "升级必须回满法力");
+    assert_eq!(
+        mana.current, mana_current_before,
+        "升级不回满：当前法力保持原值（DsnE25）"
+    );
 
     let log = world.resource::<EventLog>();
     assert!(

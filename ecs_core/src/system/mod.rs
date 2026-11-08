@@ -89,6 +89,8 @@ pub fn build_core_schedule() -> Schedule {
             // 等级变化后重算生命/法力上限（DsnE23 的唯一上限公式）。
             // 放在升级之后、其它系统之前：本轮的观测值（HUD）已经是新上限。
             crate::rules::refresh_vitals_system,
+            // 法力按 AV 回复（DsnE25）：放在上限刷新之后，保证本轮回的是新上限下的蓝。
+            crate::rules::mana_regen_system,
             perception::fov_system,
             perception::update_map_memory_system,
             perception::update_visible_memory_system,
@@ -97,6 +99,9 @@ pub fn build_core_schedule() -> Schedule {
             // 就没有漏改导致的幽灵条目。顺序无关（两者读的组件不同），
             // 放在占用图旁边只为让人一眼看到"这张图上有两个格索引"。
             crate::effect::rebuild_cell_effects_system,
+            // 治疗泉（DsnE25）：必须在格索引重建之后——这一轮玩家可能刚走进泉眼，
+            // 索引要先用当前位置重建，才能按格找到它。
+            crate::effect::heal_spring_system,
             update_events_system,
         )
             .chain(),

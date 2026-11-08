@@ -872,7 +872,13 @@ fn overlay_cell_effects(world: &mut World, view: &mut MapView, width: usize, hei
     }
 
     let mut costs = world.query::<&ecs_core::CellMoveCost>();
+    let mut springs = world.query::<&ecs_core::CellHeal>();
     for (x, y, entity) in positions {
+        // 治疗泉优先于移动代价：一格只有一个效果实体，但"这格是什么"由具体效果决定。
+        if springs.get(world, entity).is_ok() {
+            view.set_tile(x, y, VisualKey::Effect(crate::catalog::EFFECT_SPRING));
+            continue;
+        }
         let Ok(cost) = costs.get(world, entity) else {
             continue;
         };

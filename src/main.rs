@@ -17,7 +17,7 @@
 use std::io::{self, stdout};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use dungeon_app::{App, dev_log, translate_key, tui_plugin};
+use dungeon_app::{App, translate_key, tui_plugin};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use sys::{self, try_recv_key};
@@ -99,17 +99,14 @@ fn run(log_rx: &std::sync::mpsc::Receiver<sys::LogRecord>) -> io::Result<()> {
 /// 提取与绘制是两个 crate 的两件事，这里只是把它们按顺序串起来，
 /// 不做任何加工（加工会变成"后端偷偷改视图数据"）。
 fn draw(terminal: &mut TuiTerminal, app: &mut App, ui: &tui::TuiPlugin) -> io::Result<()> {
-    // `refresh` 要 `&mut App`；先取出日志快照（`dev_log` 返回 owned），
-    // 再提取帧，两个步骤之间没有借用重叠。
-    let log = dev_log(app.world());
     let frame = app.refresh();
-    terminal.draw(|terminal_frame| ui.draw(terminal_frame, frame, log.as_ref()))?;
+    terminal.draw(|terminal_frame| ui.draw(terminal_frame, frame))?;
     Ok(())
 }
 
 /// 终端当前可用的**地图区**尺寸（供相机视口使用）。
 ///
-/// 注意**不是**终端整体尺寸：地图只占终端的一部分（右边有侧栏、下面有调试面板）。
+/// 注意**不是**终端整体尺寸：地图只占终端的一部分（右边有信息/状态栏）。
 /// 给相机过大的视口会让它以为"视口比世界还大"从而放弃夹取，玩家一走出中心
 /// 就滚出画面。尺寸由 `tui::map_viewport` 给出——那是布局的唯一权威。
 fn terminal_size(terminal: &TuiTerminal) -> (u16, u16) {

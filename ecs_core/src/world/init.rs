@@ -7,7 +7,8 @@
 //! 本轮只做首次初始化；下楼（descend）留待后续。
 
 use crate::balance::{
-    PLAYER_ATTACK_SPEED, PLAYER_MOVE_SPEED, exp_to_next_level,
+    HEAL_SPRING_AMOUNT, HEAL_SPRING_MAX_RADIUS, HEAL_SPRING_MIN_RADIUS, HEAL_SPRINGS,
+    PLAYER_ATTACK_SPEED, PLAYER_MOVE_SPEED, exp_to_next_level, monster_count_range,
 };
 use crate::components::*;
 use crate::entity_cls::*;
@@ -159,6 +160,8 @@ pub fn spawn_player_system(mut commands: Commands, map: Res<Map>, mut spawn: Res
         .spawn(player_base_bundle(pos))
         .insert(Viewshed::new(10))
         .insert(AttackName("斩击".into()))
+        // 法力回复进度（DsnE25）：运行时派生，不进存档。
+        .insert(ManaRegen::new())
         // 身体容器（含行囊）单独 `insert`：`player_base_bundle` 受 15 元组上限约束。
         .insert(body)
         .insert(CanMove)
@@ -253,8 +256,8 @@ fn generate_monster_population(
 ) -> Vec<(MonsterKindId, usize, usize)> {
     let threshold = (0.38 - floor as f64 * 0.012).max(0.15);
     let expand_chance = 0.35;
-    let min_count = (floor as usize).saturating_mul(2).saturating_add(4);
-    let max_count = (floor as usize).saturating_mul(4).saturating_add(8);
+    // 数量随层成长但首层显著放开（DsnE25 决策 4）：首层 4–6 只，旧口径 6–12。
+    let (min_count, max_count) = monster_count_range(floor);
 
     let mut density = [[0.0f64; MAP_WIDTH]; MAP_HEIGHT];
     for y in 0..MAP_HEIGHT {
@@ -464,6 +467,36 @@ pub fn spawn_cell_effects_system(
         placed += 1;
     }
     log::info!("生成泥潭: {placed} 格（尝试 {attempts} 次）");
+
+    // 治疗泉（DsnE25 决策 3）：每层 1 个，离出生点 4–10 格。
+    // 与泥潭共用 `taken`：一格一个效果实体（同格两个会互相覆盖，见 effect/cell.rs）。
+    let mut springs = 0usize;
+    let mut spring_attempts = 0usize;
+    while springs < HEAL_SPRINGS && spring_attempts < 400 {
+        spring_attempts += 1;
+        let x = rng.random_range(
+            player_spawn.0.0.saturating_sub(HEAL_SPRING_MAX_RADIUS)
+                ..=(player_spawn.0.0 + HEAL_SPRING_MAX_RADIUS).min(MAP_WIDTH - 2),
+        );
+        let y = rng.random_range(
+            player_spawn.0.1.saturating_sub(HEAL_SPRING_MAX_RADIUS)
+                ..=(player_spawn.0.1 + HEAL_SPRING_MAX_RADIUS).min(MAP_HEIGHT - 2),
+        );
+        if !map.tiles[y][x].walkable() || taken.contains(&(x, y)) {
+            continue;
+        }
+        let distance = x.abs_diff(player_spawn.0.0).max(y.abs_diff(player_spawn.0.1));
+        if distance < HEAL_SPRING_MIN_RADIUS {
+            continue;
+        }
+        taken.push((x, y));
+        commands.spawn((
+            crate::effect::CellEffectAt::new(x, y),
+            crate::effect::CellHeal::new(HEAL_SPRING_AMOUNT),
+        ));
+        springs += 1;
+    }
+    log::info!("生成治疗泉: {springs} 处（尝试 {spring_attempts} 次）");
 }
 
 // ── 物品内容（C4 → 物品系统落地） ─────────────────────

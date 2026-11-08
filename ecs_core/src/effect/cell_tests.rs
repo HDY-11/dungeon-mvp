@@ -1,7 +1,12 @@
 //! `super`（`effect::cell`）的测试：格索引行为 + 统一读取入口 + "格子效果不进占用图"。
 
+use bevy_ecs::system::RunSystemOnce;
+
 use super::*;
+use crate::components::{Health, Position};
+use crate::entity_cls::Player;
 use crate::map::{TILE_PROPS, TileProps};
+use crate::resources::EventLog;
 
 /// `cell_attributes` 真的**消费**地形表的 `move_cost` 列（而不是只把它摆在结构里）。
 ///
@@ -181,4 +186,96 @@ fn cell_effects_do_not_enter_the_occupancy_map() {
         !occupancy.is_occupied(5, 6),
         "格子效果不得占用格子：它用的是 CellEffectAt，不是 Position"
     );
+}
+
+// ── DsnE25：治疗泉 ─────────────────────────────────────
+
+/// 站在泉眼上的玩家回血、泉眼被消耗；同一格只回一次。
+#[test]
+fn heal_spring_restores_once_and_is_consumed() {
+    let mut world = crate::test_util::test_world();
+    let player = world
+        .spawn((
+            Player,
+            Position::new(5, 5),
+            Health::full(20.0, 40.0),
+        ))
+        .id();
+    let spring = world
+        .spawn((CellEffectAt::new(5, 5), CellHeal::new(12.0)))
+        .id();
+    world.resource_mut::<CellEffects>().set(5, 5, spring);
+
+    world
+        .run_system_once(heal_spring_system)
+        .expect("治疗泉系统必须能跑");
+
+    assert_eq!(
+        world.get::<Health>(player).unwrap().current,
+        32.0,
+        "踩上治疗泉应当恢复 12 点生命"
+    );
+    assert!(
+        world.get_entity(spring).is_err(),
+        "治疗泉用过一次就必须销毁（每层只回一次，不能原地刷血）"
+    );
+    let log = world.resource::<EventLog>();
+    assert!(
+        log.messages.iter().any(|m| m.text.contains("恢复")),
+        "喝泉水应当写入日志: {:?}",
+        log.messages.iter().map(|m| &m.text).collect::<Vec<_>>()
+    );
+}
+
+/// 满血踩泉不消耗：玩家不该因为"路过"就浪费掉这一层的回复点。
+#[test]
+fn heal_spring_is_not_consumed_at_full_health() {
+    let mut world = crate::test_util::test_world();
+    let player = world
+        .spawn((
+            Player,
+            Position::new(5, 5),
+            Health::full(40.0, 40.0),
+        ))
+        .id();
+    let spring = world
+        .spawn((CellEffectAt::new(5, 5), CellHeal::new(12.0)))
+        .id();
+    world.resource_mut::<CellEffects>().set(5, 5, spring);
+
+    world
+        .run_system_once(heal_spring_system)
+        .expect("治疗泉系统必须能跑");
+
+    assert_eq!(world.get::<Health>(player).unwrap().current, 40.0);
+    assert!(world.get_entity(spring).is_ok(), "满血时治疗泉不得被消耗");
+    let log = world.resource::<EventLog>();
+    assert!(
+        !log.messages.iter().any(|m| m.text.contains("恢复")),
+        "满血没回血时不应写回复日志"
+    );
+}
+
+/// 只有站在泉眼格上的玩家会回血；别处的玩家不受影响、泉眼保留。
+#[test]
+fn heal_spring_only_heals_the_actor_on_its_cell() {
+    let mut world = crate::test_util::test_world();
+    let player = world
+        .spawn((
+            Player,
+            Position::new(4, 4),
+            Health::full(20.0, 40.0),
+        ))
+        .id();
+    let spring = world
+        .spawn((CellEffectAt::new(5, 5), CellHeal::new(12.0)))
+        .id();
+    world.resource_mut::<CellEffects>().set(5, 5, spring);
+
+    world
+        .run_system_once(heal_spring_system)
+        .expect("治疗泉系统必须能跑");
+
+    assert_eq!(world.get::<Health>(player).unwrap().current, 20.0);
+    assert!(world.get_entity(spring).is_ok());
 }

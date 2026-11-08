@@ -213,6 +213,23 @@ impl From<Pool> for Mana {
     }
 }
 
+/// 法力回复进度（DsnE25）：累计 AV，攒满 `MANA_REGEN_AV` 换 1 点 MP。
+///
+/// **为什么放组件而不是资源**：回复是"每个施法者自己的节奏"，怪物以后也可能有；
+/// 挂在实体上就不必在资源里维护一张 `Entity -> 进度` 的散表。进度是运行时派生数据，
+/// 不进存档（读档从 0 开始，与"随机流不进档"同一边界）。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct ManaRegen {
+    /// 尚未兑换成 MP 的累计 AV。
+    pub progress_av: f64,
+}
+
+impl ManaRegen {
+    pub const fn new() -> Self {
+        Self { progress_av: 0.0 }
+    }
+}
+
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Level(pub u64);
 

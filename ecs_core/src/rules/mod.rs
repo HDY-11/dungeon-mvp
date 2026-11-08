@@ -20,6 +20,6 @@ pub use modifier::{
 };
 pub use stat::{STATS, StatDef, StatId, stat_by_name};
 pub use vitals::{
-    apply_maxima, hp_curve, max_health, max_mana, mp_curve, refresh_player_vitals,
-    refresh_vitals_system,
+    apply_maxima, hp_curve, mana_regen_system, max_health, max_mana, mp_curve,
+    refresh_player_vitals, refresh_vitals_system,
 };

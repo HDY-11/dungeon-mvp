@@ -29,15 +29,10 @@ use render_api::{EntityView, Pane, SceneFrame, UiView};
 
 use crate::catalog::TuiCatalog;
 use crate::layout::inner_rect;
-use crate::state::DevLogBuffer;
 
 mod inventory;
 
 use inventory::render_inventory_page;
-
-/// 调试面板高度（终端行）。它是**覆盖层**：只在有调试输出时盖住底部几行，
-/// 不参与四栏划分——否则相机视口会随调试输出出现/消失而跳变。
-const DEBUG_PANEL_HEIGHT: u16 = 8;
 
 /// 一整帧的区块划分（由契约层的四栏布局换算而来）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +47,6 @@ pub struct FrameAreas {
     pub status: Rect,
     /// 事件栏（含边框）。
     pub events: Rect,
-    /// 调试面板（覆盖层，仅在有关闭输出时使用）。
-    pub debug: Rect,
 }
 
 /// 计算区块划分。**这是 TUI 侧布局的唯一入口**——它只是契约布局的换算，
@@ -72,13 +65,6 @@ pub fn frame_areas(area: Rect) -> FrameAreas {
         info: offset(layout.info),
         status: offset(layout.status),
         events: offset(layout.events),
-        debug: Rect {
-            x: area.x,
-            y: area.y
-                .saturating_add(area.height.saturating_sub(DEBUG_PANEL_HEIGHT)),
-            width: area.width,
-            height: DEBUG_PANEL_HEIGHT.min(area.height),
-        },
     }
 }
 
@@ -92,8 +78,7 @@ pub fn map_viewport(area: Rect) -> (u16, u16) {
 }
 
 /// 画一整帧。
-pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Option<&DevLogBuffer>) {
-    let has_debug = dev_log.is_some_and(|buffer| !buffer.lines.is_empty());
+pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame) {
     let areas = frame_areas(terminal_frame.area());
 
     match &scene.ui {
@@ -117,10 +102,6 @@ pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame, dev_log: Opt
                 _ => {}
             }
         }
-    }
-
-    if has_debug {
-        render_debug_panel(terminal_frame, areas.debug, dev_log);
     }
 }
 
@@ -149,23 +130,21 @@ fn render_map(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// 画信息栏：**当前可见的观察候选**（名字 + 血量），以及切页键位提示。
+/// 画信息栏：**当前可见的观察候选**（名字 + 类型 + 血量条 + 距离），以及键位提示。
 ///
 /// 顺序由契约层的 [`render_api::InfoView`] 给出（近→远，同距按方位顺时针），
 /// 后端不再自己排序。焦点在信息栏时 `↑/↓` 选中一行，选中对象在地图上高亮。
+/// 每个候选画两行（名字 / 细节），可见行不够时窗口跟着选中行走——否则"选中了
+/// 却看不见"比没有这一栏更糟。
 fn render_info(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     let focused = scene.focus == Pane::Info;
     let selected = scene.info.selected_id();
-    let mut lines = Vec::new();
-    let mut count = 0usize;
+    let player_pos = scene.player.as_ref().map(|player| player.position);
+    let mut rows: Vec<Line> = Vec::new();
     for id in &scene.info.entries {
         let Some(entity) = scene.entities.iter().find(|entity| entity.id == *id) else {
             // 候选来自同一帧的实体列表；这里找不到说明提取器产出了悬空 id。
             continue;
-        };
-        let hp = match entity.hp {
-            Some(hp) if hp.max > 0.0 => format!(" {:.0}/{:.0}", hp.current, hp.max),
-            _ => String::new(),
         };
         let is_selected = selected == Some(*id);
         let marker = if is_selected { '>' } else { ' ' };
@@ -174,25 +153,42 @@ fn render_info(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
         } else {
             Style::default()
         };
-        lines.push(Line::from(Span::styled(
+        rows.push(Line::from(Span::styled(
             format!(
-                "{marker}{} {}{hp}",
+                "{marker}{} {}",
                 TuiCatalog::glyph(entity.visual),
                 entity.name
             ),
             style,
         )));
-        count += 1;
+        rows.push(Line::from(Span::styled(
+            entity_detail(entity, player_pos),
+            Style::default().fg(Color::DarkGray),
+        )));
     }
-    if count == 0 {
-        lines.push(Line::from(Span::styled(
+    if rows.is_empty() {
+        rows.push(Line::from(Span::styled(
             "（视野内没有可关注的东西）",
             Style::default().fg(Color::DarkGray),
         )));
     }
+
+    // 边框内可用行数减去底部两行提示。
+    let inner_height = usize::from(area.height.saturating_sub(2)).max(1);
+    let visible = inner_height.saturating_sub(2).max(1);
+    let selected_row = scene
+        .info
+        .selected
+        .map(|index| index.min(scene.info.entries.len().saturating_sub(1)) * 2);
+    let start = match selected_row {
+        Some(row) if row + 2 > visible => row + 2 - visible,
+        _ => 0,
+    };
+    let end = (start + visible).min(rows.len());
+    let mut lines: Vec<Line> = rows[start..end].to_vec();
     lines.push(Line::from(""));
     let hint = if focused {
-        "↑↓：选择对象    Tab：切换焦点"
+        "↑↓：选择对象      Tab：切换焦点"
     } else {
         "Tab：切换焦点"
     };
@@ -206,6 +202,54 @@ fn render_info(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
             .wrap(ratatui::widgets::Wrap { trim: true }),
         area,
     );
+}
+
+/// 信息栏候选的类型标签（只用于显示，不是领域分类）。
+fn info_kind(visual: render_api::VisualKey) -> &'static str {
+    use render_api::VisualKey as V;
+    match visual {
+        V::Monster(_) => "怪物",
+        V::Stairs => "楼梯",
+        V::Item(_) => "物品",
+        V::Corpse => "尸体",
+        V::Effect(_) => "效果",
+        _ => "对象",
+    }
+}
+
+/// 信息栏的细节行：类型 · 血量条（有血才有） · 距离。
+///
+/// 距离与排序用同一口径（欧氏距离平方排序后取整数距离），避免"列表顺序是近→远
+/// 但距离数字看起来跳序"。玩家位置缺失时（死亡/切页中途）省略距离。
+fn entity_detail(entity: &EntityView, player_pos: Option<(i32, i32)>) -> String {
+    let mut parts: Vec<String> = vec![info_kind(entity.visual).to_string()];
+    if let Some(hp) = entity.hp.filter(|hp| hp.max > 0.0) {
+        parts.push(format!(
+            "HP {} {:.0}/{:.0}",
+            health_bar(hp.current, hp.max),
+            hp.current,
+            hp.max
+        ));
+    }
+    if let Some((px, py)) = player_pos {
+        let dx = f64::from(entity.position.0 - px);
+        let dy = f64::from(entity.position.1 - py);
+        let distance = dx.hypot(dy).round() as usize;
+        parts.push(format!("{distance} 格"));
+    }
+    format!("  {}", parts.join(" · "))
+}
+
+/// 纯文本血量条：10 格宽，满血 `[##########]`、空血 `[----------]`。
+fn health_bar(current: f32, max: f32) -> String {
+    const WIDTH: usize = 10;
+    let ratio = (current / max).clamp(0.0, 1.0);
+    let filled = ((ratio * WIDTH as f32).round() as usize).min(WIDTH);
+    format!(
+        "[{}{}]",
+        "#".repeat(filled),
+        "-".repeat(WIDTH - filled)
+    )
 }
 
 /// 画状态栏：楼层、玩家属性、扩展状态与键位提示。
@@ -276,12 +320,46 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
 /// 默认自动贴底显示最新（`events_scroll == 0`）。焦点在事件栏时可以向上翻
 /// 历史（DsnA6）：`events_scroll` 是从底部往上裁掉的行数，标题上标出当前偏移，
 /// 滚回 0 就恢复跟随最新。
+///
+/// 可读性（DsnE25）：每条带等级前缀符号，事实与进行中之间插一条分隔；聚焦时
+/// 底部留一行翻页提示。分隔行也占可见高度，因此可滚上限按**渲染后的行数**算。
 fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
+    let focused = scene.focus == Pane::Events;
     let inner_height = usize::from(area.height.saturating_sub(2)).max(1);
-    let mut lines: Vec<Line> = Vec::new();
+    // 聚焦时底部留一行提示；太矮就不留，优先给事件本身。
+    let hint_rows = usize::from(focused && inner_height >= 4);
+    let visible = inner_height.saturating_sub(hint_rows).max(1);
+
+    let mut rows: Vec<Line> = Vec::new();
+    for (index, line) in scene.events.iter().enumerate() {
+        if line.running && index > 0 && !scene.events[index - 1].running {
+            // 事实与进行中之间有一条分隔：玩家能一眼看出哪些已经落定。
+            rows.push(Line::from(Span::styled(
+                "---- 进行中 ----",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        let prefix = crate::catalog::log_prefix(line.level);
+        let color = if line.running {
+            // 进行中：暗一点，表示"还没落定"；剩余 AV 已经写在文案里。
+            Color::DarkGray
+        } else {
+            crate::catalog::log_color(line.level)
+        };
+        rows.push(Line::from(Span::styled(
+            format!("{prefix} {}", line.text),
+            Style::default().fg(color),
+        )));
+    }
+    if rows.is_empty() {
+        rows.push(Line::from(Span::styled(
+            "（暂无事件）",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
 
     // 偏移超过可滚范围时按上限夹取（页栈只记"想滚多少"，上限由可见高度决定）。
-    let max_scroll = scene.events.len().saturating_sub(inner_height);
+    let max_scroll = rows.len().saturating_sub(visible);
     let scroll = scene.events_scroll.min(max_scroll);
     let title = if scroll > 0 {
         format!("事件 ↑{scroll}")
@@ -289,26 +367,18 @@ fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
         "事件".to_string()
     };
 
-    if scene.events.is_empty() {
+    let end = rows.len() - scroll;
+    let start = end.saturating_sub(visible);
+    let mut lines: Vec<Line> = rows[start..end].to_vec();
+    if hint_rows > 0 {
         lines.push(Line::from(Span::styled(
-            "（暂无事件）",
+            "↑↓：翻历史    ↓ 到底：跟随最新",
             Style::default().fg(Color::DarkGray),
         )));
-    } else {
-        let end = scene.events.len() - scroll;
-        let start = end.saturating_sub(inner_height);
-        for line in &scene.events[start..end] {
-            let mut style = Style::default().fg(crate::catalog::log_color(line.level));
-            if line.running {
-                // 进行中：暗一点，表示"还没落定"；剩余 AV 已经写在文案里。
-                style = style.fg(Color::DarkGray);
-            }
-            lines.push(Line::from(Span::styled(line.text.clone(), style)));
-        }
     }
 
     frame.render_widget(
-        Paragraph::new(lines).block(pane_block(&title, scene.focus == Pane::Events)),
+        Paragraph::new(lines).block(pane_block(&title, focused)),
         area,
     );
 }
@@ -497,42 +567,6 @@ fn render_placeholder(frame: &mut Frame, area: Rect, title: &str, message: &str)
     };
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(message).centered(), inner);
-}
-
-fn render_debug_panel(frame: &mut Frame, area: Rect, dev_log: Option<&DevLogBuffer>) {
-    let lines = dev_log
-        .map(|buffer| {
-            buffer
-                .lines
-                .iter()
-                .rev()
-                .take(area.height.saturating_sub(2) as usize)
-                .rev()
-                .map(|entry| {
-                    let level_color = match entry.level.as_str() {
-                        "ERROR" => Color::Red,
-                        "WARN" => Color::Yellow,
-                        "INFO" => Color::Cyan,
-                        _ => Color::DarkGray,
-                    };
-                    Line::from(vec![
-                        Span::styled(
-                            format!("[{}] ", entry.level),
-                            Style::default().fg(level_color),
-                        ),
-                        Span::styled(
-                            format!("{}: ", entry.target),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::raw(entry.message.clone()),
-                    ])
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    let block = Block::default().borders(Borders::ALL).title("Debug");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// 居中的固定尺寸矩形（对话框用）。

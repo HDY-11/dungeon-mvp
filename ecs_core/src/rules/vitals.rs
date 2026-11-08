@@ -14,16 +14,20 @@
 //! 函数：
 //!
 //! - 普通刷新（装备变化、读档、每轮兜底）只把 `current` 夹到上限内，**不回血**；
-//! - 升级时传 `restore = true`，回满 HP/MP（存活者的既有行为，DsnE23 确认）。
+//! - `restore = true` 只给"出生满池"这类一次性初始化用；**升级不再回满**
+//!   （DsnE25 决策 2 取代了 DsnE23 的"升级回满"）。
 //!
-//! 防御不再顺带加血：防御只做减伤，血量上限只看等级曲线与显式修正。
+//! 生命回复只有两类来源（DsnE25）：消耗品与治疗泉；法力按 AV 回复见
+//! [`mana_regen_system`]。上限公式本身不负责回复。
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 
-use crate::components::{Health, Level, Mana};
+use crate::balance::MANA_REGEN_AV;
+use crate::components::{Health, Level, Mana, ManaRegen};
 use crate::effect::EffectContext;
 use crate::entity_cls::Player;
+use crate::resources::WorldClock;
 use crate::rules::{Modifier, StatId, apply_modifiers};
 
 /// 等级 → 生命上限的基础曲线：Lv1 40，每级 +8（Lv10 = 112）。
@@ -50,8 +54,8 @@ pub fn max_mana(level: u64, modifiers: &[Modifier]) -> f64 {
 
 /// 把上限写进生命/法力组件（[`max_health`] / [`max_mana`] 的唯一调用口）。
 ///
-/// - `restore = false`：只夹取 `current`（装备变化/读档/每轮兜底）；
-/// - `restore = true`：回满（升级与出生）。
+/// - `restore = false`：只夹取 `current`（装备变化/读档/升级/每轮兜底）；
+/// - `restore = true`：回满（只给出生这类一次性初始化）。
 ///
 /// 不回血这件事是刻意的：把 +生命上限的装备穿上再脱下，不能变成免费治疗。
 pub fn apply_maxima(
@@ -75,8 +79,8 @@ pub fn apply_maxima(
 /// 每轮结算的兜底刷新：等级/装备变化一个系统周期内没被即时刷新时，这里补上。
 ///
 /// 只处理玩家：怪物血量来自模板（`MonsterStats`），不走等级曲线。
-/// 升级回满不在这里做——`apply_exp_system` 升级时直接带 `restore = true` 调
-/// [`apply_maxima`]，这里只做"夹取"，避免系统之间争谁是写者。
+/// 升级回满**不在这里做**——DsnE25 起升级也不回满，`apply_exp_system` 只调
+/// `apply_maxima(..., restore = false)`；这里同样只做"夹取"，避免系统之间争谁是写者。
 pub fn refresh_vitals_system(
     effects: EffectContext,
     mut players: Query<(Entity, &Level, &mut Health, &mut Mana), With<Player>>,
@@ -84,6 +88,42 @@ pub fn refresh_vitals_system(
     for (entity, level, mut health, mut mana) in players.iter_mut() {
         let modifiers = effects.collect_actor(entity);
         apply_maxima(level.0, &modifiers, &mut health, &mut mana, false);
+    }
+}
+
+/// 法力随时间回复（DsnE25 决策 1）：每累计 [`MANA_REGEN_AV`] AV 回 1 点。
+///
+/// 只在存活时累计；MP 已满时把进度清零——**不攒爆发**：否则玩家可以挂机攒满一大截，
+/// 开战后连续施法，等于把"随时间回"变成"开局送蓝"。进度不足 1 点的零头保留，
+/// 所以回复节奏不会因为一次行动跨了多轮而丢失。
+///
+/// 死亡（`Health` 已空）不回复：尸体不该回蓝，且读档/结算链里这条路径本身也可达。
+pub fn mana_regen_system(
+    clock: Res<WorldClock>,
+    mut players: Query<(&Health, &mut Mana, &mut ManaRegen), With<Player>>,
+) {
+    if clock.last_step_av <= 0.0 {
+        return;
+    }
+    for (health, mut mana, mut regen) in players.iter_mut() {
+        if !health.is_alive() {
+            continue;
+        }
+        if mana.current >= mana.max {
+            regen.progress_av = 0.0;
+            continue;
+        }
+        regen.progress_av += clock.last_step_av;
+        let points = (regen.progress_av / MANA_REGEN_AV).floor();
+        if points < 1.0 {
+            continue;
+        }
+        let restored = mana.restore(points);
+        // 只扣掉真正换到的点数；满池时多余的进度直接丢弃（不攒爆发）。
+        regen.progress_av -= restored * MANA_REGEN_AV;
+        if mana.current >= mana.max {
+            regen.progress_av = 0.0;
+        }
     }
 }
 

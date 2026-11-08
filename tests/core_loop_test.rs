@@ -320,23 +320,25 @@ fn game_over_stops_further_commands() {
 fn player_death_ends_the_game() {
     let mut world = new_game(3);
 
-    // 玩家只剩 1 点血，且怪物贴脸；怪物 AV 更小会先手打死玩家。
+    // 玩家只剩 1 点血。挑一个**会追击**的怪物贴到相邻格，并把它的移动速度拉满：
+    // 追击 AV = CHASE_DURATION / MAX_SPEED = 125，远小于玩家 Wait 的固定 800 AV，
+    // 所以它一定能在本轮等待结束前完成追击与攻击、把玩家打死。
+    // （旧版本依赖「种群里第一个怪物恰好会追击／恰好出生在玩家旁边」，DsnE25 调整
+    // 首层怪物数量后这个偶然前提不再成立。）
     let player = player_entity(&world);
     {
         let mut health = world.get_mut::<Health>(player).unwrap();
         health.current = 1.0;
         health.max = 1.0;
     }
-    world
-        .get_mut::<ecs_core::Stats>(player)
-        .expect("玩家必须有 Stats")
-        .set(ecs_core::StatId::MOVE_SPEED, 0.25);
 
     let monster = {
         let mut query = world
-            .try_query::<(Entity, &Monster)>()
-            .expect("Monster 已注册");
-        query.iter(&world).next().expect("新游戏必须有怪物").0
+            .query_filtered::<Entity, (With<Monster>, With<ecs_core::CanChase>)>();
+        query
+            .iter(&world)
+            .next()
+            .expect("新游戏必须有会追击的怪物")
     };
     let (px, py) = player_pos(&world);
     {
@@ -345,14 +347,12 @@ fn player_death_ends_the_game() {
         pos.y = py;
     }
     world.resource_mut::<Map>().tiles[py][px + 1] = Tile::Floor;
-    // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
-    // 速度改成**下限** `MIN_SPEED`：玩家的 AV 被拉到最长（800ms 等待 ×4），
-    // 怪物一定先手，用最少的轮数钉住「怪物先动手」这一前提。
+    // 追击 AV 必须比玩家本轮 Wait 短，怪物才会先动手：把移动速度拉满即可。
     world
         .get_mut::<ecs_core::Stats>(monster)
         .expect("怪物必须有 Stats")
-        .set(ecs_core::StatId::MOVE_SPEED, ecs_core::MIN_SPEED);
-    // 同上：手工搬动实体后重建占用图，怪物才会真的和玩家相邻并发动攻击。
+        .set(ecs_core::StatId::MOVE_SPEED, ecs_core::MAX_SPEED);
+    // 手工搬动实体后重建占用图与视野，怪物才会真的和玩家相邻并发动攻击。
     ecs_core::system::run_settle_systems(&mut world);
 
     apply_player_command(&mut world, PlayerCommand::Wait);

@@ -96,3 +96,32 @@ pub fn action_av(base_duration: f64, speed: f64) -> f64 {
     base_duration / clamp_speed(speed)
 }
 
+// ── 资源回复与开局节奏（DsnE25） ─────────────────────
+//
+// 用户 m08053 拍板：法力随时间回；生命不回，只靠道具/可交互物。
+// 数值全是 `[试调]`，改这里即可，不要在系统里写魔法数。
+
+/// 每累计多少 AV 恢复 1 点法力（约两个玩家行动）。
+pub const MANA_REGEN_AV: f64 = 600.0;
+
+/// 每层治疗泉数量。
+pub const HEAL_SPRINGS: usize = 1;
+
+/// 一座治疗泉恢复的生命。
+pub const HEAL_SPRING_AMOUNT: f64 = 12.0;
+
+/// 治疗泉离出生点的最近 / 最远距离（格）。
+///
+/// 太近等于开局白送，太远则开局压力没缓解；4–10 格大约是一间房到两间房的距离。
+pub const HEAL_SPRING_MIN_RADIUS: usize = 4;
+pub const HEAL_SPRING_MAX_RADIUS: usize = 10;
+
+/// 第 `floor` 层的怪物数量区间 `(min, max)`（DsnE25 决策 4）。
+///
+/// 首层 4–6（旧口径 6–12）。随层线性增长，但单只数值不变：降的是"同时面对多少只"，
+/// 不是把怪物变软。
+pub fn monster_count_range(floor: u32) -> (usize, usize) {
+    let step = floor.saturating_sub(1) as usize;
+    (4 + step.saturating_mul(3), 6 + step.saturating_mul(4))
+}
+

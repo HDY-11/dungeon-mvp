@@ -5,8 +5,9 @@
 //! （旧 `PendingExp` 已随 Phase E 删除；见 `events.rs::DeathEvent` 的说明）。
 //!
 //! 升级只做两件事：清空阈值内的经验、把等级 +1；生命/法力的**上限**交给
-//! `rules::vitals::apply_maxima`（DsnE23 的唯一公式），这里只传 `restore = true`
-//! （存活升级回满，死亡不回——死亡在循环开头就被挡住了）。
+//! `rules::vitals::apply_maxima`（DsnE23 的唯一公式）。升级**不回满**（DsnE25
+//! 决策 2）：生命只能靠消耗品/治疗泉恢复，法力走随时间回复——升级不再附带续航，
+//! 否则"升一级=回满"会把资源取舍变成免费重置。
 
 use crate::balance::exp_to_next_level;
 use crate::components::*;
@@ -59,13 +60,13 @@ pub fn apply_exp_system(
             level.0 += 1;
 
             // 上限公式只有一个实现（DsnE23）：等级 + 装备/状态修正。
-            // 存活升级回满，与旧行为一致。
+            // DsnE25 起升级**不回满**——只重算上限、夹取 current。
             apply_maxima(
                 level.0,
                 &effects.collect_actor(entity),
                 &mut health,
                 &mut mana,
-                true,
+                false,
             );
             exp.exp_to_next = exp_to_next_level(level.0);
 

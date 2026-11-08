@@ -892,11 +892,19 @@ fn log_level_mapping_covers_every_core_level() {
 #[test]
 fn mud_cells_are_drawn_as_an_effect_overlay() {
     let mut world = new_game(2026);
+    // 格索引里同时有泥潭与治疗泉，这里只取泥潭（`CellMoveCost`）。
     let mud: Vec<(usize, usize)> = {
-        let mut query = world.query::<&ecs_core::CellEffectAt>();
+        let mut query =
+            world.query_filtered::<&ecs_core::CellEffectAt, With<ecs_core::CellMoveCost>>();
+        query.iter(&world).map(|at| at.to_tuple()).collect()
+    };
+    let springs: Vec<(usize, usize)> = {
+        let mut query =
+            world.query_filtered::<&ecs_core::CellEffectAt, With<ecs_core::CellHeal>>();
         query.iter(&world).map(|at| at.to_tuple()).collect()
     };
     assert!(!mud.is_empty(), "F1 应当有泥潭（内容没上线，这条测试就没意义）");
+    assert!(!springs.is_empty(), "F1 应当有治疗泉");
 
     let config = ExtractConfig::default().with_viewport(40, 20);
     let frame = extract_scene_frame(&mut world, &config, &PageStack::new(), 1);
@@ -906,6 +914,15 @@ fn mud_cells_are_drawn_as_an_effect_overlay() {
             frame.map.tile(*x, *y),
             Some(VisualKey::Effect(crate::catalog::EFFECT_MUD)),
             "({x},{y}) 的泥潭没有画出来：玩家看不到减速，等于隐形惩罚"
+        );
+    }
+
+    // 治疗泉是另一种效果，必须有自己的 key——否则玩家会把回血点当减速泥潭。
+    for (x, y) in &springs {
+        assert_eq!(
+            frame.map.tile(*x, *y),
+            Some(VisualKey::Effect(crate::catalog::EFFECT_SPRING)),
+            "({x},{y}) 的治疗泉没有画出来：玩家看不到回复点"
         );
     }
 

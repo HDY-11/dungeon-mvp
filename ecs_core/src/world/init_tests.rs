@@ -3,11 +3,30 @@
 //! 通过 `init.rs` 末尾的 `#[cfg(test)] #[path = "init_tests.rs"] mod tests;` 引入。
 
 use super::*;
-use crate::effect::{CellAttributes, CellEffectAt, CellEffects, EffectContext};
+use crate::effect::{CellAttributes, CellEffectAt, CellEffects, CellHeal, CellMoveCost, EffectContext};
+use bevy_ecs::prelude::With;
 
 /// 所有格子效果实体的坐标（排序后，便于直接比较两次运行）。
 fn cell_effect_cells(world: &mut World) -> Vec<(usize, usize)> {
     let mut query = world.query::<&CellEffectAt>();
+    let mut cells: Vec<(usize, usize)> = query.iter(world).map(|at| at.to_tuple()).collect();
+    cells.sort_unstable();
+    cells
+}
+
+/// 泥潭格：只认带 [`CellMoveCost`] 的效果实体。
+///
+/// 格索引里现在同时有泥潭与治疗泉，泛化的 [`cell_effect_cells`] 不能再当泥潭集合用。
+fn mud_cells(world: &mut World) -> Vec<(usize, usize)> {
+    let mut query = world.query_filtered::<&CellEffectAt, With<CellMoveCost>>();
+    let mut cells: Vec<(usize, usize)> = query.iter(world).map(|at| at.to_tuple()).collect();
+    cells.sort_unstable();
+    cells
+}
+
+/// 治疗泉格。
+fn heal_spring_cells(world: &mut World) -> Vec<(usize, usize)> {
+    let mut query = world.query_filtered::<&CellEffectAt, With<CellHeal>>();
     let mut cells: Vec<(usize, usize)> = query.iter(world).map(|at| at.to_tuple()).collect();
     cells.sort_unstable();
     cells
@@ -33,8 +52,8 @@ fn mud_placement_is_deterministic_for_the_same_seed() {
     let mut first = crate::world_loop::new_game(2026);
     let mut second = crate::world_loop::new_game(2026);
 
-    let a = cell_effect_cells(&mut first);
-    let b = cell_effect_cells(&mut second);
+    let a = mud_cells(&mut first);
+    let b = mud_cells(&mut second);
     assert_eq!(a, b, "同种子的泥潭落点必须逐格相同");
     assert!(!a.is_empty(), "F1 应当至少有一格泥潭（否则这条内容等于没上线）");
 }
@@ -45,7 +64,7 @@ fn mud_respects_placement_rules() {
     let mut world = crate::world_loop::new_game(2026);
     let spawn = world.resource::<PlayerSpawn>().0;
     let stairs = world.resource::<StairsPos>().0;
-    let cells = cell_effect_cells(&mut world);
+    let cells = mud_cells(&mut world);
 
     assert!(cells.len() <= MUD_PATCHES, "泥潭数量不得超过上限");
 
@@ -63,6 +82,34 @@ fn mud_respects_placement_rules() {
     }
 }
 
+/// 治疗泉：每层恰好一个、避开出生点与楼梯、落在可走格、距出生点 4–10 格。
+#[test]
+fn heal_spring_respects_placement_rules() {
+    let mut world = crate::world_loop::new_game(2026);
+    let spawn = world.resource::<PlayerSpawn>().0;
+    let stairs = world.resource::<StairsPos>().0;
+    let springs = heal_spring_cells(&mut world);
+
+    assert_eq!(springs.len(), HEAL_SPRINGS, "每层必须生成指定数量的治疗泉");
+
+    let (x, y) = springs[0];
+    assert_ne!((x, y), spawn, "治疗泉不得盖住玩家出生点");
+    assert_ne!((x, y), stairs, "治疗泉不得盖住楼梯");
+    assert!(
+        world.resource::<Map>().tiles[y][x].walkable(),
+        "治疗泉 ({x},{y}) 落在了不可走格上"
+    );
+    let distance = x.abs_diff(spawn.0).max(y.abs_diff(spawn.1));
+    assert!(
+        (HEAL_SPRING_MIN_RADIUS..=HEAL_SPRING_MAX_RADIUS).contains(&distance),
+        "治疗泉应距出生点 {HEAL_SPRING_MIN_RADIUS}–{HEAL_SPRING_MAX_RADIUS} 格（Chebyshev），实际 {distance}"
+    );
+    assert!(
+        !mud_cells(&mut world).contains(&(x, y)),
+        "治疗泉不得与泥潭同格"
+    );
+}
+
 /// **初始化末尾就要把格索引建好**：否则开局那一帧的泥潭是不可见的
 /// （`CellEffects` 是派生数据，`init` 与每轮结算各维护一次）。
 #[test]
@@ -78,7 +125,7 @@ fn cell_effect_index_is_populated_right_after_init() {
 #[test]
 fn mud_and_plain_cells_report_their_cost_through_the_unified_entry() {
     let mut world = crate::world_loop::new_game(2026);
-    let mud = cell_effect_cells(&mut world)[0];
+    let mud = mud_cells(&mut world)[0];
     let plain = plain_walkable_cell(&mut world);
 
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
@@ -92,6 +139,24 @@ fn mud_and_plain_cells_report_their_cost_through_the_unified_entry() {
     let plain_attrs = context.cell_attributes(plain.0, plain.1);
     assert!(!plain_attrs.has_effect);
     assert_eq!(plain_attrs.move_cost, 1.0, "普通地板代价必须是中性");
+}
+
+/// 首层人口下调（DsnE25 决策 4）：公式在 `balance.rs`，这里钉住首层区间。
+#[test]
+fn monster_count_range_starts_low_and_grows_with_depth() {
+    assert_eq!(monster_count_range(1), (4, 6), "首层 4–6 只（降低开局压力）");
+    assert_eq!(monster_count_range(2), (7, 10));
+    assert_eq!(monster_count_range(3), (10, 14));
+
+    let mut world = crate::world_loop::new_game(2026);
+    let floor = world.resource::<FloorNumber>().0;
+    let mut query = world.query::<&crate::entity_cls::Monster>();
+    let count = query.iter(&world).count();
+    let (min, max) = monster_count_range(floor);
+    assert!(
+        (min..=max).contains(&count),
+        "第 {floor} 层实际生成 {count} 只怪物，不在 {min}..={max} 内"
+    );
 }
 
 // ── ECS34：派生 RNG 的"同种子同世界"必须被钉住 ─────────

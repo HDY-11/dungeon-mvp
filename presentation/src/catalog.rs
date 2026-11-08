@@ -52,6 +52,9 @@ pub fn map_monster_kind(kind: ecs_core::MonsterKindId) -> VisualKey {
 /// 同 [`tile_id`]：只能末尾追加，不能重排。
 pub const EFFECT_MUD: u16 = 0;
 
+/// 治疗泉的语义编号（DsnE25）：同样只能末尾追加。
+pub const EFFECT_SPRING: u16 = 1;
+
 /// 一格的移动代价倍率 → 语义 key（`None` = 没有专属外观，回落到地形）。
 ///
 /// **按规则数据判定，不新增显示字段**：显示数据不进领域（DESIGN DsnX17 ④），

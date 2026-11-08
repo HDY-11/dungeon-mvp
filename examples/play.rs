@@ -104,12 +104,11 @@ fn is_wide_char(c: char) -> bool {
 /// 用真实 `TuiPlugin` 画一帧，逐行打印（不做拍平：CJK 占两格）。
 fn print_frame(app: &mut App, size: (u16, u16), title: &str) {
     let ui = tui::TuiPlugin::new();
-    let log = dungeon_app::dev_log(app.world());
     let frame = app.refresh();
 
     let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).expect("测试终端");
     terminal
-        .draw(|f| ui.draw(f, frame, log.as_ref()))
+        .draw(|f| ui.draw(f, frame))
         .expect("绘制不得失败");
     let buffer = terminal.backend().buffer();
 

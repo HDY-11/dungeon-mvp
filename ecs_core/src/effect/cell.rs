@@ -125,6 +125,59 @@ impl CellMoveCost {
     }
 }
 
+/// 治疗泉（DsnE25 决策 3）：玩家**走到这一格**时自动使用的生命回复。
+///
+/// 为什么是格子效果而不是地形：它是一次性的、会被用掉的"这一格发生的事"，
+/// 与泥潭同属 DsnE12 的格子效果形状；用完销毁实体，格索引下一轮重建时自然清掉。
+/// 满血时不消耗——玩家可以记住位置，回头再用；这也是它和"白送的药水"的区别。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct CellHeal {
+    /// 一次回复的生命值。
+    pub amount: f64,
+}
+
+impl CellHeal {
+    pub const fn new(amount: f64) -> Self {
+        Self { amount }
+    }
+}
+
+/// 玩家踩到治疗泉时使用它（DsnE25 决策 3）。
+///
+/// 顺序：必须在 `rebuild_cell_effects_system` 之后（本轮索引才是当前位置的），
+/// 且只在 `0 < HP < max` 时生效；满血不消耗，玩家可以回头再用。
+pub fn heal_spring_system(
+    mut commands: Commands,
+    players: Query<(&crate::components::Position, &mut crate::components::Health), With<crate::entity_cls::Player>>,
+    effects: Query<&CellHeal>,
+    index: Res<CellEffects>,
+    mut event_log: ResMut<crate::resources::EventLog>,
+) {
+    for (position, mut health) in players {
+        if !health.is_alive() || health.current >= health.max {
+            continue;
+        }
+        let (x, y) = position.to_tuple();
+        let Some(effect) = index.entity_at(x, y) else {
+            continue;
+        };
+        let Ok(spring) = effects.get(effect) else {
+            continue;
+        };
+        if spring.amount <= 0.0 || !spring.amount.is_finite() {
+            continue;
+        }
+        let restored = health.restore(spring.amount);
+        if restored <= 0.0 {
+            continue;
+        }
+        commands.entity(effect).despawn();
+        event_log.push(crate::resources::EventMessage::item(format!(
+            "你喝下泉水，恢复了 {restored:.0} 点生命"
+        )));
+    }
+}
+
 /// 一格的全部属性 = **地形属性表** + **该格效果**的结果（DsnE13 第 3 条的"统一读取入口"）。
 ///
 /// 与 DsnE9 的"返回因子分解"同源：读取方拿到的是一个可解释的结构，

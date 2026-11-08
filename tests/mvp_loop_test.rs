@@ -114,11 +114,10 @@ fn key(k: Key) -> InputEvent {
 /// 里记了同一个坑）。
 fn render_text(app: &mut App) -> String {
     let ui = TuiPlugin::new();
-    let log = dungeon_app::dev_log(app.world());
     let frame = app.refresh();
     let mut terminal = Terminal::new(TestBackend::new(TERMINAL.0, TERMINAL.1)).expect("测试终端");
     terminal
-        .draw(|terminal_frame| ui.draw(terminal_frame, frame, log.as_ref()))
+        .draw(|terminal_frame| ui.draw(terminal_frame, frame))
         .expect("绘制不得失败");
 
     let buffer = terminal.backend().buffer();

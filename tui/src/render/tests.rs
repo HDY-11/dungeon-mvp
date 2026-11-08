@@ -303,7 +303,7 @@ fn full_frame_renders_without_panicking_and_shows_all_panels() {
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
 
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -313,12 +313,8 @@ fn full_frame_renders_without_panicking_and_shows_all_panels() {
     assert!(text.contains("信息"), "信息栏标题应当出现");
     assert!(text.contains("状态"), "状态栏标题应当出现");
     assert!(text.contains("事件"), "事件栏标题应当出现");
-    // 调试面板在**没有调试输出时高度为 0**（SYN9：80×30 下它白占 7 行）。
-    // 这里传的是 `None`，所以它**不该**出现——出现才是 bug。
-    assert!(
-        !text.contains("Debug"),
-        "没有调试输出时不应给 Debug 面板留位置（SYN9）"
-    );
+    // 调试面板已整体移除（DsnE25）：任何终端尺寸下都不应再出现 Debug 字样。
+    assert!(!text.contains("Debug"), "Debug 面板应当被移除");
     assert!(text.contains('@'), "玩家 glyph 应当出现");
     assert!(text.contains("HP"), "状态栏应当有 HP");
 }
@@ -358,7 +354,7 @@ fn the_focused_pane_gets_a_cyan_border() {
     scene.focus = Pane::Events;
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let areas = frame_areas(Rect::new(0, 0, 80, 30));
@@ -390,7 +386,7 @@ fn the_info_pane_follows_the_contract_order_and_highlights_the_selection() {
     };
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     // 宽字符在缓冲里每个格子一个符号、续格是空格；断言前先去掉空白。
@@ -406,7 +402,11 @@ fn the_info_pane_follows_the_contract_order_and_highlights_the_selection() {
     assert!(goblin_row < rat_row, "信息栏必须按契约给的顺序画");
     assert!(rows[goblin_row].contains('>'), "选中行要有 `>` 前缀");
     assert!(!rows[rat_row].contains('>'), "未选中行不带前缀");
-    assert!(rows[goblin_row].contains("18/18"), "应当显示血量");
+    // 细节行紧跟在名字行之后：类型、血量条、距离（DsnE25）。
+    let goblin_detail = &rows[goblin_row + 1];
+    assert!(goblin_detail.contains("怪物"), "应当显示类型: {goblin_detail}");
+    assert!(goblin_detail.contains("18/18"), "应当显示血量: {goblin_detail}");
+    assert!(goblin_detail.contains("#####"), "应当有血量条: {goblin_detail}");
 
     // 地图上同一实体被反色高亮：`build_map_lines` 里应有黄底的字形。
     let map_lines = build_map_lines(&scene, W, H);
@@ -435,7 +435,7 @@ fn dialog_overlay_is_drawn_over_the_game() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -461,7 +461,7 @@ fn look_overlay_shows_cursor_and_tile() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -479,7 +479,7 @@ fn tiny_terminal_does_not_panic() {
     for (width, height) in [(1u16, 1u16), (3, 2), (10, 3), (20, 5)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试终端");
         terminal
-            .draw(|frame| render_frame(frame, &scene, None))
+            .draw(|frame| render_frame(frame, &scene))
             .unwrap_or_else(|err| panic!("{width}×{height} 下绘制失败: {err}"));
     }
 }
@@ -492,7 +492,7 @@ fn game_over_notice_is_shown() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -520,7 +520,7 @@ fn death_notice_survives_a_crowded_side_panel() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -543,7 +543,7 @@ fn the_events_panel_renders_the_timeline_in_order() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     // 宽字符在缓冲里占两格（续格是空格），所以先按行去掉空白再做 contains/顺序比较。
@@ -587,7 +587,7 @@ fn the_events_panel_scrolls_up_to_earlier_events() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
     let text = buffer_text_compact(&terminal);
     assert!(text.contains("事件40"), "默认贴底：最新事件可见");
@@ -595,21 +595,54 @@ fn the_events_panel_scrolls_up_to_earlier_events() {
 
     scene.events_scroll = 5;
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
     let text = buffer_text_compact(&terminal);
     assert!(!text.contains("事件40"), "上滚后最新事件滚出画面: {text}");
     assert!(text.contains("事件35"), "窗口整体上移: {text}");
     assert!(text.contains("事件↑5"), "标题要标出偏移: {text}");
 
-    // 偏移申请超过上限：按 `len - height` 夹取，不会画到空白或越界。
+    // 偏移申请超过上限：按 `渲染行数 - 可见行数` 夹取。
+    // 聚焦时底部留一行翻页提示，所以 80×30 下事件栏可见 9 行，上限 40 - 9 = 31。
     scene.events_scroll = 9999;
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
     let text = buffer_text_compact(&terminal);
     assert!(text.contains("事件01"), "夹取到最旧一页: {text}");
-    assert!(text.contains("事件↑30"), "偏移按可见高度夹取: {text}");
+    assert!(text.contains("事件↑31"), "偏移按可见高度夹取: {text}");
+}
+
+/// 事件栏可读性（DsnE25）：等级前缀、事实/进行中分隔、聚焦时翻页提示。
+#[test]
+fn the_events_panel_marks_levels_and_separates_running_actions() {
+    let mut scene = base_scene();
+    scene.events = vec![
+        EventLine::done(LogLevel::Combat, "你对老鼠造成3点伤害"),
+        EventLine::done(LogLevel::Item, "你捡起了蘑菇"),
+        EventLine::running(LogLevel::Combat, "哥布林举起了武器（200AV）"),
+    ];
+    scene.focus = Pane::Events;
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene))
+        .expect("绘制不得失败");
+    let text = buffer_text_compact(&terminal);
+
+    // `buffer_text_compact` 会去掉空白，所以前缀与正文之间没有空格可断言。
+    assert!(
+        text.contains("*你对老鼠造成3点伤害"),
+        "战斗事件带 `*` 前缀: {text}"
+    );
+    assert!(text.contains("+你捡起了蘑菇"), "物品事件带 `+` 前缀");
+    let separator = text.find("----进行中----").expect("事实与进行中之间要有分隔");
+    let running = text
+        .find("哥布林举起了武器")
+        .expect("进行中的行动应当可见");
+    let done = text.find("你对老鼠").expect("已落定事实应当可见");
+    assert!(done < separator && separator < running, "分隔要在事实之后、进行中之前");
+    assert!(text.contains("↑↓：翻历史"), "聚焦时要有翻页提示");
 }
 
 /// 未实现页给占位提示，而不是空白或崩溃。
@@ -621,7 +654,7 @@ fn unimplemented_pages_show_a_placeholder() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
 
     let text = buffer_text_compact(&terminal);
@@ -701,7 +734,7 @@ fn draw_inventory(
     let scene = inventory_scene(inventory);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("绘制不得失败");
     terminal
 }
@@ -990,7 +1023,7 @@ fn inventory_page_survives_tiny_and_narrow_terminals() {
     ] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("测试终端");
         terminal
-            .draw(|frame| render_frame(frame, &scene, None))
+            .draw(|frame| render_frame(frame, &scene))
             .unwrap_or_else(|err| panic!("{width}×{height} 下画背包页失败: {err}"));
     }
 }
@@ -1001,7 +1034,7 @@ fn empty_scene_renders_without_panicking() {
     let scene = SceneFrame::empty();
     let mut terminal = Terminal::new(TestBackend::new(40, 12)).expect("测试终端");
     terminal
-        .draw(|frame| render_frame(frame, &scene, None))
+        .draw(|frame| render_frame(frame, &scene))
         .expect("空场景也应当能画");
 }
 

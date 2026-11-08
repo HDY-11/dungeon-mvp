@@ -35,7 +35,13 @@ impl TuiCatalog {
             VisualKey::Stairs => Rgb::new(0, 255, 0),
             VisualKey::Item(_) => Rgb::new(220, 200, 120),
             VisualKey::Tile(id) => Self::tile_fg(id),
-            VisualKey::Effect(_) => Rgb::new(255, 140, 0),
+            VisualKey::Effect(id) => match id {
+                // 泥潭：暧昧的橙，和"糟糕地形"的直觉一致。
+                0 => Rgb::new(255, 140, 0),
+                // 治疗泉：青色，和生命/水意象一致，比橙色显眼。
+                1 => Rgb::new(80, 220, 220),
+                _ => Rgb::new(255, 140, 0),
+            },
             VisualKey::UiIcon(icon) => Self::icon_fg(icon),
             VisualKey::Unknown(_) => Rgb::new(255, 255, 255),
             // 尸体要一眼看出「死了」：统一暗灰，不跟随物种颜色。
@@ -54,7 +60,12 @@ impl TuiCatalog {
             VisualKey::Stairs => '>',
             VisualKey::Item(_) => '!',
             VisualKey::Tile(id) => Self::tile_glyph(id),
-            VisualKey::Effect(_) => '*',
+            VisualKey::Effect(id) => match id {
+                // 泥潭的 `*` 是"陷阱感"，治疗泉的 `~` 是"水面感"。
+                0 => '*',
+                1 => '~',
+                _ => '*',
+            },
             VisualKey::UiIcon(icon) => Self::icon_glyph(icon),
             VisualKey::Unknown(_) => '?',
             // `%` 是 roguelike 传统里的尸体符号；颜色交给 fg（暗灰）。
@@ -223,6 +234,22 @@ pub fn log_color(level: render_api::LogLevel) -> Color {
     }
 }
 
+/// 事件等级前缀符号（DsnE25）：不逐行读颜色也能分辨事件种类。
+///
+/// 用 ASCII：CJK 全角符号会让行宽计算与终端对齐变得脆弱（`tui` 里为此付出过
+/// 代价），事件栏的文字本身已经足够表达内容。
+pub fn log_prefix(level: render_api::LogLevel) -> char {
+    use render_api::LogLevel as L;
+    match level {
+        L::Combat => '*',
+        L::Item => '+',
+        L::Skill => '~',
+        L::System => '-',
+        L::Danger => '!',
+        L::Debug => '?',
+    }
+}
+
 // ── 名称（Look 页等 UI 文本） ────────────────────────
 
 /// 语义 key 的**人类可读名称**。
@@ -262,10 +289,11 @@ pub fn tile_name(id: u16) -> &'static str {
     }
 }
 
-/// 格子效果名称（编号见 `presentation::catalog::EFFECT_MUD`）。
+/// 格子效果名称（编号见 `presentation::catalog::EFFECT_MUD` / `EFFECT_SPRING`）。
 pub fn effect_name(id: u16) -> &'static str {
     match id {
         0 => "泥沼（移动变慢）",
+        1 => "治疗泉（踩上回血）",
         _ => "未知效果",
     }
 }
