@@ -20,4 +20,9 @@ pub enum PlayerCommand {
     /// 拦下来交给 [`crate::world::floor::descend`]；生成系统里那个分支只作防御
     /// （真收到就记一条错误，而不是静默当成 `Wait`）。
     Descend,
+    /// 施放法术书里的第 `slot` 格（0 起的快捷键序号，DsnE26）。
+    ///
+    /// 目标**不在这里指定**：`NearestEnemy` 法术由校验阶段自动选视野内最近敌人，
+    /// 治疗法术固定对自己。按键层不需要知道"选谁"。
+    Cast { slot: u8 },
 }

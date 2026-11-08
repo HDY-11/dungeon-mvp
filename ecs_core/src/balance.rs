@@ -101,8 +101,8 @@ pub fn action_av(base_duration: f64, speed: f64) -> f64 {
 // 用户 m08053 拍板：法力随时间回；生命不回，只靠道具/可交互物。
 // 数值全是 `[试调]`，改这里即可，不要在系统里写魔法数。
 
-/// 每累计多少 AV 恢复 1 点法力（约两个玩家行动）。
-pub const MANA_REGEN_AV: f64 = 600.0;
+/// 每累计多少 AV 恢复 1 点法力（m08882 拍板：初始 10000，约 12 个玩家行动）。
+pub const MANA_REGEN_AV: f64 = 10000.0;
 
 /// 每层治疗泉数量。
 pub const HEAL_SPRINGS: usize = 1;

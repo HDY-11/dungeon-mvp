@@ -302,6 +302,10 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
+        "1/2/3：施法（法术见扩展行）",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
         "e：背包    ?：查看    q/Esc：退出",
         Style::default().fg(Color::DarkGray),
     )));
@@ -321,8 +325,9 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
 /// 历史（DsnA6）：`events_scroll` 是从底部往上裁掉的行数，标题上标出当前偏移，
 /// 滚回 0 就恢复跟随最新。
 ///
-/// 可读性（DsnE25）：每条带等级前缀符号，事实与进行中之间插一条分隔；聚焦时
-/// 底部留一行翻页提示。分隔行也占可见高度，因此可滚上限按**渲染后的行数**算。
+/// 可读性（DsnE25）：每条带等级前缀符号；聚焦时底部留一行翻页提示。
+/// 事实与进行中是**同一条时间轴**（DsnE21 统一语义），不插分隔行——已落定的
+/// 事实在上、未落定的行动在下，由排序本身表达先后，不靠装饰性标题。
 fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     let focused = scene.focus == Pane::Events;
     let inner_height = usize::from(area.height.saturating_sub(2)).max(1);
@@ -331,14 +336,7 @@ fn render_events(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
     let visible = inner_height.saturating_sub(hint_rows).max(1);
 
     let mut rows: Vec<Line> = Vec::new();
-    for (index, line) in scene.events.iter().enumerate() {
-        if line.running && index > 0 && !scene.events[index - 1].running {
-            // 事实与进行中之间有一条分隔：玩家能一眼看出哪些已经落定。
-            rows.push(Line::from(Span::styled(
-                "---- 进行中 ----",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
+    for line in &scene.events {
         let prefix = crate::catalog::log_prefix(line.level);
         let color = if line.running {
             // 进行中：暗一点，表示"还没落定"；剩余 AV 已经写在文案里。

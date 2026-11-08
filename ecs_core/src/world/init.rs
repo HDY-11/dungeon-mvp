@@ -14,7 +14,7 @@ use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent,
+    LevelUpEvent, SpellIntentEvent,
 };
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
@@ -82,6 +82,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
+    // 施法意图（DsnE26）：settle 写、`resolve_spell_system` 读。
+    world.insert_resource(bevy_ecs::event::Events::<SpellIntentEvent>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());
@@ -162,6 +164,8 @@ pub fn spawn_player_system(mut commands: Commands, map: Res<Map>, mut spawn: Res
         .insert(AttackName("斩击".into()))
         // 法力回复进度（DsnE25）：运行时派生，不进存档。
         .insert(ManaRegen::new())
+        // 法术书（DsnE26）：起始会两招；书本身是组件，已知法术列表是静态数据 id。
+        .insert(crate::spell::SpellBook::starting())
         // 身体容器（含行囊）单独 `insert`：`player_base_bundle` 受 15 元组上限约束。
         .insert(body)
         .insert(CanMove)

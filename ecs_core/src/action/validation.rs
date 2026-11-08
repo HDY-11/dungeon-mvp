@@ -62,11 +62,12 @@ use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionEvents, Pendi
 use crate::balance::FLEE_HP_RATIO_EXIT;
 use crate::combat::can_attack_positions;
 use crate::components::{
-    BasicAttack, Chase, Flee, Health, LastKnownPlayerPos, Move, Position, Viewshed, Wander,
+    BasicAttack, Chase, Flee, Health, LastKnownPlayerPos, Mana, Move, Position, Viewshed, Wander,
 };
 use crate::entity_cls::Player as PlayerMarker;
 use crate::map::Map;
 use crate::resources::{EventLog, EventMessage, GameRng, OccupancyMap};
+use crate::spell::{CastSpell, SpellBook, SpellTargeting, nearest_enemy_in_range};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 
@@ -80,14 +81,22 @@ pub struct MoveTarget(pub Position);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttackTarget(pub Entity);
 
-/// 一次"定案"的结果：要么落脚、要么打人、要么原地不动（仍然算这一步做完）。
+/// 校验阶段定下的**法术目标**（DsnE26）。落地阶段只负责发 `SpellIntentEvent`。
+///
+/// 与 [`AttackTarget`] 分开而不是共用一个 `Entity`：两者落地成不同的事件，
+/// 类型分开后 settle 不需要再回头查"这一发到底是普攻还是法术"。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CastTarget(pub Entity);
+
+/// 一次"定案"的结果：要么落脚、要么打人、要么施法、要么原地不动（仍然算这一步做完）。
 enum Decision {
     Move(Position),
     Attack(Entity),
+    Cast(Entity),
     Stay,
 }
 
-/// 把决策落到 action 实体上：`MoveTarget` / `AttackTarget` / 什么都不加（= 原地不动）。
+/// 把决策落到 action 实体上：`MoveTarget` / `AttackTarget` / `CastTarget` / 什么都不加（= 原地不动）。
 fn apply_decision(cmd: &mut EntityCommands, decision: Decision) {
     match decision {
         Decision::Move(to) => {
@@ -95,6 +104,9 @@ fn apply_decision(cmd: &mut EntityCommands, decision: Decision) {
         }
         Decision::Attack(target) => {
             cmd.insert(AttackTarget(target));
+        }
+        Decision::Cast(target) => {
+            cmd.insert(CastTarget(target));
         }
         Decision::Stay => {}
     }
@@ -465,6 +477,66 @@ pub fn validate_basic_attack_system(
             continue;
         }
         apply_decision(&mut commands.entity(action), Decision::Attack(attack.target));
+    }
+}
+
+/// `CastSpell`（DsnE26）：保活 = 施法者活着、法力够、目标类型仍有可选项；
+/// 到点才定案——目标按**那一刻**的视野重新选。
+///
+/// 目标在吟唱期间走远不算失败：定案时若选不到就**失败**（`ActionFailedEvent`）；
+/// 定案之后目标死掉则由结算侧处理成"法术落空"（法力照扣，见 `resolve_spell_system`）。
+pub fn validate_cast_system(
+    mut commands: Commands,
+    mut events: ActionEvents,
+    actions: Query<ActionEntryPayload<CastSpell>, PendingAction<CastSpell>>,
+    casters: Query<(&Position, &SpellBook, &Mana, &Viewshed, Has<PlayerMarker>)>,
+    monsters: Query<(Entity, &Position), With<crate::entity_cls::Monster>>,
+    mut event_log: ResMut<EventLog>,
+) {
+    for (action, child_of, cast, ready) in &actions {
+        let actor = child_of.parent();
+        let Ok((position, book, mana, viewshed, is_player)) = casters.get(actor) else {
+            events.fail(action, actor);
+            continue;
+        };
+        let spell = cast.spell.def();
+        // 保活对排队中也生效（ECS43）：法力不够 / 法术已被移出书页时立刻取消。
+        if mana.current < f64::from(spell.mp_cost)
+            || !book.known().contains(&cast.spell)
+        {
+            if is_player {
+                event_log.push(EventMessage::skill(format!(
+                    "{}被打断了：法力不足或已不在法术书里",
+                    spell.name
+                )));
+            }
+            events.fail(action, actor);
+            continue;
+        }
+        // 施法者自己死了（或已没有法术书/视野）就让行动失败，而不是让它空转到超时。
+        let target = match spell.targeting {
+            SpellTargeting::SelfOnly => Some(actor),
+            SpellTargeting::NearestEnemy => nearest_enemy_in_range(
+                *position,
+                viewshed,
+                spell.range,
+                monsters.iter().map(|(entity, position)| (entity, *position)),
+            ),
+        };
+        let Some(target) = target else {
+            if is_player {
+                event_log.push(EventMessage::skill(format!(
+                    "{}落空了：视野里没有目标",
+                    spell.name
+                )));
+            }
+            events.fail(action, actor);
+            continue;
+        };
+        if !ready {
+            continue;
+        }
+        apply_decision(&mut commands.entity(action), Decision::Cast(target));
     }
 }
 

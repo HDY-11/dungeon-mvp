@@ -420,8 +420,10 @@ fn mud_doubles_the_player_move_av_in_the_real_world() {
     ecs_core::system::run_settle_systems(&mut world);
 
     // 选一格泥潭、一格普通地板（都要有可走邻格）。
+    // 只取带 `CellMoveCost` 的格子：`CellEffectAt` 也覆盖治疗泉，泉不减速。
     let mud: Vec<(usize, usize)> = {
-        let mut query = world.query::<&CellEffectAt>();
+        let mut query =
+            world.query_filtered::<&CellEffectAt, bevy_ecs::prelude::With<ecs_core::CellMoveCost>>();
         query.iter(&world).map(|at| at.to_tuple()).collect()
     };
     let mud_target = mud
@@ -563,8 +565,12 @@ fn picking_up_the_boots_cancels_the_mud_penalty() {
     ecs_core::system::run_settle_systems(&mut world);
 
     let mud_target = {
+        // 只取泥潭（`CellMoveCost`）：`CellEffectAt` 也包含治疗泉，泉不减速。
         let cells: Vec<(usize, usize)> = {
-            let mut query = world.query::<&CellEffectAt>();
+            let mut query = world.query_filtered::<
+                &CellEffectAt,
+                bevy_ecs::prelude::With<ecs_core::CellMoveCost>,
+            >();
             query.iter(&world).map(|at| at.to_tuple()).collect()
         };
         cells

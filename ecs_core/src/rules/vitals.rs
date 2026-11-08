@@ -30,11 +30,12 @@ use crate::entity_cls::Player;
 use crate::resources::WorldClock;
 use crate::rules::{Modifier, StatId, apply_modifiers};
 
-/// 等级 → 生命上限的基础曲线：Lv1 40，每级 +8（Lv10 = 112）。
+/// 等级 → 生命上限的基础曲线：Lv1 80，每级 +8（Lv10 = 152）。
 ///
+/// 用户 m08882 要求开局更抗打：Lv1 基数从 40 翻倍到 80，逐级成长不变。
 /// 曲线是**内容数值**，调它不需要改任何系统；`GAME.md` 是玩家口径的权威。
 pub fn hp_curve(level: u64) -> f64 {
-    40.0 + 8.0 * level.saturating_sub(1) as f64
+    80.0 + 8.0 * level.saturating_sub(1) as f64
 }
 
 /// 等级 → 法力上限的基础曲线：Lv1 12，每级 +2（Lv10 = 30）。

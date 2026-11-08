@@ -6,9 +6,12 @@
 use super::*;
 use crate::action::generation::player::PlayerCommand;
 use crate::action::settle::settle_action_system;
-use crate::components::{CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Viewshed};
+use crate::components::{
+    CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Mana, Viewshed,
+};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
 use crate::resources::GameRng;
+use crate::spell::{CastSpell, SpellBook, SpellId};
 use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_test_monster};
 use crate::world_loop::apply_player_command;
 use bevy_ecs::system::RunSystemOnce;
@@ -786,6 +789,91 @@ fn player_move_spawns_move_action_and_moves_one_tile() {
         "执行后玩家必须恰好移动一格"
     );
     assert!(world.get::<Idle>(player).is_some());
+}
+
+/// 玩家 `Cast` 命令（DsnE26）：生成施法行动 → 吟唱到点 → settle 发意图 →
+/// 结算链扣蓝扣血。这条用例把"行动层"和"法术数值层"接在一起验证一次。
+#[test]
+fn player_cast_spawns_a_cast_action_and_resolves_through_the_settle_chain() {
+    let (mut world, player) = player_move_scene((10, 10));
+    // 12 = Lv1 的法力上限（`mp_curve(1)`）；满池开局。
+    world.entity_mut(player).insert((
+        SpellBook::starting(),
+        Mana::new(12.0),
+        Viewshed {
+            range: 5,
+            visible_tiles: vec![(11, 10)],
+        },
+    ));
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        (11, 10),
+        30.0,
+        4.0,
+    );
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Cast { slot: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let actions = action_entities_of(&mut world, player);
+    assert_eq!(actions.len(), 1, "施法必须恰好生成一个行动实体");
+    let action = actions[0];
+    assert_eq!(
+        world.get::<CastSpell>(action).map(|cast| cast.spell),
+        Some(SpellId(0)),
+        "行动载荷要记住放的是哪一招"
+    );
+    assert_eq!(
+        world.get::<ActionName>(action).map(|name| name.0),
+        Some("Cast"),
+        "事件栏/进行中投影按 ActionName 取文案"
+    );
+
+    // 吟唱 600 AV 到点，落地发 SpellIntentEvent，completion 回收行动。
+    world.run_schedule(ActionPocSchedule);
+    crate::system::run_settle_systems(&mut world);
+
+    let health = *world.get::<Health>(monster).expect("怪物还活着");
+    assert_eq!(health.current, 17.0, "火花术 5 + 精通 8 = 13 点伤害");
+    let mana = *world.get::<Mana>(player).expect("玩家有法力");
+    assert_eq!(mana.current, 9.0, "火花术耗蓝 3（满池 12）");
+    assert!(world.get::<Idle>(player).is_some(), "施法完成后回 Idle");
+}
+
+/// 玩家 `Cast` 命令：法术格为空 / 法力不足时在生成期就被拒绝（false），不烧一个吟唱。
+#[test]
+fn player_cast_is_refused_at_generation_when_the_slot_or_mana_is_missing() {
+    let (mut world, player) = player_move_scene((10, 10));
+    world.entity_mut(player).insert((
+        SpellBook::new(vec![SpellId(0)]),
+        Mana::new(20.0),
+        Viewshed {
+            range: 5,
+            visible_tiles: vec![(11, 10)],
+        },
+    ));
+    let _ = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        (11, 10),
+        30.0,
+        4.0,
+    );
+
+    // 第 2 格是空的。
+    assert!(
+        !apply_player_command(&mut world, PlayerCommand::Cast { slot: 1 }),
+        "空格位必须被拒绝"
+    );
+    // 法力不足：火花术要 3 点蓝，只留 1 点。
+    world.get_mut::<Mana>(player).unwrap().current = 1.0;
+    assert!(
+        !apply_player_command(&mut world, PlayerCommand::Cast { slot: 0 }),
+        "法力不足必须被拒绝"
+    );
+    assert!(world.get::<Active>(player).is_none(), "被拒绝的命令不得留下活跃行动");
 }
 
 /// 玩家移动与旧 `apply_player_command` 的落点一致（迁移期一致性）。

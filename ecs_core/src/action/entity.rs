@@ -52,6 +52,7 @@ use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::OccupancyMap;
 use crate::effect::EffectContext;
 use crate::rules::{EffectSource, Modifier, StatId, apply_modifiers};
+use crate::spell::SpellId;
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
@@ -81,6 +82,27 @@ type AiActor<C> = (
 
 /// 玩家路径的 actor 数据：实体 id + 位置 + 基础属性（速度在 `Stats` 里）。
 type PlayerActorData = (Entity, &'static Position, Option<&'static Stats>);
+
+/// 玩家生成器要读的"世界现状"：自己、挡路的怪物、法术书/法力/视野、怪物位置。
+///
+/// 打成一个 [`SystemParam`] 而不是继续加参数：玩家生成系统原本已经有 9 个参数，
+/// 每加一个能力（施法、投掷……）都会再撞一次 `clippy::too_many_arguments`。
+/// 这里的字段回答的是同一个问题——"玩家此刻下令时，世界里有什么可参考"。
+#[derive(SystemParam)]
+pub struct PlayerWorld<'w, 's> {
+    players: Query<'w, 's, PlayerActorData, (With<Player>, Without<Active>)>,
+    monsters: Query<'w, 's, (), With<Monster>>,
+    books: Query<
+        'w,
+        's,
+        (
+            &'static crate::spell::SpellBook,
+            &'static crate::components::Mana,
+            &'static Viewshed,
+        ),
+    >,
+    monster_positions: Query<'w, 's, (Entity, &'static Position), With<Monster>>,
+}
 
 /// 一个 AI actor 的数据：实体 id + 基础属性 + 所在格。
 ///
@@ -255,6 +277,7 @@ impl ActionName {
             "Chase" => "追了上去",
             "Move" => "迈开脚步",
             "BasicAttack" => "举起了武器",
+            "Cast" => "开始施法",
             _ => "行动",
         }
     }
@@ -596,6 +619,8 @@ enum PlayerAction {
     Wait,
     Move(Move),
     BasicAttack(Entity),
+    /// 施法（DsnE26）：法术编号在生成期固定，目标留给校验阶段选。
+    Cast(SpellId),
 }
 
 /// 玩家行动生成（C2/C3）：把已确认的玩家命令翻译成 **active action 实体**。
@@ -621,8 +646,7 @@ enum PlayerAction {
 pub fn player_action_generation_system(
     mut commands: Commands,
     mut request: ResMut<PlayerActionRequest>,
-    players: Query<PlayerActorData, (With<Player>, Without<Active>)>,
-    monsters: Query<(), With<Monster>>,
+    world: PlayerWorld,
     movement: MovementContext,
     effects: EffectContext,
     mut event_log: ResMut<crate::resources::EventLog>,
@@ -632,12 +656,11 @@ pub fn player_action_generation_system(
     // 连续重复会被 `EventLog::push` 合并成 (×N)（SYN8）。
     fn refuse(log: &mut crate::resources::EventLog, reason: &str) {
         log.push(crate::resources::EventMessage::system(reason));
-    }
-    let Some(command) = request.command.take() else {
+    }    let Some(command) = request.command.take() else {
         return;
     };
 
-    let Ok((player, position, stats)) = players.single() else {
+    let Ok((player, position, stats)) = world.players.single() else {
         log::warn!("玩家请求无法处理（玩家不存在或已有行动）: {command:?}");
         return;
     };
@@ -660,7 +683,7 @@ pub fn player_action_generation_system(
                 return;
             }
             if let Some(occupant) = movement.occupancy.entity_at(nx, ny) {
-                if monsters.get(occupant).is_ok() {
+                if world.monsters.get(occupant).is_ok() {
                     // 走向怪物 = 声明攻击（与旧实现一致）。
                     (
                         PlayerAction::BasicAttack(occupant),
@@ -687,6 +710,40 @@ pub fn player_action_generation_system(
                     UNARMED_ATTACK_DURATION,
                 )
             }
+        }
+        PlayerCommand::Cast { slot } => {
+            let Ok((book, mana, viewshed)) = world.books.get(player) else {
+                log::warn!("玩家没有法术书，拒绝施法");
+                refuse(&mut event_log, "你还没有学会任何法术");
+                return;
+            };
+            let Some(spell_id) = book.get(usize::from(slot)) else {
+                refuse(&mut event_log, "那个法术格是空的");
+                return;
+            };
+            let spell = spell_id.def();
+            if mana.current < f64::from(spell.mp_cost) {
+                refuse(&mut event_log, "法力不足，念不出这个法术");
+                return;
+            }
+            // 目标在别处校验：生成期只拒绝"连个能选的目标都没有"的情形，
+            // 免得玩家花一个吟唱才被告知什么都打不到。
+            if spell.targeting == crate::spell::SpellTargeting::NearestEnemy
+                && crate::spell::nearest_enemy_in_range(
+                    *position,
+                    viewshed,
+                    spell.range,
+                    world
+                        .monster_positions
+                        .iter()
+                        .map(|(entity, position)| (entity, *position)),
+                )
+                .is_none()
+            {
+                refuse(&mut event_log, "视野里没有可施法的目标");
+                return;
+            }
+            (PlayerAction::Cast(spell_id), SpeedRule::Fixed, spell.cast_av)
         }
     };
 
@@ -727,6 +784,11 @@ pub fn player_action_generation_system(
         }
         PlayerAction::BasicAttack(target) => {
             action_cmd.insert((ActionName("BasicAttack"), BasicAttack { target }));
+        }
+        PlayerAction::Cast(spell) => {
+            // 目标不在生成期固定：校验阶段按"此刻视野里最近的敌人"重新选，
+            // 吟唱期间目标跑动/换目标都由此兜住（DsnE26）。
+            action_cmd.insert((ActionName("Cast"), crate::spell::CastSpell { spell }));
         }
     }
 
@@ -1019,6 +1081,7 @@ pub fn build_action_poc_schedule() -> Schedule {
                 (
                     crate::action::validation::validate_move_system,
                     crate::action::validation::validate_basic_attack_system,
+                    crate::action::validation::validate_cast_system,
                     crate::action::validation::validate_chase_system,
                     crate::action::validation::validate_flee_system,
                     crate::action::validation::validate_wander_system,

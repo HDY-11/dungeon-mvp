@@ -39,7 +39,7 @@ pub use perception::{fov_system, update_map_memory_system, update_visible_memory
 
 use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent,
+    LevelUpEvent, SpellIntentEvent,
 };
 use crate::schedule::CoreSettleSchedule;
 use bevy_ecs::prelude::*;
@@ -57,6 +57,7 @@ pub fn update_events_system(
     mut level_up_events: ResMut<Events<LevelUpEvent>>,
     mut action_succeeded: ResMut<Events<ActionSucceededEvent>>,
     mut action_failed: ResMut<Events<ActionFailedEvent>>,
+    mut spell_intents: ResMut<Events<SpellIntentEvent>>,
 ) {
     attack_intents.update();
     attack_events.update();
@@ -64,6 +65,7 @@ pub fn update_events_system(
     level_up_events.update();
     action_succeeded.update();
     action_failed.update();
+    spell_intents.update();
 }
 
 /// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。
@@ -77,6 +79,10 @@ pub fn build_core_schedule() -> Schedule {
         (
             combat::resolve_attack_system,
             combat::apply_damage_system,
+            // 法术（DsnE26）：settle 只发 SpellIntentEvent，效果在这里落地。
+            // 放在 apply_damage_system 之后、中毒之前：法术伤害先扣血，
+            // 本轮的死亡判定照常收口；法术不参与"中毒"这条链。
+            crate::spell::resolve_spell_system,
             // 中毒的顺序有语义（见 `effect/status.rs`）：先运转已有中毒，再让本轮的攻击
             // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
             crate::effect::poison_tick_system,

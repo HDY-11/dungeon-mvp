@@ -138,6 +138,27 @@ fn poison_ticks_on_elapsed_av_not_on_rounds() {
     );
 }
 
+/// 魔法抗性折进毒伤（m08882）：50% 抗性 → 每次只吃一半伤害。
+#[test]
+fn magic_resist_reduces_poison_damage() {
+    let mut world = test_world();
+    let player = spawn_test_player(&mut world, (6, 5));
+    let before = *world.get::<Health>(player).expect("玩家有血量");
+    world
+        .get_mut::<Stats>(player)
+        .expect("玩家有属性")
+        .set(crate::rules::StatId::MAGIC_RESIST, 0.5);
+    world.spawn((EffectOf(player), Poison::standard()));
+
+    advance_poison(&mut world, POISON_TICK_AV);
+
+    assert_eq!(
+        world.get::<Health>(player).map(|h| h.current),
+        Some(before.current - POISON_DAMAGE_PER_TICK * 0.5),
+        "50% 魔法抗性应当把每次毒伤减半"
+    );
+}
+
 /// 没有时间流逝的一轮不发作、也不消耗次数（时间没走就没有中毒）。
 #[test]
 fn zero_elapsed_av_does_not_tick() {

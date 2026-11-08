@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "spells": [
+    {
+      "id": 0,
+      "name": "火花术",
+      "desc": "指尖迸出一束火花，对视野内最近的敌人造成少量魔法伤害。",
+      "mp_cost": 3,
+      "cast_av": 600,
+      "range": 6,
+      "targeting": "nearest_enemy",
+      "effect": { "kind": "damage", "amount": 5 }
+    },
+    {
+      "id": 1,
+      "name": "治愈术",
+      "desc": "让伤口暂时合拢，恢复自身生命。施法期间会站在原地。",
+      "mp_cost": 6,
+      "cast_av": 600,
+      "range": 0,
+      "targeting": "self_only",
+      "effect": { "kind": "heal", "amount": 12 }
+    }
+  ]
+}

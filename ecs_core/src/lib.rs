@@ -22,6 +22,7 @@ pub mod resources;
 pub mod rules;
 pub mod schedule;
 pub mod spatial;
+pub mod spell;
 pub mod system;
 pub mod world;
 
@@ -42,6 +43,7 @@ pub use resources::*;
 pub use rules::*;
 pub use schedule::*;
 pub use spatial::*;
+pub use spell::*;
 pub use system::*;
 pub use world::*;
 

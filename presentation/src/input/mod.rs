@@ -238,6 +238,11 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                 // 那属于规则（`world::floor::descend` 会拒绝并给玩家一句话），
                 // 输入层只负责"这个键是什么意思"。
                 Key::Char('>') => InputOutcome::Command(PlayerCommand::Descend),
+                // 施法：1/2/3 对应法术书前三格（DsnE26）。生成器再查法术书/耗蓝/目标；
+                // 输入层只负责"数字键 = 第几格"。
+                Key::Char('1') => InputOutcome::Command(PlayerCommand::Cast { slot: 0 }),
+                Key::Char('2') => InputOutcome::Command(PlayerCommand::Cast { slot: 1 }),
+                Key::Char('3') => InputOutcome::Command(PlayerCommand::Cast { slot: 2 }),
                 // 背包页（R2 只读版）：e 开/关；页内 ↑/↓ 移光标。
                 Key::Char('e') => {
                     if in_overlay {

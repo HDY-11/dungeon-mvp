@@ -1216,6 +1216,19 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
             lines.push(render_api::UiTextLine::plain(format!("装备：{joined}")));
         }
     }
+    // 法术书（DsnE26）：快捷键 1/2/3 对应前三格；玩家得能看出自己会什么、要多少蓝。
+    if let Some(book) = world.get::<ecs_core::SpellBook>(player)
+        && !book.known().is_empty()
+    {
+        let joined = book
+            .known()
+            .iter()
+            .enumerate()
+            .map(|(slot, spell)| format!("{} {}({}MP)", slot + 1, spell.def().name, spell.def().mp_cost))
+            .collect::<Vec<_>>()
+            .join("  ");
+        lines.push(render_api::UiTextLine::plain(format!("法术：{joined}")));
+    }
     // 行囊载重（DsnE20）：玩家得能看出还剩多少余量，否则"捡不起来"会显得莫名其妙。
     if let Some(body) = world.get::<ecs_core::Container>(player)
         && let Some(pack) = body

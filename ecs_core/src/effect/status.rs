@@ -35,8 +35,9 @@ pub const POISON_TICK_AV: f64 = 400.0;
 /// 一共发作几次。[⃞试调]
 pub const POISON_TICKS: u32 = 3;
 
-/// 每次发作伤害。[⃞试调] 不吃防御（毒不是攻击）。
-pub const POISON_DAMAGE_PER_TICK: f64 = 3.0;
+/// 每次发作伤害。[⃞试调] 不吃防御（毒不是攻击），但**受魔法抗性影响**
+///（m08882：中毒是魔法伤害的一种；抗性上限由词表 `magic_resist` 管，0.75）。
+pub const POISON_DAMAGE_PER_TICK: f64 = 2.0;
 
 /// 中毒状态。挂在**效果实体**上（经 [`EffectOf`] 归属到受害者）。
 ///
@@ -132,7 +133,8 @@ pub fn poison_tick_system(
     clock: Res<crate::resources::WorldClock>,
     mut poisons: Query<(Entity, &mut Poison, &EffectOf)>,
     mut healths: Query<&mut Health>,
-    names: Query<&EntityName>,
+    victims: Query<(&Position, Option<&Stats>, &EntityName)>,
+    effects: crate::effect::EffectContext,
     mut event_log: ResMut<EventLog>,
 ) {
     // 按**世界时间**推进：这一轮走了多少 AV，毒就少多少 AV。
@@ -147,12 +149,29 @@ pub fn poison_tick_system(
 
         // 可能一轮跨过多个发作点（例如玩家做了一次很长的行动）。
         while poison.remaining_av <= 0.0 && poison.ticks_left > 0 {
-            let damage = poison.damage_per_tick;
+            // 毒是魔法伤害：魔法抗性按"独立乘区"折进来（m08882）。
+            // 基数来自 `Stats`，装备/状态修正走与攻击同一条求值路径；位置用于收脚下格修正。
+            let (base, collected) = victims.get(victim).map_or_else(
+                |_| (0.0, crate::effect::CollectedModifiers::default()),
+                |(position, stats, _)| {
+                    let base = stats
+                        .map(|stats| stats.get(crate::rules::StatId::MAGIC_RESIST))
+                        .unwrap_or(0.0);
+                    (base, effects.collect(victim, (position.x, position.y)))
+                },
+            );
+            let resist = crate::rules::clamp_resistance(crate::rules::apply_modifiers(
+                crate::rules::StatId::MAGIC_RESIST,
+                base,
+                &collected.actor,
+                &collected.ignored,
+            ));
+            let damage = (poison.damage_per_tick * (1.0 - resist)).max(1.0);
             if let Ok(mut health) = healths.get_mut(victim) {
                 *health = health.damage(damage);
-                let name = names
+                let name = victims
                     .get(victim)
-                    .map(|name| name.0.as_str())
+                    .map(|(_, _, name)| name.0.as_str())
                     .unwrap_or("目标");
                 event_log.push(EventMessage::combat(format!(
                     "{name} 受到 {damage:.0} 点中毒伤害"

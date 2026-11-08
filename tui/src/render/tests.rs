@@ -613,9 +613,9 @@ fn the_events_panel_scrolls_up_to_earlier_events() {
     assert!(text.contains("事件↑31"), "偏移按可见高度夹取: {text}");
 }
 
-/// 事件栏可读性（DsnE25）：等级前缀、事实/进行中分隔、聚焦时翻页提示。
+/// 事件栏可读性（DsnE25/DsnE21）：等级前缀、事实与进行中同轴、聚焦时翻页提示。
 #[test]
-fn the_events_panel_marks_levels_and_separates_running_actions() {
+fn the_events_panel_marks_levels_and_keeps_one_timeline() {
     let mut scene = base_scene();
     scene.events = vec![
         EventLine::done(LogLevel::Combat, "你对老鼠造成3点伤害"),
@@ -636,12 +636,16 @@ fn the_events_panel_marks_levels_and_separates_running_actions() {
         "战斗事件带 `*` 前缀: {text}"
     );
     assert!(text.contains("+你捡起了蘑菇"), "物品事件带 `+` 前缀");
-    let separator = text.find("----进行中----").expect("事实与进行中之间要有分隔");
+    // 事实与进行中是同一条时间轴（DsnE21），排序本身表达先后，不插分隔行。
+    assert!(
+        !text.contains("进行中"),
+        "不应再有「进行中」分隔标题: {text}"
+    );
     let running = text
         .find("哥布林举起了武器")
         .expect("进行中的行动应当可见");
     let done = text.find("你对老鼠").expect("已落定事实应当可见");
-    assert!(done < separator && separator < running, "分隔要在事实之后、进行中之前");
+    assert!(done < running, "已落定事实在上、进行中的行动在下");
     assert!(text.contains("↑↓：翻历史"), "聚焦时要有翻页提示");
 }
 

@@ -43,6 +43,18 @@ pub struct ActionSucceededEvent {
     pub entity: Entity,
 }
 
+/// 一次已确认的施法意图（DsnE26）。法力扣除与效果结算都在结算链路里，不在落地器里。
+///
+/// 与 [`AttackIntentEvent`] 同构：落地阶段只发"我要对谁放什么"，具体伤害/治疗
+/// 由 `spell::resolve_spell_system` 按规则计算——战斗公式（DsnE9）与法术公式
+/// 都不认识"落地"这件事。
+#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpellIntentEvent {
+    pub caster: Entity,
+    pub spell: crate::spell::SpellId,
+    pub target: Entity,
+}
+
 /// 行动执行失败（保活条件不再成立）。
 #[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionFailedEvent {

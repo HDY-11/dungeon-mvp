@@ -14,7 +14,7 @@ pub mod modifier;
 pub mod stat;
 pub mod vitals;
 
-pub use damage::{CritProfile, MeleeBreakdown, MeleeInput, melee};
+pub use damage::{CritProfile, MeleeBreakdown, MeleeInput, clamp_resistance, melee};
 pub use modifier::{
     EffectSource, Modifier, ModifierOp, ModifierOutcome, apply_modifiers, evaluate_modifiers, for_stat,
 };

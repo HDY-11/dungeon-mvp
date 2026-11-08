@@ -17,9 +17,10 @@ use crate::action::entity::{ActionPriority, ActionSource, ActiveAction};
 use crate::action::settle::settle_action_system;
 use crate::action::ownership::ActionOf;
 use crate::components::{ActionTimer, Active, BasicAttack, Blocks, Idle, Ready, Wait};
-use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent};
+use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent, SpellIntentEvent};
 use crate::map::Tile;
 use crate::schedule::ActionPocSchedule;
+use crate::spell::SpellId;
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
 use bevy_ecs::event::Events;
 use bevy_ecs::system::RunSystemOnce;
@@ -100,6 +101,7 @@ fn run_validators(world: &mut World) {
         (
             validate_move_system,
             validate_basic_attack_system,
+            validate_cast_system,
             validate_chase_system,
             validate_flee_system,
             validate_wander_system,
@@ -691,4 +693,70 @@ fn a_queued_action_is_never_decided_reserved_or_randomised() {
         0,
         "仍然有效的排队行动不该被取消"
     );
+}
+
+// ── 施法（DsnE26）──────────────────────────────────────
+
+/// 准备好一个"会施法"的玩家：法术书 + 视野。
+fn cast_ready_player(world: &mut World, player: Entity, visible: Vec<(usize, usize)>) {
+    world.entity_mut(player).insert((
+        SpellBook::starting(),
+        Viewshed {
+            range: 5,
+            visible_tiles: visible,
+        },
+    ));
+}
+
+#[test]
+fn cast_validation_targets_the_nearest_visible_enemy_and_settles_an_intent() {
+    let (mut world, player) = open_world();
+    cast_ready_player(&mut world, player, vec![(11, 10), (12, 10)]);
+    let near = monster_at(&mut world, (11, 10));
+    let _far = monster_at(&mut world, (12, 10));
+    let action = mount_ready(&mut world, player, CastSpell { spell: SpellId(0) });
+
+    run_validate_and_settle(&mut world);
+
+    assert_eq!(
+        world.get::<CastTarget>(action).map(|target| target.0),
+        Some(near),
+        "施法应锁定视野内最近的敌人"
+    );
+    let intents: Vec<SpellIntentEvent> = world
+        .resource_mut::<Events<SpellIntentEvent>>()
+        .drain()
+        .collect();
+    assert_eq!(intents.len(), 1, "落地阶段必须恰好发一个施法意图");
+    assert_eq!(intents[0].caster, player);
+    assert_eq!(intents[0].target, near);
+}
+
+#[test]
+fn cast_validation_fails_without_mana_and_without_a_target() {
+    let (mut world, player) = open_world();
+    cast_ready_player(&mut world, player, vec![(11, 10)]);
+    // 没蓝：连目标都不该选。
+    world.get_mut::<Mana>(player).unwrap().current = 1.0;
+    let action = mount_ready(&mut world, player, CastSpell { spell: SpellId(0) });
+    run_validate_and_settle(&mut world);
+    assert!(
+        world.get::<CastTarget>(action).is_none(),
+        "法力不足时不得定案"
+    );
+
+    // 有蓝但视野里没有敌人：同样失败。
+    world.get_mut::<Mana>(player).unwrap().current = 20.0;
+    let failed_before = world.resource::<Events<ActionFailedEvent>>().len();
+    let action2 = mount_ready(&mut world, player, CastSpell { spell: SpellId(1) });
+    // 治愈术是自施法，不需要目标；换成火花术来测"无目标"。
+    world.entity_mut(action2).remove::<CastSpell>().insert(CastSpell {
+        spell: SpellId(0),
+    });
+    run_validate_and_settle(&mut world);
+    assert!(
+        world.resource::<Events<ActionFailedEvent>>().len() > failed_before,
+        "视野里没有敌人时火花术必须失败"
+    );
+    assert!(world.get::<CastTarget>(action2).is_none());
 }
