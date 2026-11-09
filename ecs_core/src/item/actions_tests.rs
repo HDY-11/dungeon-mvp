@@ -34,10 +34,10 @@ fn pack_of(world: &World, player: Entity) -> Entity {
         .expect("玩家身上有行囊")
 }
 
-/// 往行囊里塞一件。
+/// 往行囊里塞一件（走唯一装配桥，组件与生产一致）。
 fn put_in_pack(world: &mut World, player: Entity, id: ItemId) -> (usize, Entity) {
     let pack = pack_of(world, player);
-    let item = world.spawn((Item::new(id), Amount::new(1))).id();
+    let item = spawn_item_assembled(world, id, 1);
     let mut container = world.get_mut::<Container>(pack).expect("行囊");
     let slot = container.free_slot_for(&[]).expect("空格");
     container.insert(slot, item, &[]).expect("空格");
@@ -101,7 +101,7 @@ fn unequipping_returns_to_pack_and_refuses_when_full() {
     let pack = pack_of(&world, player);
     {
         let fillers: Vec<Entity> = (0..TRAVELER_PACK.len())
-            .map(|_| world.spawn((Item::new(ItemId(29)), Amount::new(1))).id())
+            .map(|_| spawn_item_assembled(&mut world, ItemId(29), 1))
             .collect();
         let mut container = world.get_mut::<Container>(pack).expect("行囊");
         for (index, filler) in fillers.into_iter().enumerate() {
@@ -146,9 +146,7 @@ fn using_a_consumable_spends_one_and_despawns_at_zero() {
     world.get_mut::<Health>(player).unwrap().current = max - 10.0;
 
     let pack = pack_of(&world, player);
-    let mushroom = world
-        .spawn((Item::new(ItemId(25)), Amount::new(2)))
-        .id();
+    let mushroom = spawn_item_assembled(&mut world, ItemId(25), 2);
     {
         let mut container = world.get_mut::<Container>(pack).expect("行囊");
         let slot = container.free_slot_for(&[]).expect("空格");
@@ -197,7 +195,7 @@ fn wrong_targets_report_clear_errors() {
 /// 在玩家脚下放一具装着 `id` 的尸体，返回（尸体，物品）。
 fn corpse_underfoot_with(world: &mut World, player: Entity, id: ItemId) -> (Entity, Entity) {
     let at = world.get::<Position>(player).expect("玩家有位置").to_tuple();
-    let item = world.spawn((Item::new(id), Amount::new(1))).id();
+    let item = spawn_item_assembled(world, id, 1);
     let mut container = Container::new(&crate::item::CORPSE);
     container.insert(0, item, &[]).expect("尸体格子无过滤");
     let corpse = world
@@ -262,7 +260,7 @@ fn a_full_pack_keeps_the_corpse_item_in_place() {
     let pack = pack_of(&world, player);
     {
         let fillers: Vec<Entity> = (0..TRAVELER_PACK.len())
-            .map(|_| world.spawn((Item::new(ItemId(29)), Amount::new(1))).id())
+            .map(|_| spawn_item_assembled(&mut world, ItemId(29), 1))
             .collect();
         let mut container = world.get_mut::<Container>(pack).expect("行囊");
         for (index, filler) in fillers.into_iter().enumerate() {
@@ -330,7 +328,7 @@ fn multiple_corpses_underfoot_are_addressed_by_stable_index() {
 /// 往行囊前 `count` 格塞锈铁剑（每把 3.0，共 18.0），留出空槽但接近上限 20.0。
 fn fill_pack_with_swords(world: &mut World, pack: Entity, count: usize) -> Vec<Entity> {
     let swords: Vec<Entity> = (0..count)
-        .map(|_| world.spawn((Item::new(ItemId(0)), Amount::new(1))).id())
+        .map(|_| spawn_item_assembled(world, ItemId(0), 1))
         .collect();
     let mut container = world.get_mut::<Container>(pack).expect("行囊");
     for (index, sword) in swords.iter().copied().enumerate() {
@@ -400,13 +398,11 @@ fn ground_underfoot_with(
         .get::<Position>(player)
         .expect("玩家有位置")
         .to_tuple();
+    let item = spawn_item_assembled(world, id, count);
     world
-        .spawn((
-            Item::new(id),
-            Amount::new(count),
-            GroundItemAt::new(position.0, position.1),
-        ))
-        .id()
+        .entity_mut(item)
+        .insert(GroundItemAt::new(position.0, position.1));
+    item
 }
 
 /// 地面材料：拿起来进行囊，实体被搬走、不再带地面位置。

@@ -608,11 +608,10 @@ fn picking_up_the_boots_cancels_the_mud_penalty() {
     // 把一双靴子放到玩家脚下，然后显式拾取（踩上不再自动捡）→ 直接穿上。
     let player = player_entity(&world);
     let player_pos = player_pos(&world);
-    world.spawn((
-        ecs_core::GroundItemAt::new(player_pos.0, player_pos.1),
-        ecs_core::Item::new(ecs_core::ItemId(40)), // 踏水靴
-        ecs_core::Amount::new(1),
-    ));
+    let boots = ecs_core::item::spawn_item_assembled(&mut world, ecs_core::ItemId(40), 1);
+    world
+        .entity_mut(boots)
+        .insert(ecs_core::GroundItemAt::new(player_pos.0, player_pos.1));
     ecs_core::take_from_ground(&mut world, 0).expect("脚下有靴子，必须能拿起来");
 
     assert!(

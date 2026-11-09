@@ -3,6 +3,9 @@
 //! 一张数据表最怕的不是"写错一个数"，而是**表本身不完整**：漏一个 `max_stack`、
 //! 槽位写成 `None`、法力和生命的效果挂反。这些都不会报错，只会在某个玩家手里
 //! 表现为"这件装备捡不起来"或"吃了没反应"。所以这里的用例几乎都是**枚举全表**的。
+//!
+//! DsnE27 起物品由「核心字段 + `parts` 部件列表」组成，数值/行为/武器参数都是部件；
+//! 装配后组件才是运行期真相（见 `item_tests::assembly_materializes_parts_as_components`）。
 
 use super::*;
 
@@ -97,131 +100,70 @@ fn single_items_are_equipment_or_containers() {
     }
 }
 
-/// 武器必须给出攻击耗时，非武器必须不给：`weapon_speed_ms` 与"是不是主手武器"同真同假。
+/// 武器部件与 `weapon` 标签同真同假，并钉住三档攻速（GAME.md Gm7「武器攻速」）。
 #[test]
-fn only_main_hand_weapons_carry_a_swing_speed() {
+fn only_main_hand_weapons_carry_a_weapon_part() {
     for def in items() {
         let is_weapon = def.tags.contains(&crate::item::ItemTag::Weapon);
         assert_eq!(
-            def.weapon_speed_ms.is_some(),
+            def.weapon().is_some(),
             is_weapon,
-            "{}：主手武器与攻速必须同时有/同时无",
+            "{}：武器部件与 weapon 标签必须同时有/同时无",
             def.name
         );
     }
-    // 三档攻速与 GAME.md Gm7「武器攻速」一致。
-    assert_eq!(ItemId(24).def().weapon_speed_ms, Some(200.0), "匕首 200ms");
-    assert_eq!(ItemId(0).def().weapon_speed_ms, Some(300.0), "锈铁剑 300ms");
-    assert_eq!(ItemId(23).def().weapon_speed_ms, Some(450.0), "石锤 450ms");
+    assert_eq!(ItemId(24).def().weapon().unwrap().speed_ms, 200.0, "匕首 200ms");
+    assert_eq!(ItemId(0).def().weapon().unwrap().speed_ms, 300.0, "锈铁剑 300ms");
+    assert_eq!(ItemId(23).def().weapon().unwrap().speed_ms, 450.0, "石锤 450ms");
 }
 
-/// 武器必须声明力量上限，非武器必须不给：`strength_cap` 与"是不是主手武器"同真同假（DsnE24）。
-///
-/// 漏写会让力量项静默变成 0（玩家以为力量有用、实际没有）；非武器写了又会让加载器
-/// 以为它能吃力量。两个方向都在加载期挡住，这里顺带钉住三把武器的数值口径。
+/// 武器必须声明正的力量上限（DsnE24），三档口径：匕首 3 / 剑 6 / 锤 10。
 #[test]
-fn only_main_hand_weapons_carry_a_strength_cap() {
+fn weapon_parts_carry_a_positive_strength_cap() {
     for def in items() {
-        assert_eq!(
-            def.strength_cap.is_some(),
-            def.weapon_speed_ms.is_some(),
-            "{}：力量上限与武器攻速必须同时有/同时无",
-            def.name
-        );
-        if let Some(cap) = def.strength_cap {
+        if let Some(weapon) = def.weapon() {
             assert!(
-                cap.is_finite() && cap > 0.0,
+                weapon.strength_cap.is_finite() && weapon.strength_cap > 0.0,
                 "{} 的力量上限必须是正的有限数",
                 def.name
             );
         }
     }
-    // 三档：匕首吃得少、锈铁剑中等、石锤最能吃力量（Gm2 武器表）。
-    assert_eq!(ItemId(24).def().strength_cap, Some(3.0), "匕首 3");
-    assert_eq!(ItemId(0).def().strength_cap, Some(6.0), "锈铁剑 6");
-    assert_eq!(ItemId(23).def().strength_cap, Some(10.0), "石锤 10");
+    assert_eq!(ItemId(24).def().weapon().unwrap().strength_cap, 3.0, "匕首 3");
+    assert_eq!(ItemId(0).def().weapon().unwrap().strength_cap, 6.0, "锈铁剑 6");
+    assert_eq!(ItemId(23).def().weapon().unwrap().strength_cap, 10.0, "石锤 10");
 }
 
+/// 成长曲线只在武器部件里，并钉住三把武器的每级攻击口径（DsnE24 阶段 ②）。
 #[test]
-fn a_weapon_without_a_strength_cap_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
-}
-
-#[test]
-fn a_strength_cap_on_a_non_weapon_is_rejected() {
-    let json = table(&[&material(5, r#","strength_cap":3.0"#)]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
-}
-
-#[test]
-fn a_non_positive_strength_cap_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":0.0}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
-}
-
-/// 武器必须声明成长曲线，非武器必须不给（DsnE24 阶段 ②）。
-///
-/// 与力量上限同一条道理：武器漏写成长曲线 = 它永远不会升级；非武器写了又会让
-/// 装配桥挂上一条永远不会涨的经验条。两个方向都在加载期挡住，这里再钉住数值口径。
-#[test]
-fn only_main_hand_weapons_carry_a_growth_curve() {
+fn weapon_growth_curves_are_pinned() {
     for def in items() {
-        assert_eq!(
-            def.weapon_growth.is_some(),
-            def.weapon_speed_ms.is_some(),
-            "{}：成长曲线与武器攻速必须同时有/同时无",
-            def.name
-        );
-        if let Some(growth) = def.weapon_growth {
-            assert_eq!(growth.max_level, 5, "{} 的等级上限口径是 5 级", def.name);
-            assert!(growth.exp_base > 0.0, "{} 的升级基础经验必须为正", def.name);
+        if let Some(weapon) = def.weapon() {
+            assert_eq!(weapon.growth.max_level, 5, "{} 的等级上限口径是 5 级", def.name);
+            assert!(
+                weapon.growth.exp_base > 0.0,
+                "{} 的升级基础经验必须为正",
+                def.name
+            );
         }
     }
-    // 三把武器的成长参数与 GAME.md Gm7 对齐（每级攻击 / 每级力量上限 / 基础经验）。
-    assert_eq!(ItemId(0).def().weapon_growth.unwrap().attack_per_level, 1.0);
-    assert_eq!(ItemId(23).def().weapon_growth.unwrap().attack_per_level, 1.2);
-    assert_eq!(ItemId(24).def().weapon_growth.unwrap().attack_per_level, 0.8);
-}
-
-#[test]
-fn a_weapon_without_a_growth_curve_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":3.0}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("成长曲线"), "错误应提到成长曲线：{error}");
-}
-
-#[test]
-fn a_growth_curve_on_a_non_weapon_is_rejected() {
-    let json = table(&[&material(
-        5,
-        r#","weapon_growth":{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":30.0}"#,
-    )]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("成长曲线"), "错误应提到成长曲线：{error}");
-}
-
-#[test]
-fn a_non_positive_exp_base_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试短刃","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["weapon"],"weapon_speed_ms":300.0,"strength_cap":3.0,"weapon_growth":{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":0.0}}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("升级基础经验"), "错误应提到基础经验：{error}");
+    assert_eq!(
+        ItemId(0).def().weapon().unwrap().growth.attack_per_level,
+        1.0
+    );
+    assert_eq!(
+        ItemId(23).def().weapon().unwrap().growth.attack_per_level,
+        1.2
+    );
+    assert_eq!(
+        ItemId(24).def().weapon().unwrap().growth.attack_per_level,
+        0.8
+    );
 }
 
 /// 身体每个部位**都至少有一件**能穿的装备：否则玩家会遇到"这个部位永远是空的"。
 ///
-/// 这条与 `every_equippable_item_fits_exactly_one_body_slot`（正向）互补：
+/// 这条与 `every_equippable_item_fits_exactly_one_body_slot`（反向）互补：
 /// 一个防"物品穿不上"，一个防"部位没内容"。
 #[test]
 fn every_body_slot_has_something_that_fits() {
@@ -300,9 +242,6 @@ fn consumables_always_do_something() {
 }
 
 /// 数值与 GAME.md Gm7「消耗品」一致（蘑菇 +6 HP、海藻 +4 MP）。
-///
-/// 钉死具体值而不是"大于 0"：这两个数是文档里写明的，改它们必须先改文档
-/// （`docs_check.py` 保证 GAME.md 的表格与地形表一致，但管不到这里——所以由测试管）。
 #[test]
 fn consumable_values_match_the_design_doc() {
     assert_eq!(
@@ -339,9 +278,6 @@ fn items_can_be_looked_up_by_name() {
 
 /// **标签 × 身体槽位**的交叉校验（DsnE18）：每件可装备物品都至少有一个部位收得下，
 /// 而且**恰好**一个部位——多一个就说明标签写宽了（例如戒指也被头盔位接受）。
-///
-/// 这是 `ItemDef.tags` 与 `container::BODY` 两份内容表的唯一联系点：任何一边写错，
-/// 表现都是"这件装备永远穿不上"或"能穿在两个部位"，且都不会报错。
 #[test]
 fn every_equippable_item_fits_exactly_one_body_slot() {
     use crate::item::container::BODY;
@@ -371,8 +307,6 @@ fn every_equippable_item_fits_exactly_one_body_slot() {
     }
 }
 
-
-
 /// 每件物品都必须有正重量（DsnE20）：0 重会让"载重"这条规则对某些物品形同虚设。
 #[test]
 fn every_item_has_a_positive_weight() {
@@ -396,7 +330,7 @@ fn stack_weight_scales_with_count() {
     assert!((crate::item::stack_weight(ItemId(0), 1) - 3.0).abs() < 1e-6);
 }
 
-// ── 数据加载（DsnE22 阶段 ①） ──────────────────────
+// ── 数据加载（DsnE22 阶段 ① / DsnE27 部件化） ──────────────────────
 //
 // 下面这些用例喂的是**最小 JSON 片段**，不是数据文件本身：加载器的每一条校验
 // 都必须能被单独触发，否则"写错数据会报错"只是口号。
@@ -410,18 +344,35 @@ fn the_embedded_data_file_loads() {
 }
 
 /// 用最小表包一层 JSON（`items` 片段由调用方给）。
-fn table(items: &[&str]) -> String {
+fn table(items: &[String]) -> String {
     format!(
         r#"{{"schema_version":{ITEMS_SCHEMA_VERSION},"items":[{}]}}"#,
         items.join(",")
     )
 }
 
-/// 一行最小的合法材料（`extra` 用来覆盖单个字段）。
-fn material(id: u16, extra: &str) -> String {
+/// 一行最小物品；`parts` 是部件 JSON 列表的正文（空串 = `parts: []`）。
+fn item_line(id: u16, max_stack: u32, parts: &str, extra: &str) -> String {
     format!(
-        r#"{{"id":{id},"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"quality":"common","kind":{{"type":"material"}}{extra}}}"#
+        r#"{{"id":{id},"name":"测试物品","desc":"测试用","weight":1.0,"max_stack":{max_stack},"quality":"common","parts":[{parts}]{extra}}}"#
     )
+}
+
+/// 一行最小材料（没有部件）。
+fn material(id: u16, extra: &str) -> String {
+    item_line(id, 10, "", extra)
+}
+
+const GROWTH: &str = r#"{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":30.0}"#;
+
+fn weapon_part(speed: f64, cap: f32, growth: &str) -> String {
+    format!(
+        r#"{{"type":"weapon","speed_ms":{speed},"strength_cap":{cap},"growth":{growth}}}"#
+    )
+}
+
+fn behaviors(list: &str) -> String {
+    format!(r#"{{"type":"behaviors","list":[{list}]}}"#)
 }
 
 #[test]
@@ -439,53 +390,207 @@ fn an_empty_item_table_is_rejected() {
 
 #[test]
 fn duplicate_or_unsorted_item_ids_are_rejected() {
-    let json = table(&[&material(5, ""), &material(3, "")]);
+    let json = table(&[material(5, ""), material(3, "")]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("严格递增"), "错误应说明编号顺序：{error}");
 }
 
 #[test]
 fn a_non_positive_weight_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":0.0,"max_stack":10,"quality":"common","kind":{"type":"material"}}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("重量"), "错误应提到重量：{error}");
-}
-
-/// 负重量（方向与 0 相反，但走同一条校验）。
-#[test]
-fn a_negative_weight_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":-1.0,"max_stack":10,"quality":"common","kind":{"type":"material"}}"#,
-    ]);
+    let json = table(&[r#"{"id":0,"name":"测试材料","desc":"测试用","weight":0.0,"max_stack":10,"quality":"common","parts":[]}"#.to_string()]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("重量"), "错误应提到重量：{error}");
 }
 
 #[test]
 fn an_unknown_tag_is_rejected() {
-    let json = table(&[&material(0, r#","tags":["laser"]"#)]);
+    let json = table(&[material(0, r#","tags":["laser"]"#)]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("laser"), "错误应提到未知标签：{error}");
 }
 
 #[test]
-fn an_unknown_pack_layout_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"pack","layout":"chest"}}"#,
-    ]);
+fn an_unknown_part_type_is_rejected() {
+    let json = table(&[item_line(0, 1, r#"{"type":"laser"}"#, "")]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("laser"), "错误应提到未知部件类型：{error}");
+}
+
+#[test]
+fn a_part_without_a_type_is_rejected() {
+    let json = table(&[item_line(0, 1, "{}", "")]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("缺少 type") || error.contains("type"),
+        "错误应指出缺少 type：{error}"
+    );
+}
+
+#[test]
+fn a_part_with_unknown_fields_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        r#"{"type":"equippable","speed_ms":300.0}"#,
+        "",
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("unknown field") || error.contains("speed_ms"),
+        "错误应拒绝部件上的未知字段：{error}"
+    );
+}
+
+#[test]
+fn duplicate_parts_are_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        r#"{"type":"equippable"},{"type":"equippable"}"#,
+        "",
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("多个 equippable"),
+        "错误应指出重复部件：{error}"
+    );
+}
+
+#[test]
+fn an_unknown_container_layout_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        r#"{"type":"container","layout":"chest"}"#,
+        "",
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("chest"), "错误应提到未知布局：{error}");
 }
 
 #[test]
-fn equipment_and_packs_must_not_stack() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试箱子","desc":"测试用","weight":1.0,"max_stack":2,"quality":"common","kind":{"type":"pack","layout":"traveler_pack"}}"#,
-    ]);
+fn equipment_and_containers_must_not_stack() {
+    let json = table(&[item_line(
+        0,
+        2,
+        r#"{"type":"container","layout":"traveler_pack"}"#,
+        "",
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("堆叠上限"), "错误应提到堆叠上限：{error}");
+}
+
+// ── 武器部件（DsnE27） ──────────────────────────────
+
+#[test]
+fn a_weapon_part_without_an_equippable_part_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        &weapon_part(300.0, 3.0, GROWTH),
+        r#","tags":["weapon"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("equippable"),
+        "错误应指出武器必须先可装备：{error}"
+    );
+}
+
+#[test]
+fn a_weapon_without_the_weapon_tag_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        &format!(r#"{{"type":"equippable"}},{}"#, weapon_part(300.0, 3.0, GROWTH)),
+        r#","tags":["ring"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("weapon"), "错误应指出缺少 weapon 标签：{error}");
+}
+
+#[test]
+fn a_non_positive_weapon_speed_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        &format!(r#"{{"type":"equippable"}},{}"#, weapon_part(0.0, 3.0, GROWTH)),
+        r#","tags":["weapon"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("攻速"), "错误应提到攻速：{error}");
+}
+
+#[test]
+fn a_non_positive_strength_cap_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        &format!(r#"{{"type":"equippable"}},{}"#, weapon_part(300.0, 0.0, GROWTH)),
+        r#","tags":["weapon"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("力量上限"), "错误应提到力量上限：{error}");
+}
+
+#[test]
+fn a_non_positive_exp_base_is_rejected() {
+    let broken = r#"{"max_level":5,"attack_per_level":1.0,"strength_cap_per_level":0.5,"exp_base":0.0}"#;
+    let json = table(&[item_line(
+        0,
+        1,
+        &format!(
+            r#"{{"type":"equippable"}},{}"#,
+            weapon_part(300.0, 3.0, broken)
+        ),
+        r#","tags":["weapon"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("基础经验"), "错误应提到基础经验：{error}");
+}
+
+#[test]
+fn a_weapon_part_without_a_growth_curve_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        r#"{"type":"equippable"},{"type":"weapon","speed_ms":300.0,"strength_cap":3.0}"#,
+        r#","tags":["weapon"]"#,
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("growth") || error.contains("missing field"),
+        "错误应指出缺少成长曲线：{error}"
+    );
+}
+
+// ── 修正部件（DsnE27） ──────────────────────────────
+
+#[test]
+fn modifiers_require_an_equippable_part() {
+    let json = table(&[item_line(
+        0,
+        10,
+        r#"{"type":"modifiers","list":[{"stat":"attack","source":"equipment","op":"add","value":1.0}]}"#,
+        "",
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(
+        error.contains("equippable"),
+        "错误应指出修正必须挂在装备上：{error}"
+    );
+}
+
+#[test]
+fn an_empty_modifiers_part_is_rejected() {
+    let json = table(&[item_line(
+        0,
+        1,
+        r#"{"type":"equippable"},{"type":"modifiers","list":[]}"#,
+        "",
+    )]);
+    let error = load_items(&json).unwrap_err();
+    assert!(error.contains("空清单"), "错误应指出空修正清单：{error}");
 }
 
 // ── 行为数据（DsnE22 阶段 ③） ──────────────────────
@@ -496,9 +601,15 @@ fn equipment_and_packs_must_not_stack() {
 /// 行为能原样读出来：`use` + `heal`。
 #[test]
 fn behaviors_are_loaded_with_their_trigger_and_effects() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]}"#,
-    ]);
+    let json = table(&[item_line(
+        0,
+        5,
+        &format!(
+            r#"{{"type":"consumable"}},{}"#,
+            behaviors(r#"{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}"#)
+        ),
+        "",
+    )]);
     let defs = load_items(&json).expect("合法的行为数据必须能加载");
     assert_eq!(
         defs[0].use_effects().collect::<Vec<_>>(),
@@ -509,27 +620,33 @@ fn behaviors_are_loaded_with_their_trigger_and_effects() {
 
 #[test]
 fn a_consumable_without_a_use_behavior_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"}}"#,
-    ]);
+    let json = table(&[item_line(0, 5, r#"{"type":"consumable"}"#, "")]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("use 行为"), "错误应提到缺少 use 行为：{error}");
 }
 
 #[test]
 fn an_empty_behavior_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[]}]}"#,
-    ]);
+    let json = table(&[item_line(
+        0,
+        5,
+        &format!(
+            r#"{{"type":"consumable"}},{}"#,
+            behaviors(r#"{"trigger":"use","effects":[]}"#)
+        ),
+        "",
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("空行为"), "错误应提到空行为：{error}");
 }
 
 #[test]
 fn a_use_behavior_on_a_non_consumable_is_rejected() {
-    let json = table(&[&material(
+    let json = table(&[item_line(
         0,
-        r#","behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}]"#,
+        10,
+        &behaviors(r#"{"trigger":"use","effects":[{"type":"heal","amount":2.0}]}"#),
+        "",
     )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("不是消耗品"), "错误应指出种类不符：{error}");
@@ -537,9 +654,11 @@ fn a_use_behavior_on_a_non_consumable_is_rejected() {
 
 #[test]
 fn an_equipped_behavior_on_a_non_equipment_is_rejected() {
-    let json = table(&[&material(
+    let json = table(&[item_line(
         0,
-        r#","behaviors":[{"trigger":"equipped","effects":[{"type":"ignore_source","source":"terrain"}]}]"#,
+        10,
+        &behaviors(r#"{"trigger":"equipped","effects":[{"type":"ignore_source","source":"terrain"}]}"#),
+        "",
     )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("不是装备"), "错误应指出种类不符：{error}");
@@ -547,65 +666,53 @@ fn an_equipped_behavior_on_a_non_equipment_is_rejected() {
 
 #[test]
 fn an_unknown_behavior_trigger_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"on_hit","effects":[]}]}"#,
-    ]);
+    let json = table(&[item_line(
+        0,
+        5,
+        &format!(
+            r#"{{"type":"consumable"}},{}"#,
+            behaviors(r#"{"trigger":"on_hit","effects":[]}"#)
+        ),
+        "",
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("on_hit"), "错误应提到未知触发：{error}");
 }
 
 #[test]
 fn a_heal_amount_must_be_positive() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试药","desc":"测试用","weight":1.0,"max_stack":5,"quality":"common","kind":{"type":"consumable"},"behaviors":[{"trigger":"use","effects":[{"type":"heal","amount":0.0}]}]}"#,
-    ]);
+    let json = table(&[item_line(
+        0,
+        5,
+        &format!(
+            r#"{{"type":"consumable"}},{}"#,
+            behaviors(r#"{"trigger":"use","effects":[{"type":"heal","amount":0.0}]}"#)
+        ),
+        "",
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("消耗效果"), "错误应提到消耗效果：{error}");
 }
 
 #[test]
 fn an_equipped_behavior_cannot_heal() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试护符","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","kind":{"type":"equipment"},"tags":["ring"],"behaviors":[{"trigger":"equipped","effects":[{"type":"heal","amount":2.0}]}]}"#,
-    ]);
+    let json = table(&[item_line(
+        0,
+        1,
+        &format!(
+            r#"{{"type":"equippable"}},{}"#,
+            behaviors(r#"{"trigger":"equipped","effects":[{"type":"heal","amount":2.0}]}"#)
+        ),
+        r#","tags":["ring"]"#,
+    )]);
     let error = load_items(&json).unwrap_err();
     assert!(error.contains("不支持回复"), "错误应指出效果不配对：{error}");
 }
 
 #[test]
-fn only_equipment_declares_a_positive_durability() {
-    let sword = ItemId(0).def();
-    assert_eq!(sword.durability_max, Some(40.0), "锈铁剑应该有耐久上限");
-    assert_eq!(ItemId(25).def().durability_max, None, "蘑菇没有耐久");
-
-    for def in items() {
-        if let Some(max) = def.durability_max {
-            assert!(def.is_equipment(), "{} 不是装备却声明了耐久", def.name);
-            assert!(max.is_finite() && max > 0.0, "{} 的耐久上限必须为正", def.name);
-        }
-    }
-}
-
-#[test]
-fn a_non_positive_durability_is_rejected() {
-    let json = table(&[
-        r#"{"id":0,"name":"测试装备","desc":"测试用","weight":1.0,"max_stack":1,"quality":"common","durability_max":0.0,"kind":{"type":"equipment"}}"#,
-    ]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("耐久"), "错误应提到耐久：{error}");
-}
-
-#[test]
-fn a_durability_on_a_non_equipment_is_rejected() {
-    let json = table(&[&material(5, r#","durability_max":10.0"#)]);
-    let error = load_items(&json).unwrap_err();
-    assert!(error.contains("耐久"), "错误应提到耐久：{error}");
-}
-
-#[test]
 fn an_unknown_quality_is_rejected() {
     let json = table(&[
-        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"quality":"mythic","kind":{"type":"material"}}"#,
+        r#"{"id":0,"name":"测试材料","desc":"测试用","weight":1.0,"max_stack":10,"quality":"mythic","parts":[]}"#.to_string(),
     ]);
     let error = load_items(&json).unwrap_err();
     assert!(

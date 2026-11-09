@@ -1,21 +1,22 @@
-//! 存档 V4 的集成测试（DsnE19 / DsnE22 阶段 ④ / DsnE23 / DsnE24 阶段 ②）。
+//! 存档 V5 的集成测试（DsnE19 / DsnE22 阶段 ④ / DsnE23 / DsnE24 阶段 ② / DsnE27）。
 //!
-//! 覆盖：投影 roundtrip（数值 + 身体槽 + 行囊嵌套物品 + 实例耐久 + 武器养成进度）、
+//! 覆盖：投影 roundtrip（数值 + 身体槽 + 行囊嵌套物品 + 武器养成进度）、
 //! 楼层重建、版本/文件/损坏/物品数据版本四类错误、模板装配与存档装配的一致性，以及
 //! F5/F9 经 `App::handle` 的端到端接线。V3 起只存 `health/mana` 的 current，上限读档时
-//! 按等级曲线重算（DsnE23）；V4 起武器的等级/经验也作为实例差异进档。
+//! 按等级曲线重算（DsnE23）；V4 起武器的等级/经验也作为实例差异进档；
+//! V5 删除耐久实例差异（DsnE27），物品 schema 升到 8。
 
 use std::path::PathBuf;
 
 use bevy_ecs::prelude::*;
 use dungeon_app::App;
 use dungeon_app::save::{
-    self, ExpSave, ItemOverrides, ItemSave, PlayerSave, SaveError, SaveV4, WeaponSave,
+    self, ExpSave, ItemOverrides, ItemSave, PlayerSave, SaveError, SaveV5, WeaponSave,
 };
 use ecs_core::{
-    Amount, BODY, Container, Durability, Experience, FloorNumber, Health, ITEMS_SCHEMA_VERSION,
-    Item, ItemId, ItemTag, Level, Mana, MagicMastery, Map, Monster, Pool, Position, Stairs,
-    WeaponProgress, hp_curve, mp_curve, spawn_item_assembled,
+    Amount, BODY, Container, Experience, FloorNumber, Health, ITEMS_SCHEMA_VERSION, Item, ItemId,
+    ItemTag, Level, MagicMastery, Mana, Map, Monster, Pool, Position, Stairs, WeaponProgress,
+    hp_curve, mp_curve, spawn_item_assembled,
 };
 use render_api::{InputEvent, Key, KeyEvent};
 
@@ -34,7 +35,7 @@ fn body_slot_for(tag: ItemTag) -> usize {
         .expect("身体必须有能接受该标签的槽位")
 }
 
-/// 直接造一个物品实体（测试里绕过 `Commands`）：走蓝图装配，耐久等实例组件自动带上。
+/// 直接造一个物品实体（测试里绕过 `Commands`）：走蓝图装配，实例组件自动带上。
 fn spawn_item(world: &mut World, id: u16, count: u32) -> Entity {
     spawn_item_assembled(world, ItemId(id), count)
 }
@@ -68,12 +69,7 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
             .expect("玩家有身体容器")
             .insert(main_hand, sword, ItemId(0).def().tags)
             .expect("主手槽接受武器");
-        // 实例数据：剑的耐久磨到 17（蓝图满值是 40）、养成到 3 级 12.5 经验，
-        // 存档要记住这两个差异。
-        world
-            .get_mut::<Durability>(sword)
-            .expect("蓝图带耐久的物品装配时应有 Durability")
-            .current = 17.0;
+        // 实例数据：剑养成到 3 级 12.5 经验（模板装配是 1 级 0 经验），存档要记住。
         {
             let mut progress = world
                 .get_mut::<WeaponProgress>(sword)
@@ -119,8 +115,6 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
         .slot(body_slot_for(ItemTag::Weapon))
         .expect("主手槽里还有剑");
     assert_eq!(world.get::<Item>(sword).unwrap().id, ItemId(0));
-    let durability = world.get::<Durability>(sword).expect("读档后剑仍有耐久");
-    assert_eq!((durability.current, durability.max), (17.0, 40.0));
     let progress = world
         .get::<WeaponProgress>(sword)
         .expect("读档后剑仍有养成进度");
@@ -133,10 +127,6 @@ fn a_save_round_trip_restores_the_player_and_the_container_tree() {
     let mushroom = pack.slot(0).expect("行囊第 0 格里有蘑菇");
     assert_eq!(world.get::<Item>(mushroom).unwrap().id, ItemId(25));
     assert_eq!(world.get::<Amount>(mushroom).unwrap().0, 3);
-    assert!(
-        world.get::<Durability>(mushroom).is_none(),
-        "蘑菇没有耐久这回事"
-    );
 }
 
 #[test]
@@ -173,7 +163,7 @@ fn a_save_on_a_lower_floor_rebuilds_the_same_floor() {
 
 #[test]
 fn an_unknown_version_in_the_file_header_is_rejected() {
-    let save = SaveV4 {
+    let save = SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -238,7 +228,7 @@ fn an_unknown_item_id_in_the_save_is_reported_as_corrupt() {
         overrides: ItemOverrides::default(),
         slots: None,
     });
-    let save = SaveV4 {
+    let save = SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -302,7 +292,7 @@ fn an_old_v1_file_is_rejected_by_the_header_version() {
 
 #[test]
 fn a_save_with_a_different_items_schema_is_rejected() {
-    let save = SaveV4 {
+    let save = SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION + 1,
         map_seed: 1,
         floor: 1,
@@ -345,7 +335,7 @@ fn template_assembly_matches_save_assembly_when_there_are_no_overrides() {
         slots: None,
     });
 
-    let save = SaveV4 {
+    let save = SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,
@@ -369,17 +359,6 @@ fn template_assembly_matches_save_assembly_when_there_are_no_overrides() {
         .expect("主手有剑");
     let fresh = spawn_item_assembled(&mut world, ItemId(0), 1);
 
-    let restored_durability = world.get::<Durability>(restored).expect("存档装配带耐久");
-    let fresh_durability = world.get::<Durability>(fresh).expect("模板装配带耐久");
-    assert_eq!(
-        restored_durability, fresh_durability,
-        "没有实例差异时，存档装配必须与模板装配完全一致"
-    );
-    assert_eq!(
-        (restored_durability.current, restored_durability.max),
-        (40.0, 40.0)
-    );
-
     let restored_progress = world
         .get::<WeaponProgress>(restored)
         .expect("存档装配带养成进度");
@@ -401,7 +380,6 @@ fn an_illegal_weapon_progress_in_the_save_is_rejected() {
         id: 0,
         count: 1,
         overrides: ItemOverrides {
-            durability: None,
             // 锈铁剑的成长曲线最多 5 级；9 级是损坏的存档。
             weapon: Some(WeaponSave {
                 level: 9,
@@ -410,7 +388,7 @@ fn an_illegal_weapon_progress_in_the_save_is_rejected() {
         },
         slots: None,
     });
-    let save = SaveV4 {
+    let save = SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: 1,
         floor: 1,

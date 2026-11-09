@@ -60,9 +60,10 @@
 | M22 | **设计补齐：审计后修掉的三处缺口**（1）事件栏滚动（DsnE21 决策 4 / DsnA6）：`PageStack.events_scroll` + `UiIntent::ScrollEvents`、`SceneFrame.events_scroll`（契约 8）、tui 按偏移裁窗口并在标题标 `↑N`；（2）同格多具尸体分组（DsnE21 决策 7）：`take_from_corpse(world, corpse, slot)` 按实体编号升序取下标，背包「尸体」页签每具一个不可操作标题行；（3）`take_from_ground` 拆堆改走唯一装配桥 `spawn_item_assembled`，不再手工拼物品实体。同时同步 DsnE16/17/18 的陈旧状态段与代价段 | DsnE21 / DsnA6 / DsnE22 / DsnE16 / DsnE17 / DsnE18 / Gm7 / Gm14 | 本次提交 |
 | M23 | **资源回复与开局节奏 + 界面可读性（DsnE25）**：`ManaRegen` 运行时进度 + `mana_regen_system`（每累计 600AV 回 1 点；满池清零不攒、死亡不回、零头保留）；升级改为 `apply_maxima(..., false)`——只重算上限、不回满；新格子效果 `CellHeal` + `heal_spring_system`（踩上 +12、满血不消耗、用完销毁；每层 1 个、距出生点 4–10 格、避开出生点/楼梯/泥潭）；首层怪物数量 `monster_count_range` 改为 4–6（F1）；数值常量集中 `balance.rs`；tui 移除 Debug 面板、事件栏加等级前缀/进行中分隔/聚焦提示、信息栏补类型/血量条/距离；治疗泉 `VisualKey::Effect(1)` 外观 | DsnE25 / DsnE23 / DsnE21 / DsnA4 / Gm3 / Gm4 / Gm10 / Gm14 | 本次提交 |
 | M24 | **法术（DsnE26）+ 开局数值修订 + 事件栏统一时间轴**：（1）法术数据 `assets/spells.json` schema 1（火花术 3MP/600AV/射程 6/最近可见敌人/伤害 5；治愈术 6MP/自身/治疗 12），启动校验与物品注册表同策略，`SpellBook` 初始两格不存档；（2）施法是一个行动：`PlayerCommand::Cast{slot}` → 生成期查书/蓝/目标 → `CastSpell` 行动（固定 600 AV）→ `validate_cast_system` 保活并到点重选目标（写 `CastTarget`）→ `settle` 发 `SpellIntentEvent` → 结算链 `resolve_spell_system` 扣蓝结算（伤害 `max(1,(5+精通)×(1−魔法抗性))`、治疗 `12+精通`，伤害不吃护甲）；输入 `1/2/3`、HUD 法术行、日志前缀 `~`；（3）数值修订（m08882）：`hp_curve` 基数 40→80（Lv1 80）、`MANA_REGEN_AV` 600→10000、毒每次 3→2 且受魔法抗性（`max(1, 2×(1−抗性))`）；（4）事件栏删 `---- 进行中 ----` 分隔行，已落定与进行中共用一条时间轴（DsnE21 统一语义） | DsnE26 / DsnE24 / DsnE25 / DsnE21 / DsnE23 / Gm2 / Gm4 / Gm5 / Gm14 / Gm15 | 本次提交 |
+| M25 | **物品部件化与组件化（DsnE27）**：`items.json` schema 8 改为「核心字段 + `parts`」部件列表（`equippable`/`consumable`/`weapon`/`container`/`modifiers`/`behaviors`），加载器逐部件强类型解析 + 跨部件校验；装配后组件是运行期真相（`Equippable`/`Consumable`/`Weapon`/`Container`/`Modifiers`/`Behaviors`，实例 `WeaponProgress`），规则/详情改读组件；`ItemKind` 退役、类别走 tags；删除耐久（字段/组件/装配/存档 overrides/详情/测试）；存档 V5（`SaveV5`、`ItemOverrides { weapon }`、旧 V1–V4 拒绝），测试夹具统一走唯一装配桥 | DsnE27 / DsnE22 / DsnE16 / DsnE18 / DsnE19 / DsnE24 / Gm7 / Gm13 | 本次提交 |
 
-**当前基线（实测）：** `cargo test -p ecs_core` **334 passed**；`cargo test --workspace`
-29 目标 **623 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（本轮已复跑）。
+**当前基线（实测）：** `cargo test -p ecs_core` **336 passed**；`cargo test --workspace`
+29 目标 **625 passed / 0 failed / 1 ignored**；`scripts/gate.ps1` 10 步全绿（本轮已复跑）。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
 级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；

@@ -672,38 +672,44 @@ fn item_detail(
         "重量：{:.1}",
         ecs_core::stack_weight(def.id, amount)
     )));
-    // 实例数据（DsnE22 阶段 ④）：耐久是实体上的稀疏组件，不是蓝图字段。
-    if let Some(durability) = world.get::<ecs_core::Durability>(occupant) {
-        detail.push_line(UiTextLine::plain(format!(
-            "耐久：{:.0}/{:.0}",
-            durability.current, durability.max
-        )));
+    // 类型与静态数据：部件列表是蓝图真相（DsnE27），实例数值优先读装配后的组件。
+    let mut kind_shown = false;
+    if def.is_equipment() {
+        detail.push_line(UiTextLine::plain("类型：装备"));
+        kind_shown = true;
+        if let Some(weapon) = def.weapon() {
+            detail.push_line(UiTextLine::plain(format!(
+                "主手攻速：{:.0}ms",
+                weapon.speed_ms
+            )));
+        }
+        let modifiers = world
+            .get::<ecs_core::Modifiers>(occupant)
+            .map(|modifiers| modifiers.0.as_slice())
+            .unwrap_or_else(|| def.modifiers());
+        for modifier in modifiers {
+            detail.push_line(UiTextLine::plain(modifier.describe()));
+        }
+        let ignores: Vec<&str> = def.ignored_sources().map(|source| source.label()).collect();
+        if !ignores.is_empty() {
+            detail.push_line(UiTextLine::plain(format!("无视：{}", ignores.join("、"))));
+        }
     }
-
-    match def.kind {
-        ecs_core::ItemKind::Equipment { modifiers } => {
-            detail.push_line(UiTextLine::plain("类型：装备"));
-            if let Some(ms) = def.weapon_speed_ms {
-                detail.push_line(UiTextLine::plain(format!("主手攻速：{ms:.0}ms")));
-            }
-            for modifier in modifiers {
-                detail.push_line(UiTextLine::plain(modifier.describe()));
-            }
-            let ignores: Vec<&str> = def.ignored_sources().map(|source| source.label()).collect();
-            if !ignores.is_empty() {
-                detail.push_line(UiTextLine::plain(format!("无视：{}", ignores.join("、"))));
-            }
-        }
-        ecs_core::ItemKind::Consumable => {
-            let effects: Vec<String> = def.use_effects().map(|effect| effect.describe()).collect();
-            detail.push_line(UiTextLine::plain(format!("使用：{}", effects.join("、"))));
-        }
-        ecs_core::ItemKind::Material => {
-            detail.push_line(UiTextLine::plain("材料：合成原料"));
-        }
-        ecs_core::ItemKind::Pack(layout) => {
-            detail.push_line(UiTextLine::plain(format!("容器：{} 格", layout.len())));
-        }
+    if def.is_consumable() {
+        detail.push_line(UiTextLine::plain("类型：消耗品"));
+        kind_shown = true;
+        let effects: Vec<String> = def.use_effects().map(|effect| effect.describe()).collect();
+        detail.push_line(UiTextLine::plain(format!("使用：{}", effects.join("、"))));
+    }
+    if let Some(layout) = def.container_def() {
+        detail.push_line(UiTextLine::plain(format!(
+            "类型：容器（{} 格）",
+            layout.len()
+        )));
+        kind_shown = true;
+    }
+    if !kind_shown {
+        detail.push_line(UiTextLine::plain("类型：材料"));
     }
 
     let body = world.get::<ecs_core::Container>(player)?;

@@ -40,15 +40,13 @@ fn open_world() -> (World, Entity) {
     (world, player)
 }
 
-/// 在某一格放一堆物品。
+/// 在某一格放一堆物品（走唯一装配桥，组件与生产一致）。
 fn place(world: &mut World, pos: (usize, usize), id: ItemId, count: u32) -> Entity {
+    let entity = spawn_item_assembled(world, id, count);
     world
-        .spawn((
-            Item::new(id),
-            Amount::new(count),
-            GroundItemAt::new(pos.0, pos.1),
-        ))
-        .id()
+        .entity_mut(entity)
+        .insert(GroundItemAt::new(pos.0, pos.1));
+    entity
 }
 
 /// 显式拾取一次：拿脚下第 0 件（旧测试的"踩上自动捡"已改成动作调用）。
@@ -676,14 +674,28 @@ fn every_item_is_either_on_the_ground_or_in_a_container() {
 }
 
 #[test]
-fn durable_items_are_assembled_at_full_durability() {
+fn assembly_materializes_parts_as_components() {
     let mut world = World::new();
     let sword = spawn_item_assembled(&mut world, ItemId(0), 1);
-    let durability = *world.get::<Durability>(sword).expect("剑的蓝图声明了耐久");
-    assert_eq!((durability.current, durability.max), (40.0, 40.0));
+    assert!(world.get::<Equippable>(sword).is_some(), "剑是可装备物品");
+    assert!(world.get::<Weapon>(sword).is_some(), "剑是主手武器");
+    assert!(
+        world.get::<Modifiers>(sword).is_some(),
+        "剑的 +3 攻击应装配成组件"
+    );
 
     let mushroom = spawn_item_assembled(&mut world, ItemId(25), 3);
-    assert!(world.get::<Durability>(mushroom).is_none(), "蘑菇没有耐久");
+    assert!(world.get::<Consumable>(mushroom).is_some());
+    assert!(world.get::<Behaviors>(mushroom).is_some(), "蘑菇带 use 行为");
+    assert!(world.get::<Equippable>(mushroom).is_none(), "蘑菇不是装备");
+
+    let pack = spawn_item_assembled(&mut world, ItemId(41), 1);
+    assert!(world.get::<Container>(pack).is_some(), "行囊自带容器");
+
+    let material = spawn_item_assembled(&mut world, ItemId(10), 2);
+    assert!(world.get::<Equippable>(material).is_none());
+    assert!(world.get::<Modifiers>(material).is_none());
+    assert!(world.get::<Behaviors>(material).is_none());
 }
 
 #[test]
@@ -704,7 +716,11 @@ fn weapons_are_assembled_at_level_one_with_no_experience() {
 
 #[test]
 fn weapon_experience_levels_up_across_the_curved_threshold_and_caps() {
-    let growth = ItemId(0).def().weapon_growth.expect("锈铁剑有成长曲线");
+    let growth = ItemId(0)
+        .def()
+        .weapon()
+        .expect("锈铁剑有武器部件")
+        .growth;
     let mut progress = WeaponProgress::new();
 
     // 差一点不升。

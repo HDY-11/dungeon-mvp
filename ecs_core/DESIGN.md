@@ -26,7 +26,7 @@
 | 移动与写入权 | DsnE14 · DsnE15 |
 | 行动系统 | DsnE4（已并入）· DsnE8 · DsnE9 |
 | 规则与效果 | DsnE10 · DsnE11 · DsnE12 |
-| 物品与装备 | DsnE16 · DsnE18 · DsnE20 · DsnE22 |
+| 物品与装备 | DsnE16 · DsnE18 · DsnE20 · DsnE22 · DsnE27 |
 | 生命/法力与品质 | DsnE23 |
 | 战斗与武器成长 | DsnE24 |
 | 资源回复与开局节奏 | DsnE25 |
@@ -1098,7 +1098,7 @@ DsnE22 ②a 把词表从封闭枚举改成了运行时词表（`STATS` / `StatId
 **关联：** GAME.md Gm4 / Gm7 | DsnE10（求值五步，第 ④ 步补 `Stat`）| DsnE12 / ECS42（两条归属关系）|
 DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗时）| DsnE18 / DsnE20 / DsnE22 / DsnE23 | `LECS22`
 
-**状态：** 已定 — 规则层**已落地**（注册表/堆叠/容器/装备/掉落/消耗品/行为数据/耐久）。
+**状态：** 已定 — 规则层**已落地**（注册表/堆叠/容器/装备/掉落/消耗品/行为数据/武器成长）。
 **未落地**：合成（模板碎片）、技能与卷轴（H10）。
 <!-- &/DsnE16 -->
 ---
@@ -1160,7 +1160,7 @@ DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗�
 **用户提出的方向（原话要点）**
 
 - 物品**很少直接掉到地上**；**尸体算容器**；箱子等多种容器。
-- 物品一定会需要**自己的数据**（耐久/附魔…）；**物品实体化不算问题**。
+- 物品一定会需要**自己的数据**（附魔/充能…）；**物品实体化不算问题**。
 - **身体（Body）就是一种背包**：固定槽位（头、胸…），每个部位只接受**带对应过滤的**物品，
   一个部位只放一件，放进去之后该槽位「满」。
 - 行囊（如「旅者行囊」）也是背包，只是**没有过滤**，满时挂 `Full`。
@@ -1171,7 +1171,7 @@ DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗�
 | 概念 | 载体 | 判据 |
 |---|---|---|
 | 物品定义 | 静态表 `ItemDef`（已有） | 数据；无中央分派 |
-| 物品实例 | **实体** + `Item { id }` + 0..n 个实例数据组件（如 `Durability`） | 需要身份与实例态，且要被容器引用 |
+| 物品实例 | **实体** + `Item { id }` + 0..n 个实例数据组件（如 `WeaponProgress`） | 需要身份与实例态，且要被容器引用 |
 | 容器布局（几个槽、各接什么） | 静态 `ContainerDef { slots: &'static [SlotDef] }` | 内容：同类容器的布局相同 |
 | 容器当前内容 | 组件 `Container { def, slots: Vec<Option<Entity>> }` | 运行时状态；不占格、不进渲染抽取 |
 | 槽位过滤 | `ItemDef.tags` ∩ `SlotDef.accept` ≠ ∅ | 两侧必须共享同一份词汇 |
@@ -1180,7 +1180,7 @@ DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗�
 **评估**
 
 1. **物品实体化 —— 采纳。** 地面物品已经是实体，行囊是唯一还在用数据堆（`ItemStack{id,count}`）的地方。
-   实例数据用**组件**表达（`Durability { current, max }`），不需要一个 `ItemData` 大结构：
+   实例数据用**组件**表达（`WeaponProgress { level, exp }`），不需要一个 `ItemData` 大结构：
    这是 ECS 的自然答案，代价只是存档时"要枚举哪些实例组件入档"（教程 ch11 的 `serialize_individually!`
    就是这件事）。**结论：把行囊从数据改成容器装实体，是这条方向的前提，不能只改一半**
    —— 否则"物品"有两种表示，其中一种（数据堆）无法携带实例数据。
@@ -1248,8 +1248,8 @@ DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗�
 **状态：** 已定 — 三片全部落地：
 ① 词汇 + 容器骨架 + 身体/行囊（含装备统一，退役 `EquippedBy`）；
 ② 尸体容器与（显式）搜刮；
-③ 实例数据与存档投影 —— 由 DsnE22 阶段 ④ 接替实现（耐久实例 + 武器成长 `WeaponProgress`，
-   存档升到 V2 → V4，见 DsnE19）。箱类容器（放置/打开）仍未做。
+③ 实例数据与存档投影 —— 由 DsnE22 阶段 ④ 接替实现（武器成长 `WeaponProgress`；耐久实例
+   按 DsnE27 删除），存档升到 V5（见 DsnE19）。箱类容器（放置/打开）仍未做。
 
 **关联：** DsnE16（物品规则层现状）| DsnE13（身份判据：索引还是实体）| DsnE12 / ECS42（两条归属关系）|
 DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家容器树"）| `ecs_core/RESEARCH-item-systems.md`
@@ -1269,7 +1269,7 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
   `r` 使用消耗品、`d` 丢弃到脚下。核心动作在 `item::actions`（6 条用例：装、交换、卸下被拒、
   丢弃落地、使用消耗、三类错误），应用层再用一条端到端用例把「按键 → 页栈 → 世界动作」串起来。
   这些动作**不消耗回合**（换装不是行动）；将来若要耗时，是加一次世界推进而不是塞进行动链路。
-- **仍未做**：实例数据（耐久等）——由 DsnE22 阶段 ④ 完成（`durability_max` + `Durability` 实例组件）。
+- **实例数据**：由 DsnE22 阶段 ④ 完成（`WeaponProgress`）；耐久按 DsnE27 删除。
   **落地记录（2026-11，第②片，尸体容器）：**
 - **尸体 = 容器 + 世界对象**：`Corpse { kind, name }`（`monster` 模块）+ `Container::new(&CORPSE)`（4 个无过滤格），
   带 `Position`、**不带 `Blocks`**（不挡路）；渲染用独立外观 `VisualKey::Corpse`（`%` 灰色，契约 V2）、
@@ -1286,8 +1286,8 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 - **仍未做**：箱类容器（等放置/交互）；实例数据已由 DsnE22 阶段 ④ 完成。
 <!-- &/DsnE18 -->
 
-<!-- &DsnE19  存档 V4：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/物品实例差异（耐久、武器等级经验）/当前生命法力；F5/F9 -->
-### DsnE19 存档 V4：投影式快照（seed + floor + 玩家容器树 + 物品实例差异 + 当前生命法力）
+<!-- &DsnE19  存档 V5：bincode 完整快照 + 手写投影；只存 seed/floor/玩家状态/容器树/武器养成进度/当前生命法力；F5/F9 -->
+### DsnE19 存档 V5：投影式快照（seed + floor + 玩家容器树 + 武器养成进度 + 当前生命法力）
 
 **决策**
 
@@ -1300,11 +1300,11 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 
    ```text
    文件头（8 字节）：magic b"DNSV" + 版本 u32（小端）
-   载荷：bincode(SaveV4)
-   SaveV4 { items_schema, map_seed, floor, player: PlayerSave }
+   载荷：bincode(SaveV5)
+   SaveV5 { items_schema, map_seed, floor, player: PlayerSave }
    PlayerSave { x, y, level, experience, health, mana, magic_mastery, body: [Option<ItemSave>] }  // health/mana 只存 current
    ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> } // 容器树递归
-   ItemOverrides { durability: Option<f32>, weapon: Option<WeaponSave> }
+   ItemOverrides { weapon: Option<WeaponSave> }
    WeaponSave { level, exp }                   // 武器养成进度（DsnE24 阶段 ②）
    ```
 
@@ -1321,8 +1321,8 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    （已杀的怪物会回来、已捡走的地面物品会重刷）；想要"保留中途进度"得等 V2 的地面/怪物差异段。
    另有两个有意的取舍：**不存 `GameRng`**（读档后随机流从该层开局重来，与"一直玩下去"会分叉，
    这也是"进层检查点"比"随时存档"更自然的另一个理由）。
-   V2 只补存"玩家造成的物品实例差异"（目前是耐久当前值与武器等级/经验），地面物品与怪物
-   差异仍然不入档。
+   V2 只补存"玩家造成的物品实例差异"（当时是耐久当前值与武器等级/经验）；V5（DsnE27）按
+   用户要求删除耐久实例，只剩武器等级/经验。地面物品与怪物差异仍然不入档。
    V3（DsnE23）起**生命/法力只存 current、不存上限**：上限是"等级曲线 + 装备修正"的派生
    数据，读档时按当前规则重算——否则改公式后旧档会带着旧上限继续跑，出现"同一件装备两个
    上限"。这条替代了 V2 的"上限按值存"取舍。
@@ -1338,13 +1338,13 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
    `describe()`，统一写 `EventLog`。失败静默 = 玩家以为存上了。
 7. **死亡状态不可存。** `game_over` 时拒绝存档，避免存出"读档即死"的档。
 
-**状态：** 实现（V4）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV4`；手写投影、
-`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides { durability, weapon }`；
+**状态：** 实现（V5）。落地：`src/save.rs`（文件头 magic + 版本，载荷 `SaveV5`；手写投影、
+`restore_to_world` 复用 `rebuild_floor`；物品实例差异 = `ItemOverrides { weapon }`；
 玩家 `health/mana` 只存 current，读档按 DsnE23 的单一上限公式重算后夹取）、统一装配桥
 `spawn_item_assembled` 同时服务系统与读档（武器装配自动带 1 级 0 经验，读档再套等级/经验，
 不合法进度报 `Corrupt`）、`App` 的 F5/F9 接线、`tests/save_test.rs`
 11 条（roundtrip / 楼层重建 / 版本头 / 物品数据版本 / magic / 未知编号 / 缺文件 /
-非法养成进度 / F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 4`；旧 V1/V2/V3
+非法养成进度 / F5-F9 端到端 / 模板装配 == 存档装配）。`SAVE_VERSION = 5`；旧 V1–V4
 文件被版本头直接拒绝，`items_schema` 不一致报 `ContentVersion`（MVP 不迁移，DsnE22 已拍板第 3 条）。
 **关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
 DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）| DsnE22 阶段 ④（实例差异形状）|
@@ -1515,13 +1515,15 @@ Bedrock 的 item components JSON 验证"配置只描述"。实现技术（DFU Co
 2. **动态性放在数据与实例，不放在 Rust 类型上。** 不做运行时注册的组件类型
    （那需要反射，且系统查询依旧静态）；加属性、加效果 = 改数据；加全新组件
    语义 = 加代码，并在数据里留 id 占位。
-3. **属性用动态词表 + 稠密组件，不做"每属性一个组件"。**
-   `StatId(u16)` + `StatRegistry`（`StatDef { key, label, default, min, max }`）；
-   物品实体挂稳定的 `Stats`（按 StatId 稠密存放基础值）与
-   `Modifiers(Vec<Modifier { stat, op: Add | MulBase | MulTotal, value }>)`。
-   `ItemKind` 枚举退役，换成 `Traits(Vec<TraitId>)` + 结构组件（Container 等）。
-   理由：`Query<&AttackBonus>` 式写法会让每加一个属性都改代码，且每个物品的
-   archetype 数量爆炸。
+3. **属性分三类，不按属性拆组件。** 通用判定字段（名字/描述/重量/堆叠/品质/标签）
+   留在蓝图核心；**数值属性**（攻防/速度/暴击/抗性等可聚合项）走 `StatId` 词表 +
+   `Modifier`，不按属性拆组件——`Query<&AttackBonus>` 式写法会让每加一个属性改代码，
+   且每个物品的 archetype 数量爆炸；**语义特征**（容器、武器、施法工具、消耗行为等）
+   用稀疏组件 / 声明式行为表达，装配时按蓝图挂上，物品实体只带它用得到的组件。
+   当前实现与这条的差距：物品实体不挂 `Stats`，数值修正仍存在蓝图 `Modifier` 里求值；
+   而且每类特征仍在 `ItemDef` 上占固定字段（`durability_max` / `weapon_speed_ms` /
+   `strength_cap` / `weapon_growth` / `kind`）。m09676 提出的"每加一个属性多一个结构体
+   字段、多数物品用不上"问题因此成立，表达方式待评估（见开放问题）。
 4. **行为是声明式数据。** `BehaviorDef { id, trigger: OnUse | OnEquip | OnHit |
    OnTurn, effects: [Effect] }`；`Effect` 是白名单指令（加修正、伤害、治疗、
    给状态、生成实体、写事件、条件分支）。表达力上限：能用"触发 → 效果列表"
@@ -1616,14 +1618,22 @@ IgnoreSource}` 表达全部三条现有行为（蘑菇/海藻的 `use` 回复、
 至少有一条 `use` 行为、空行为与未知触发/效果直接拒绝），所以解释器不需要兜底分支。
 求值侧（`EffectContext::ignored_sources`）与使用/拾取路由改为读行为表，
 不再认识具体物品编号；数据 schema 升 3。
-阶段 ④ 实例组件 + SaveV2 **已落地**：`ItemDef.durability_max`（数据 schema 升 4，只有装备
-可声明、加载器校验为正有限数）、`Durability { current, max }` 稀疏组件（装配时满值、夹在
-`[0, max]`）；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走
-`World`）；存档升 `SaveV2`（`items_schema` + `ItemSave.overrides`，只存玩家造成的耐久差异），
-读档先按蓝图装配再套差异；`SAVE_VERSION = 2`，旧 V1 档被版本头拒绝、`items_schema` 不一致
-报 `ContentVersion`（MVP 不迁移）。DsnE23 之后存档再升 V3：生命/法力只存 current，
-装配/上限重算仍走同一读档管线。验收不变量测试「无 overrides 时模板装配 == 存档装配」已落地。
-四阶段全部完成；后续长尾内容（附魔/充能/磨损规则等）走同一形状增量加，不改结构。
+阶段 ④ 实例组件与存档 **已落地**：唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走
+`Commands`、读档走 `World`），实例数据组件 `WeaponProgress { level, exp }`（装配时 1 级 0 经验，
+读档再套进度）；存档从 `SaveV2`（`items_schema` + `ItemSave.overrides`）演进到 `SaveV5`
+（DsnE27：删除耐久实例、`ItemOverrides` 只剩 `weapon`，`SAVE_VERSION = 5`，旧档被版本头
+拒绝）。DsnE23 之后生命/法力只存 current，装配/上限重算仍走同一读档管线。验收不变量测试
+「无 overrides 时模板装配 == 存档装配」已落地。四阶段全部完成；耐久实例已按 DsnE27 删除，
+后续长尾内容（附魔/充能等）走同一形状增量加，不改结构。
+DsnE27 修订两处：决策 3 的组件化边界细化为"parts → 组件真相 + 命名三分"；阶段 ④ 的
+耐久项按用户 m09597 要求删除（字段/组件/存档 overrides/UI/测试），实例数据以
+`WeaponProgress` 为准。
+
+**开放问题 → 已由 DsnE27 拍板（m09742）**
+属性扩展改为强类型 `parts` 列表，装配后组件是运行期真相；类别走 tags、能力走形容词
+marker、参数走名词组件；数值属性继续走 `StatId` + `Modifier`；耐久按用户要求删除
+（组件/存档/UI/测试一并移除，实例数据示例改以 `WeaponProgress` 为准）；强类型解析
+保留。实现分片与验收见 DsnE27。
 
 **关联：** DsnE16（现行物品注册表/背包/装备）· DsnE18（容器与槽位）·
 DsnE20（重量）· DsnE19（存档边界，V2/V3 在这里扩展）· DsnE10（Modifier 求值）·
@@ -1705,8 +1715,9 @@ DsnX17（确定性）· Gm4 / Gm7 / Gm13。
    （结构化输入 + 因子分解）继续有效，因子分解增加了护甲/抗性/力量项。
 7. **武器成长（阶段 ②）。** 武器实例带 `WeaponProgress { level, exp }`（1 级 0 经验起），
    蓝图声明 `WeaponGrowth { max_level, attack_per_level, strength_cap_per_level, exp_base }`
-   （数据 schema 升 7）；实例只存等级与经验这两个玩家造成的差异（沿用 DsnE22 的 overrides
-   形状，存档升 V4）。等级带来的攻击/力量上限是**派生值**，装配时按蓝图重算；EXP 由
+   （数据 schema 升 7；DsnE27 起落在 `weapon` 部件里、装配为 `Weapon` 组件）；实例只存等级与
+   经验这两个玩家造成的差异（沿用 DsnE22 的 overrides 形状，存档升 V4 → 现为 V5）。等级带来
+   的攻击/力量上限是**派生值**，装配时按蓝图重算；EXP 由
    "造成伤害 × 品质倍率"获得，升级门槛 `exp_base × 等级^1.5`；升级在事件栏记一条。
    断点触发的副词条/附带效果留给后续内容，不写在本次实现里。
 
@@ -1716,17 +1727,19 @@ strength, strength_cap, damage_bonus, defense, physical_resist, crit, crit_roll 
 magic_resist`、`ItemDef::strength_cap`（数据 schema 升 6，只有武器可声明且必须声明）、
 `EffectContext::main_hand_weapon` 提供力量上限、战斗系统按新公式结算；旧标量适配器删除。
 
-阶段 ②（武器成长）已落地：`ItemDef::weapon_growth`（`WeaponGrowth`，数据 schema 升 7，
+阶段 ②（武器成长）已落地：蓝图 `weapon` 部件里的 `WeaponGrowth`（DsnE27 起由固定字段迁到
+`WeaponSpec { speed_ms, strength_cap, growth }`，装配为 `Weapon` 组件；数据 schema 升 7，
 只有武器可声明且必须声明，各值加载期校验）、`WeaponProgress` 实例组件（唯一装配桥
 `ItemSpawner::insert_blueprint_parts` 插 1 级 0 经验）、`Quality::exp_factor` 品质倍率
 （粗劣 1.25 → 传说 0.4）、`apply_damage_system` 按"伤害 × 倍率"记经验并在升级时写事件、
 `EffectContext::collect_actor` 把等级攻击加成合成一条装备 `Modifier`、
-`main_hand_strength_cap` 加上等级成长；存档 V4 用 `ItemOverrides.weapon = WeaponSave
-{ level, exp }` 保存，读档先按蓝图装配再套进度，不合法进度报 `Corrupt`。
+`main_hand_strength_cap` 加上等级成长；存档 V5（DsnE27 起；字段与 V4 相同）用
+`ItemOverrides.weapon = WeaponSave { level, exp }` 保存，读档先按蓝图装配再套进度，
+不合法进度报 `Corrupt`。
 断点/副词条/附带效果仍属未做内容（后续内容阶段追加到 `WeaponGrowth` 形状）。
 
 **关联：** DsnE9（结构化输入形状）· DsnE10（修正器求值）· DsnE22（蓝图/实例/存档边界）·
-DsnE23（属性词表与品质）· DsnE19（存档 V4 记武器养成进度）· Gm2 / Gm4 / Gm7 / Gm8 / Gm13。
+DsnE23（属性词表与品质）· DsnE19（存档 V5 记武器养成进度）· Gm2 / Gm4 / Gm7 / Gm8 / Gm13。
 <!-- &/DsnE24 -->
 
 <!-- &DsnE25  资源回复：MP 随 AV 回、HP 不回（道具/治疗泉）；首层怪物 4-6；升级不回满 -->
@@ -1775,7 +1788,7 @@ DsnE23（属性词表与品质）· DsnE19（存档 V4 记武器养成进度）�
 （层内容与中途存档回滚）· DsnE21（事件栏）· Gm2 / Gm4 / Gm7 / Gm13 / Gm14。
 <!-- &/DsnE25 -->
 
-<!-- &DsnE26  法术 = 数据（spells.json）+ 施法行动；效果词表只做即时伤害/治疗，目标在校验阶段定 -->
+<!-- &DsnE26  法术 = 数据 + 施法行动；公式与施法工具按原草案待重做（m09597） -->
 ### DsnE26 法术（数据 + 施法行动）
 
 **背景。** 用户 m08882 要求"做魔法部分"。DsnE11 把技能拆成三层（触发/委托/效果实体），
@@ -1783,44 +1796,148 @@ DsnE22 已确立"蓝图数据 → 唯一装配 → ECS 实体"的物品路线；
 **法术表是数据、施法实体是实例、效果是即时结算**。这样做而不是"一个技能一个系统"，
 是因为后续法术种类会变多（长尾专用），数据文件能让内容扩展不动行动框架。
 
+第一版实现（`1b8c026`）为了先跑通链路，把用户 m06405 的草案压缩成了
+"基础值 + 法术精通、固定吟唱、不吃护甲"，并在本条目里写了具体数值。用户 m09597
+指出这偏离了原设计（MP 投入 / 施法工具 / 护甲域 / 法杖 / 敌方反制），且违反 RULE §五
+（DESIGN 不写游戏数值、五段结构缺「代价」）。本节据此改写：**保留已定的架构决策，
+把被否的简化放入「背景与被否方案」，数值与玩家可见口径全部交给 GAME（Gm15）；
+公式与施法工具重做前，代码里的过渡实现按「状态」段对待。**
+
 **决策**
 
-1. **法术是数据。** `ecs_core/assets/spells.json`（`schema_version: 1`，`SpellId` 就是下标），
-   启动时校验：编号从 0 连续、名称/说明非空且名称唯一、`mp_cost > 0`、`cast_av > 0`、
-   `self_only` 必须射程 0、`nearest_enemy` 必须射程 > 0、效果数值 > 0；不合法直接 panic。
-   原型阶段不做跨版本兼容（与物品注册表同策略）。
-2. **效果词表只做即时 Damage/Heal。** `SpellEffect::{Damage{amount},Heal{amount}}`；
-   持续效果（护盾/狂暴/DoT）不在这里提前长字段，留给 DsnE12 的效果实体（Buff 尚未迁移）。
-   魔法伤害 `max(1, (amount + 法术精通) × (1 − clamp_resistance(魔法抗性)))`，**不吃护甲域**；
-   治疗 `amount + 法术精通`，由 `Health::restore` 夹到上限。抗性上限 75% 复用
-   `rules::clamp_resistance`（DsnE24 的词表，DsnE26 起真正接线；中毒也用它）。
-3. **施法是一个行动。** `PlayerCommand::Cast { slot }`（输入层只映射"第几格"）→ 生成期查
-   法术书/法力/视野内目标，成功则生成 `CastSpell` 行动（`ActionName("Cast")`，固定
-   `cast_av = 600`，不吃速度）；校验期保活（仍在书里、法力够），到点重新选目标
-   （`self_only` = 自己；`nearest_enemy` = 欧氏射程内且可见，同距按实体编号升序），写入
-   `CastTarget`；`settle` 只发 `SpellIntentEvent`；结算链的 `resolve_spell_system` 扣蓝并结算。
-   沿用"校验定案、落地器只发事件、效果系统消费事件"的既有分工；目标在落地时已死则蓝照扣、
-   法术落空；生成期无目标/蓝不足则命令被拒绝（不进入行动、不耗 AV）。
-4. **法术书不存档。** `SpellBook` 是运行时派生（出生两格 = 火花术/治愈术）；卷轴、学习与
-   熟练度是 Gm6 的未迁移内容，等它们落地再把"已学法术"加进存档并升版本。
-5. **UI 不改契约。** 游戏页 `1`/`2`/`3` 对应法术书格位；状态栏扩展行列出法术与耗蓝
-   （`HudView::extra_lines`，与中毒/装备行同一通道）；事件日志前缀 `~`（技能）。
-6. **数值 [试调]。** 火花术：3 MP / 600 AV / 射程 6 / 最近可见敌人 / 基础 5；治愈术：
-   6 MP / 600 AV / 自身 / 基础 12。Lv1 法术精通 8 → 火花术 13 点魔法伤害、治愈术 20 点 HP；
-   MP 回复沿用 DsnE25（每 10000 AV 回 1，m08882 修订）。
-7. **不做的事。** 敌方施法与法术 AI、吟唱打断、熟练度加成、护盾/狂暴、法术暴击、卷轴学习、
-   跨版本法术数据迁移。
+1. **法术是数据。** `ecs_core/assets/spells.json`（`schema_version` 头 + `SpellId`=下标），
+   启动时校验编号连续、名称/说明非空且唯一、射程与目标类型相容、效果数值合法；
+   不合法直接 panic。原型阶段不做跨版本兼容（与物品注册表同策略）。
+2. **效果词表先只做即时 Damage/Heal。** 持续效果（护盾/狂暴/DoT）留给 DsnE12 的效果
+   实体，不在这里提前长字段。**伤害/治疗的公式形状是临时决定**：按用户原草案，应改为
+   "基础 + MP 投入比例 × 法术加成系数"的施法资源模型，由施法工具限制单次可投入上限；
+   法术精通参与哪个乘区、品质如何进入，见开放问题。物理与魔法共享护甲域
+   （`原护甲域 × (1 − 穿透)`），魔法抗性保持独立乘区；这条会改动 DsnE24 护甲域的
+   适用范围，重做时同步修订。
+3. **施法是一个行动。** 输入只映射"第几格法术"；生成期查法术书 / 资源 / 可用目标，
+   成功则生成施法行动（行动名、耗时由法术与施法工具决定）；校验期保活（仍在书里、
+   资源够），到点重新选目标并写入目标组件；`settle` 只发意图事件；结算链的效果系统
+   扣资源并结算。沿用"校验定案、落地器只发事件、效果系统消费事件"的既有分工；目标在
+   落地时已死则资源照扣、法术落空；生成期无目标 / 资源不足则命令被拒绝（不进入行动）。
+4. **目标选择是规则层的独立策略，不引用信息栏排序。** 法术目标由法术的目标类型与
+   规则函数决定（最近可见等），排序口径写进规则文档；信息栏排序是 presentation 的
+   展示策略（DsnA4），两者不共享"真相源"（修正 m09597 第 1 点）。
+5. **法术书暂不存档。** `SpellBook` 是运行时派生（出生两格）；卷轴、学习与熟练度是
+   Gm6 的未迁移内容，等它们落地再把"已学法术"加进存档并升版本。代价：读档后非出生
+   来源的额外法术会回退到出生配置。
+6. **玩家可见口径进 GAME。** 法术清单、消耗、施法耗时、目标规则与快捷键属于玩家可见
+   规则，写在 GAME（Gm15）；DESIGN 只记录取舍。UI 通过 `HudView::extra_lines` 显示
+   法术行，不改契约。
+7. **本轮不做的事（及代价）。** 敌方施法与法术 AI、吟唱打断、熟练度加成、护盾 / 狂暴、
+   法术暴击、卷轴学习。代价：玩家远程法术对纯近战怪有风筝优势，当前反制手段只有
+   走位与资源限制；这条账记在开放问题里，做敌方 AI 时一并解决。
 
-**状态：** 已落地。数据 `assets/spells.json` + `spell` 模块（`SpellDef`/`SpellBook`/`CastSpell`/
-`nearest_enemy_in_range`/`spell_damage`/`spell_heal`/`resolve_spell_system`）；行动链
-`PlayerCommand::Cast`、`PlayerAction::Cast`、生成器 Cast 分支、`validate_cast_system`、
-`CastTarget` 与 `settle` 的 `SpellIntentEvent`；结算链 `resolve_spell_system`（物理伤害之后、
-中毒之前）；`Events<SpellIntentEvent>` 注册与清理；玩家出生带 `SpellBook::starting()`；
-输入 1/2/3；HUD 法术行。测试：注册表钉死、伤害/治疗公式与抗性上限、可见/射程/同距选目标、
-扣蓝与落空/目标已死、生成拒绝、整链"生成→校验→settle→结算"；ecs_core 334、workspace
-623 passed / 1 ignored。
+**背景与被否方案。** 被否的简化方案是：法术效果只存固定 `amount`、伤害
+`max(1, (amount + 精通) × (1 − 抗性))` 且不吃护甲域、吟唱固定耗时、无施法工具、
+无 MP 投入、目标选择注释引用信息栏排序。它先跑通了行动链，但把用户草案中的
+"MP 投入比例、施法工具上限、法术品质、法术精通 / 加成系数、爆伤乘区"全部抹平
+（m09597）。保留的部分是数据 / 行动 / 事件骨架；公式与工具部分按开放问题重做。
+
+**代价**
+- 法术与物理暂时是两套伤害管线（资源、乘区、护甲 / 抗性适用范围不同）；重做魔法公式
+  时会再动一次规则层。
+- 吟唱固定耗时且无打断：远程法术对纯近战敌人偏强，先靠 MP 与走位平衡，等敌方施法 /
+  打断落地再收。
+- 法术书不入档：内容越多，读档回退缺口越大；卷轴阶段必须升存档版本。
+- 数据层多一套 schema 与校验（与物品并行维护）。
+
+**状态：** 架构已落地（`1b8c026`）：法术数据文件 + `spell` 模块（`SpellDef` / `SpellBook` /
+`CastSpell` / `SpellIntentEvent` / 目标选择 / 结算系统）、行动链 Cast 生成 / 校验 / 落地、
+输入格位、HUD 法术行、测试与 gate / soak 通过。**待重做（m09597 / m09676 讨论中）**：
+魔法公式（MP 投入、精通位置、爆伤、品质）、施法工具（法杖等）、护甲域与穿透、敌方
+反制施法、法术目标选择从"与信息栏一致"改为规则层独立策略。数值与玩家口径见 GAME Gm15。
+
+**开放问题（重做前需拍板）**
+1. 施法工具的原始设定：品质 / 无等级、法力加成上限；占哪个槽、是否是施法前提、
+   影响施法耗时还是移速、品质如何生效（仓库内与历史记录均无条文，需用户重述）。
+2. 法术精通的位置（加算进基础、乘算系数，还是加法封顶的一部分）与来源。
+3. MP 投入：命令是否携带额外投入、默认投入多少、超量投入的上限由工具决定；
+   低品质法术超量投入的边际递减如何实现。
+4. 穿透：做成属性词条还是法术 / 工具自带；作用点是 `护甲域 × (1 − 穿透)`
+   （用户 m09597 的写法）确认，以及 clamp 范围。
+5. 法术暴击是否接 DsnE24 的暴击域（原草案公式含 `(1 + 爆伤)`）。
+6. 敌方施法 / 打断是否进本轮 MVP；若不进，**代价**段按上面写法记录。
+7. 现有火花术 / 治愈术两行数据如何迁移（改公式后保留为示例，还是替换）。
 
 **关联：** DsnE8 / DsnE9（行动插件形状）· DsnE11（技能三层）· DsnE12（效果实体，Buff 去向）·
-DsnE21（事件时间轴）· DsnE22（数据/实例边界）· DsnE23（MP 池）· DsnE24（词表与抗性上限）·
-DsnE25（MP 回复）· Gm2 / Gm4 / Gm5 / Gm14 / Gm15。
+DsnE21（事件时间轴）· DsnE22（数据 / 实例边界）· DsnE23（MP 池）· DsnE24（词表、护甲域与抗性上限）·
+DsnE25（MP 回复）· DsnA4（信息栏排序归 presentation）· Gm2 / Gm4 / Gm5 / Gm14 / Gm15。
 <!-- &/DsnE26 -->
+
+<!-- &DsnE27  物品 = 核心字段 + 强类型 parts → 装配为 ECS 组件；组件按词性三分：形容词=能力，名词=参数，tags=类别 -->
+### DsnE27 物品部件化与组件化（parts + 组件真相）
+
+**背景。** DsnE22 把物品表从代码搬到 JSON，但每个属性/类别仍在 `ItemDef` 上占一个
+固定字段（`durability_max` / `weapon_speed_ms` / `strength_cap` / `weapon_growth` /
+`ItemKind` 的变体）。用户 m09597 / m09676 指出：这让"大部分物品用不上的字段"成为
+结构负担，JSON 只是把结构体搬了个家；数值属性已经由 `StatId` + `Modifier` 覆盖，
+真正膨胀的是语义特征与类别。m09742 拍板：先完善本设计，再实施，最后逐条对照验收。
+
+**决策**
+
+1. **蓝图只留核心字段。** `ItemDef` = `id / name / desc / quality / weight / max_stack /
+   tags / parts`。其余全部进 `parts`：强类型列表，每个 part 是独立 serde tag 变体、
+   各自 `deny_unknown_fields`。加一种物品能力 = 加一个 part 变体（代码）+ 数据行声明，
+   但不再给 `ItemDef` 加字段、不再给所有物品加可空字段。
+2. **Part 的形状是"物品有什么"。** `equippable`（可装备，marker）、`consumable`
+   （可消耗，marker）、`weapon { speed_ms, strength_cap, growth }`、`container { layout }`、
+   `modifiers { list }`、`behaviors { list }`。加载期做逐 part 校验 + 跨 part 约束
+   （weapon 必须 equippable、consumable 必须有 use 行为、container layout 必须存在、
+   非装备不能声明装备专属部件等）。校验失败即启动失败（沿用 DsnE22 决策 9）。
+3. **装配后组件是运行期真相。** 仅 `spawn_item_assembled` 一个入口把 parts 翻译成组件：
+   `Equippable` / `Consumable`（零大小形容词）、`Weapon { .. }` / `Container` /
+   `Modifiers(Vec<Modifier>)` / `Behaviors(Vec<Behavior>)`（名词数据）、实例状态仍走
+   稀疏组件（`WeaponProgress`）。**规则层只读组件，不读蓝图**；蓝图只负责身份、展示、
+   重新装配的配方。这样系统不认识具体物品，也避免"同一字段两处读"。
+4. **命名按词性三分（m09742 确认）。** 形容词/分词 = 能力或状态（零大小 marker）；
+   名词 = 参数/数据组件；类别 = `tags` 词汇，不另建组件。`modifiers` 是数据清单，
+   用名词组件 `Modifiers`，不是属性。
+5. **删耐久。** 耐久不是用户的设计（m09597），磨损规则从未接入；删除 `durability_max`、
+   `Durability` 组件、装配插入、存档 `ItemOverrides.durability`、详情行与相关测试。
+   实例数据以 `WeaponProgress` 为样本。存档版本升到 V5（原型阶段不承诺跨版本）。
+6. **类别枚举退役。** `ItemKind` 删除；"是不是装备/消耗品/容器"由组件存在性判断，
+   筛选词仍用 `tags`。`is_equipment()` 等蓝图访问器随之删除或改为"有该 part"。
+7. **存档仍是 COW。** 只存 `blueprint_id + overrides`（武器等级/经验等玩家造成的差异），
+   读档时按 parts 重新装配再套差异；组件是内存物化，不写盘。不做全量自包含存档、
+   不做换页/运行时热加载（m09708 已确认本轮不做）。
+8. **数值仍走 `StatId` + `Modifier`，不引入每属性一组件。** 新增属性 = 加词表行 +
+   数据引用；`Modifiers` 组件只装贡献清单。
+
+**背景与被否方案**
+- 被否：继续给 `ItemDef` 加 `Option` 字段 / `ItemKind` 变体。省一次迁移，但结构随内容
+  线性膨胀，且每件物品都背用不到的字段。
+- 被否：`custom_data` / 自由 JSON blob。丢失加载期校验与类型安全，系统只能靠字符串约定。
+- 被否：每属性一个组件（archetype 爆炸、加属性必须改代码且数据要写占位）。
+- 被否：物品挂 `Stats`。物品提供的是"贡献"（Modifier），不是最终属性值；两者混在一起
+  后，装备加成与角色基础值无法分开重算。
+- 被否：解析后立刻折叠进角色的派生值并丢弃来源。卸下/状态到期时无法撤销，也失去
+  "每次从来源重算"的单一求值路径（DsnE10）。
+
+**代价**
+- 迁移期存在两处真相（蓝图 vs 组件）：只能靠"装配后规则只读组件"的纪律与等价测试
+  钉死；旧读取点若漏改会读到蓝图默认值，必须逐点迁移。
+- 每种新 part 仍需要 Rust 结构、加载校验与装配代码——消除的是"字段爆炸"，不是
+  "扩展零代码"；运行时动态词表/热加载不在本轮。
+- 展示层要拆"规则数据读组件、名字/说明/品质读蓝图"，否则会再出现第二个真相源。
+- 删除耐久会让 V4 存档不可读（版本头直接拒绝）；原型阶段接受这笔账。
+
+**状态：** 已落地（2026-11-09，用户 m09742 拍板）。实施顺序与产出：
+① items.json schema 8（核心字段 + `parts`，删耐久）→ ② `ItemPart`/`WeaponSpec` 加载器
+（逐部件强类型解析 + 跨部件校验）→ ③ 装配组件化（`Equippable`/`Consumable`/`Weapon`/
+`Modifiers`/`Behaviors`/`Container`，`ItemKind` 退役）→ ④ 读取点迁移（`effect/collect`、
+`combat`、`item/actions`、`save`、`presentation`）→ ⑤ 耐久全链路删除、存档 V5、文档同步。
+测试夹具统一走唯一装配桥（直接 `spawn((Item, Amount))` 会缺组件，装备/使用路由失效）。
+**验收：** `cargo test -p ecs_core` 336 passed；workspace 29 目标 625 passed / 1 ignored；
+四 crate clippy 干净；`docs_check` PASS；`gate.ps1` 10/10；soak 6 种子「异常：无」；
+逐条对照本条目决策清单确认完成。
+
+**关联：** DsnE22（蓝图/装配/版本策略的前身，决策 3 与阶段 ④ 被本条修订）· DsnE16
+（注册表）· DsnE18（容器与槽位）· DsnE19（存档边界，V5）· DsnE20（重量）· DsnE10
+（Modifier 求值）· DsnE24（武器成长与力量上限的读取点）· DsnE26（法术工具未来挂
+`SpellFocus` 组件）· Gm7。
+<!-- &/DsnE27 -->

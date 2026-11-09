@@ -21,8 +21,9 @@
 use crate::components::{Health, Mana, Position};
 use crate::entity_cls::Player;
 use crate::item::{
-    Amount, BODY, BehaviorEffect, Container, GroundItemAt, Item, ItemDef, ItemId, ItemTag,
-    pack_slot_index, spawn_item_assembled, stack_weight,
+    Amount, BODY, BehaviorEffect, BehaviorTrigger, Behaviors, Consumable, Container, Equippable,
+    GroundItemAt, Item, ItemDef, ItemId, ItemTag, pack_slot_index, spawn_item_assembled,
+    stack_weight,
 };
 use crate::resources::{EventLog, EventMessage};
 use crate::rules::refresh_player_vitals;
@@ -79,7 +80,8 @@ pub fn equip_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemAc
     let pack = pack_entity(world, player)?;
     let item = slot_of(world, pack, pack_slot)?;
     let def = item_def(world, item)?;
-    if !def.is_equipment() {
+    // DsnE27：运行期真相是组件；蓝图只负责装配。
+    if world.get::<Equippable>(item).is_none() {
         return Err(ItemActionError::NotEquippable);
     }
     // 有空位就穿；被占就交换。两者都是"目标槽位 + 可选旧装备"。
@@ -169,11 +171,11 @@ pub fn use_from_pack(world: &mut World, pack_slot: usize) -> Result<(), ItemActi
     let player = player_entity(world)?;
     let pack = pack_entity(world, player)?;
     let item = slot_of(world, pack, pack_slot)?;
-    let def = item_def(world, item)?;
-    if !def.is_consumable() {
+    if world.get::<Consumable>(item).is_none() {
         return Err(ItemActionError::NotUsable);
     }
-    if !apply_effects(world, player, def.use_effects()) {
+    let effects = use_effects_of(world, item);
+    if !apply_effects(world, player, effects) {
         return Err(ItemActionError::NotUsable);
     }
     let remaining = world.get::<Amount>(item).map(|amount| amount.0).unwrap_or(1);
@@ -287,7 +289,7 @@ pub fn take_from_ground(
     let def = id.def();
 
     // ① 装备：有空部位就穿上（与旧拾取一致，不要求玩家先手动装）。
-    if def.is_equipment()
+    if world.get::<Equippable>(entity).is_some()
         && let Some(slot) = free_slot_in(world, player, def.tags)
     {
         world.entity_mut(entity).remove::<GroundItemAt>();
@@ -301,7 +303,8 @@ pub fn take_from_ground(
     }
 
     // ② 消耗品：现在用得上就用 1 个，用不上就进行囊。
-    if def.is_consumable() && apply_effects(world, player, def.use_effects()) {
+    let effects = use_effects_of(world, entity);
+    if world.get::<Consumable>(entity).is_some() && apply_effects(world, player, effects) {
         push_log(world, format!("你使用了{}", def.name));
         if amount <= 1 {
             world.despawn(entity);
@@ -545,6 +548,21 @@ fn put_back(
     }
     let free = free_slot_in(world, container, tags).ok_or(ItemActionError::NoRoom)?;
     put_into(world, container, free, item, tags)
+}
+
+/// 一件物品声明的 `Use` 效果（DsnE27：读装配后的 `Behaviors` 组件，不读蓝图）。
+fn use_effects_of(world: &World, item: Entity) -> Vec<BehaviorEffect> {
+    world
+        .get::<Behaviors>(item)
+        .map(|behaviors| {
+            behaviors
+                .0
+                .iter()
+                .filter(|behavior| behavior.trigger == BehaviorTrigger::Use)
+                .flat_map(|behavior| behavior.effects.iter().copied())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 应用一组行为效果；返回是否至少有一条生效（资源已满 = 没生效）。

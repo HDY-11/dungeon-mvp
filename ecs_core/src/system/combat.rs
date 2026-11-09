@@ -8,7 +8,7 @@ use crate::balance::UNARMED_STRENGTH_CAP;
 use crate::components::*;
 use crate::effect::EffectContext;
 use crate::events::{AttackEvent, AttackIntentEvent};
-use crate::item::{Container, Item, ItemTag, WeaponProgress};
+use crate::item::{Container, Item, ItemTag, Weapon, WeaponProgress};
 use crate::resources::{EventLog, EventMessage, GameRng};
 use crate::rules::{CritProfile, MeleeInput, StatId, apply_modifiers, melee};
 use bevy_ecs::prelude::*;
@@ -148,6 +148,7 @@ pub fn apply_damage_system(
     mut healths: Query<&mut Health>,
     bodies: Query<&Container>,
     items: Query<&Item>,
+    weapons_data: Query<&Weapon>,
     mut weapons: Query<&mut WeaponProgress>,
     mut event_log: ResMut<EventLog>,
 ) {
@@ -158,6 +159,7 @@ pub fn apply_damage_system(
         award_weapon_exp(
             &bodies,
             &items,
+            &weapons_data,
             &mut weapons,
             &mut event_log,
             event.attacker,
@@ -175,14 +177,14 @@ fn main_hand_weapon(
     bodies: &Query<&Container>,
     items: &Query<&Item>,
     actor: Entity,
-) -> Option<(Entity, &'static crate::item::ItemDef)> {
+) -> Option<Entity> {
     let body = bodies.get(actor).ok()?;
     body.iter().find_map(|(_, occupant)| {
         let item = items.get(occupant).ok()?;
-        let def = item.def();
-        def.tags
+        item.def()
+            .tags
             .contains(&ItemTag::Weapon)
-            .then_some((occupant, def))
+            .then_some(occupant)
     })
 }
 
@@ -190,17 +192,23 @@ fn main_hand_weapon(
 fn award_weapon_exp(
     bodies: &Query<&Container>,
     items: &Query<&Item>,
+    weapon_data: &Query<&Weapon>,
     weapons: &mut Query<&mut WeaponProgress>,
     event_log: &mut EventLog,
     attacker: Entity,
     damage: f64,
 ) {
-    let Some((weapon, def)) = main_hand_weapon(bodies, items, attacker) else {
+    let Some(weapon) = main_hand_weapon(bodies, items, attacker) else {
         return;
     };
-    let Some(growth) = def.weapon_growth else {
+    let Ok(data) = weapon_data.get(weapon) else {
         return;
     };
+    let Ok(item) = items.get(weapon) else {
+        return;
+    };
+    let def = item.def();
+    let growth = data.growth;
     let Ok(mut progress) = weapons.get_mut(weapon) else {
         return;
     };

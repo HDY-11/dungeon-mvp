@@ -21,7 +21,10 @@ use crate::effect::cell::{
     CellAttributes, CellEffects, CellMoveCost, cell_attributes, cell_speed_modifier,
 };
 use crate::effect::{EffectModifier, IgnoresSource, OwnedEffects};
-use crate::item::{Container, Item, ItemTag, WeaponProgress};
+use crate::item::{
+    BehaviorEffect, BehaviorTrigger, Behaviors, Container, Item, ItemTag, Modifiers, Weapon,
+    WeaponProgress,
+};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::rules::{EffectSource, Modifier, StatId};
 use bevy_ecs::prelude::*;
@@ -33,7 +36,7 @@ use bevy_ecs::system::SystemParam;
 /// 调用方直接构造：`SpeedModifiers { actor: &c.actor, cell: &c.cell }`。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CollectedModifiers {
-    /// actor 自带的修正：**装备**（按 `EquippedBy` 关系读注册表）+ 状态效果（`EffectOf` 实体）。
+    /// actor 自带修正：装备（DsnE27：读物品实体上的组件）+ 状态效果（`EffectOf` 实体）。
     pub actor: Vec<Modifier>,
     /// 脚下这一格带来的修正（`Terrain` 桶）。
     pub cell: Vec<Modifier>,
@@ -62,6 +65,12 @@ pub struct EffectContext<'w, 's> {
     cell_costs: Query<'w, 's, &'static CellMoveCost>,
     equipped: Query<'w, 's, &'static Container>,
     equipped_items: Query<'w, 's, &'static Item>,
+    /// 物品实体上的数值修正（DsnE27：装配后组件是运行期真相）。
+    item_modifiers: Query<'w, 's, &'static Modifiers>,
+    /// 物品实体上的行为声明（`Equipped` 触发的无视来源写在这里）。
+    item_behaviors: Query<'w, 's, &'static Behaviors>,
+    /// 武器实体上的基础参数（攻速 / 力量上限 / 成长曲线）。
+    item_weapons: Query<'w, 's, &'static Weapon>,
     /// 武器实体的额外成长修正（DsnE24 阶段 ②）：等级带来的攻击加成在这里合成。
     weapon_progress: Query<'w, 's, &'static WeaponProgress>,
     /// 效果实体身上的修正（将来的 buff：`(EffectOf(actor), Modifier)`）。
@@ -108,32 +117,35 @@ impl EffectContext<'_, '_> {
                 }
             }
         }
-        for def in self.equipped_defs(actor) {
-            for source in def.ignored_sources() {
-                if !ignored.contains(&source) {
-                    ignored.push(source);
+        for entity in self.equipped_entities(actor) {
+            let Ok(behaviors) = self.item_behaviors.get(entity) else {
+                continue;
+            };
+            for behavior in &behaviors.0 {
+                if behavior.trigger != BehaviorTrigger::Equipped {
+                    continue;
+                }
+                for effect in behavior.effects {
+                    if let BehaviorEffect::IgnoreSource { source } = effect
+                        && !ignored.contains(source)
+                    {
+                        ignored.push(*source);
+                    }
                 }
             }
         }
         ignored
     }
 
-    /// actor **身体槽位**里那些物品的定义（DsnE18：装备就是身体容器里的物品）。
+    /// actor **身体槽位**里装备的物品实体（DsnE18：装备就是身体容器里的物品）。
     ///
-    /// 走"身体容器 → 槽位 → 物品实体 → 注册表"这条链，不读任何副本：
-    /// 于是"卸下装备"只是把物品移出槽位，加成自动消失，不需要清理派生状态。
-    fn equipped_defs(&self, actor: Entity) -> Vec<&'static crate::item::ItemDef> {
+    /// 走"身体容器 → 槽位 → 物品实体"这条链；数值、行为、武器参数都从
+    /// 装配到该实体上的组件读取（DsnE27），不读注册表副本。
+    fn equipped_entities(&self, actor: Entity) -> Vec<Entity> {
         let Ok(body) = self.equipped.get(actor) else {
             return Vec::new();
         };
-        body.iter()
-            .filter_map(|(_, occupant)| {
-                self.equipped_items
-                    .get(occupant)
-                    .ok()
-                    .map(|item| item.def())
-            })
-            .collect()
+        body.iter().map(|(_, occupant)| occupant).collect()
     }
 
     /// actor 自带的修正（装备 + 状态效果）。**不含脚下这一格**。
@@ -148,29 +160,23 @@ impl EffectContext<'_, '_> {
                 }
             }
         }
-        for def in self.equipped_defs(actor) {
-            mods.extend_from_slice(def.modifiers());
-        }
-        // 武器等级（DsnE24 阶段 ②）：等级加成不是蓝图静态修正，按实例等级现场合成一条
-        // 装备来源的加法修正——求值侧仍然只看见 `Modifier`，没有"武器特例"分支。
-        if let Ok(body) = self.equipped.get(actor) {
-            for (_, occupant) in body.iter() {
-                let Ok(item) = self.equipped_items.get(occupant) else {
-                    continue;
-                };
-                let def = item.def();
-                let Some(growth) = def.weapon_growth else {
-                    continue;
-                };
-                let level = self
-                    .weapon_progress
-                    .get(occupant)
-                    .map(|progress| progress.level)
-                    .unwrap_or(1);
-                let bonus = growth.attack_bonus(level);
-                if bonus > 0.0 {
-                    mods.push(Modifier::delta(StatId::ATTACK, EffectSource::Equipment, bonus));
-                }
+        for entity in self.equipped_entities(actor) {
+            if let Ok(modifiers) = self.item_modifiers.get(entity) {
+                mods.extend_from_slice(&modifiers.0);
+            }
+            let Ok(weapon) = self.item_weapons.get(entity) else {
+                continue;
+            };
+            // 武器等级（DsnE24 阶段 ②）：等级加成不是蓝图静态修正，按实例等级现场合成一条
+            // 装备来源的加法修正——求值侧仍然只看见 `Modifier`，没有"武器特例"分支。
+            let level = self
+                .weapon_progress
+                .get(entity)
+                .map(|progress| progress.level)
+                .unwrap_or(1);
+            let bonus = weapon.growth.attack_bonus(level);
+            if bonus > 0.0 {
+                mods.push(Modifier::delta(StatId::ATTACK, EffectSource::Equipment, bonus));
             }
         }
         mods
@@ -188,23 +194,13 @@ impl EffectContext<'_, '_> {
         })
     }
 
-    /// 主手武器的定义；没装备武器时 `None`。
-    ///
-    /// 主手槽只接受带 `Weapon` 标签的物品（DsnE18 的 `BODY` 过滤表），所以这里
-    /// 按标签找即可，不需要再查槽位下标——"哪一把是主手"由身体容器的槽位唯一决定。
-    pub fn main_hand_weapon(&self, actor: Entity) -> Option<&'static crate::item::ItemDef> {
-        self.equipped_defs(actor)
-            .into_iter()
-            .find(|def| def.tags.contains(&ItemTag::Weapon))
-    }
-
     /// 主手武器的攻击耗时（毫秒）；没装备武器时 `None`（用空手基准）。
     ///
     /// GAME.md Gm7「武器攻速」：`AV = 武器 speed ÷ 攻击速度`。武器覆盖的是**基础耗时**，
     /// 不是速度——所以石锤与匕首的区别在于"每一击要多久"，而不是"速度倍率多少"。
     pub fn main_hand_weapon_speed(&self, actor: Entity) -> Option<f64> {
-        self.main_hand_weapon(actor)
-            .and_then(|def| def.weapon_speed_ms)
+        let weapon = self.main_hand_weapon_entity(actor)?;
+        self.item_weapons.get(weapon).ok().map(|weapon| weapon.speed_ms)
     }
 
     /// 主手武器的力量加成上限 S_m（DsnE24）；空手时由调用方用
@@ -212,19 +208,14 @@ impl EffectContext<'_, '_> {
     ///
     /// 这是**基础上限 + 等级加成**：武器升级会放宽能吃的力量（成长曲线管这件事）。
     pub fn main_hand_strength_cap(&self, actor: Entity) -> Option<f64> {
-        let weapon = self.main_hand_weapon_entity(actor)?;
-        let def = self.equipped_items.get(weapon).ok()?.def();
-        let base = def.strength_cap?;
+        let entity = self.main_hand_weapon_entity(actor)?;
+        let weapon = self.item_weapons.get(entity).ok()?;
         let level = self
             .weapon_progress
-            .get(weapon)
+            .get(entity)
             .map(|progress| progress.level)
             .unwrap_or(1);
-        let bonus = def
-            .weapon_growth
-            .map(|growth| growth.strength_cap_bonus(level))
-            .unwrap_or(0.0);
-        Some(f64::from(base) + bonus)
+        Some(f64::from(weapon.strength_cap) + weapon.growth.strength_cap_bonus(level))
     }
 
     /// 收桶：脚下这一格的修正 + actor 自带的修正 + 忽略表。

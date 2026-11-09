@@ -15,7 +15,7 @@
 //! [`ItemTag`] 说明自己能进哪类部位，两边求交。于是"穿上"= 移进身体某个槽位，
 //! "卸下"= 从槽位移出；求值侧（`effect::collect`）遍历身体槽位读物品定义。
 //!
-//! 行囊是**一件物品**（`ItemKind::Pack`），被塞在身体的「背包」槽里；它自己带一个
+//! 行囊是**一件物品**（蓝图带 `container` part），被塞在身体的「背包」槽里；它自己带一个
 //! `Container`。所以"背包也是容器"不是特例，而是同一条规则的另一个实例。
 //!
 //! # 容器里没有位置
@@ -55,6 +55,8 @@ pub mod registry;
 use crate::resources::EventLog;
 use bevy_ecs::prelude::*;
 
+use crate::rules::Modifier;
+
 pub use container::{
     BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
@@ -66,7 +68,7 @@ pub use loot::{LootEntry, roll_loot};
 pub use quality::Quality;
 pub use registry::{
     Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ITEMS_SCHEMA_VERSION, ItemDef, ItemId,
-    ItemKind, TRAVELER_PACK_ITEM, WeaponGrowth, item_by_name, stack_weight,
+    ItemPart, TRAVELER_PACK_ITEM, WeaponGrowth, WeaponSpec, item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
@@ -131,46 +133,45 @@ impl GroundItemAt {
     }
 }
 
-/// 物品实例的耐久（实例数据的第一项，DsnE22 阶段 ④）。
+// ── 装配后的组件（DsnE27：组件是运行期真相） ─────────────────────────
+
+/// 可装备（形容词 = 能力 marker，DsnE27 决策 4）。
 ///
-/// 只出现在蓝图声明了 `durability_max` 的物品上（稀疏组件）：模板装配时插满，
-/// 存档只保存"与蓝图不同的部分"（当前值）。磨损规则尚未接入——本阶段先把
-/// "实例数据进得了档、读档后与模板装配一致"这条地基落下来。
+/// 能进哪个部位由 [`Item::tags`] 与 `BODY` 的槽位过滤表求交（DsnE18）；
+/// 这个 marker 只回答"它是不是装备"，不携带参数。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Equippable;
+
+/// 消耗品（形容词 = 能力 marker）：主动使用会应用 [`Behaviors`] 里 `use` 触发的效果。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Consumable;
+
+/// 主手武器的参数（名词 = 数据组件，DsnE27）：装配自蓝图 `weapon` part。
+///
+/// 攻速、力量上限、成长曲线都是**蓝图数据**；实例只额外挂 [`WeaponProgress`]
+/// （等级与经验这类玩家造成的差异）。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Durability {
-    pub current: f32,
-    pub max: f32,
+pub struct Weapon {
+    /// 每一击的基础耗时（毫秒）；`AV = 它 ÷ 攻击速度`。
+    pub speed_ms: f64,
+    /// 力量加成上限 S_m（DsnE24）。
+    pub strength_cap: f32,
+    /// 等级成长曲线（DsnE24 阶段 ②）。
+    pub growth: WeaponGrowth,
 }
 
-impl Durability {
-    /// 满耐久（模板装配时用）。
-    pub fn new(max: f32) -> Self {
-        let max = max.max(0.0);
-        Self { current: max, max }
-    }
+/// 物品带来的数值修正（名词 = 数据组件，DsnE27）：装配自蓝图 `modifiers` part。
+///
+/// 规则层求值时只读这个组件（DsnE10 的三算子折叠），不再回头查注册表；
+/// 于是"实例可以带与蓝图不同的修正"（附魔、符文……）将来只是改这个组件。
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Modifiers(pub Vec<Modifier>);
 
-    /// 带当前值（读档套用 overrides 时用）：当前值夹在 `[0, max]`。
-    pub fn with_current(current: f32, max: f32) -> Self {
-        let max = max.max(0.0);
-        Self {
-            current: if current.is_finite() {
-                current.clamp(0.0, max)
-            } else {
-                max
-            },
-            max,
-        }
-    }
-
-    /// 当前值占上限的比例；上限为 0 时按"满"处理。
-    pub fn ratio(self) -> f32 {
-        if self.max <= 0.0 {
-            1.0
-        } else {
-            self.current / self.max
-        }
-    }
-}
+/// 物品的行为表（名词 = 数据组件，DsnE27）：装配自蓝图 `behaviors` part。
+///
+/// 触发时机 + 效果列表；主动使用与被动装备两条路径都读它。
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Behaviors(pub Vec<Behavior>);
 
 /// 武器的养成进度（实例数据，DsnE24 阶段 ②）。
 ///
@@ -231,7 +232,7 @@ impl Default for WeaponProgress {
 pub trait ItemSpawner {
     /// 只造基础组件（`Item + Amount`）。
     fn spawn_item_base(&mut self, id: ItemId, count: u32) -> Entity;
-    /// 按蓝图补上可选组件（容器布局、满耐久……）。
+    /// 按蓝图补上部件对应的组件（装备/武器/容器/修正/行为，DsnE27）。
     fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId);
 }
 
@@ -242,14 +243,31 @@ impl ItemSpawner for Commands<'_, '_> {
 
     fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId) {
         let def = id.def();
+        if def.is_equipment() {
+            self.entity(entity).insert(Equippable);
+        }
+        if def.is_consumable() {
+            self.entity(entity).insert(Consumable);
+        }
+        if let Some(spec) = def.weapon() {
+            self.entity(entity).insert((
+                Weapon {
+                    speed_ms: spec.speed_ms,
+                    strength_cap: spec.strength_cap,
+                    growth: spec.growth,
+                },
+                WeaponProgress::new(),
+            ));
+        }
         if let Some(layout) = def.container_def() {
             self.entity(entity).insert(Container::new(layout));
         }
-        if let Some(max) = def.durability_max {
-            self.entity(entity).insert(Durability::new(max));
+        if !def.modifiers().is_empty() {
+            self.entity(entity).insert(Modifiers(def.modifiers().to_vec()));
         }
-        if def.weapon_growth.is_some() {
-            self.entity(entity).insert(WeaponProgress::new());
+        if !def.behaviors().is_empty() {
+            self.entity(entity)
+                .insert(Behaviors(def.behaviors().to_vec()));
         }
     }
 }
@@ -261,14 +279,32 @@ impl ItemSpawner for World {
 
     fn insert_blueprint_parts(&mut self, entity: Entity, id: ItemId) {
         let def = id.def();
+        if def.is_equipment() {
+            self.entity_mut(entity).insert(Equippable);
+        }
+        if def.is_consumable() {
+            self.entity_mut(entity).insert(Consumable);
+        }
+        if let Some(spec) = def.weapon() {
+            self.entity_mut(entity).insert((
+                Weapon {
+                    speed_ms: spec.speed_ms,
+                    strength_cap: spec.strength_cap,
+                    growth: spec.growth,
+                },
+                WeaponProgress::new(),
+            ));
+        }
         if let Some(layout) = def.container_def() {
             self.entity_mut(entity).insert(Container::new(layout));
         }
-        if let Some(max) = def.durability_max {
-            self.entity_mut(entity).insert(Durability::new(max));
+        if !def.modifiers().is_empty() {
+            self.entity_mut(entity)
+                .insert(Modifiers(def.modifiers().to_vec()));
         }
-        if def.weapon_growth.is_some() {
-            self.entity_mut(entity).insert(WeaponProgress::new());
+        if !def.behaviors().is_empty() {
+            self.entity_mut(entity)
+                .insert(Behaviors(def.behaviors().to_vec()));
         }
     }
 }

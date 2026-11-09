@@ -1,8 +1,8 @@
-//! 存档 V4：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19 / DsnE22 阶段 ④ / DsnE23 / DsnE24）。
+//! 存档 V5：bincode 完整快照 + **手写投影**（设计见 `ecs_core/DESIGN.md` DsnE19 / DsnE22 阶段 ④ / DsnE23 / DsnE24 / DsnE27）。
 //!
 //! 只写"重开一局后无法重算"的状态：`map_seed`、楼层、玩家数值、身体容器树，
-//! 以及物品的**实例差异**（目前是耐久当前值与武器养成等级/经验）。地图 / 怪物 /
-//! 楼梯 / 地面物品 / 格子效果都由 `(map_seed, floor)` 重新生成（DsnE17），
+//! 以及物品的**实例差异**（目前是武器养成等级/经验；耐久已被 DsnE27 删除）。
+//! 地图 / 怪物 / 楼梯 / 地面物品 / 格子效果都由 `(map_seed, floor)` 重新生成（DsnE17），
 //! 所以磁盘上**没有 `Entity`**，也不存这些派生内容；物品的基础数值永远跟蓝图
 //! （`assets/items.json`）走。
 //!
@@ -11,22 +11,22 @@
 //! 世界里有 `Entity` 引用与派生资源；直接 derive 会把它们也变成磁盘契约。
 //! 投影只写"玩家身上发生了什么"，形状小、能读懂、加字段时只需要管 `SAVE_VERSION`。
 //!
-//! # 文件格式（V4）
+//! # 文件格式（V5）
 //!
 //! ```text
-//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端，当前 4）
-//! 载荷：bincode(SaveV4)
-//! SaveV4 { items_schema, map_seed, floor, player: PlayerSave }
+//! 文件头（8 字节）：magic b"DNSV" + 版本 u32（小端，当前 5）
+//! 载荷：bincode(SaveV5)
+//! SaveV5 { items_schema, map_seed, floor, player: PlayerSave }
 //! PlayerSave { x, y, level, experience, health, mana, magic_mastery,
 //!              body: [Option<ItemSave>] }        // 身体七部位；health/mana 只存 current
 //! ItemSave   { id, count, overrides: ItemOverrides, slots: Option<[Option<ItemSave>]> }
-//! ItemOverrides { durability: Option<f32>, weapon: Option<WeaponSave> }
+//! ItemOverrides { weapon: Option<WeaponSave> }
 //! WeaponSave { level, exp }                     // 只存玩家行为造成的差异
 //! ```
 //!
 //! 版本放在**文件头**而不是 bincode 载荷里：bincode 1.3 不是自描述格式，
 //! 结构一变旧档解不出来，如果版本在载荷里就永远读不到它，只能报"编码失败"。
-//! 头部先读、版本先判，才能给出"版本 1 不认识（当前 4）"这种可读错误。
+//! 头部先读、版本先判，才能给出"版本 1 不认识（当前 5）"这种可读错误。
 //!
 //! V4 在 V3 的基础上只加了一件事：武器的等级/经验（DsnE24 阶段 ②）——它们由
 //! 玩家行为（造成伤害、升级）改变，重开一局无法重算，所以必须进档；而等级带来
@@ -55,15 +55,16 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 use ecs_core::components::{Experience, Health, Level, Mana, MagicMastery, Position};
 use ecs_core::item::{
-    Amount, BODY, Container, Durability, ITEMS_SCHEMA_VERSION, Item, ItemId, ItemTag,
-    WeaponProgress, spawn_item_assembled,
+    Amount, BODY, Container, ITEMS_SCHEMA_VERSION, Item, ItemId, ItemTag, WeaponProgress,
+    spawn_item_assembled,
 };
 use ecs_core::resources::{EventLog, EventMessage, FloorNumber, MapMemory, MapSeed, VisibleMemory};
 use ecs_core::world::query::player_entity;
 use serde::{Deserialize, Serialize};
 
-/// 当前存档格式版本。V4 = 武器养成（等级/经验）作为实例差异进档；V3 = 生命/法力只存 current。
-pub const SAVE_VERSION: u32 = 4;
+/// 当前存档格式版本。V5 = 物品部件化（DsnE27）：删掉耐久实例差异、物品 schema 升 8；
+/// V4 = 武器养成（等级/经验）作为实例差异进档；V3 = 生命/法力只存 current。
+pub const SAVE_VERSION: u32 = 5;
 
 /// 存档文件头的魔数：读档第一件事是确认"这确实是我们写的文件"。
 pub const FILE_MAGIC: [u8; 4] = *b"DNSV";
@@ -81,7 +82,7 @@ pub fn default_path() -> PathBuf {
 
 /// 存档根：物品数据版本、种子、楼层、玩家。文件格式版本在文件头里，不在这里。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SaveV4 {
+pub struct SaveV5 {
     /// 写档时 `assets/items.json` 的 schema 版本；读档不一致直接拒绝（MVP 不迁移）。
     pub items_schema: u32,
     /// 本局地图种子（决定所有楼层内容，DsnX17）。
@@ -127,11 +128,9 @@ pub struct ItemSave {
     pub slots: Option<Vec<Option<ItemSave>>>,
 }
 
-/// 一件物品的实例差异。空白（全部 `None`）= 与模板装配完全一致。
+/// 一件物品的实例差异。空白（`None`）= 与模板装配完全一致。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct ItemOverrides {
-    /// 耐久当前值；`None` = 满耐久（模板装配值）。
-    pub durability: Option<f32>,
     /// 武器养成进度；`None` = 1 级 0 经验（模板装配值）。
     pub weapon: Option<WeaponSave>,
 }
@@ -196,7 +195,7 @@ pub fn write(world: &World, path: &Path) -> Result<(), SaveError> {
 }
 
 /// 读存档文件。先验文件头（magic + 版本），通过后才解 bincode 载荷。
-pub fn read(path: &Path) -> Result<SaveV4, SaveError> {
+pub fn read(path: &Path) -> Result<SaveV5, SaveError> {
     let bytes = std::fs::read(path).map_err(SaveError::Io)?;
     if bytes.len() < HEADER_LEN || bytes[..4] != FILE_MAGIC {
         return Err(SaveError::Corrupt("不是存档文件（文件头不对）".to_string()));
@@ -205,7 +204,7 @@ pub fn read(path: &Path) -> Result<SaveV4, SaveError> {
     if version != SAVE_VERSION {
         return Err(SaveError::UnsupportedVersion(version));
     }
-    let save: SaveV4 = bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)?;
+    let save: SaveV5 = bincode::deserialize(&bytes[HEADER_LEN..]).map_err(SaveError::Encode)?;
     if save.items_schema != ITEMS_SCHEMA_VERSION {
         return Err(SaveError::ContentVersion {
             save: save.items_schema,
@@ -216,7 +215,7 @@ pub fn read(path: &Path) -> Result<SaveV4, SaveError> {
 }
 
 /// 从世界抽取存档投影（`write` 的前半段；测试可单独用）。
-pub fn capture(world: &World) -> Result<SaveV4, SaveError> {
+pub fn capture(world: &World) -> Result<SaveV5, SaveError> {
     let player = player_entity(world).ok_or(SaveError::NoPlayer)?;
     let corrupt = |why: &str| SaveError::Corrupt(why.to_string());
 
@@ -236,7 +235,7 @@ pub fn capture(world: &World) -> Result<SaveV4, SaveError> {
     let x = u16::try_from(position.x).map_err(|_| corrupt("玩家 x 坐标超出存档范围"))?;
     let y = u16::try_from(position.y).map_err(|_| corrupt("玩家 y 坐标超出存档范围"))?;
 
-    Ok(SaveV4 {
+    Ok(SaveV5 {
         items_schema: ITEMS_SCHEMA_VERSION,
         map_seed: world.resource::<MapSeed>().0,
         floor: world.resource::<FloorNumber>().0,
@@ -283,22 +282,15 @@ fn item_to_save(world: &World, entity: Entity) -> Result<ItemSave, SaveError> {
         )));
     }
     let count = world.get::<Amount>(entity).map(|amount| amount.0).unwrap_or(1);
-    let durability = world.get::<Durability>(entity).map(|durability| durability.current);
-    if durability.is_some() && item.def().durability_max.is_none() {
-        return Err(SaveError::Corrupt(format!(
-            "物品 {} 带着实例耐久，但蓝图里没有耐久",
-            item.id.0
-        )));
-    }
     let weapon = world
         .get::<WeaponProgress>(entity)
         .map(|progress| WeaponSave {
             level: progress.level,
             exp: progress.exp,
         });
-    if weapon.is_some() && item.def().weapon_growth.is_none() {
+    if weapon.is_some() && item.def().weapon().is_none() {
         return Err(SaveError::Corrupt(format!(
-            "物品 {} 带着武器养成进度，但蓝图里没有成长曲线",
+            "物品 {} 带着武器养成进度，但蓝图里没有武器部件",
             item.id.0
         )));
     }
@@ -317,16 +309,16 @@ fn item_to_save(world: &World, entity: Entity) -> Result<ItemSave, SaveError> {
     Ok(ItemSave {
         id: item.id.0,
         count,
-        overrides: ItemOverrides { durability, weapon },
+        overrides: ItemOverrides { weapon },
         slots,
     })
 }
 
 /// 按存档建一个世界：重新生成该层，再按蓝图装配物品、套实例差异、还原玩家数值。
 ///
-/// 版本校验在 [`read`] 里（文件头 + 物品数据 schema）。这里拿到的 `SaveV4`
+/// 版本校验在 [`read`] 里（文件头 + 物品数据 schema）。这里拿到的 `SaveV5`
 /// 已经是当前版本的形状。
-pub fn restore_to_world(save: &SaveV4) -> Result<World, SaveError> {
+pub fn restore_to_world(save: &SaveV5) -> Result<World, SaveError> {
     let mut world = ecs_core::new_game(save.map_seed);
 
     // 楼层：`new_game` 恒第 1 层。高于 1 层时改资源后重建一次——与 `descend`
@@ -410,25 +402,16 @@ fn spawn_from_save(world: &mut World, data: &ItemSave) -> Result<Entity, SaveErr
     let count = data.count.max(1);
     let entity = spawn_item_assembled(world, id, count);
 
-    if let Some(current) = data.overrides.durability {
-        let max = def.durability_max.ok_or_else(|| {
-            SaveError::Corrupt(format!(
-                "存档里物品 {} 有耐久差异，但蓝图没有声明耐久",
-                data.id
-            ))
-        })?;
-        world
-            .entity_mut(entity)
-            .insert(Durability::with_current(current, max));
-    }
-
     if let Some(weapon) = data.overrides.weapon {
-        let growth = def.weapon_growth.ok_or_else(|| {
-            SaveError::Corrupt(format!(
-                "存档里物品 {} 有武器养成进度，但蓝图没有成长曲线",
-                data.id
-            ))
-        })?;
+        let growth = def
+            .weapon()
+            .map(|spec| spec.growth)
+            .ok_or_else(|| {
+                SaveError::Corrupt(format!(
+                    "存档里物品 {} 有武器养成进度，但蓝图没有武器部件",
+                    data.id
+                ))
+            })?;
         let valid_level = (1..=growth.max_level).contains(&weapon.level);
         if !valid_level || !weapon.exp.is_finite() || weapon.exp < 0.0 {
             return Err(SaveError::Corrupt(format!(

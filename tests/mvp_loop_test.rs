@@ -432,7 +432,7 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
         .get::<Container>(player)
         .and_then(|body| body.slot(pack_slot_index()))
         .expect("玩家身上有行囊");
-    let sword = world.spawn((Item::new(ItemId(0)), Amount::new(1))).id();
+    let sword = ecs_core::item::spawn_item_assembled(world, ItemId(0), 1);
     {
         let mut pack_container = world.get_mut::<Container>(pack).expect("行囊");
         let slot = pack_container.free_slot_for(&[]).expect("空格");
@@ -498,9 +498,7 @@ fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
     let player = player_entity(app.world_mut());
     let world = app.world_mut();
     let position = *world.get::<Position>(player).expect("玩家有位置");
-    let dagger = world
-        .spawn((Item::new(ItemId(24)), Amount::new(1)))
-        .id();
+    let dagger = ecs_core::item::spawn_item_assembled(world, ItemId(24), 1);
     let mut corpse_container = Container::new(&CORPSE);
     corpse_container.insert(0, dagger, &[]).expect("尸体空格");
     let corpse = world
