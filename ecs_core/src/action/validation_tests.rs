@@ -11,7 +11,7 @@
 //! 藏在四个执行器内部，只能通过"位置有没有变"间接观察。
 
 // `super::*` 已经带出校验器用到的组件（`Move`/`Chase`/`Flee`/`Wander`/`BasicAttack`/
-// `Ready`/`Position`/`Health`/`LastKnownPlayerPos`）与三个资源；这里只补它没有的。
+// `Ready`/`Position`/`Health`/`Aggro`）与三个资源；这里只补它没有的。
 use super::*;
 use crate::action::entity::{ActionPriority, ActionSource, ActiveAction};
 use crate::action::settle::settle_action_system;
@@ -25,6 +25,7 @@ use crate::item::{
     Amount, BODY, Container, Item, ItemId, Throw, off_hand_slot_index,
 };
 use crate::map::Tile;
+use crate::monster::Aggro;
 use crate::schedule::ActionPocSchedule;
 use crate::spell::SpellId;
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
@@ -332,7 +333,7 @@ fn each_validator_only_claims_its_own_action_type() {
 
     // C：`Chase` —— 看不见但有记忆，朝记忆点走一步。
     let chaser = monster_at(&mut world, (30, 30));
-    world.entity_mut(chaser).insert(LastKnownPlayerPos(Some((30, 32))));
+    world.entity_mut(chaser).insert(Aggro::with_memory((30, 32)));
     let chase_action = mount_ready(&mut world, chaser, Chase);
 
     // D：`Flee` —— 低血（低于滞回退出阈值），朝离玩家最远的合法方向逃。
@@ -400,7 +401,7 @@ fn each_validator_only_claims_its_own_action_type() {
 fn a_chase_with_no_path_stays_put_and_succeeds() {
     let (mut world, _player) = open_world();
     let chaser = monster_at(&mut world, (30, 30));
-    world.entity_mut(chaser).insert(LastKnownPlayerPos(Some((30, 32))));
+    world.entity_mut(chaser).insert(Aggro::with_memory((30, 32)));
     // 把追击者四周砌死：A* 没有首步可用。
     {
         let mut map = world.resource_mut::<Map>();
@@ -664,7 +665,7 @@ fn a_queued_action_is_never_decided_reserved_or_randomised() {
     let chaser = monster_at(&mut world, (30, 30));
     world
         .entity_mut(chaser)
-        .insert(LastKnownPlayerPos(Some((30, 32))));
+        .insert(Aggro::with_memory((30, 32)));
     let chase = mount_queued(&mut world, chaser, Chase);
 
     // 排队中的游荡：不该取随机数、不该占格。
@@ -849,5 +850,39 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
     assert!(
         world.get::<ThrowTarget>(action3).is_none(),
         "视线被挡不得定案"
+    );
+}
+
+/// DsnE29：追击目标 = 威胁最高者，而不是永远玩家。
+///
+/// 玩家可见、但威胁表里另一只怪更高；追击者应当定案攻击那只怪。
+/// 这条钉住"仇恨层只换目标选择、不换行动原语"：输出的仍是 `AttackTarget`。
+#[test]
+fn a_chase_attacks_the_highest_threat_instead_of_the_player() {
+    let (mut world, player) = open_world();
+    let chaser = monster_at(&mut world, (30, 30));
+    let rival = monster_at(&mut world, (31, 30));
+
+    let mut viewshed = Viewshed::new(10);
+    viewshed.visible_tiles = vec![(10, 10), (31, 30)];
+    let mut aggro = Aggro::with_memory((31, 30));
+    aggro.record(rival, 5.0);
+    aggro.record(player, 1.0);
+    world.entity_mut(chaser).insert((viewshed, aggro));
+
+    let action = mount_ready(&mut world, chaser, Chase);
+    crate::system::run_settle_systems(&mut world);
+    clear_events(&mut world);
+
+    run_validators(&mut world);
+
+    assert_eq!(
+        world.get::<AttackTarget>(action),
+        Some(&AttackTarget(rival)),
+        "威胁最高的 rival 应当优先于玩家"
+    );
+    assert!(
+        world.get::<AttackTarget>(action) != Some(&AttackTarget(player)),
+        "玩家只在没有更高威胁时才成为目标"
     );
 }

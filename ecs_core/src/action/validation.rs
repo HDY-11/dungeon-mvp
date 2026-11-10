@@ -62,11 +62,12 @@ use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionEvents, Pendi
 use crate::balance::FLEE_HP_RATIO_EXIT;
 use crate::combat::can_attack_positions;
 use crate::components::{
-    BasicAttack, Chase, Flee, Health, LastKnownPlayerPos, Mana, Move, Position, Viewshed, Wander,
+    BasicAttack, Chase, Flee, Health, Mana, Move, Position, Viewshed, Wander,
 };
 use crate::entity_cls::Player as PlayerMarker;
 use crate::item::{Container, Throw, off_hand_slot_index};
 use crate::map::Map;
+use crate::monster::Aggro;
 use crate::resources::{EventLog, EventMessage, GameRng, OccupancyMap};
 use crate::spell::{CastSpell, SpellBook, SpellTargeting, nearest_enemy_in_range};
 use crate::throw::{ThrowAction, throw_reachable};
@@ -207,46 +208,72 @@ pub fn validate_move_system(
     }
 }
 
-/// `Chase`：保活（还看得见或有记忆）→ A\* 首步 / 相邻则攻击 / 否则原地。
+/// 追击校验器要读的世界切片：待执行行动 / 位置 / 视野 / 仇恨 / 血量 / 玩家。
+///
+/// 合成一个 `SystemParam` 而不是六个独立参数：这些查询永远一起用（目标选择的全部
+/// 输入），也把 `validate_chase_system` 的参数数量压到 clippy 的阈值内。
+#[derive(SystemParam)]
+pub struct ChaseWorld<'w, 's> {
+    actions: Query<'w, 's, ActionEntry, PendingAction<Chase>>,
+    positions: Query<'w, 's, &'static Position>,
+    viewsheds: Query<'w, 's, &'static Viewshed>,
+    aggro: Query<'w, 's, &'static mut Aggro>,
+    healths: Query<'w, 's, &'static Health>,
+    player: Query<'w, 's, Entity, With<PlayerMarker>>,
+}
+
+/// `Chase`：保活（还看得见目标、或有记忆/仇恨）→ 目标优先威胁最高者 → A\* 首步 /
+/// 相邻则攻击 / 否则原地。
 ///
 /// 保活对**所有**待执行追击生效（ECS43）：看不见又没记忆时立刻取消，不等到它到点。
 /// 定案只在到点那一轮做——A\* 是"此刻"的路径，提前算出来的首步没有意义。
 ///
-/// 十个参数里 `positions`/`viewsheds`/`last_known`/`player` 语义各异且都是可变访问点，
-/// 压不进一个 `SystemParam`（同旧执行器的取舍）。
-#[allow(clippy::too_many_arguments)]
+/// 目标选择（DsnE29）：威胁表最高且仍活着者优先；没有仇恨时回退到玩家。
+/// 这样"被玩家打过的怪物"会追玩家，"被别的来源打过的怪物"也会追那个来源，
+/// 而不是永远只认玩家。
 pub fn validate_chase_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut events: ActionEvents,
-    actions: Query<ActionEntry, PendingAction<Chase>>,
-    positions: Query<&Position>,
-    viewsheds: Query<&Viewshed>,
-    mut last_known: Query<&mut LastKnownPlayerPos>,
-    player: Query<Entity, With<PlayerMarker>>,
+    mut world: ChaseWorld,
 ) {
     use crate::spatial::pathfinding::astar;
 
-    for (action, child_of, ready) in &actions {
+    for (action, child_of, ready) in &world.actions {
         let actor = child_of.parent();
-        let Ok(player_entity) = player.single() else {
+        let Ok(player_entity) = world.player.single() else {
             events.fail(action, actor);
             continue;
         };
-        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
-            events.fail(action, actor);
-            continue;
-        };
-        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
+        let Ok(self_position) = world.positions.get(actor).map(Position::to_tuple) else {
             events.fail(action, actor);
             continue;
         };
 
-        let can_see = viewsheds
+        // 仇恨目标（若仍活着）优先于玩家；`record_threat_system` 会把来源位置写进记忆。
+        let threat_target = world
+            .aggro
             .get(actor)
             .ok()
-            .is_some_and(|viewshed| viewshed.can_see(player_position));
-        let memory = last_known.get(actor).ok().and_then(|known| known.0);
+            .and_then(Aggro::target)
+            .filter(|target| {
+                world
+                    .healths
+                    .get(*target)
+                    .is_ok_and(|health| health.is_alive())
+            });
+        let target_entity = threat_target.unwrap_or(player_entity);
+        let Ok(target_position) = world.positions.get(target_entity).map(Position::to_tuple) else {
+            events.fail(action, actor);
+            continue;
+        };
+
+        let can_see = world
+            .viewsheds
+            .get(actor)
+            .ok()
+            .is_some_and(|viewshed| viewshed.can_see(target_position));
+        let memory = world.aggro.get(actor).ok().and_then(Aggro::last_known);
         // 保活：既看不见又没有记忆 → 这个追击不再成立（排队中也立刻取消）。
         if !can_see && memory.is_none() {
             events.fail(action, actor);
@@ -257,18 +284,22 @@ pub fn validate_chase_system(
         if !ready {
             continue;
         }
-        if can_see && let Ok(mut known) = last_known.get_mut(actor) {
-            known.0 = Some(player_position);
+        if can_see && let Ok(mut aggro) = world.aggro.get_mut(actor) {
+            aggro.remember(target_position);
         }
 
         let self_tile = Position::new(self_position.0, self_position.1);
-        let target = if can_see { Some(player_position) } else { memory };
+        let target = if can_see {
+            Some(target_position)
+        } else {
+            memory
+        };
         let decision = match target {
             Some((tx, ty)) => {
                 let target_tile = Position::new(tx, ty);
                 if can_see && self_tile.is_near(target_tile) {
                     // 相邻且可见：定案为攻击（伤害仍归结算链路）。
-                    Decision::Attack(player_entity)
+                    Decision::Attack(target_entity)
                 } else {
                     match astar(
                         self_position,
@@ -298,12 +329,12 @@ pub fn validate_chase_system(
 
         // 不可见且已抵达最后已知位置附近 → 记忆失效。
         if !can_see
-            && let Ok(mut known) = last_known.get_mut(actor)
-            && let Some((kx, ky)) = known.0
+            && let Ok(mut aggro) = world.aggro.get_mut(actor)
+            && let Some((kx, ky)) = aggro.last_known()
             && self_position.0.abs_diff(kx) <= 2
             && self_position.1.abs_diff(ky) <= 2
         {
-            known.0 = None;
+            aggro.forget();
         }
 
         apply_decision(&mut commands.entity(action), decision);

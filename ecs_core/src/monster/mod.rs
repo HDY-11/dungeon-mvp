@@ -1,10 +1,10 @@
-//! 怪物：模板数据（`template`）与生成规则（`spawn`）。
+//! 怪物：模板数据（`template`）、生成规则（`spawn`）与仇恨（`aggro`）。
 //!
 //! `mod.rs` 只做模块声明与重导出。**一个物种的全部信息都在 `template.rs` 的一行里**
-//! （数值 / 能力 / 生成权重）；`spawn.rs` 只剩种类池与加权挑选（Phase H6/H7）。
-//!
-//! 本轮不迁移掉落表（物品未迁移）。
+//! （数值 / 能力 / 生成权重）；`spawn.rs` 只剩种类池与加权挑选（Phase H6/H7）；
+//! `aggro.rs` 是仇恨/威胁表骨架（DsnE29）。
 
+pub mod aggro;
 pub mod spawn;
 pub mod template;
 
@@ -29,6 +29,9 @@ impl Corpse {
     }
 }
 
+pub use aggro::{
+    Aggro, ThreatEntry, record_threat_system, threat_decay_system, threat_system,
+};
 pub use spawn::{
     attach_abilities, kinds_for, monster_spawn_weight, pick_by_weight, roll_one_kind,
 };

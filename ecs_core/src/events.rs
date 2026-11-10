@@ -22,6 +22,20 @@ pub struct AttackEvent {
     pub is_crit: bool,
 }
 
+/// 一次伤害已经落到目标身上（DsnE29）。
+///
+/// 与 [`AttackEvent`]（"近战这一次打出的结果"）不同，这是**所有伤害来源的统一
+/// 出口**：近战、法术、投掷都发；将来的环境伤害/持续伤害也应走这里。仇恨系统只
+/// 订阅这一个事件，因此不会随伤害来源增加而改。
+///
+/// `source` 可以为空（陷阱、毒、坠落等无施害者的伤害），此时不产生仇恨。
+#[derive(Event, Debug, Clone, Copy, PartialEq)]
+pub struct DamageTakenEvent {
+    pub source: Option<Entity>,
+    pub target: Entity,
+    pub amount: f64,
+}
+
 /// 实体死亡。
 ///
 /// **携带经验奖励**是刻意的：奖励数值只有死亡那一刻能拿到——`check_death_system`

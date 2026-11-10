@@ -4,17 +4,17 @@
 //! actor 上的行动挂载；这里只保留**被 action 实体链路复用的条件函数**。
 
 use crate::balance::{FLEE_HP_RATIO, FLEE_HP_RATIO_EXIT};
-use crate::components::{Health, LastKnownPlayerPos, Viewshed};
+use crate::components::{Health, Viewshed};
+use crate::monster::Aggro;
 use crate::world::query::player_pos;
 use bevy_ecs::prelude::*;
 
-/// 追击保活条件：仍能看到玩家，或仍有最后已知位置。
+/// 追击保活条件：仍能看到玩家，或仇恨表里还有目标/最后已知位置（DsnE29）。
 pub fn chase_condition(world: &World, entity: Entity) -> bool {
     player_visible_to(world, entity)
         || world
-            .get::<LastKnownPlayerPos>(entity)
-            .map(|last_known| last_known.0.is_some())
-            .unwrap_or(false)
+            .get::<Aggro>(entity)
+            .is_some_and(|aggro| !aggro.is_empty() || aggro.last_known().is_some())
 }
 
 /// 逃跑保活条件（滞回退出阈值）。

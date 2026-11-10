@@ -10,6 +10,7 @@ use crate::components::{
     CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Mana, Viewshed,
 };
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
+use crate::monster::Aggro;
 use crate::item::{Amount, BODY, Container, Item, ItemId, Throw, off_hand_slot_index};
 use crate::resources::GameRng;
 use crate::spell::{CastSpell, SpellBook, SpellId};
@@ -1404,7 +1405,7 @@ fn chase_parity_scene(
     );
     world
         .entity_mut(monster)
-        .insert((CanChase, Viewshed::new(10), LastKnownPlayerPos::default()));
+        .insert((CanChase, Viewshed::new(10), Aggro::default()));
     crate::system::run_settle_systems(&mut world);
     // `new_game` 只注册 init/settle 两条调度；用行动链路还需要 PoC 调度。
     world.add_schedule(build_action_poc_schedule());
@@ -1415,6 +1416,15 @@ fn chase_parity_scene(
 fn set_visibility(world: &mut World, monster: Entity, player_tile: (usize, usize), sees: bool) {
     let mut viewshed = world.get_mut::<Viewshed>(monster).unwrap();
     viewshed.visible_tiles = if sees { vec![player_tile] } else { Vec::new() };
+}
+
+/// 覆写仇恨记忆（`None` 表示清空），避免测试直接摸组件私有字段。
+fn set_memory(world: &mut World, monster: Entity, memory: Option<(usize, usize)>) {
+    let mut aggro = world.get_mut::<Aggro>(monster).unwrap();
+    match memory {
+        Some(position) => aggro.remember(position),
+        None => aggro.forget(),
+    }
 }
 
 /// 给怪物挂一个已到期的 action 实体（`Chase`），并让它进入 `Active`。
@@ -1441,7 +1451,7 @@ fn mount_ready_chase(world: &mut World, monster: Entity) -> Entity {
 ///
 /// | 情形 | 期望 |
 /// |---|---|
-/// | 可见、不相邻 | 朝玩家走一步（`astar`），写 `LastKnownPlayerPos`，无攻击意图 |
+/// | 可见、不相邻 | 朝玩家走一步（`astar`），写 `Aggro.last_known`，无攻击意图 |
 /// | 不可见、有记忆 | 朝记忆点走一步 |
 /// | 不可见、无记忆 | 保活失败 → `Failure`，不移动 |
 ///
@@ -1463,7 +1473,7 @@ fn chase_action_three_outcome_contracts() {
     ] {
         let (mut world, _player, monster) = chase_parity_scene(11, player_tile, monster_tile);
         set_visibility(&mut world, monster, player_tile, sees);
-        world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = memory;
+        set_memory(&mut world, monster, memory);
         mount_ready_chase(&mut world, monster);
 
         validate_and_settle(&mut world);
@@ -1471,8 +1481,8 @@ fn chase_action_three_outcome_contracts() {
 
         let after = world.get::<Position>(monster).unwrap().to_tuple();
         let memory_after = world
-            .get::<LastKnownPlayerPos>(monster)
-            .and_then(|known| known.0);
+            .get::<Aggro>(monster)
+            .and_then(Aggro::last_known);
         let intents = world.resource::<Events<AttackIntentEvent>>().len();
 
         match (sees, memory) {
@@ -1571,7 +1581,7 @@ fn chase_generation_requires_sight_or_memory() {
     // 情形 C：看不见但有记忆 → 生成。
     let (mut world, _player, monster) = chase_parity_scene(31, player_tile, monster_tile);
     set_visibility(&mut world, monster, player_tile, false);
-    world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = Some((35, 40));
+    world.get_mut::<Aggro>(monster).unwrap().remember((35, 40));
     let _ = world.run_system_once(chase_generation_system);
     assert_eq!(
         candidates(&mut world).len(),
@@ -1588,15 +1598,15 @@ fn chase_clears_memory_when_reaching_last_known_position() {
     let (mut world, _player, monster) = chase_parity_scene(41, player_tile, monster_tile);
     set_visibility(&mut world, monster, player_tile, false);
     // 最后已知位置就在脚下（切比雪夫距离 0 ≤ 2）。
-    world.get_mut::<LastKnownPlayerPos>(monster).unwrap().0 = Some(monster_tile);
+    world.get_mut::<Aggro>(monster).unwrap().remember(monster_tile);
     mount_ready_chase(&mut world, monster);
 
     validate_and_settle(&mut world);
 
     assert_eq!(
         world
-            .get::<LastKnownPlayerPos>(monster)
-            .and_then(|known| known.0),
+            .get::<Aggro>(monster)
+            .and_then(Aggro::last_known),
         None,
         "抵达最后已知位置后必须清空记忆"
     );
@@ -1615,7 +1625,7 @@ fn idle_and_failure_are_mutually_exclusive() {
     // 追击需要视野与记忆组件；这里给空的（既看不见也没记忆）。
     world
         .entity_mut(monster)
-        .insert((CanChase, Viewshed::new(0), LastKnownPlayerPos::default()));
+        .insert((CanChase, Viewshed::new(0), Aggro::default()));
     let action = mount_ready_chase(&mut world, monster);
 
     validate_and_settle(&mut world);
@@ -1727,7 +1737,7 @@ fn flee_parity_scene(
     );
     world
         .entity_mut(monster)
-        .insert((CanFlee, Viewshed::new(10), LastKnownPlayerPos::default()));
+        .insert((CanFlee, Viewshed::new(10), Aggro::default()));
     let hp = 100.0 * monster_hp_ratio;
     *world.get_mut::<Health>(monster).unwrap() = Health::full(hp, 100.0);
     crate::system::run_settle_systems(&mut world);
@@ -2098,8 +2108,8 @@ fn parity_chase_scenario() {
     );
     assert_eq!(
         world
-            .get::<LastKnownPlayerPos>(monster)
-            .and_then(|known| known.0),
+            .get::<Aggro>(monster)
+            .and_then(Aggro::last_known),
         Some(player_tile),
         "追击可见时必须更新最后已知位置"
     );

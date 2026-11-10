@@ -372,10 +372,6 @@ impl Viewshed {
     }
 }
 
-/// AI 追击记忆：最后已知的玩家位置。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct LastKnownPlayerPos(pub Option<(usize, usize)>);
-
 // ── 行动状态组件 ─────────────────────────────────────
 
 /// 这个实体**占格**：别人不能走进它所在的格子。

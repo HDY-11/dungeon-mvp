@@ -7,11 +7,12 @@
 use crate::balance::UNARMED_STRENGTH_CAP;
 use crate::components::*;
 use crate::effect::EffectContext;
-use crate::events::{AttackEvent, AttackIntentEvent};
+use crate::events::{AttackEvent, AttackIntentEvent, DamageTakenEvent};
 use crate::item::{Container, Item, ItemTag, Weapon, WeaponProgress};
 use crate::resources::{EventLog, EventMessage, GameRng};
 use crate::rules::{CritProfile, MeleeInput, StatId, apply_modifiers, melee};
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
 
 /// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
 ///
@@ -138,30 +139,43 @@ pub fn resolve_attack_system(
     }
 }
 
+/// 伤害落地的写侧切片：血量、武器经验、日志、统一伤害出口。
+///
+/// 合成一个 `SystemParam` 是为了把 `apply_damage_system` 的参数数量压进 clippy 阈值；
+/// 同时也强调这七样共同构成"一次伤害落地"的写集合。
+#[derive(SystemParam)]
+pub struct DamageSink<'w, 's> {
+    healths: Query<'w, 's, &'static mut Health>,
+    bodies: Query<'w, 's, &'static Container>,
+    items: Query<'w, 's, &'static Item>,
+    weapons_data: Query<'w, 's, &'static Weapon>,
+    weapons: Query<'w, 's, &'static mut WeaponProgress>,
+    damage_taken: EventWriter<'w, DamageTakenEvent>,
+    event_log: ResMut<'w, EventLog>,
+}
+
 /// 消费 `AttackEvent`，把伤害扣到目标身上；同时给攻击者的主手武器记养成经验。
 ///
 /// 经验量 = 造成的伤害 × 物品品质的 EXP 倍率（DsnE24 阶段 ②）：品质越高升级越慢，
 /// 于是"打同样的伤害，粗劣武器更快追上高等级"。只有**造成伤害**才给经验，
 /// 空挥/未命中（未来有闪避时）不给。
-pub fn apply_damage_system(
-    mut attack_events: EventReader<AttackEvent>,
-    mut healths: Query<&mut Health>,
-    bodies: Query<&Container>,
-    items: Query<&Item>,
-    weapons_data: Query<&Weapon>,
-    mut weapons: Query<&mut WeaponProgress>,
-    mut event_log: ResMut<EventLog>,
-) {
+pub fn apply_damage_system(mut attack_events: EventReader<AttackEvent>, mut sink: DamageSink) {
     for event in attack_events.read() {
-        if let Ok(mut health) = healths.get_mut(event.target) {
+        if let Ok(mut health) = sink.healths.get_mut(event.target) {
             *health = health.damage(event.damage);
+            // 统一伤害出口（DsnE29）：仇恨系统只订阅这一种事件。
+            sink.damage_taken.write(DamageTakenEvent {
+                source: Some(event.attacker),
+                target: event.target,
+                amount: event.damage,
+            });
         }
         award_weapon_exp(
-            &bodies,
-            &items,
-            &weapons_data,
-            &mut weapons,
-            &mut event_log,
+            &sink.bodies,
+            &sink.items,
+            &sink.weapons_data,
+            &mut sink.weapons,
+            &mut sink.event_log,
             event.attacker,
             event.damage,
         );

@@ -13,12 +13,14 @@ use crate::balance::{
 use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
-    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
+    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DamageTakenEvent,
+    DeathEvent, LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
 };
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
-use crate::monster::{MonsterKindId, attach_abilities, monster_template, roll_one_kind};
+use crate::monster::{
+    Aggro, MonsterKindId, attach_abilities, monster_template, roll_one_kind,
+};
 use crate::resources::*;
 use crate::rules::{StatId, hp_curve, mp_curve};
 use crate::schedule::CoreInitSchedule;
@@ -86,6 +88,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<SpellIntentEvent>::default());
     // 投掷意图（Gm9）：settle 写、`resolve_throw_system`/`consume_thrown_item_system` 读。
     world.insert_resource(bevy_ecs::event::Events::<ThrowIntentEvent>::default());
+    // 已落地伤害（DsnE29）：近战/法术/投掷写，仇恨系统读；统一伤害出口。
+    world.insert_resource(bevy_ecs::event::Events::<DamageTakenEvent>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());
@@ -397,7 +401,8 @@ pub fn spawn_monsters_system(
         cmd.insert(Viewshed::new(10))
             .insert(EntityName(template.name.into()))
             .insert(AttackName(template.attack_name.into()))
-            .insert(LastKnownPlayerPos::default())
+            // 仇恨/威胁表（DsnE29）：替换旧 `LastKnownPlayerPos`，记忆并入 `Aggro`。
+            .insert(Aggro::default())
             // 怪物能产生事件（行动、受击、死亡），是信息栏候选（DsnE21 阶段 3）。
             .insert(Observable)
             .insert(Idle);

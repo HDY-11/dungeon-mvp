@@ -38,8 +38,8 @@ pub use occupancy::rebuild_occupancy_system;
 pub use perception::{fov_system, update_map_memory_system, update_visible_memory_system};
 
 use crate::events::{
-    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
+    ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DamageTakenEvent,
+    DeathEvent, LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
 };
 use crate::schedule::CoreSettleSchedule;
 use bevy_ecs::prelude::*;
@@ -60,6 +60,7 @@ pub struct CoreEventBuffers<'w> {
     action_failed: ResMut<'w, Events<ActionFailedEvent>>,
     spell_intents: ResMut<'w, Events<SpellIntentEvent>>,
     throw_intents: ResMut<'w, Events<ThrowIntentEvent>>,
+    damage_taken: ResMut<'w, Events<DamageTakenEvent>>,
 }
 
 /// 每轮结算末尾更新所有事件缓冲。
@@ -77,6 +78,7 @@ pub fn update_events_system(mut events: CoreEventBuffers) {
     events.action_failed.update();
     events.spell_intents.update();
     events.throw_intents.update();
+    events.damage_taken.update();
 }
 
 /// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。
@@ -88,47 +90,56 @@ pub fn build_core_schedule() -> Schedule {
     let mut schedule = crate::schedule::core_schedule(CoreSettleSchedule);
     schedule.add_systems(
         (
-            combat::resolve_attack_system,
-            combat::apply_damage_system,
-            // 法术（DsnE26）：settle 只发 SpellIntentEvent，效果在这里落地。
-            // 放在 apply_damage_system 之后、中毒之前：法术伤害先扣血，
-            // 本轮的死亡判定照常收口；法术不参与"中毒"这条链。
-            crate::spell::resolve_spell_system,
-            // 投掷（Gm9）：settle 只发 ThrowIntentEvent；伤害在这里落地，消耗系统
-            // 随后从副手扣 1。放在死亡判定之前，投掷击杀能在本轮收口。
-            crate::throw::resolve_throw_system,
-            crate::throw::consume_thrown_item_system,
-            // 效果时长（DsnE12 第 4 条）：先统一推进所有 `EffectDuration`；payload 系统
-            // （如中毒 tick）读到的剩余时长必须是"这一轮已经走完"的值，否则发作晚一轮。
-            crate::effect::advance_effect_durations_system,
-            // 中毒的顺序有语义（见 `effect/status.rs`）：先运转已有中毒，再让本轮的攻击
-            // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
-            crate::effect::poison_tick_system,
-            crate::effect::poison_apply_system,
-            // 到期回收必须在所有 payload 结算**之后**：否则"时长归零那一轮"的最后一次
-            // 发作会被回收吞掉。它是按时间终结效果实体的唯一入口（DsnE12 第 4 条）。
-            crate::effect::expire_effects_system,
-            // 拾取**不在结算链里**：踩上物品不会自动捡，玩家在背包页「地面」栏
-            // 按 Enter 调 `item::take_from_ground`（DsnE21 阶段 4）。结算链只留
-            // 与回合推进相关的系统。
-            death::check_death_system,
-            experience::apply_exp_system,
-            // 等级变化后重算生命/法力上限（DsnE23 的唯一上限公式）。
-            // 放在升级之后、其它系统之前：本轮的观测值（HUD）已经是新上限。
-            crate::rules::refresh_vitals_system,
-            // 法力按 AV 回复（DsnE25）：放在上限刷新之后，保证本轮回的是新上限下的蓝。
-            crate::rules::mana_regen_system,
-            perception::fov_system,
-            perception::update_map_memory_system,
-            perception::update_visible_memory_system,
-            occupancy::rebuild_occupancy_system,
-            // 格索引与占用图并列：都是"每轮重建的派生数据"——没有增量更新，
-            // 就没有漏改导致的幽灵条目。顺序无关（两者读的组件不同），
-            // 放在占用图旁边只为让人一眼看到"这张图上有两个格索引"。
-            crate::effect::rebuild_cell_effects_system,
-            // 治疗泉（DsnE25）：必须在格索引重建之后——这一轮玩家可能刚走进泉眼，
-            // 索引要先用当前位置重建，才能按格找到它。
-            crate::effect::heal_spring_system,
+            (
+                combat::resolve_attack_system,
+                combat::apply_damage_system,
+                // 法术（DsnE26）：settle 只发 SpellIntentEvent，效果在这里落地。
+                // 放在 apply_damage_system 之后、中毒之前：法术伤害先扣血，
+                // 本轮的死亡判定照常收口；法术不参与"中毒"这条链。
+                crate::spell::resolve_spell_system,
+                // 投掷（Gm9）：settle 只发 ThrowIntentEvent；伤害在这里落地，消耗系统
+                // 随后从副手扣 1。放在死亡判定之前，投掷击杀能在本轮收口。
+                crate::throw::resolve_throw_system,
+                crate::throw::consume_thrown_item_system,
+                // 效果时长（DsnE12 第 4 条）：先统一推进所有 `EffectDuration`；payload 系统
+                // （如中毒 tick）读到的剩余时长必须是"这一轮已经走完"的值，否则发作晚一轮。
+                crate::effect::advance_effect_durations_system,
+                // 中毒的顺序有语义（见 `effect/status.rs`）：先运转已有中毒，再让本轮的攻击
+                // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
+                crate::effect::poison_tick_system,
+                crate::effect::poison_apply_system,
+                // 到期回收必须在所有 payload 结算**之后**：否则"时长归零那一轮"的最后一次
+                // 发作会被回收吞掉。它是按时间终结效果实体的唯一入口（DsnE12 第 4 条）。
+                crate::effect::expire_effects_system,
+                // 拾取**不在结算链里**：踩上物品不会自动捡，玩家在背包页「地面」栏
+                // 按 Enter 调 `item::take_from_ground`（DsnE21 阶段 4）。结算链只留
+                // 与回合推进相关的系统。
+                death::check_death_system,
+                experience::apply_exp_system,
+                // 等级变化后重算生命/法力上限（DsnE23 的唯一上限公式）。
+                // 放在升级之后、其它系统之前：本轮的观测值（HUD）已经是新上限。
+                crate::rules::refresh_vitals_system,
+                // 法力按 AV 回复（DsnE25）：放在上限刷新之后，保证本轮回的是新上限下的蓝。
+                crate::rules::mana_regen_system,
+                perception::fov_system,
+                perception::update_map_memory_system,
+                perception::update_visible_memory_system,
+                occupancy::rebuild_occupancy_system,
+                // 格索引与占用图并列：都是"每轮重建的派生数据"——没有增量更新，
+                // 就没有漏改导致的幽灵条目。顺序无关（两者读的组件不同），
+                // 放在占用图旁边只为让人一眼看到"这张图上有两个格索引"。
+                crate::effect::rebuild_cell_effects_system,
+                // 治疗泉（DsnE25）：必须在格索引重建之后——这一轮玩家可能刚走进泉眼，
+                // 索引要先用当前位置重建，才能按格找到它。
+                crate::effect::heal_spring_system,
+                // 仇恨（DsnE29）：所有伤害来源都已发 `DamageTakenEvent`——近战在
+                // `apply_damage_system`、法术/投掷分别在各自 resolve 里；这里收口成
+                // 威胁表并按本轮 AV 衰减。与 update_events 分开是因为"一轮结束"的
+                // 事件缓冲更新必须最后做，而仇恨只读本轮事件。
+                crate::monster::threat_system,
+            )
+                .chain(),
+            // 事件缓冲必须在一轮所有系统之后统一更新（否则跨轮残留）。
             update_events_system,
         )
             .chain(),

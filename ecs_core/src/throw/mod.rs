@@ -15,7 +15,7 @@
 use crate::balance::THROW_RANGE;
 use crate::components::{EntityName, Health, Position, Stats};
 use crate::effect::EffectContext;
-use crate::events::ThrowIntentEvent;
+use crate::events::{DamageTakenEvent, ThrowIntentEvent};
 use crate::item::{Amount, Container, Item, Throw, off_hand_slot_index, spawn_ground_item};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::{EventLog, EventMessage, GameRng};
@@ -82,6 +82,7 @@ pub struct ThrowResolution<'w, 's> {
     rng: ResMut<'w, GameRng>,
     commands: Commands<'w, 's>,
     event_log: ResMut<'w, EventLog>,
+    damage_taken: EventWriter<'w, DamageTakenEvent>,
 }
 
 /// 结算一次投掷（`ThrowIntentEvent`）：落点必中——格上站着谁就打谁，没人就只是落地。
@@ -105,6 +106,7 @@ pub fn resolve_throw_system(world: ThrowResolution) {
         mut rng,
         mut commands,
         mut event_log,
+        mut damage_taken,
     } = world;
     for intent in intents.read() {
         let Ok((body, thrower_stats, thrower_name)) = throwers.get(intent.thrower) else {
@@ -159,6 +161,12 @@ pub fn resolve_throw_system(world: ThrowResolution) {
             let thrower_label = thrower_name.map_or("你", |name| name.0.as_str());
             if let Ok(mut health) = healths.get_mut(victim_entity) {
                 *health = health.damage(breakdown.damage);
+                // 统一伤害出口（DsnE29）：投掷也参与仇恨。
+                damage_taken.write(DamageTakenEvent {
+                    source: Some(intent.thrower),
+                    target: victim_entity,
+                    amount: breakdown.damage,
+                });
             }
             let crit = if breakdown.is_crit { "（暴击）" } else { "" };
             event_log.push(EventMessage::combat(format!(

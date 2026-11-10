@@ -31,7 +31,7 @@ use serde::Deserialize;
 use crate::components::{EntityName, Health, MagicMastery, Mana, Position, Stats};
 use crate::effect::EffectContext;
 use crate::entity_cls::Player;
-use crate::events::SpellIntentEvent;
+use crate::events::{DamageTakenEvent, SpellIntentEvent};
 use crate::resources::{EventLog, EventMessage};
 use crate::rules::{StatId, apply_modifiers, clamp_resistance};
 
@@ -220,6 +220,7 @@ pub fn resolve_spell_system(
     mut players: Query<(&mut Health, &Position), With<Player>>,
     mut bodies: SpellVictims,
     effects: EffectContext,
+    mut damage_taken: EventWriter<DamageTakenEvent>,
     mut event_log: ResMut<EventLog>,
 ) {
     for intent in intents.read() {
@@ -267,6 +268,12 @@ pub fn resolve_spell_system(
                 );
                 let damage = spell_damage(amount, mastery.0, resist);
                 *health = health.damage(damage);
+                // 统一伤害出口（DsnE29）：法术也参与仇恨。
+                damage_taken.write(DamageTakenEvent {
+                    source: Some(intent.caster),
+                    target: intent.target,
+                    amount: damage,
+                });
                 let name = target_name.map(|name| name.0.as_str()).unwrap_or("目标");
                 event_log.push(EventMessage::skill(format!(
                     "{caster_label}施放{}，对{name}造成 {damage:.0} 点魔法伤害",

@@ -44,10 +44,11 @@ use crate::balance::{
 };
 use crate::components::{
     ActionTimer, Active, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase, Failure, Flee,
-    Health, Idle, LastKnownPlayerPos, Move, Position, Ready, Stats, Viewshed, Wait, Wander,
+    Health, Idle, Move, Position, Ready, Stats, Viewshed, Wait, Wander,
 };
 use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent};
+use crate::monster::Aggro;
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
 use crate::resources::OccupancyMap;
 use crate::effect::EffectContext;
@@ -547,33 +548,32 @@ pub fn wait_generation_system(
     }
 }
 
-/// 追击候选（C5）：玩家可见、或仍有最后已知位置（§3.3 表）。
+/// 追击候选（C5）：可见玩家、仍有记忆、或仇恨表里还有目标（DsnE29）。
 ///
-/// 条件与旧 `ai.rs::choose_action` 的 `chase_condition` 一致：
-/// `player_visible_to(actor) || LastKnownPlayerPos.0.is_some()`。
+/// 旧条件只有"看见玩家或有最后已知位置"；仇恨表加入后，被其他来源打过的怪物
+/// 即使看不见玩家也会产生追击候选（记忆由 `record_threat_system` 写入，
+/// 具体锁谁在 `validate_chase_system` 里按威胁值决定）。
 pub fn chase_generation_system(
     mut commands: Commands,
     actors: Query<AiActorData, AiActor<CanChase>>,
     viewsheds: Query<&Viewshed>,
-    last_known: Query<&LastKnownPlayerPos>,
+    aggro: Query<&Aggro>,
     player: Query<&Position, With<Player>>,
     effects: EffectContext,
 ) {
-    let Ok(player_position) = player.single() else {
-        return;
-    };
-    let player_position = player_position.to_tuple();
+    let player_position = player.single().ok().map(Position::to_tuple);
 
     for (actor, stats, position) in &actors {
-        let can_see = viewsheds
-            .get(actor)
-            .ok()
-            .is_some_and(|viewshed| viewshed.can_see(player_position));
-        let has_memory = last_known
-            .get(actor)
-            .ok()
-            .is_some_and(|known| known.0.is_some());
-        if !can_see && !has_memory {
+        let awareness = aggro.get(actor).ok();
+        let can_see_player = player_position.is_some_and(|player| {
+            viewsheds
+                .get(actor)
+                .ok()
+                .is_some_and(|viewshed| viewshed.can_see(player))
+        });
+        let has_aggro = awareness.is_some_and(|aggro| !aggro.is_empty());
+        let has_memory = awareness.is_some_and(|aggro| aggro.last_known().is_some());
+        if !can_see_player && !has_aggro && !has_memory {
             continue;
         }
         let collected = effects.collect(actor, position.to_tuple());
