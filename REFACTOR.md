@@ -53,22 +53,23 @@
 | M15 | **属性词表 + 修正算子（DsnE22 阶段 ②a）**：`Stat` 枚举退役 → `rules/stat.rs` 的 `StatId(u16)` + `STATS` 词表（数据里按名字序列化，未知名字加载期报错）；`Modifier` 改为「一条修正一个算子」（`Add` / `MultiplyBase` / `MultiplyTotal` + `value`），折叠 `(base+ΣAdd)×ΠMulBase×ΠMulTotal` 与旧口径逐值等价；物品数据 schema 升 2，加载器拒绝未知属性/非有限值/非正乘区因子 | DsnE22 / DsnE10 | 本次提交 |
 | M16 | **稠密属性表（DsnE22 阶段 ②b）**：六个数值组件（`Attack`/`Defense`/`MoveSpeed`/`AttackSpeed`/`CritRate`/`CritDamage`）并成一份 `Stats`（按 `StatId` 稠密存放，`get/set/from_pairs/with`）；词表补 `crit_rate`/`crit_damage` 与每项 `default`；`Stats::set` 是唯一区间夹取处（忽略 NaN，其余 clamp 到 `[min,max]`）；生成点与读取点（战斗/经验/行动速度/HUD/驱动器）全部迁移 | DsnE22 | 本次提交 |
 | M17 | **行为数据化（DsnE22 阶段 ③）**：`ItemDef.behaviors`（`trigger: Use/Equipped` + 效果列表）；`ConsumeEffect` 与 `ItemKind::Equipment.ignores` 退役，改由 `BehaviorEffect::{Heal, RestoreMagic, IgnoreSource}` 表达蘑菇/海藻/踏水靴；加载器按触发/效果矩阵校验（种类与触发配对、数值为正、空行为/未知触发拒绝）；求值侧与使用/拾取路由只读行为表；数据 schema 升 3 | DsnE22 / DsnE10 / Gm7 | 本次提交 |
-| M18 | **实例组件 + 存档 V2（DsnE22 阶段 ④）**：`ItemDef.durability_max`（数据 schema 升 4，只有装备可声明）；`Durability{current,max}` 稀疏组件；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走 `World`）；`SaveV2{items_schema,...}` + `ItemSave.overrides`（只存玩家造成的耐久差异），读档先按蓝图装配再套差异；`SAVE_VERSION=2`，旧 V1 与物品 schema 不一致都明确拒绝（MVP 不迁移）；背包详情显示耐久 | DsnE22 / DsnE19 / DsnE20 / Gm7 / Gm13 | 本次提交 |
-| M19 | **品质与生命/法力基线（DsnE23）**：`Quality` 六档（粗劣/普通/精良/稀有/史诗/传说）进蓝图与 `items.json`（schema 升 5），UI 按品质着色 + 详情「品质：」行（`UiTextStyle::Quality`，渲染契约 7）；通用 `Pool` + `Health`/`Mana` newtype（`Magic` 改名 `Mana`）；上限 = 等级曲线（40+8×(lv-1) / 12+2×(lv-1)）+ `max_health`/`max_mana` 修正，防御不再加血；`rules::vitals` 是唯一上限公式与写者（普通刷新只夹取、升级回满）；存档 V3 只存 `health/mana` current、读档重算上限 | DsnE23 / DsnE19 / DsnE22 / Gm4 / Gm7 / Gm13 | 本次提交 |
+| M18 | **实例组件 + 存档 V2（DsnE22 阶段 ④）**：`ItemDef.durability_max`（数据 schema 升 4，只有装备可声明）；`Durability{current,max}` 稀疏组件；唯一装配桥 `ItemSpawner` + `spawn_item_assembled`（系统走 `Commands`、读档走 `World`）；`SaveV2{items_schema,...}` + `ItemSave.overrides`（只存玩家造成的耐久差异），读档先按蓝图装配再套差异；`SAVE_VERSION=2`，旧 V1 与物品 schema 不一致都明确拒绝（MVP 不迁移）；背包详情显示耐久（**后由 M25 修订：耐久删除、实例数据示例改 `WeaponProgress`、存档 V5**） | DsnE22 / DsnE19 / DsnE20 / Gm7 / Gm13 | 本次提交 |
+| M19 | **品质与生命/法力基线（DsnE23）**：`Quality` 六档（粗劣/普通/精良/稀有/史诗/传说）进蓝图与 `items.json`（schema 升 5），UI 按品质着色 + 详情「品质：」行（`UiTextStyle::Quality`，渲染契约 7）；通用 `Pool` + `Health`/`Mana` newtype（`Magic` 改名 `Mana`）；上限 = 等级曲线（40+8×(lv-1) / 12+2×(lv-1)）+ `max_health`/`max_mana` 修正，防御不再加血；`rules::vitals` 是唯一上限公式与写者（普通刷新只夹取、升级回满；**升级回满后由 M23 改为不回满**）；存档 V3 只存 `health/mana` current、读档重算上限 | DsnE23 / DsnE19 / DsnE22 / Gm4 / Gm7 / Gm13 | 本次提交 |
 | M20 | **物理伤害五域管线（DsnE24 阶段 ①）**：`base = 攻击力 + min(力量, 主手武器力量上限)×0.5`；护甲域 `4/(防御+4)`（曲线非减法）；增伤/暴击/护甲/抗性四域相乘，最终 `max(1, …)`；词表补 `strength`/`damage_bonus`/`physical_resist`/`magic_resist`；`ItemDef.strength_cap` 进蓝图（武器必须声明，schema 升 6，三把武器 6/10/3，空手 4）；旧 `combat::compute_melee_damage` 适配器退役；GAME.md Gm2 公式整段换口径 | DsnE24 / DsnE9 / Gm2 / Gm4 / Gm7 / Gm8 / Gm9 | 本次提交 |
 | M21 | **武器成长与存档 V4（DsnE24 阶段 ②）**：`WeaponGrowth { max_level, attack_per_level, strength_cap_per_level, exp_base }` 进蓝图（数据 schema 升 7，只有武器声明且必须声明）；`WeaponProgress { level, exp }` 实例组件（唯一装配桥插 1 级 0 经验）；经验 = 造成的伤害 × `Quality::exp_factor`（粗劣 1.25 → 传说 0.4），门槛 `exp_base × 等级^1.5`，升级写事件；等级攻击加成经 `EffectContext` 合成装备 `Modifier`，力量上限加等级成长；存档 V4 用 `ItemOverrides.weapon` 存等级/经验、非法进度报 `Corrupt`，旧 V1/V2/V3 拒绝；GAME.md Gm7 新增「武器成长」小节 | DsnE24 / DsnE19 / DsnE23 / Gm2 / Gm7 / Gm13 | 本次提交 |
 | M22 | **设计补齐：审计后修掉的三处缺口**（1）事件栏滚动（DsnE21 决策 4 / DsnA6）：`PageStack.events_scroll` + `UiIntent::ScrollEvents`、`SceneFrame.events_scroll`（契约 8）、tui 按偏移裁窗口并在标题标 `↑N`；（2）同格多具尸体分组（DsnE21 决策 7）：`take_from_corpse(world, corpse, slot)` 按实体编号升序取下标，背包「尸体」页签每具一个不可操作标题行；（3）`take_from_ground` 拆堆改走唯一装配桥 `spawn_item_assembled`，不再手工拼物品实体。同时同步 DsnE16/17/18 的陈旧状态段与代价段 | DsnE21 / DsnA6 / DsnE22 / DsnE16 / DsnE17 / DsnE18 / Gm7 / Gm14 | 本次提交 |
-| M23 | **资源回复与开局节奏 + 界面可读性（DsnE25）**：`ManaRegen` 运行时进度 + `mana_regen_system`（每累计 600AV 回 1 点；满池清零不攒、死亡不回、零头保留）；升级改为 `apply_maxima(..., false)`——只重算上限、不回满；新格子效果 `CellHeal` + `heal_spring_system`（踩上 +12、满血不消耗、用完销毁；每层 1 个、距出生点 4–10 格、避开出生点/楼梯/泥潭）；首层怪物数量 `monster_count_range` 改为 4–6（F1）；数值常量集中 `balance.rs`；tui 移除 Debug 面板、事件栏加等级前缀/进行中分隔/聚焦提示、信息栏补类型/血量条/距离；治疗泉 `VisualKey::Effect(1)` 外观 | DsnE25 / DsnE23 / DsnE21 / DsnA4 / Gm3 / Gm4 / Gm10 / Gm14 | 本次提交 |
+| M23 | **资源回复与开局节奏 + 界面可读性（DsnE25）**：`ManaRegen` 运行时进度 + `mana_regen_system`（每累计 600AV 回 1 点；满池清零不攒、死亡不回、零头保留）；升级改为 `apply_maxima(..., false)`——只重算上限、不回满；新格子效果 `CellHeal` + `heal_spring_system`（踩上 +12、满血不消耗、用完销毁；每层 1 个、距出生点 4–10 格、避开出生点/楼梯/泥潭）；首层怪物数量 `monster_count_range` 改为 4–6（F1）；数值常量集中 `balance.rs`；tui 移除 Debug 面板、事件栏加等级前缀/进行中分隔/聚焦提示、信息栏补类型/血量条/距离；治疗泉 `VisualKey::Effect(1)` 外观（**600AV 与「进行中分隔」后由 M24 修订：10000AV、去分隔**） | DsnE25 / DsnE23 / DsnE21 / DsnA4 / Gm3 / Gm4 / Gm10 / Gm14 | 本次提交 |
 | M24 | **法术（DsnE26）+ 开局数值修订 + 事件栏统一时间轴**：（1）法术数据 `assets/spells.json` schema 1（火花术 3MP/600AV/射程 6/最近可见敌人/伤害 5；治愈术 6MP/自身/治疗 12），启动校验与物品注册表同策略，`SpellBook` 初始两格不存档；（2）施法是一个行动：`PlayerCommand::Cast{slot}` → 生成期查书/蓝/目标 → `CastSpell` 行动（固定 600 AV）→ `validate_cast_system` 保活并到点重选目标（写 `CastTarget`）→ `settle` 发 `SpellIntentEvent` → 结算链 `resolve_spell_system` 扣蓝结算（伤害 `max(1,(5+精通)×(1−魔法抗性))`、治疗 `12+精通`，伤害不吃护甲）；输入 `1/2/3`、HUD 法术行、日志前缀 `~`；（3）数值修订（m08882）：`hp_curve` 基数 40→80（Lv1 80）、`MANA_REGEN_AV` 600→10000、毒每次 3→2 且受魔法抗性（`max(1, 2×(1−抗性))`）；（4）事件栏删 `---- 进行中 ----` 分隔行，已落定与进行中共用一条时间轴（DsnE21 统一语义） | DsnE26 / DsnE24 / DsnE25 / DsnE21 / DsnE23 / Gm2 / Gm4 / Gm5 / Gm14 / Gm15 | 本次提交 |
 | M25 | **物品部件化与组件化（DsnE27）**：`items.json` schema 8 改为「核心字段 + `parts`」部件列表（`equippable`/`consumable`/`weapon`/`container`/`modifiers`/`behaviors`），加载器逐部件强类型解析 + 跨部件校验；装配后组件是运行期真相（`Equippable`/`Consumable`/`Weapon`/`Container`/`Modifiers`/`Behaviors`，实例 `WeaponProgress`），规则/详情改读组件；`ItemKind` 退役、类别走 tags；删除耐久（字段/组件/装配/存档 overrides/详情/测试）；存档 V5（`SaveV5`、`ItemOverrides { weapon }`、旧 V1–V4 拒绝），测试夹具统一走唯一装配桥 | DsnE27 / DsnE22 / DsnE16 / DsnE18 / DsnE19 / DsnE24 / Gm7 / Gm13 | 本次提交 |
 | M26 | **效果时长/到期通用化（DsnE12 第 4 条补齐）**：新增 `effect::duration`——`EffectDuration { remaining_av }` 组件 + `advance_effect_durations_system`（按 `WorldClock.last_step_av` 推进）+ `expire_effects_system`（到点 despawn，唯一回收者）；中毒迁移：删 `Poison.remaining_av`，时长由 `EffectDuration` 承担（`POISON_TOTAL_AV = 400×3`），`poison_apply_system` 刷新时 reset 时长，`poison_tick_system` 只负责结算伤害（判据「剩余时长跨过 `(ticks_left-1)×400`」）、不再 despawn；结算链顺序 `resolve_spell → advance_effect_durations → poison_tick → poison_apply → expire_effects → check_death`；HUD 中毒行的「下一次 AV」改由时长推导；DsnE12 决策 4 从「每类效果一个 owner」改为「共享时长入口唯一回收 + 载荷不自行移除」 | DsnE12 / DsnE23 / DsnE26 / Gm4 | 本次提交 |
 | M27 | **投掷（DsnE28）**：石子改为 `throw` 部件（`damage: 3`）+ `throwable` 标签（物品 schema 9）；`ItemTag::Throwable` 与副手槽过滤（Shield/Throwable）；`Throw` 组件由装配桥物化；`rules/thrown.rs` 独立四域公式（基值=投掷物、增伤/暴击/护甲/抗性，不计攻击力与力量，下限 1）；`PlayerCommand::Throw{dx,dy}` → 生成期查副手投掷物、视线与切比雪夫射程 5（`THROW_RANGE`）→ `ActionName("Throw")` + `ThrowAction{target}`（190AV，`THROW_DURATION_AV`）→ `validate_throw_system` 保活/复查可达 → `settle` 发 `ThrowIntentEvent` → 结算链 `resolve_throw_system`（落点必中、伤者扣血、落地 `spawn_ground_item`）+ `consume_thrown_item_system`（只耗 1，归零移除副手；两系统分离避开 B0001）；`t` 进瞄准页（`PageKind::ThrowAim`，自动瞄准信息栏关注目标、方向键手动、Enter/x 取消，`ThrowAimView` 弹道与可达性），tui 叠加层画 `*`/`X` | DsnE28 / DsnE27 / DsnE12 / Gm9 / Gm14 | 本次提交 |
 
 **当前基线（实测）：** `cargo test -p ecs_core` **359 passed**；`cargo test --workspace --no-fail-fast`
-30 目标 **652 passed / 0 failed / 1 ignored**（含 presentation 80、tui 44、render_api 36、doc-tests 13）；`scripts/gate.ps1` 10 步全绿（本轮已复跑）。
+29 目标 **652 passed / 0 failed / 1 ignored**（含 presentation 80、tui 44、render_api 36、doc-tests 13）；`scripts/gate.ps1` 10 步全绿（本轮已复跑）。
 
 **H9/H11 的三个开放项已全部定案**（DsnE12「开放项」表）：装备落点 → 两个关系类型分开
-级联语义（`EffectOf` 级联 / `EquippedBy` 不级联）；格子效果粒度 → 每格实体 + 格索引；
+级联语义（`EffectOf` 级联 / `EquippedBy` 不级联；**`EquippedBy` 后随 DsnE18 退役**，装备加成
+改读身体容器内物品实体上的组件）；格子效果粒度 → 每格实体 + 格索引；
 来源桶集合 → 维持 `Intrinsic`/`Equipment`/`Status`/`Terrain` 四项不拆。
 
 ---
@@ -86,7 +87,7 @@
 
 | 阶段 | 内容 | 前置 |
 |---|---|---|
-| R2 | 页栈 UI：`Inventory` / `Throw` 需要物品与投掷规则迁移（当前给占位页） | 物品系统迁移（S4） |
+| R2 | 页栈 UI：`Inventory`（DsnA5）与 `Throw` 瞄准页（DsnE28）均已落地 | 已完成 |
 | R3 | `bevy_app` 宿主 + `ScheduleRunner` 替换主循环 | 无（网络已可用；原"环境无外网"的阻塞已消失） |
 | R4 | GPU 后端（消费同一 `SceneFrame`，`ecs_core` 零改动） | R3 |
 
@@ -102,7 +103,9 @@
 ### 2.4 旧架构归位的取舍（已定）
 
 `archive/` 里的 4 个 `dungeon-*` **仍保留为 workspace members**（可编译可测），
-因为它们还是"物品/技能/投掷/存档"这些未迁移子系统的**唯一可运行参考**。
+作为迁移前实现的**历史参考**：物品、投掷、存档、效果与技能骨架的当前实现都已迁进
+`ecs_core`；旧 crate 只剩「技能卷轴/合成」等尚未迁移子系统的设计线索，且与现行
+`DsnE11/DsnE27` 的口径不一致，读时以现行 DESIGN 为准。
 判定见 `archive/README.md`：迁移完成或旧依赖拖累升级时再整体删除。
 
 ---

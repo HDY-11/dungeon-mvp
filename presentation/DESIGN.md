@@ -21,7 +21,7 @@
 
 | 主题 | 条目 |
 |---|---|
-| 输入与页栈 | DsnP1 · DsnP2 |
+| 输入与页栈 | DsnP1 · DsnP2 · DsnP3 |
 
 
 <!-- &DsnP1  tap-tap：同键第二次才确认；第一次只设预览 -->
@@ -37,6 +37,9 @@
 
 方向键同时承担"移动"和"攻击"两个语义。如果敲一下方向键就直接执行，玩家无法区分"我想走过去"和"我想攻击敌人"——攻击是移动的一个副效应。
 
+**状态：** 已被取代（2026-11）。迁移后的输入管线没有实现 tap-tap 预览：`map_input_event`
+单键直接产出 `PlayerCommand`（见 GAME Gm11）；本条保留迁移前的预览动机。
+
 ---
 
 **原编号：** `DsnP1`（迁移前）
@@ -49,31 +52,34 @@
 
 所有 UI 页面通过页栈导航，栈顶决定按键路由和渲染行为。
 
-**页栈模型：**
+**页栈模型（当前实现）：**
 
 ```
-PageStack: Vec<Page>
-  [Game]                      ← 栈底，永不 pop
-  [Game, Dialog]              ← 按 q/Esc 弹出确认
-  [Game, Look]                ← 按 x 进入查看模式
-  [Game, Inventory]           ← 按 e 打开背包
-  [Game, ThrowSelect]         ← 按 t（无投掷物时）
-  [Game, ThrowAim]            ← 按 t（有投掷物时）
+PageStack（presentation crate；装配层作为 ECS Resource 持有并每帧应用意图）
+  Game                     ← 栈底，永不 pop
+  Dialog                   ← q/Esc 退出确认
+  Look                     ← ? 查看模式
+  Inventory                ← e 背包（3×3 网格，DsnA5）
+  ThrowAim                 ← t 投掷瞄准（DsnE28；无投掷物时先尝试自动装填）
 ```
 
-- 按键分派：`process_key` 读 `stack.last()` → 分派到对应页面处理器
-- Back 路由：Esc 在列表页 pop 栈，在详情页切回列表
-- 无阻塞旁路：所有页面走主循环 30FPS 渲染，不绕过
+- `PageKind::ThrowSelect` 只是 `render-api` 契约里的占位变体：当前流程不进入它，
+  `t` 直接进 `ThrowAim`。
+- 按键分派：`presentation::map_input_event(PresentationInput)` → `UiIntent`（页栈/焦点）
+  或 `PlayerCommand`（世界行动）；`PageStack::apply` 落地 UI 意图，需要世界尺寸的
+  （Look 光标移动）由装配层调 `input::apply_ui_intent`。
+- 需要世界数据的页面由 `extract` 特判构造视图：`Inventory`（DsnA5）与 `ThrowAim`
+  （DsnE28；`ThrowAimView` 的弹道与可达性由核心规则给出，presentation 只消费）。
+- 页栈状态**不在 tui**：`tui` 只消费 `SceneFrame` / `UiView`。
 
 **每个页面的责任界定：**
 
 | 页面 | 按键处理 | 渲染 |
 |------|---------|------|
-| Game | 游戏行动（移动/攻击/技能） | 地图 + 行动轴 + 状态面板 |
-| Look | 方向键移动光标，x/Esc 退出 | 地图 + 光标高亮 + 信息面板 |
-| ThrowAim | 方向键瞄准，Enter 投掷 | 地图 + 轨迹 + 光标 |
-| ThrowSelect | Enter/r/y 装填投掷物 | 叠加层（对话框风格） |
-| Inventory | 方向键选择，e 装备，d 丢弃 | 全屏替换地图（`is_fullscreen=true`）|
+| Game | 移动/攻击/施法/等待/投掷/背包/查看 | 地图 + 四栏布局（DsnA2）|
+| Look | 方向键移动光标，? / x / Esc 退出 | 地图 + 光标高亮 + 信息面板 |
+| ThrowAim | 方向键瞄准，Enter 投掷，x / Esc 取消 | 地图 + 轨迹 + 落点提示 |
+| Inventory | 4 焦点轮转（DsnA5），Enter/r/d 动作 | 全屏替换地图（`is_fullscreen=true`）|
 | Dialog | Y 确认，N/Esc 取消 | 叠加层（对话框风格） |
 
 **为什么不是单一 match / 独立模态：**
@@ -82,8 +88,10 @@ PageStack: Vec<Page>
 - 页栈：每个页面一个 handler，共处相同框架，新 UI 只需加一个新枚举变体
 
 **与渲染管道的关系：**
-- 页面状态存在 ECS Resource 中（`InventoryUI`、`LookCursor`、`ThrowPreview`）
-- 渲染管道的 UI 层读取这些资源 + 页栈，决定绘制什么
+- 页面状态在 `presentation` 的 `PageStack`；装配层把它作为 ECS Resource 插入，
+  每帧 clone → apply 意图 → 写回（`App` 的借用规避方式）
+- `extract` 读页栈 + 世界，产出 `SceneFrame`（含 `focus`、`events_scroll`）
+  与 `UiView`（页面视图模型）
 - 全屏页（Inventory）跳过游戏 UI 渲染，非全屏页叠加在游戏 UI 之上
 
 **Background**
@@ -98,4 +106,34 @@ ISSUES.md A14 记录了查看模式的架构问题。A16 的 `InputBuffer` 资�
 
 **原编号：** `DsnP2`（迁移前）
 <!-- &/DsnP2 -->
+
+<!-- &DsnP3  投掷瞄准页：t → OpenThrow；装配层自动装填与自动瞄准；extract 特判构造 ThrowAimView -->
+### DsnP3 投掷瞄准页（ThrowAim）
+
+**决策**
+
+- `t` 产出 `UiIntent::OpenThrow { x, y }`；由装配层处理：先确认副手有 `Throw` 组件，
+  否则调用 `ecs_core::load_throwable_from_pack` 自动装填；失败只写日志、不开页。
+- 开页自动瞄准：优先信息栏当前选中实体所在格（若核心 `throw_reachable` 可达），
+  否则玩家脚下；方向键手动移动光标，Enter 确认（转 `PlayerCommand::Throw { dx, dy }`），
+  x / Esc 取消。
+- `ThrowAimView` 由 `extract` 特判构造（有世界与 `Map`）：`path` 用核心 `throw_path`、
+  `valid` 用核心 `throw_reachable`、`target` 取落点实体快照；presentation 不复制任何
+  射程/视线规则（单一真相源）。
+- `PageKind::ThrowSelect` 保留为契约占位，当前流程不使用。
+
+**背景**
+
+迁移前的投掷页是"先选投掷物、再瞄准"的两段流程（DsnX6/DsnX7 的 `ThrowSelect`）。
+实现时按用户拍板的"副手持、主手投"直觉模型，简化为一次 `t` 进入瞄准。
+
+**代价**
+
+- 自动装填与开页耦合在装配层，`t` 的失败反馈只有一行日志。
+- 瞄准页的可投信息依赖核心的 `throw_reachable`；若规则改口径需同时改 HUD 文案。
+
+**状态：** 已落地（DsnE28，2026-11）。
+
+**关联：** DsnE28 / DsnP2 / DsnA5 / Gm9 / Gm14
+<!-- &/DsnP3 -->
 

@@ -29,7 +29,7 @@
 > （吟唱 600 AV、耗蓝、目标在校验阶段定）/ 火花术与治愈术（Gm15）/ 毒伤改为 2 点且受魔法抗性
 > （Gm5）/ HP 曲线基数翻倍到 80、MP 回复改为每 10000 AV 一点（Gm4）。
 > **已迁移（2026-11 物品部件轮，DsnE27）：** 物品蓝图 `parts` 部件化 / `ItemKind` 退役、
-> 装备·消耗品·武器·容器·行为改由组件表达 / 删除耐久 / 存档 V5、物品数据 schema 8（Gm7、Gm13）。
+> 装备·消耗品·武器·容器·行为改由组件表达 / 删除耐久 / 存档 V5、物品数据 schema 9（Gm7、Gm13）。
 > **已迁移（2026-11 投掷轮，DsnE28）：** 投掷物 = `throw` 部件 + `throwable` 标签 / `t`
 > 打开瞄准页（自动瞄准 + 手动）/ 落点必中、落地可拾 / 副手投掷物与装填 / 独立四域伤害
 > （Gm9）；`THROW_DURATION_AV=190`、射程切比雪夫 5、视线判定与弹道由核心唯一提供。
@@ -41,7 +41,7 @@
 > **评审提醒：** 在标 ⬜ 的章节上做数值调整，目前**不会**在游戏里生效；
 > 它们要等对应子系统迁进 `ecs_core`（见 REFACTOR §2.4）之后才有意义。
 
-<!-- &Gm1  行动耗时 + 速度倍率 → AV；tap-tap 确认；先校验后落地；保活覆盖全部待执行行动(ECS43) -->
+<!-- &Gm1  行动耗时 + 速度倍率 → AV；先校验后落地；保活覆盖全部待执行行动(ECS43) -->
 ## Gm1 行动系统
 
 所有行动有耗时（duration）与对应的速度倍率，`AV = 耗时 ÷ 速度`，作为实体上的单一倒计时值。
@@ -318,13 +318,13 @@ Flee > Chase > Wander > Wait 等。当前 core 方向不再依赖 ActionQueue/�
 | 重复命中 | **刷新**（重新计时 + 回满次数），不叠层 | 叠层会让多只变异蝎子的伤害呈平方增长 |
 | 结算时机 | 每轮结算按时钟推进 AV：先运转已有中毒，再施加本轮新毒，最后死亡判定 | 新毒**下一轮**才可能发作 |
 
-> 实现：`ecs_core/src/effect/status.rs`（效果实体 + 唯一 owner 系统）；时间基是
-> `WorldClock`（`tick_action_timers_system` 每轮推进多少 AV 就记多少）。玩家状态显示在 HUD
-> 的扩展行（`HudView::extra_lines`，形如「中毒 还剩 2 次（下一次 380 AV）」）。
-> 受害者死亡时中毒由 `EffectOf` 级联回收。
+> 实现：`ecs_core/src/effect/status.rs`（效果实体；时长与回收由共享的 `EffectDuration`
+> 负责，见 DsnE12 决策 4）；时间基是 `WorldClock`（`tick_action_timers_system` 每轮推进多少 AV
+> 就记多少）。玩家状态显示在 HUD 的扩展行（`HudView::extra_lines`，形如「中毒 还剩 2 次
+> （下一次 380 AV）」）。受害者死亡时中毒由 `EffectOf` 级联回收。
 
-
-Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同步推进（`remaining_av -= dist`）。
+Buff 的**目标口径**是走 `EffectDuration` 的 AV 时长（与中毒同一套回收路径）；
+护盾/狂暴当前尚未实现，等技能与卷轴迁移（Gm6）时接入。
 
 | Buff | 来源 | 效果 | 持续 AV |
 |---|---|---|---|
@@ -789,7 +789,7 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 | ID | 18 |
 | 来源 | 哥布林掉落（60%, 1-2） + 地面刷新（每层 1-3 堆） |
 | 堆叠 | 20 |
-| 物品数据 | `Material` + `throw` 部件（基值 3）+ `throwable` 标签 |
+| 物品数据 | 核心字段（无 `kind`）+ `throw` 部件（基值 3）+ `throwable` 标签 |
 | 使用方式 | `t` 键 → 投掷瞄准（副手有投掷物直接瞄准，否则从行囊自动装填）；背包详情页 `r` 键为「使用/学习物品」（卷轴专用），石子不可直接使用 |
 
 副手槽接受"盾或可投掷物"（Gm9 的双持限制）：带着石子就意味着放弃盾的防御加成；
@@ -815,7 +815,8 @@ Buff 使用 AV 制时间轴，在 `advance_action_queue` 中与行动队列同�
 
 ### 视线检查
 
-弹道经过的格中**任一格阻挡视线**（Wall / Stalactite）→ 目标不可投，轨迹变红。
+弹道经过的格中**任一格阻挡视线**的地形 → 目标不可投，轨迹变红。当前 `blocks_vision`
+为 `Wall` / `Stalactite` / `HangingVine` / `CoralReef` 四种（见 `ecs_core/src/map/tile.rs`）。
 **落点格本身豁免**：可以往墙上砸（落地物可能因此落在不可拾取格，见 DsnE28 开放问题）。
 
 ### 伤害公式
@@ -974,17 +975,22 @@ terrain-forge room_accretion（Brogue 风格有机洞穴）
 <!-- &Gm11  输入系统：独立线程 + 非阻塞主循环（非数值，待迁出 GAME） -->
 ## Gm11 输入系统
 
-独立输入线程 + 主循环非阻塞接收，16ms 限流轮询，33ms 按键去重。
+> ⬜**待迁出 GAME**：本节是运行管线说明、不是玩家可见规则；实现见 `sys` 与 `presentation`。
+
+输入线程 + 主循环非阻塞消费：
 
 ```
-输入线程 → mpsc channel → 主循环 try_recv → process_key → advance_and_settle_parallel → render
+输入线程（sys::spawn_key_source）→ mpsc channel → 主循环 try_recv_key
+  → App::handle_input（presentation::map_input_event）→ UiIntent 或 PlayerCommand
+  → world::advance_until_player_acted → App::refresh → 后端绘制
 ```
 
-- 输入线程：独立线程 `crossterm::event::poll(16ms)`，33ms 同键去重（LSYS2 校准：过滤 Release/Repeat 事件后窗口收窄）
-- 主循环：`try_recv()` 非阻塞，无输入时 `sleep(1ms)` 防空转
-- tap-tap：第一次按键设预览，第二次同键确认入队
-- `x` 键：光标查看模式（方向键移动、x/Esc 退出），显示地形和实体信息
-- 模态对话框（退出/下楼/背包）：页栈按键路由（DsnP2 页栈迁移后，旧 `AtomicBool` 暂停输入线程方案已废弃）
+- 输入线程：独立线程 `crossterm::event::poll(33ms)` 轮询，33ms 同键去重（只收 `Press`）
+- 主循环：每帧 `try_recv_key` 非阻塞取键；`App::refresh` 产出 `SceneFrame` 后由 `TuiPlugin` 绘制
+- 按键路由：`presentation::map_input_event` 按页栈/焦点产出 `UiIntent`（页面、Tab、滚动）或
+  `PlayerCommand`（世界行动）；`UiIntent` 由 `PageStack`/装配层落地
+- 查看（`?`）、事件栏滚动、背包页、投掷瞄准全部走页栈（DsnP2 / DsnA2 / DsnE28）
+- 迁移前设计的 tap-tap 预览未迁移：当前为单键直接行动
 - `F5` / `F9`：存档 / 读档（集成层直接在 `App::handle` 里接地，见 Gm13）
 <!-- &/Gm11 -->
 

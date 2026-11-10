@@ -10,7 +10,7 @@
 
 **归属范围：** TUI 后端的决策：绘制方式、外观目录、终端布局。
 
-**编号：** `DsnT1` 起逐个递增（本 crate 目前只有一条）。
+**编号：** `DsnT1` 起逐个递增（本 crate 目前有两条）。
 判据：决策**落点在哪个 crate 的代码/接口**里就归哪里；跨多个 crate 的分层/契约/路线决策留根目录。
 
 ---
@@ -21,7 +21,7 @@
 
 | 主题 | 条目 |
 |---|---|
-| 渲染实现 | DsnT1 |
+| 渲染实现 | DsnT1 · DsnT2 |
 
 
 <!-- &DsnT1  Buffer 直写 + 持久 Canvas + 背景色优先；与外观无关的全部留在后端 -->
@@ -95,8 +95,42 @@ cell.bg    = terrain_color           // 地形色作为背景
 
 对 Brogue 终端渲染的分析引发此次设计讨论。核心发现：当前渲染慢的原因不是 ratatui（它的 ANSI diff 机制在终端输出层面已经做到了增量），而是"全量重建 + 文本 widget 封装"导致的上游浪费。Brogue 在纯终端时代用 Canvas 缓冲 + 增量 flush + 固定帧率实现了流畅画面，其本质是"只输出变化"而非"全量重建"。
 
+**状态：** 部分落地（2026-11）——① 地形背景色已落地；② 仅地图段直写 `frame.buffer_mut()`，
+其余 UI 仍用 `Paragraph`；③ 持久 Canvas + dirty tracking 未实施。迁移后 `tui` 的输入是
+`SceneFrame`，本条中"ECS queries → 文本"为迁移前语境；迁移后的渲染分层见 DsnT2。
+
 ---
 
 **原编号：** `DsnT1`（迁移前）
 <!-- &/DsnT1 -->
+
+<!-- &DsnT2  迁移后渲染分层：只消费 SceneFrame/UiView；四栏、事件/信息栏、投掷叠加层按契约画 -->
+### DsnT2 渲染分层与栏位渲染（迁移后）
+
+**决策**
+
+- `tui` 只消费 `SceneFrame` 与 `UiView`，不读世界（R1 边界）；不再有 ECS queries → 文本的旧管线。
+- 四栏布局按契约 `render_api::layout` 画（DsnA2）：摄像机 / 信息 / 事件 / 状态；
+  `SceneFrame.focus` 决定焦点边框。
+- 事件栏按 DsnA3/DsnA6：等级前缀、暗色进行中行、按滚动偏移裁窗口、标题 `事件 ↑N`；
+  状态栏画 `HudView` 的 HP/MP/EXP、扩展行（中毒/法术/装备）与键位提示。
+- 信息栏按 DsnA4：每项两行（名字 + 类型·血量条·距离），选中行反色，项多时窗口跟随。
+- 投掷瞄准页按 DsnE28：在地图之上叠加 `*` 弹道、`X` 落点与底部提示行。
+- 调试面板不再渲染（DsnE25）；`DevLogBuffer` 仍由装配层灌入，仅作诊断保留。
+- CJK 显示宽度按全角 2 格计算，避免 `Paragraph` 换行算法在 CJK 之间插入空格。
+
+**背景**
+
+迁移前（DsnT1 语境）tui 直接查询 ECS；拆出 `render-api` / `presentation` 后，后端只负责
+"把视图模型画到终端"，布局几何、页面状态、事件排序都不在 tui。
+
+**代价**
+
+- `SceneFrame` 是每帧快照，无法做旧管线里的持久 Canvas / dirty tracking（DsnT1 ③ 未实施）。
+- 栏位渲染依赖契约字段；新增栏位信息要先改 `render-api`。
+
+**状态：** 已落地（DsnA2/A3/A4/A6、DsnE25、DsnE28，2026-11）。
+
+**关联：** DsnA2 / DsnA3 / DsnA4 / DsnA5 / DsnA6 / DsnE21 / DsnE25 / DsnE28 / DsnT1
+<!-- &/DsnT2 -->
 

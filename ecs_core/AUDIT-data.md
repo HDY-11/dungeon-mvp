@@ -3,6 +3,11 @@
 > **基线**：HEAD `806c379`（「背包页能装/卸/用/丢……R2 完成」）+ 工作区未提交改动（Lead 并行落地 DsnE18 第②片尸体容器：`item/container.rs`、`item/mod.rs`、`system/death.rs`、`monster/template.rs`、`monster/mod.rs`、`world/floor.rs`、`presentation/src/extract/mod.rs` + `GAME.md`/`DESIGN.md`；快照 2026-11-04 23:05）。行号会随并行编辑漂移，请按关键词复搜。
 > **范围**：GAME.md Gm4/Gm7/Gm8/Gm10 ↔ `item/registry.rs`、`item/container.rs`、`monster/template.rs`、`item/loot.rs`、`system/death.rs`、`world/init.rs`、`action/entity.rs`、`balance.rs`。
 > **实测**：`cargo test -p ecs_core`（HEAD=218 pass；工作区=223 pass/0 fail）；`cargo run --release -p dungeon-app --example playthrough` 6 种子 `[2026,1,2,3,7,11]`。按要求未跑 `scripts/gate.ps1`。
+>
+> **历史快照（2026-11-04）**：本文是当时审计的事实记录，不代表当前状态。此后 DsnE22/23/24/25/27/28
+> 等轮次已改动物品 schema、存档、投掷、HP/MP 曲线与首层节奏；例如 D3 的「投掷未迁移 /
+> `ItemKind::Material`」与 D4/D5/D6 的部分结论已过时（投掷已落地 DsnE28、`ItemKind` 已退役
+> DsnE27、消耗品与背包页已迁移）。核对当前行为请以 `GAME.md` 与代码为准。
 
 ## 一、最高优先级
 

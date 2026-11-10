@@ -31,7 +31,7 @@ if key.code == last_code && now - last_time < Duration::from_millis(50) {
 }
 ```
 
-**错误做法：** 增大去重窗口。100ms 虽然能覆盖 Release，但会延迟 tap-tap 的响应，手感变钝。
+**错误做法：** 增大去重窗口。100ms 虽然能覆盖 Release，但会延迟正常按键的响应（当时目标是 tap-tap 的预览/确认），手感变钝。
 
 **正确做法：** 从事件类型上区分 Press 和 Release，时间窗口只用于过滤 OS key-repeat：
 

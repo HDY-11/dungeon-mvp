@@ -106,10 +106,9 @@ core ──> presentation ──> render-api <── tui / gpu
 
 **状态**
 
-已落地阶段 1：契约（6 条测试）+ `PageStack` 焦点与 Tab + tui 四栏渲染
-（40 条测试）。事件栏当前渲染历史事件（旧在上、新在下）；「已定未落」的进行中
-条目、0 刻度线与关注集属于后续事件模型迭代。信息栏暂按实体稳定顺序列出，
-按距离/方位的排序与 `Observable` 标记同属后续阶段。
+已落地：契约（`Rect`/`Pane`/`GameLayout`/`game_layout`）、`PageStack` 焦点与 `Tab` 轮转、
+tui 四栏渲染。后续栏位内容均已接入：事件时间轴与滚动（DsnA3/DsnA6）、信息栏
+`InfoView` 与 `Observable` 排序（DsnA4）、背包与投掷页（DsnA5/DsnE28）。
 
 **关联：** DsnA1（渲染契约）| DESIGN.md DsnP2（页栈状态在 presentation）|
 DESIGN.md DsnX14（渲染分层）

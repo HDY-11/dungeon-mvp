@@ -826,6 +826,9 @@ AV 在**生成期**固化（`SpeedRule` 的既有约定）。玩家的 `Move` �
   中断恢复后效果消失是当前已接受的代价，等"持久效果"出现时再统一枚举）。
 
 **状态：** 已定 — 形状与 H9/H11 **均已落地**；三个开放项全部定案（2026-09）。
+时长/到期与解除路径已由 `EffectDuration` 共享入口补齐（2026-11，M26：统一推进 + 唯一回收，
+载荷不自行 despawn）；「装备落点」里的 `EquippedBy` 关系已随 DsnE18 退役（装备 = 身体容器
+槽位里的物品实体），本条相关叙述保留为历史。
 **已落地（2026-11）**：效果时长/到期路径通用化（`EffectDuration` +
 `advance_effect_durations_system` / `expire_effects_system`），中毒迁移到统一时钟与回收入口；
 "被解除"路径等解除类效果出现时接入同一入口（不得散落 `despawn`）。
@@ -1951,7 +1954,7 @@ DsnE25（MP 回复）· DsnA4（信息栏排序归 presentation）· Gm2 / Gm4 /
 - 删除耐久会让 V4 存档不可读（版本头直接拒绝）；原型阶段接受这笔账。
 
 **状态：** 已落地（2026-11-09，用户 m09742 拍板）。实施顺序与产出：
-① items.json schema 8（核心字段 + `parts`，删耐久）→ ② `ItemPart`/`WeaponSpec` 加载器
+① items.json schema 8（核心字段 + `parts`，删耐久；投掷轮后升 9）→ ② `ItemPart`/`WeaponSpec` 加载器
 （逐部件强类型解析 + 跨部件校验）→ ③ 装配组件化（`Equippable`/`Consumable`/`Weapon`/
 `Modifiers`/`Behaviors`/`Container`，`ItemKind` 退役）→ ④ 读取点迁移（`effect/collect`、
 `combat`、`item/actions`、`save`、`presentation`）→ ⑤ 耐久全链路删除、存档 V5、文档同步。

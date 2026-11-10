@@ -54,6 +54,9 @@ render ───╯（依赖 core + action，因 timeline 使用行动类型）
 
 render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后，增加了对 action 的依赖。这是 render 依赖链的"例外"——仅限于类型引用，不依赖行动执行逻辑。如果未来将行动类型提取为独立 crate，render 可以切到那个 crate，取消对 action 的依赖。
 
+**状态：** 已被取代（2026-11）。迁移后的实际分层见 DsnX14：`render-api` / `presentation` / `tui`，
+旧 `core`/`action`/`world`/`render` crate 已归档；本条保留为迁移前"按变化速度分层"的背景。
+
 ---
 
 **原编号：** `DsnX1`（迁移前）
@@ -136,6 +139,9 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 **背景**
 
 为什么不先卸载再装备：如果先卸载旧装备（背包空出一个位置）再装备新装备，玩家可以用"装备格"作为额外背包空间——这是一个合法的游戏机制，但增加了实现复杂度。
+
+**状态：** 已迁移（DsnE18/DsnE27 的 `equip_from_pack`）：交换原子的语义按本条实现——先检查行囊
+能否背动旧装备，任何一步失败都整体回滚，不会"换到一半"。
 
 ---
 
@@ -234,7 +240,9 @@ t 键 → 列出 throwable 物品 → 选择目标 → 自动装副手 → 瞄�
 - Buff/冷却 → `remaining_av: f32`，在 `advance_action_queue` 中与队列同步推进
 - 冷却持续时间下限约 1000 AV
 
-**状态：** 已定 — 已实现基础框架（ActiveBuffs 组件 + AV 推进 + 公式集成），旧回合制 Buffs 已移除（D11）。卷轴投放与学习机制是下一个开发目标。数值见 GAME.md。
+**状态：** 已定 — 未落地（H10）。迁移后 `ecs_core` 尚无技能/卷轴；旧 `ActiveBuffs` 实现随迁移退役，
+目标口径改为「技能是行动 + 效果实体 / `EffectDuration`」。卷轴投放、学习与熟练度仍是开发目标；
+数值见 GAME.md Gm6。
 
 **背景**
 
@@ -285,8 +293,12 @@ pub struct ItemMeta {
 
 **背景**
 
-为什么不用 HashMap 代替 CompoundTag：强类型 struct 在 Rust 中比动态 NBT 更优——字段名错误在编译期捕获而非运行时暴露。
-为什么不用每物品一子类：MC 有 800+ Item 子类，我们是数据驱动的，每个行为一个 impl 覆盖所有同类物品。
+为什么要用 HashMap 代替 CompoundTag：强类型 struct 在 Rust 中比动态 NBT 更优——字段名错误在编译期捕获而非运行时暴露。
+为什么不选每物品一子类：MC 有 800+ Item 子类，我们是数据驱动的，每个行为一个 impl 覆盖所有同类物品。
+
+**状态：** 已被取代（2026-11）。物品系统已按 `ecs_core/DESIGN.md` 的 DsnE22/DsnE27 落地：
+数据外置到 `items.json` + `parts` 部件列表，运行期真相是物品实体上的组件；`ItemMeta`/`ItemBehavior`
+未采用，耐久已按用户要求删除（存档 V5）。本条保留为迁移前的 MC 对照记录。
 
 ---
 
@@ -383,7 +395,8 @@ Phase 3（深化）：实验级碎片+条件合成
 - 分类仅在基础层存在，高级阶段归一化
 - 某些碎片永远无法被整合（世界深度设计，Phase 3）
 
-**状态：** 已定 — Phase 1 优先级高于渲染重构。代码层准备：`ItemMeta.tier` 字段已存在（I41），`ItemBehavior` trait 骨架已定义（I40）。
+**状态：** 已定 — 未落地。合成仍未实现；原计划的 `ItemMeta`/`ItemBehavior` 骨架未采用
+（DsnE27 后的口径是蓝图 `parts` + 物品实体组件，见 `ecs_core/DESIGN.md`）。
 
 **关联：** ISSUES.md G11 | GAME.md Gm7 | LESSONS.md LSYN8
 
@@ -399,7 +412,7 @@ Phase 3（深化）：实验级碎片+条件合成
 <!-- &/DsnX12 -->
 
 <!-- &DsnX13  业务领域收敛到单一 ecs_core；旧组件体系作废 -->
-### DsnX13 业务领域收敛至 `core`，旧组件体系作废（进行中）
+### DsnX13 业务领域收敛至 `core`，旧组件体系作废
 
 **决策**
 
@@ -414,7 +427,8 @@ Phase 3（深化）：实验级碎片+条件合成
 
 refactor 分支已经删除旧模型并引入 ECS 原生行动模型，但旧 crate 仍保留了大量历史实现。继续在旧 crate 上修修补补会延续架构债，因此把业务领域收敛到一个新的 `core` crate，逐步摆脱对旧组件体系和旧目录结构的依赖。
 
-**状态：** 已定 — 初步补全中。旧文档中的 ActionQueue/ActionKindV3/Stats 描述不再代表未来方向。
+**状态：** 已定 — 主体已落地：全部玩法逻辑在 `ecs_core`；旧 `dungeon-*` 只剩历史参考与
+R5 清理（见 REFACTOR §2.4）。旧文档中的 ActionQueue/ActionKindV3/Stats 描述不再代表未来方向。
 
 ---
 
@@ -503,12 +517,12 @@ Last        : TUI draw / GPU sync
 - 提取成本：80×60 全量快照可接受；后续 dirty/chunk。
 - 插件顺序：`SystemSet` + `.chain()` 显式；`App::update()` headless 测试。
 - 终端生命周期：`NonSend` + panic-safe guard；Ctrl+C；resize。
-- 输入去重/tap-tap：保持在 `presentation`；GPU repeat 归一化。
+- 输入去重/catalog/页面状态：去重在 `sys`；页面状态在 `presentation`。tap-tap 预览未迁移（若要恢复，落点应在 `presentation`）。
 - GPU 非 drop-in：需要 asset catalog、camera、runner、UI 文本；先做平铺 tilemap + sprite。
 
 **关联：** DESIGN DsnX1 / DsnT1 / DsnP2 / DsnA1；DESIGN DsnX14；ISSUES I87/I88；README 渲染契约章节。
 
-**状态：** 已定 — R0/R1 已落地（见 REFACTOR §1）。
+**状态：** 已定 — R0/R1/R2 已落地（见 REFACTOR §1/§2.2）；R3–R5 待续。
 
 - **R0**（`render-api` v1，34 测试）已完成；
 - **R1** 已完成：新建 `presentation`（`extract` / `catalog` / `camera` / `ui` / `input`，
@@ -516,11 +530,11 @@ Last        : TUI draw / GPU sync
   `TuiPlugin`，24 测试，含 `TestBackend` 全帧断言）。
   三条边界（`tui` ↛ `ecs_core`/`presentation`、`presentation` ↛ ratatui/crossterm、
   `render-api` ↛ `ecs_core`）已由 `scripts/gate.ps1` 的 `cargo tree` 步骤强制；
-- **R2** 部分：页栈的 `Look` / `Dialog` 已落地（`ui::PageStack` → `UiView`，
-  输入路由与 tap-tap 口径在 `input`）；`Inventory` / `ThrowSelect` / `ThrowAim`
-  需要物品与投掷规则迁移（DsnX13 S4），后端当前给占位页；
-- **R3**：工作区里没有 `bevy_app` 且环境无外网，本轮未引入。`TuiPlugin` 已按
-  插件形状收敛（`tui/src/plugin.rs`），补 `impl Plugin` 时调用点不变；
+- **R2** 已完成：页栈的 `Look` / `Dialog` / `Inventory`（DsnA5）/ `ThrowAim`（DsnE28）
+  均已落地；`ThrowSelect` 只作为 `PageKind/UiView` 的占位变体保留（当前流程不进入，
+  `t` 直接进瞄准页并在需要时从行囊自动装填）；输入路由在 `input`（tap-tap 预览未迁移）；
+- **R3**：`bevy_app` 尚未引入（网络阻塞已消失，待做）；`TuiPlugin` 已按插件形状收敛
+  （`tui/src/plugin.rs`），补 `impl Plugin` 时调用点不变；
 - **R4/R5**：GPU 后端与旧 crate 清理待续。
 
 **R1 的实现结论（与草案的差异，均已在代码注释就位）：**

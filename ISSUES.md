@@ -28,7 +28,8 @@
 <!-- &SYN4  行动确认后不可撤回：技术阻塞已随 Phase C 解除，方案待定 -->
 ### SYN4 — 玩家确认行动后无法取消（阻塞已随 Phase C 消除，方案待重定） 🟡
 
-**问题：** tap-tap 双击确认后，玩家的行动**不可撤回**——按错方向后只能等它执行完。
+**问题：** 玩家确认行动后**不可撤回**——按错方向后只能等它执行完。（迁移前是 tap-tap 双击确认；
+迁移后输入改为单键直接行动，症状相同。）
 
 **原记录：** "行动进入 `ActionQueue` 无法撤回"，并称"事件帧模式（D5，已 defer）可以部分解决，
 在 D5 重新评估前此问题无解"。
@@ -53,7 +54,7 @@
    `GameRng.steps` 与回放一致性，见 DESIGN DsnX17）；
 3. **复活事件帧模式**（原 D5 方案）：触发条件见 SYN2，目前仍未达成，暂不建议。
 
-**位置：** `ecs_core/src/action/entity.rs`（玩家生成与挂载路径）、`presentation/src/input`（tap-tap 口径）
+**位置：** `ecs_core/src/action/entity.rs`（玩家生成与挂载路径）、`presentation/src/input`（旧 tap-tap 口径；现为单键直接行动）
 
 **关联：** SYN2（事件帧模式，仍 Deferred）；DESIGN DsnE8（挂载与推进两段式）。
 
