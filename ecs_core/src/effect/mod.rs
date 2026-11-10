@@ -15,6 +15,10 @@
 //! 三者都在**世界实体空间**里，因此存档可以统一枚举（DsnE12 第 6 条）；
 //! 而 `EffectContext` 是唯一把这三处读成纯数据的地方（ISSUES ECS28 的那条接缝）。
 //!
+//! **时长与到期**（DsnE12 第 4 条）：挂 [`EffectDuration`] 的效果由
+//! [`advance_effect_durations_system`] 统一推进、由 [`expire_effects_system`] 统一回收；
+//! 各效果的 payload 系统只管自己的行为结算，不得 `despawn`。细节见 `duration` 模块。
+//!
 //! # 本轮的两个具体效果（H11 最小闭环）
 //!
 //! DsnE12 明确"不定义任何具体效果类型"——效果只是位。H11 破例**一对**，因为
@@ -30,15 +34,19 @@
 
 pub mod cell;
 pub mod collect;
+pub mod duration;
 pub mod status;
 // `ownership` 不设为 `pub mod`：`action` 已有一个同名子模块，两个 `pub use X::*`
 // 会在 `lib.rs` 的 `pub use effect::*` 处撞成 `ambiguous_glob_reexports`
 // （模块名不是 API —— 四个关系类型才是）。所以这里只转出类型。
 mod ownership;
 
+pub use duration::{
+    EffectDuration, advance_effect_durations_system, expire_effects_system,
+};
 pub use status::{
-    POISON_DAMAGE_PER_TICK, POISON_TICK_AV, POISON_TICKS, Poison, poison_apply_system,
-    poison_tick_system,
+    POISON_DAMAGE_PER_TICK, POISON_TICK_AV, POISON_TICKS, POISON_TOTAL_AV, Poison,
+    poison_apply_system, poison_tick_system,
 };
 
 pub use cell::{

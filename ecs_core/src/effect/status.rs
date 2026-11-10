@@ -1,25 +1,29 @@
 //! 状态效果（C3）：**中毒**。
 //!
-//! # 这是 DsnE12 第 4 条的第二个半句第一次落地
+//! # 这是 DsnE12 第 4 条第一次出现"有时长、会自己消失"的效果
 //!
-//! 设计里写的是"**每类效果恰好一个 owner 系统**负责它的全部终结路径（过期、被解除、
-//! 被替换）；其他系统只能改它的数据，不能 `despawn` 它"。本模块之前，效果实体只有
-//! **测试**在用，生命周期系统一个也没有——`CellEffects` 每轮重建算是特例（格子效果没有
-//! 独立生命周期）。中毒是第一个真正"活一段时间后自己消失"的效果。
-//!
-//! 于是两个系统分工明确：
+//! 设计里写的是"**效果实体由恰好一个 owner 系统负责回收**"。中毒落地时曾把
+//! "扣时间 + 回收"都塞在 [`poison_tick_system`] 里；DsnE27 之后、在第二个有时长的
+//! 效果出现之前，把这件事拆成通用骨架（`effect::duration`）：
 //!
 //! | 系统 | 职责 | 什么时候跑 |
 //! |---|---|---|
-//! | [`poison_apply_system`] | 把"蝎子打中了谁"翻译成一条中毒效果（刷新，不叠层） | 伤害结算之后 |
-//! | [`poison_tick_system`] | 每轮扣血、减回合、**到期时回收实体**（唯一回收者） | 死亡判定之前 |
+//! | [`crate::effect::advance_effect_durations_system`] | 按 `WorldClock.last_step_av` 推进所有 `EffectDuration` | 本模块之前 |
+//! | [`poison_tick_system`] | 只读推进后的剩余时长，判断发作点、扣血；**不回收实体** | 死亡判定之前 |
+//! | [`poison_apply_system`] | 把"蝎子打中了谁"翻译成一条中毒效果（刷新，不叠层） | 发作结算之后 |
+//! | [`crate::effect::expire_effects_system`] | 到期统一回收（含中毒） | 本模块之后 |
 //!
 //! 顺序不是随手排的：tick 必须在 `check_death_system` **之前**，否则"被毒死"要晚一轮
-//! 才被判定（玩家会看到血量归零却没死）。这条由 `build_core_schedule` 的 `.chain()` 固定，
-//! 且 `ambiguity_detection = Error` 会逼着新增系统把顺序写出来。
+//! 才被判定（玩家会看到血量归零却没死）；`expire` 必须在 tick **之后**，否则最后一次
+//! 发作会被"到期"吞掉。这条由 `build_core_schedule` 的 `.chain()` 固定，且
+//! `ambiguity_detection = Error` 会逼着新增系统把顺序写出来。
+//!
+//! 中毒自己的计时现在是**派生**的：`Poison` 只存"还剩几次发作"，时长在
+//! [`EffectDuration`] 上。"第 N 次发作发生在 `ticks_left == N` 且剩余时长跨过
+//! `(N-1) * POISON_TICK_AV`"——这样一个时钟，两个消费者（tick 与到期）不会漂移。
 
 use crate::components::*;
-use crate::effect::{EffectOf, OwnedEffects};
+use crate::effect::{EffectDuration, EffectOf, OwnedEffects};
 use crate::events::AttackEvent;
 use crate::monster::MonsterKindId;
 use crate::resources::{EventLog, EventMessage};
@@ -39,15 +43,16 @@ pub const POISON_TICKS: u32 = 3;
 ///（m08882：中毒是魔法伤害的一种；抗性上限由词表 `magic_resist` 管，0.75）。
 pub const POISON_DAMAGE_PER_TICK: f64 = 2.0;
 
+/// 一剂标准中毒的总时长（AV）＝发作间隔 × 次数。
+pub const POISON_TOTAL_AV: f64 = POISON_TICK_AV * POISON_TICKS as f64;
+
 /// 中毒状态。挂在**效果实体**上（经 [`EffectOf`] 归属到受害者）。
 ///
-/// 字段是"还剩多少"而不是"什么时候到期"：回合数是离散的，用差值比用时间戳好推理，
-/// 也让存档不需要冻结时钟口径。
+/// 只剩"还剩几次发作 + 每次伤害"；**时长**由同一实体上的 [`EffectDuration`] 承担，
+/// 由通用到期系统回收。这样第二个有时长的效果出现时，计时/回收不需要各写一份。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Poison {
-    /// 距离下一次发作还剩多少 AV（按世界时钟扣减，不是按轮次）。
-    pub remaining_av: f64,
-    /// 还剩几次发作。
+    /// 还剩几次发作（总时长由 `EffectDuration` 单独推进）。
     pub ticks_left: u32,
     /// 每次发作的伤害。
     pub damage_per_tick: f64,
@@ -57,15 +62,9 @@ impl Poison {
     /// 一剂标准中毒（内容参数见本模块常量）。
     pub fn standard() -> Self {
         Self {
-            remaining_av: POISON_TICK_AV,
             ticks_left: POISON_TICKS,
             damage_per_tick: POISON_DAMAGE_PER_TICK,
         }
-    }
-
-    /// 还剩多少 AV 才会失效（HUD/测试用）。
-    pub fn total_remaining_av(&self) -> f64 {
-        (self.ticks_left.saturating_sub(1) as f64) * POISON_TICK_AV + self.remaining_av.max(0.0)
     }
 }
 
@@ -75,14 +74,16 @@ impl Poison {
 /// 而"这一击带不带毒"属**内容**（物种特性），不是公式的一部分。订阅事件让公式保持
 /// 对"毒"一无所知。
 ///
-/// 重复命中**刷新**回合数而不是叠层：叠层会让多只蝎子的伤害呈平方增长，而目前
-/// 没有任何设计支撑那个曲线。将来若要做叠层，改动点就是这里的 `rounds_left.max`。
+/// 重复命中**刷新**而不是叠层：叠层会让多只蝎子的伤害呈平方增长，而目前
+/// 没有任何设计支撑那个曲线。刷新 = 次数回满、剩余时长重置（不叠层；将来若要做
+/// 叠层，改动点就是这里的次数与时长策略）。
 pub fn poison_apply_system(
     mut commands: Commands,
     mut attacks: EventReader<AttackEvent>,
     attackers: Query<&MonsterKindId>,
     victims: Query<(&Health, Option<&OwnedEffects>)>,
     mut poisons: Query<&mut Poison>,
+    mut durations: Query<&mut EffectDuration>,
     mut event_log: ResMut<EventLog>,
 ) {
     for event in attacks.read() {
@@ -112,11 +113,17 @@ pub fn poison_apply_system(
                 if let Ok(mut poison) = poisons.get_mut(effect) {
                     // 刷新 = 重新计时、回满次数（不叠层：叠层会让多只蝎子的伤害呈平方增长）。
                     poison.ticks_left = POISON_TICKS;
-                    poison.remaining_av = poison.remaining_av.min(POISON_TICK_AV);
+                }
+                if let Ok(mut duration) = durations.get_mut(effect) {
+                    duration.reset(POISON_TOTAL_AV);
                 }
             }
             None => {
-                commands.spawn((EffectOf(event.target), Poison::standard()));
+                commands.spawn((
+                    EffectOf(event.target),
+                    Poison::standard(),
+                    EffectDuration::new(POISON_TOTAL_AV),
+                ));
                 event_log.push(EventMessage::danger("你中毒了"));
                 log::debug!("施加中毒: victim={:?}", event.target);
             }
@@ -124,31 +131,27 @@ pub fn poison_apply_system(
     }
 }
 
-/// **运转与终结**：每轮扣血、减回合，到期 `despawn`（唯一回收者，DsnE12 第 4 条）。
+/// **运转**：只读推进后的剩余时长，结清本轮跨过的发作点。
 ///
 /// 受害者被 despawn 时，效果实体由 `EffectOf` 的 `linked_spawn` 级联回收——
 /// 这正是"两个关系类型分开"（ECS42）要的语义：状态效果**应该**跟着人一起消失。
+/// 时间到期的回收则在 `expire_effects_system`（`effect::duration`），本系统不再
+/// `despawn` 任何实体（DsnE12 第 4 条的唯一回收入口）。
 pub fn poison_tick_system(
-    mut commands: Commands,
-    clock: Res<crate::resources::WorldClock>,
-    mut poisons: Query<(Entity, &mut Poison, &EffectOf)>,
+    mut poisons: Query<(&mut Poison, &EffectDuration, &EffectOf)>,
     mut healths: Query<&mut Health>,
     victims: Query<(&Position, Option<&Stats>, &EntityName)>,
     effects: crate::effect::EffectContext,
     mut event_log: ResMut<EventLog>,
 ) {
-    // 按**世界时间**推进：这一轮走了多少 AV，毒就少多少 AV。
-    let step = clock.last_step_av;
-    if step <= 0.0 {
-        return;
-    }
-
-    for (effect, mut poison, owner) in &mut poisons {
+    for (mut poison, duration, owner) in &mut poisons {
         let victim = owner.parent();
-        poison.remaining_av -= step;
 
         // 可能一轮跨过多个发作点（例如玩家做了一次很长的行动）。
-        while poison.remaining_av <= 0.0 && poison.ticks_left > 0 {
+        // 第 k 次发作的判据：还剩 k 次时，剩余时长已跨过 `(k-1) 个间隔`。
+        while poison.ticks_left > 0
+            && duration.remaining_av <= (poison.ticks_left.saturating_sub(1) as f64) * POISON_TICK_AV
+        {
             // 毒是魔法伤害：魔法抗性按"独立乘区"折进来（m08882）。
             // 基数来自 `Stats`，装备/状态修正走与攻击同一条求值路径；位置用于收脚下格修正。
             let (base, collected) = victims.get(victim).map_or_else(
@@ -178,12 +181,6 @@ pub fn poison_tick_system(
                 )));
             }
             poison.ticks_left -= 1;
-            poison.remaining_av += POISON_TICK_AV;
-        }
-
-        if poison.ticks_left == 0 {
-            commands.entity(effect).despawn();
-            log::debug!("中毒消退: victim={victim:?}");
         }
     }
 }

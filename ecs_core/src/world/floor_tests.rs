@@ -178,6 +178,7 @@ fn descending_keeps_the_players_status_effects() {
         .spawn((
             crate::effect::EffectOf(player),
             crate::effect::Poison::standard(),
+            crate::effect::EffectDuration::new(crate::effect::POISON_TOTAL_AV),
         ))
         .id();
 

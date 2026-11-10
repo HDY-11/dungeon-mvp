@@ -1188,10 +1188,19 @@ fn player_status_lines(world: &mut World) -> Vec<render_api::UiTextLine> {
             if let Some(poison) = world.get::<ecs_core::Poison>(effect) {
                 // 中毒按 **AV** 计时（ISSUES ECS46），所以这里显示"还剩几次发作 + 下一次的 AV"，
                 // 不显示"回合"——回合是玩家概念，而毒的时间轴是世界时间。
+                // 剩余时长已统一到 `EffectDuration`（DsnE12 第 4 条）：`Poison` 只记次数。
+                let next_tick_av = world
+                    .get::<ecs_core::EffectDuration>(effect)
+                    .map(|duration| {
+                        (duration.remaining_av
+                            - (poison.ticks_left.saturating_sub(1) as f64)
+                                * ecs_core::POISON_TICK_AV)
+                            .max(0.0)
+                    })
+                    .unwrap_or(0.0);
                 lines.push(render_api::UiTextLine::plain(format!(
                     "中毒 还剩 {} 次（下一次 {:.0} AV）",
-                    poison.ticks_left,
-                    poison.remaining_av.max(0.0)
+                    poison.ticks_left, next_tick_av
                 )));
             }
         }

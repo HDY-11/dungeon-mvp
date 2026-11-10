@@ -83,10 +83,16 @@ pub fn build_core_schedule() -> Schedule {
             // 放在 apply_damage_system 之后、中毒之前：法术伤害先扣血，
             // 本轮的死亡判定照常收口；法术不参与"中毒"这条链。
             crate::spell::resolve_spell_system,
+            // 效果时长（DsnE12 第 4 条）：先统一推进所有 `EffectDuration`；payload 系统
+            // （如中毒 tick）读到的剩余时长必须是"这一轮已经走完"的值，否则发作晚一轮。
+            crate::effect::advance_effect_durations_system,
             // 中毒的顺序有语义（见 `effect/status.rs`）：先运转已有中毒，再让本轮的攻击
             // 施加新中毒（新毒下轮才发作），最后由死亡判定收口——否则"被毒死"会晚一轮。
             crate::effect::poison_tick_system,
             crate::effect::poison_apply_system,
+            // 到期回收必须在所有 payload 结算**之后**：否则"时长归零那一轮"的最后一次
+            // 发作会被回收吞掉。它是按时间终结效果实体的唯一入口（DsnE12 第 4 条）。
+            crate::effect::expire_effects_system,
             // 拾取**不在结算链里**：踩上物品不会自动捡，玩家在背包页「地面」栏
             // 按 Enter 调 `item::take_from_ground`（DsnE21 阶段 4）。结算链只留
             // 与回合推进相关的系统。

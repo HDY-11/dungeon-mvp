@@ -532,13 +532,14 @@ fn poison_damage_kills_in_the_same_round() {
     let player = player_entity(&world);
 
     // 一剂必死的毒：下一次发作就够致命，且时间已经到点。
+    // 时长（DsnE12：EffectDuration）已经归零，tick 会结清最后一次发作，再由到期系统回收。
     world.spawn((
         ecs_core::EffectOf(player),
         ecs_core::Poison {
-            remaining_av: 0.0,
             ticks_left: 1,
             damage_per_tick: 10_000.0,
         },
+        ecs_core::EffectDuration::new(0.0),
     ));
     // 中毒按 AV 计时（ECS46）：先让世界时间走一步，tick 才会发作。
     world.resource_mut::<ecs_core::WorldClock>().last_step_av = 100.0;
