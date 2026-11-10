@@ -6,7 +6,7 @@
 
 use bevy_ecs::prelude::*;
 use ecs_core::world_loop::new_game;
-use render_api::{PageKind, VisualCategory, VisualKey, VisualLayer};
+use render_api::{PageKind, UiView, VisualCategory, VisualKey, VisualLayer};
 
 use super::*;
 use crate::ui::{PageStack, UiIntent};
@@ -937,4 +937,57 @@ fn mud_cells_are_drawn_as_an_effect_overlay() {
         !matches!(frame.map.tile(px, py), Some(VisualKey::Effect(_))),
         "没有效果的格子不得被画成效果"
     );
+}
+
+/// 投掷瞄准页：视图带光标、弹道与可投性；可达性由核心的 `throw_reachable` 决定。
+#[test]
+fn the_throw_aim_page_reports_the_path_and_reachability() {
+    let mut world = new_game(2026);
+    let player = player_position(&mut world).expect("新局要有玩家");
+
+    // 找一个可走的相邻格作为"可达落点"；找不到就跳过（地图生成可能全被围住）。
+    let reachable = {
+        let map = world.resource::<ecs_core::Map>();
+        [(1_isize, 0_isize), (0, 1), (-1, 0), (0, -1)]
+            .into_iter()
+            .filter_map(|(dx, dy)| {
+                let x = player.0 as isize + dx;
+                let y = player.1 as isize + dy;
+                if x < 0 || y < 0 {
+                    return None;
+                }
+                let cell = (x as usize, y as usize);
+                map.tiles[cell.1][cell.0]
+                    .walkable()
+                    .then_some(cell)
+            })
+            .find(|cell| ecs_core::throw_reachable(map, player, *cell))
+    };
+
+    let mut pages = PageStack::new();
+    let target = reachable.unwrap_or(player);
+    pages.open_throw(target.0, target.1);
+    let config = ExtractConfig::default().with_viewport(40, 20);
+    let frame = extract_scene_frame(&mut world, &config, &pages, 1);
+
+    let UiView::ThrowAim(aim) = &frame.ui else {
+        panic!("瞄准页应当产出 ThrowAim 视图，实际：{:?}", frame.ui);
+    };
+    assert_eq!(aim.cursor, (target.0 as i32, target.1 as i32));
+    assert_eq!(
+        aim.path.len(),
+        ecs_core::throw_path(player, target).len(),
+        "弹道格数要与核心规则一致"
+    );
+    assert!(aim.valid, "可达落点应当标记为可投");
+    assert!(aim.footer.contains("Enter"), "底栏要有确认提示");
+
+    // 远到一定不可达的落点：视图必须明确标记不可投。
+    let far = ((player.0 + 20).min(ecs_core::MAP_WIDTH - 1), player.1);
+    pages.open_throw(far.0, far.1);
+    let frame = extract_scene_frame(&mut world, &config, &pages, 2);
+    let UiView::ThrowAim(aim) = &frame.ui else {
+        panic!("瞄准页应当产出 ThrowAim 视图");
+    };
+    assert!(!aim.valid, "超出射程/视线的落点不得标记可投");
 }

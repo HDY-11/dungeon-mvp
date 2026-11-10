@@ -65,9 +65,11 @@ use crate::components::{
     BasicAttack, Chase, Flee, Health, LastKnownPlayerPos, Mana, Move, Position, Viewshed, Wander,
 };
 use crate::entity_cls::Player as PlayerMarker;
+use crate::item::{Container, Throw, off_hand_slot_index};
 use crate::map::Map;
 use crate::resources::{EventLog, EventMessage, GameRng, OccupancyMap};
 use crate::spell::{CastSpell, SpellBook, SpellTargeting, nearest_enemy_in_range};
+use crate::throw::{ThrowAction, throw_reachable};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 
@@ -88,15 +90,20 @@ pub struct AttackTarget(pub Entity);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CastTarget(pub Entity);
 
-/// 一次"定案"的结果：要么落脚、要么打人、要么施法、要么原地不动（仍然算这一步做完）。
+/// 校验阶段定下的**投掷落点**（Gm9）。落地阶段只负责发 `ThrowIntentEvent`。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThrowTarget(pub (usize, usize));
+
+/// 一次"定案"的结果：要么落脚、要么打人、要么施法、要么投掷、要么原地不动（仍然算这一步做完）。
 enum Decision {
     Move(Position),
     Attack(Entity),
     Cast(Entity),
+    Throw((usize, usize)),
     Stay,
 }
 
-/// 把决策落到 action 实体上：`MoveTarget` / `AttackTarget` / `CastTarget` / 什么都不加（= 原地不动）。
+/// 把决策落到 action 实体上：`MoveTarget` / `AttackTarget` / `CastTarget` / `ThrowTarget` / 什么都不加（= 原地不动）。
 fn apply_decision(cmd: &mut EntityCommands, decision: Decision) {
     match decision {
         Decision::Move(to) => {
@@ -107,6 +114,9 @@ fn apply_decision(cmd: &mut EntityCommands, decision: Decision) {
         }
         Decision::Cast(target) => {
             cmd.insert(CastTarget(target));
+        }
+        Decision::Throw(target) => {
+            cmd.insert(ThrowTarget(target));
         }
         Decision::Stay => {}
     }
@@ -537,6 +547,53 @@ pub fn validate_cast_system(
             continue;
         }
         apply_decision(&mut commands.entity(action), Decision::Cast(target));
+    }
+}
+
+/// `Throw`（Gm9）：保活 = 副手仍有可投掷物；到点再确认落点仍可达，然后定案。
+///
+/// 投掷与施法一样是"到点才兑现"的动作：取用物在生成期检查一次，排队期间被卸下
+/// 就立刻取消（ECS43）；落点在生成期固定（`ThrowAction.target`），但地形不会变、
+/// 只是防御性复查一遍，避免将来加入可破坏地形时静默穿过。
+pub fn validate_throw_system(
+    mut commands: Commands,
+    mut events: ActionEvents,
+    actions: Query<ActionEntryPayload<ThrowAction>, PendingAction<ThrowAction>>,
+    actors: Query<(&Position, Has<PlayerMarker>, &Container)>,
+    throwables: Query<&Throw>,
+    map: Res<Map>,
+    mut event_log: ResMut<EventLog>,
+) {
+    for (action, child_of, payload, ready) in &actions {
+        let actor = child_of.parent();
+        let Ok((position, is_player, body)) = actors.get(actor) else {
+            events.fail(action, actor);
+            continue;
+        };
+        let has_throwable = body
+            .slot(off_hand_slot_index())
+            .is_some_and(|item| throwables.get(item).is_ok());
+        if !has_throwable {
+            if is_player {
+                event_log.push(EventMessage::combat("投掷被打断了：副手已经空了"));
+            }
+            events.fail(action, actor);
+            continue;
+        }
+        if !throw_reachable(&map, position.to_tuple(), payload.target) {
+            if is_player {
+                event_log.push(EventMessage::combat("投掷落空了：落点已经够不着"));
+            }
+            events.fail(action, actor);
+            continue;
+        }
+        if !ready {
+            continue;
+        }
+        apply_decision(
+            &mut commands.entity(action),
+            Decision::Throw(payload.target),
+        );
     }
 }
 

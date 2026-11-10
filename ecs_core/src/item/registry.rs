@@ -69,7 +69,7 @@ pub const TRAVELER_PACK_ITEM: ItemId = ItemId(41);
 ///
 /// 改数据的**形状**（不是加一行）时升这里；加载器遇到不认识的版本直接失败，
 /// 不做兼容推断。schema 8 = DsnE27 的 parts 形状（并删除耐久字段）。
-pub const ITEMS_SCHEMA_VERSION: u32 = 8;
+pub const ITEMS_SCHEMA_VERSION: u32 = 9;
 
 /// 单件物品的重量上限（DsnE20：正常物品不超过 10）。
 const MAX_ITEM_WEIGHT: f32 = 10.0;
@@ -158,6 +158,8 @@ pub enum ItemPart {
     Consumable,
     /// 主手武器：攻速、力量上限、成长曲线（DsnE24）。
     Weapon(WeaponSpec),
+    /// 可投掷物（Gm9）：固定基础伤害。
+    Throw(ThrowSpec),
     /// 自己是一个容器（行囊、背包…）。
     Container(&'static ContainerDef),
     /// 数值修正清单（DsnE10 的词表）。
@@ -175,6 +177,16 @@ pub struct WeaponSpec {
     pub strength_cap: f32,
     /// 等级成长曲线（DsnE24 阶段 ②）。
     pub growth: WeaponGrowth,
+}
+
+/// 可投掷物的蓝图参数（数据里 `throw` part 的字段，装配成 [`crate::item::Throw`]）。
+///
+/// 目前只有一个固定基础伤害；射程/耗时/视线判定是投掷动作的规则常量
+/// （`balance.rs`），不在物品数据里重复。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThrowSpec {
+    /// 投掷基础伤害（Gm9）：与楼层/力量无关，只作五域公式的基值。
+    pub damage: f64,
 }
 
 /// 一件物品的定义（GAME.md Gm7 表格的一行）。
@@ -247,6 +259,14 @@ impl ItemDef {
     pub fn weapon(&self) -> Option<WeaponSpec> {
         self.parts.iter().find_map(|part| match part {
             ItemPart::Weapon(spec) => Some(*spec),
+            _ => None,
+        })
+    }
+
+    /// 可投掷物的蓝图参数；不可投掷为 `None`。
+    pub fn throw_spec(&self) -> Option<ThrowSpec> {
+        self.parts.iter().find_map(|part| match part {
+            ItemPart::Throw(spec) => Some(*spec),
             _ => None,
         })
     }
@@ -365,6 +385,13 @@ struct RawWeapon {
     growth: WeaponGrowth,
 }
 
+/// `throw` part 的字段。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawThrow {
+    damage: f64,
+}
+
 /// `container` part 的字段。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -391,6 +418,7 @@ enum ParsedPart {
     Equippable,
     Consumable,
     Weapon(RawWeapon),
+    Throw(RawThrow),
     Container(&'static ContainerDef),
     Modifiers(Vec<Modifier>),
     Behaviors(Vec<RawBehavior>),
@@ -507,6 +535,7 @@ fn load_item(raw: RawItem) -> Result<ItemDef, String> {
     let mut equippable = false;
     let mut consumable = false;
     let mut weapon: Option<RawWeapon> = None;
+    let mut throw: Option<RawThrow> = None;
     let mut container: Option<&'static ContainerDef> = None;
     let mut modifiers: Option<Vec<Modifier>> = None;
     let mut behaviors: Option<Vec<RawBehavior>> = None;
@@ -529,6 +558,12 @@ fn load_item(raw: RawItem) -> Result<ItemDef, String> {
                     return Err(format!("{label} 声明了多个 weapon 部件"));
                 }
                 weapon = Some(spec);
+            }
+            ParsedPart::Throw(spec) => {
+                if throw.is_some() {
+                    return Err(format!("{label} 声明了多个 throw 部件"));
+                }
+                throw = Some(spec);
             }
             ParsedPart::Container(def) => {
                 if container.is_some() {
@@ -573,6 +608,19 @@ fn load_item(raw: RawItem) -> Result<ItemDef, String> {
         validate_weapon(&label, spec)?;
     }
 
+    // 投掷：必须带 throwable 标签、基础伤害为正有限数。
+    if let Some(spec) = &throw {
+        if !tags.contains(&ItemTag::Throwable) {
+            return Err(format!("{label} 有 throw 部件，但 tags 里没有 throwable"));
+        }
+        if !spec.damage.is_finite() || spec.damage <= 0.0 {
+            return Err(format!(
+                "{label} 的投掷基础伤害必须是正的有限数，实得 {}",
+                spec.damage
+            ));
+        }
+    }
+
     // 修正：只有可装备物品带修正；数值必须能安全折叠。
     if let Some(list) = &modifiers {
         if !equippable {
@@ -600,7 +648,15 @@ fn load_item(raw: RawItem) -> Result<ItemDef, String> {
 
     validate_behaviors(&label, consumable, equippable, behaviors.as_deref().unwrap_or(&[]))?;
 
-    let parts = build_parts(equippable, consumable, weapon, container, modifiers, behaviors);
+    let parts = build_parts(
+        equippable,
+        consumable,
+        weapon,
+        throw,
+        container,
+        modifiers,
+        behaviors,
+    );
     Ok(ItemDef {
         id: ItemId(id),
         name: leak_str(name),
@@ -643,6 +699,11 @@ fn parse_part(label: &str, index: usize, value: Value) -> Result<ParsedPart, Str
             let spec: RawWeapon =
                 serde_json::from_value(remaining).map_err(|error| format!("{}：{error}", context()))?;
             Ok(ParsedPart::Weapon(spec))
+        }
+        "throw" => {
+            let spec: RawThrow =
+                serde_json::from_value(remaining).map_err(|error| format!("{}：{error}", context()))?;
+            Ok(ParsedPart::Throw(spec))
         }
         "container" => {
             let raw: RawContainer =
@@ -717,6 +778,7 @@ fn build_parts(
     equippable: bool,
     consumable: bool,
     weapon: Option<RawWeapon>,
+    throw: Option<RawThrow>,
     container: Option<&'static ContainerDef>,
     modifiers: Option<Vec<Modifier>>,
     behaviors: Option<Vec<RawBehavior>>,
@@ -733,6 +795,11 @@ fn build_parts(
             speed_ms: spec.speed_ms,
             strength_cap: spec.strength_cap,
             growth: spec.growth,
+        }));
+    }
+    if let Some(spec) = throw {
+        parts.push(ItemPart::Throw(ThrowSpec {
+            damage: spec.damage,
         }));
     }
     if let Some(def) = container {

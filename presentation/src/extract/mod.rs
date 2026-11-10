@@ -148,9 +148,52 @@ pub fn extract_scene_frame(
     // 页栈只持有焦点与光标，视图每帧从世界重建，规则与界面因此不可能分叉。
     frame.ui = match pages.kind() {
         render_api::PageKind::Inventory => render_api::UiView::Inventory(Box::new(inventory_view(world, pages))),
+        render_api::PageKind::ThrowAim => {
+            render_api::UiView::ThrowAim(throw_aim_view(world, pages, &frame))
+        }
         _ => pages.view(config, &frame),
     };
     frame
+}
+
+/// 投掷瞄准页的视图：光标、弹道、可达性与落点目标。
+///
+/// 在这里特判而不是放进 `PageStack::view`：弹道要读 `Map`、目标要读实体快照，
+/// 而页栈不读世界（DsnX14）。`valid` 与行动链路的 `throw_reachable` 用同一个函数，
+/// 所以"界面上能投"与"规则允许投"不会分叉。
+fn throw_aim_view(
+    world: &mut World,
+    pages: &PageStack,
+    frame: &render_api::SceneFrame,
+) -> render_api::ThrowAimView {
+    let cursor = pages.throw_cursor();
+    let cursor_cell = (cursor.0.max(0) as usize, cursor.1.max(0) as usize);
+    let player = player_position(world).unwrap_or(cursor_cell);
+    let (path, valid) = if cursor.0 < 0 || cursor.1 < 0 {
+        (Vec::new(), false)
+    } else {
+        let map = world.resource::<Map>();
+        (
+            ecs_core::throw_path(player, cursor_cell)
+                .into_iter()
+                .map(|(x, y)| (x as i32, y as i32))
+                .collect(),
+            ecs_core::throw_reachable(map, player, cursor_cell),
+        )
+    };
+    let target = frame
+        .entities
+        .iter()
+        .find(|entity| entity.position == cursor)
+        .cloned();
+    let mut view = render_api::ThrowAimView::new(cursor)
+        .with_path(path)
+        .with_valid(valid);
+    if let Some(target) = target {
+        view = view.with_target(target);
+    }
+    view.footer = "方向键移动  Enter 投掷  Esc 取消".to_string();
+    view
 }
 
 /// 脚下 Nav2 的页签：有尸体先「尸体」、有地面物品再「地面」；脚下空的就没有 Nav2。

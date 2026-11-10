@@ -61,14 +61,14 @@ pub use container::{
     BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
 pub use actions::{
-    ItemActionError, drop_from_pack, equip_from_pack, take_from_corpse, take_from_ground,
-    unequip_to_pack, use_from_pack,
+    ItemActionError, drop_from_pack, equip_from_pack, load_throwable_from_pack, off_hand_throw_damage,
+    off_hand_throwable, take_from_corpse, take_from_ground, unequip_to_pack, use_from_pack,
 };
 pub use loot::{LootEntry, roll_loot};
 pub use quality::Quality;
 pub use registry::{
     Behavior, BehaviorEffect, BehaviorTrigger, ITEMS, ITEMS_SCHEMA_VERSION, ItemDef, ItemId,
-    ItemPart, TRAVELER_PACK_ITEM, WeaponGrowth, WeaponSpec, item_by_name, stack_weight,
+    ItemPart, TRAVELER_PACK_ITEM, ThrowSpec, WeaponGrowth, WeaponSpec, item_by_name, stack_weight,
 };
 
 /// 一件物品（实体上的身份组件）：它是**哪一件**东西。
@@ -158,6 +158,15 @@ pub struct Weapon {
     pub strength_cap: f32,
     /// 等级成长曲线（DsnE24 阶段 ②）。
     pub growth: WeaponGrowth,
+}
+
+/// 可投掷物的参数（名词 = 数据组件，DsnE27）：装配自蓝图 `throw` part。
+///
+/// 投掷动作只读这个组件拿基础伤害；射程/耗时/视线是规则常量（`balance.rs`）。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Throw {
+    /// 固定基础伤害（Gm9）。
+    pub damage: f64,
 }
 
 /// 物品带来的数值修正（名词 = 数据组件，DsnE27）：装配自蓝图 `modifiers` part。
@@ -259,6 +268,11 @@ impl ItemSpawner for Commands<'_, '_> {
                 WeaponProgress::new(),
             ));
         }
+        if let Some(spec) = def.throw_spec() {
+            self.entity(entity).insert(Throw {
+                damage: spec.damage,
+            });
+        }
         if let Some(layout) = def.container_def() {
             self.entity(entity).insert(Container::new(layout));
         }
@@ -294,6 +308,11 @@ impl ItemSpawner for World {
                 },
                 WeaponProgress::new(),
             ));
+        }
+        if let Some(spec) = def.throw_spec() {
+            self.entity_mut(entity).insert(Throw {
+                damage: spec.damage,
+            });
         }
         if let Some(layout) = def.container_def() {
             self.entity_mut(entity).insert(Container::new(layout));
@@ -347,6 +366,22 @@ pub fn pack_slot_index() -> usize {
         .iter()
         .position(|slot| slot.accept.accepts(&[ItemTag::Pack]))
         .expect("BODY 必须有能装背包的槽位")
+}
+
+/// 身体上「主手」那一个槽位的下标（由过滤表推出）。
+pub fn main_hand_slot_index() -> usize {
+    BODY.slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ItemTag::Weapon]))
+        .expect("BODY 必须有主手槽位")
+}
+
+/// 身体上「副手」那一个槽位的下标（盾与可投掷物都进这里）。
+pub fn off_hand_slot_index() -> usize {
+    BODY.slots
+        .iter()
+        .position(|slot| slot.accept.accepts(&[ItemTag::Throwable]))
+        .expect("BODY 必须有副手槽位")
 }
 
 /// 容器当前总重（系统查询版）。

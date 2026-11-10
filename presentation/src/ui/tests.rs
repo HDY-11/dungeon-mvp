@@ -359,3 +359,27 @@ fn info_cursor_moves_only_with_the_info_pane_focused() {
     assert!(!pages.apply(UiIntent::MoveInfoCursor { dy: 1 }));
     assert_eq!(pages.info_cursor(), 2);
 }
+
+/// 投掷瞄准页：开页记录落点光标，移动时夹在世界内，关页回游戏。
+#[test]
+fn throw_page_opens_and_moves_within_the_world() {
+    let mut pages = PageStack::new();
+    // 开页本身要读世界（自动装填/自动瞄准），页栈不消费这个意图。
+    assert!(!pages.apply(UiIntent::OpenThrow { x: 12, y: 8 }));
+    pages.open_throw(12, 8);
+    assert_eq!(pages.kind(), render_api::PageKind::ThrowAim);
+    assert_eq!(pages.throw_cursor(), (12, 8));
+
+    pages.move_throw_cursor(-20, 99, (80, 60));
+    assert_eq!(pages.throw_cursor(), (0, 59));
+    pages.move_throw_cursor(1, -1, (80, 60));
+    assert_eq!(pages.throw_cursor(), (1, 58));
+
+    // 瞄准页也走通用关页路径。
+    assert!(pages.apply(UiIntent::ClosePage));
+    assert!(pages.is_game());
+
+    // 离开瞄准页后，移动光标不再生效（避免把光标状态带到别页）。
+    pages.move_throw_cursor(3, 3, (80, 60));
+    assert_eq!(pages.throw_cursor(), (1, 58));
+}

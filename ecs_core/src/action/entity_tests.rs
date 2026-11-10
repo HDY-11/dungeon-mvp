@@ -10,6 +10,7 @@ use crate::components::{
     CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Mana, Viewshed,
 };
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
+use crate::item::{Amount, BODY, Container, Item, ItemId, Throw, off_hand_slot_index};
 use crate::resources::GameRng;
 use crate::spell::{CastSpell, SpellBook, SpellId};
 use crate::test_util::{find_walkable_step, player_pos, single_tile_scene, spawn_test_monster};
@@ -874,6 +875,94 @@ fn player_cast_is_refused_at_generation_when_the_slot_or_mana_is_missing() {
         "法力不足必须被拒绝"
     );
     assert!(world.get::<Active>(player).is_none(), "被拒绝的命令不得留下活跃行动");
+}
+
+/// 给玩家装身体容器，副手放一堆石子（id 18，`Throw.damage = 3`）。
+fn give_throwable(world: &mut World, player: Entity, count: u32) -> Entity {
+    let tags = ItemId(18).def().tags;
+    let stone = world
+        .spawn((
+            Item::new(ItemId(18)),
+            Amount::new(count),
+            Throw { damage: 3.0 },
+        ))
+        .id();
+    let mut body = Container::new(&BODY);
+    body.insert(off_hand_slot_index(), stone, tags)
+        .expect("副手槽接受可投掷物");
+    world.entity_mut(player).insert(body);
+    stone
+}
+
+/// 玩家 `Throw` 命令：生成投掷行动，到点后经校验/落地/结算扣一颗并落地。
+#[test]
+fn player_throw_spawns_an_action_and_resolves_through_the_settle_chain() {
+    let (mut world, player) = player_move_scene((10, 10));
+    let stone = give_throwable(&mut world, player, 1);
+    let monster = spawn_test_monster(
+        &mut world,
+        crate::monster::MonsterKindId::Rat,
+        (11, 10),
+        30.0,
+        4.0,
+    );
+
+    world.resource_mut::<PlayerActionRequest>().command =
+        Some(PlayerCommand::Throw { dx: 1, dy: 0 });
+    let _ = world.run_system_once(player_action_generation_system);
+
+    let actions = action_entities_of(&mut world, player);
+    assert_eq!(actions.len(), 1, "投掷必须恰好生成一个行动实体");
+    let action = actions[0];
+    assert_eq!(
+        world.get::<ThrowAction>(action).map(|throw| throw.target),
+        Some((11, 10)),
+        "行动载荷要记住落点格"
+    );
+    assert_eq!(
+        world.get::<ActionName>(action).map(|name| name.0),
+        Some("Throw"),
+        "事件栏/进行中投影按 ActionName 取文案"
+    );
+
+    // 190 AV 到点 → 落地发投掷意图 → 结算扣 1 颗并落地；行动回收。
+    world.run_schedule(ActionPocSchedule);
+    crate::system::run_settle_systems(&mut world);
+    assert_eq!(
+        world.get::<Health>(monster).expect("怪物还活着").current,
+        27.0,
+        "石子基础伤害 3，怪物无防御"
+    );
+    assert!(
+        world.get::<Container>(player).unwrap().slot(off_hand_slot_index()).is_none(),
+        "投出的那一颗必须从副手消失"
+    );
+    assert!(
+        world.get_entity(stone).is_err(),
+        "堆空后投掷物实体应当被回收"
+    );
+    assert!(world.get::<Idle>(player).is_some(), "投掷完成后回 Idle");
+}
+
+/// 玩家 `Throw` 命令：副手没有可投物 / 落点够不着时在生成期就被拒绝。
+#[test]
+fn player_throw_is_refused_at_generation_when_nothing_is_throwable_or_in_reach() {
+    let (mut world, player) = player_move_scene((10, 10));
+
+    // 副手什么都没有。
+    assert!(
+        !apply_player_command(&mut world, PlayerCommand::Throw { dx: 1, dy: 0 }),
+        "副手没有可投物必须被拒绝"
+    );
+    assert!(world.get::<Active>(player).is_none(), "被拒绝的命令不得留下活跃行动");
+
+    // 有石子，但目标超出射程。
+    give_throwable(&mut world, player, 1);
+    let far = crate::balance::THROW_RANGE as isize + 1;
+    assert!(
+        !apply_player_command(&mut world, PlayerCommand::Throw { dx: far, dy: 0 }),
+        "射程外必须被拒绝"
+    );
 }
 
 /// 玩家移动与旧 `apply_player_command` 的落点一致（迁移期一致性）。

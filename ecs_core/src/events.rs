@@ -55,6 +55,17 @@ pub struct SpellIntentEvent {
     pub target: Entity,
 }
 
+/// 一次已确认的投掷意图（Gm9）。消耗投掷物、伤害结算与落地都在结算链路里。
+///
+/// 与 [`AttackIntentEvent`] / [`SpellIntentEvent`] 同构：落地器只发"谁往哪格扔"，
+/// 命中判定（落点格上有没有活物）与伤害公式都不在落地阶段。
+#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThrowIntentEvent {
+    pub thrower: Entity,
+    /// 落点格（世界坐标）；落点必中，即使没有活物也照常落地。
+    pub target: (usize, usize),
+}
+
 /// 行动执行失败（保活条件不再成立）。
 #[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionFailedEvent {

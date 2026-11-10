@@ -393,3 +393,46 @@ fn default_world_size_tracks_core_map_constants() {
         (ecs_core::MAP_WIDTH, ecs_core::MAP_HEIGHT)
     );
 }
+
+/// 投掷键位：游戏页 `t` 开瞄准页；瞄准页方向键移光标、Enter 确认、x 取消。
+#[test]
+fn throw_keys_open_aim_move_and_confirm() {
+    let game = ctx(PageKind::Game);
+    assert_eq!(
+        map_input_event(key(Key::Char('t')), &game),
+        InputOutcome::Ui(UiIntent::OpenThrow { x: 10, y: 20 }),
+        "t 带着玩家当前位置开瞄准页（初始落点由应用层算）"
+    );
+
+    let aim = ctx(PageKind::ThrowAim);
+    let cases = [
+        (Key::Up, (0, -1)),
+        (Key::Char('k'), (0, -1)),
+        (Key::Down, (0, 1)),
+        (Key::Char('j'), (0, 1)),
+        (Key::Left, (-1, 0)),
+        (Key::Char('h'), (-1, 0)),
+        (Key::Right, (1, 0)),
+        (Key::Char('l'), (1, 0)),
+    ];
+    for (k, (dx, dy)) in cases {
+        assert_eq!(
+            map_input_event(key(k), &aim),
+            InputOutcome::Ui(UiIntent::MoveThrowCursor { dx, dy }),
+            "{k:?} 应当移动瞄准光标"
+        );
+    }
+    assert_eq!(
+        map_input_event(key(Key::Enter), &aim),
+        InputOutcome::Ui(UiIntent::ConfirmThrow)
+    );
+    assert_eq!(
+        map_input_event(key(Key::Char('x')), &aim),
+        InputOutcome::Ui(UiIntent::ClosePage)
+    );
+    // 瞄准页不驱动玩家移动：方向键是 UI 意图，不是 Move 命令。
+    assert!(
+        map_input_event(key(Key::Up), &aim).command().is_none(),
+        "瞄准时方向键不能同时走路"
+    );
+}

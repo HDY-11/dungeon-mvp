@@ -202,6 +202,13 @@ impl App {
 
     /// 落地一个页栈意图。
     fn apply_ui(&mut self, intent: UiIntent) -> bool {
+        // 投掷页要读世界（自动装填、自动瞄准），也不改页栈之外的状态，先在这里接地。
+        if matches!(intent, UiIntent::OpenThrow { .. }) {
+            return self.open_throw_page();
+        }
+        if matches!(intent, UiIntent::ConfirmThrow) {
+            return self.confirm_throw();
+        }
         // 背包页的动作意图改的是**世界**（不是页栈）：先在这里接地。
         if matches!(
             intent,
@@ -281,6 +288,63 @@ impl App {
             log::info!("背包动作失败：{}", error.describe());
         }
         true
+    }
+
+    /// 打开投掷瞄准页：副手没有可投掷物时先从行囊装填，再按信息栏选中目标自动瞄准。
+    ///
+    /// 自动瞄准是"先给一个合理落点"；手动方向键移动光标仍是备用方案（m10559 问答）。
+    /// 开页失败（行囊里也没有可投掷物）只写日志、不开页——让玩家能看见原因。
+    fn open_throw_page(&mut self) -> bool {
+        if ecs_core::off_hand_throwable(&self.world).is_none() {
+            match ecs_core::load_throwable_from_pack(&mut self.world) {
+                Ok(id) => log::info!("装填了{}", id.def().name),
+                Err(error) => {
+                    log::info!("无法投掷：{}", error.describe());
+                    self.refresh();
+                    return true;
+                }
+            }
+        }
+        let player = presentation::player_position(&mut self.world).unwrap_or((0, 0));
+        let cursor = self.auto_throw_target(player).unwrap_or(player);
+        let mut pages = self.world.resource::<PageStack>().clone();
+        pages.open_throw(cursor.0, cursor.1);
+        *self.world.resource_mut::<PageStack>() = pages;
+        self.refresh();
+        true
+    }
+
+    /// 信息栏里当前选中的候选若在投掷射程/视线内，就是自动瞄准的落点。
+    fn auto_throw_target(&self, player: (usize, usize)) -> Option<(usize, usize)> {
+        let id = self.frame.info.selected_id()?;
+        let entity = self.frame.entities.iter().find(|entity| entity.id == id)?;
+        let cursor = (entity.position.0.max(0) as usize, entity.position.1.max(0) as usize);
+        let map = self.world.resource::<ecs_core::Map>();
+        ecs_core::throw_reachable(map, player, cursor).then_some(cursor)
+    }
+
+    /// 确认投掷：把瞄准光标换算成相对玩家的方向命令，交给行动流水线。
+    ///
+    /// 无论行动是否被接受都关掉瞄准页：被拒绝的原因已经由规则层写进日志，
+    /// 把玩家留在瞄准页里只会让"按了 Enter 没反应"更困惑。
+    fn confirm_throw(&mut self) -> bool {
+        let pages = self.world.resource::<PageStack>().clone();
+        let player = presentation::player_position(&mut self.world).unwrap_or((0, 0));
+        let cursor = pages.throw_cursor();
+        let dx = cursor.0 - player.0 as i32;
+        let dy = cursor.1 - player.1 as i32;
+        let accepted = apply_player_command(
+            &mut self.world,
+            ecs_core::PlayerCommand::Throw {
+                dx: dx as isize,
+                dy: dy as isize,
+            },
+        );
+        let mut pages = self.world.resource::<PageStack>().clone();
+        pages.close();
+        *self.world.resource_mut::<PageStack>() = pages;
+        self.refresh();
+        accepted
     }
 
     /// 游戏是否已请求退出。

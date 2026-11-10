@@ -65,6 +65,8 @@ pub enum ItemTag {
     Ring,
     /// 背包类（行囊本身就是一件能装进身体「背包」槽的物品）。
     Pack,
+    /// 可投掷物（石子…）。副手可以握住一叠，投掷时由主手掷出（Gm9）。
+    Throwable,
 }
 
 /// 一个槽位**接受什么**。
@@ -113,6 +115,7 @@ impl ItemTag {
             ItemTag::Feet => "脚",
             ItemTag::Ring => "手指",
             ItemTag::Pack => "背包",
+            ItemTag::Throwable => "可投掷物",
         }
     }
 }
@@ -176,6 +179,8 @@ impl ContainerDef {
 ///
 /// 取代旧的 `EquippedBy` + `EquippedItem.slot`（见 DsnE18 决策 1 待拍板）：槽位由这张表给出，
 /// 物品不再自己声明"我占的是主手还是副手"。
+///
+/// 副手同时接受盾与可投掷物（Gm9：石子握在副手、由主手掷出）。
 pub const BODY: ContainerDef = ContainerDef {
     name: "身体",
     max_weight: None,
@@ -183,7 +188,10 @@ pub const BODY: ContainerDef = ContainerDef {
         SlotDef::one("头", SlotAccept::Only(&[ItemTag::Head])),
         SlotDef::one("躯干", SlotAccept::Only(&[ItemTag::Chest])),
         SlotDef::one("主手", SlotAccept::Only(&[ItemTag::Weapon])),
-        SlotDef::one("副手", SlotAccept::Only(&[ItemTag::Shield])),
+        SlotDef::one(
+            "副手",
+            SlotAccept::Only(&[ItemTag::Shield, ItemTag::Throwable]),
+        ),
         SlotDef::one("脚", SlotAccept::Only(&[ItemTag::Feet])),
         SlotDef::one("手指", SlotAccept::Only(&[ItemTag::Ring])),
         SlotDef::one("背包", SlotAccept::Only(&[ItemTag::Pack])),

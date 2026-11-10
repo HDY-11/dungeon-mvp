@@ -14,7 +14,7 @@ use crate::components::*;
 use crate::entity_cls::*;
 use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent, SpellIntentEvent,
+    LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
 };
 use crate::map::map_gen::{ensure_connection_between, generate_map_from_seed};
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map, MapKind, Tile, map_kind_for};
@@ -84,6 +84,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
     // 施法意图（DsnE26）：settle 写、`resolve_spell_system` 读。
     world.insert_resource(bevy_ecs::event::Events::<SpellIntentEvent>::default());
+    // 投掷意图（Gm9）：settle 写、`resolve_throw_system`/`consume_thrown_item_system` 读。
+    world.insert_resource(bevy_ecs::event::Events::<ThrowIntentEvent>::default());
 
     // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
     world.add_schedule(build_init_schedule());

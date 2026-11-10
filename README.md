@@ -2,9 +2,9 @@
 
 Rust 终端 Roguelike：`ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 
-> **本仓库当前状态：** `refactor` 分支正在把业务领域收敛到单一 crate `ecs_core`。
-> 旧实现在 `archive/`（仍可编译可测，只作对照）。**新架构只实现了"行动 + 战斗 + 经验 +
-> 地图"这一条闭环**——物品、技能、投掷、存档都还没迁（见
+> **本仓库当前状态：** 业务领域已收敛到单一 crate `ecs_core`。旧实现在 `archive/`
+> （仍可编译可测，只作对照）。新架构已打通"行动 + 战斗 + 经验 + 地图 + 物品（容器/
+> 重量/存档）+ 法术 + 投掷"；合成、buff、技能卷轴与熟练度仍未迁移（见
 > [GAME.md](GAME.md) 头部的迁移状态表）。
 
 ## 快速开始
@@ -13,11 +13,12 @@ Rust 终端 Roguelike：`ratatui` + `crossterm` + `bevy_ecs`（0.16）。
 cargo run                      # 跑游戏
 cargo check --workspace        # 全工作区构建检查
 
-# 验收走一条命令（9 步：构建 / 新方向测试 / 端到端 / bin / clippy / 依赖边界）
+# 验收走一条命令（10 步：构建 / 新方向测试 / 端到端 / bin / clippy / 依赖边界 / 文档）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
 
-cargo test -p ecs_core         # 96 passed
-cargo test -p presentation     # 57 passed
+cargo test -p ecs_core         # 359 passed
+cargo test -p presentation     # 80 passed
+cargo test -p tui              # 44 passed
 ```
 
 门禁**覆盖**什么、**不覆盖**什么（旧 crate 测试不在门禁内）见 [PROTOCOLS.md §五](PROTOCOLS.md)。
@@ -28,12 +29,15 @@ cargo test -p presentation     # 57 passed
 |---|---|
 | 方向键 / `Home` `End` `PgUp` `PgDn` | 移动 / 朝该方向攻击（8 方向，**tap-tap**：第一次预览，同键第二次确认） |
 | `.` | 等待（同样 tap-tap 确认） |
+| `1` / `2` / `3` | 施放法术书对应格（火花术 / 治愈术，见 GAME Gm15） |
+| `e` | 背包 / 身体与容器页面（3×3 焦点网格，装-卸-用-丢-拿） |
+| `t` | 投掷瞄准（石子等可投掷物；自动瞄准 + 方向键手动，`Enter` 确认、`x`/`Esc` 取消） |
+| `>` | 下楼（站在楼梯上） |
 | `?` | 查看模式（光标移动，`Esc`/`?` 退出） |
 | `q` / `Esc` | 退出（弹出确认框，`Enter` 确认） |
 
-> 上面之外的按键（背包 `e`、投掷 `t`、拾取 `g`、下楼 `>`、存档 `F5/F9`、技能 `1-4`）
-> 属于**未迁移子系统**，当前版本按了没有效果。键位表的唯一来源是
-> `presentation/src/input`，外观的唯一来源是 `tui/src/catalog.rs`。
+> 上面之外的按键（技能卷轴等）属于**未迁移子系统**，当前版本按了没有效果。键位表的
+> 唯一来源是 `presentation/src/input`，外观的唯一来源是 `tui/src/catalog.rs`。
 
 ## 架构
 

@@ -17,11 +17,18 @@ use crate::action::entity::{ActionPriority, ActionSource, ActiveAction};
 use crate::action::settle::settle_action_system;
 use crate::action::ownership::ActionOf;
 use crate::components::{ActionTimer, Active, BasicAttack, Blocks, Idle, Ready, Wait};
-use crate::events::{ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent, SpellIntentEvent};
+use crate::events::{
+    ActionFailedEvent, ActionSucceededEvent, AttackIntentEvent, SpellIntentEvent,
+    ThrowIntentEvent,
+};
+use crate::item::{
+    Amount, BODY, Container, Item, ItemId, Throw, off_hand_slot_index,
+};
 use crate::map::Tile;
 use crate::schedule::ActionPocSchedule;
 use crate::spell::SpellId;
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
+use crate::throw::ThrowAction;
 use bevy_ecs::event::Events;
 use bevy_ecs::system::RunSystemOnce;
 
@@ -102,6 +109,7 @@ fn run_validators(world: &mut World) {
             validate_move_system,
             validate_basic_attack_system,
             validate_cast_system,
+            validate_throw_system,
             validate_chase_system,
             validate_flee_system,
             validate_wander_system,
@@ -759,4 +767,87 @@ fn cast_validation_fails_without_mana_and_without_a_target() {
         "视野里没有敌人时火花术必须失败"
     );
     assert!(world.get::<CastTarget>(action2).is_none());
+}
+
+// ── 投掷（Gm9 / DsnE28）──────────────────────────────
+
+/// 给玩家装身体容器，副手放一堆石子（id 18，`Throw.damage = 3`）。
+fn throw_ready_player(world: &mut World, player: Entity, count: u32) {
+    let tags = ItemId(18).def().tags;
+    let stone = world
+        .spawn((
+            Item::new(ItemId(18)),
+            Amount::new(count),
+            Throw { damage: 3.0 },
+        ))
+        .id();
+    let mut body = Container::new(&BODY);
+    body.insert(off_hand_slot_index(), stone, tags)
+        .expect("副手槽接受可投掷物");
+    world.entity_mut(player).insert(body);
+}
+
+#[test]
+fn throw_validation_targets_the_chosen_cell_and_settles_an_intent() {
+    let (mut world, player) = open_world();
+    throw_ready_player(&mut world, player, 1);
+    let action = mount_ready(&mut world, player, ThrowAction { target: (12, 10) });
+
+    run_validate_and_settle(&mut world);
+
+    assert_eq!(
+        world.get::<ThrowTarget>(action).map(|target| target.0),
+        Some((12, 10)),
+        "投掷的落点就是载荷里的格子（落点必中）"
+    );
+    let intents: Vec<ThrowIntentEvent> = world
+        .resource_mut::<Events<ThrowIntentEvent>>()
+        .drain()
+        .collect();
+    assert_eq!(intents.len(), 1, "落地阶段必须恰好发一个投掷意图");
+    assert_eq!(intents[0].thrower, player);
+    assert_eq!(intents[0].target, (12, 10));
+}
+
+#[test]
+fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach() {
+    let (mut world, player) = open_world();
+    throw_ready_player(&mut world, player, 1);
+    // 副手被清空：排队中的投掷必须失败（不能凭空投出空气）。
+    world
+        .get_mut::<Container>(player)
+        .unwrap()
+        .take_slot(off_hand_slot_index());
+    let action = mount_ready(&mut world, player, ThrowAction { target: (12, 10) });
+    run_validate_and_settle(&mut world);
+    assert!(world.get::<ThrowTarget>(action).is_none(), "副手空了不得定案");
+    assert!(
+        !world.resource::<Events<ActionFailedEvent>>().is_empty(),
+        "副手空了要让行动失败"
+    );
+
+    // 超出射程的落点：定案前复查可达性，不允许落空。
+    throw_ready_player(&mut world, player, 1);
+    let action2 = mount_ready(
+        &mut world,
+        player,
+        ThrowAction {
+            target: (10 + crate::balance::THROW_RANGE + 1, 10),
+        },
+    );
+    run_validate_and_settle(&mut world);
+    assert!(
+        world.get::<ThrowTarget>(action2).is_none(),
+        "射程外不得定案"
+    );
+
+    // 中间挡墙：视线断掉，同样不得定案。
+    throw_ready_player(&mut world, player, 1);
+    world.resource_mut::<Map>().tiles[10][11] = Tile::Wall;
+    let action3 = mount_ready(&mut world, player, ThrowAction { target: (13, 10) });
+    run_validate_and_settle(&mut world);
+    assert!(
+        world.get::<ThrowTarget>(action3).is_none(),
+        "视线被挡不得定案"
+    );
 }

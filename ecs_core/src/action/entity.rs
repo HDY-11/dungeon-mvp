@@ -39,8 +39,8 @@ use crate::action::generation::player::PlayerCommand;
 use crate::action::ownership::ActionOf;
 use crate::action::settle::settle_action_system;
 use crate::balance::{
-    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, UNARMED_ATTACK_DURATION, WAIT_DURATION,
-    WANDER_DURATION, action_av,
+    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, THROW_DURATION_AV, UNARMED_ATTACK_DURATION,
+    WAIT_DURATION, WANDER_DURATION, action_av,
 };
 use crate::components::{
     ActionTimer, Active, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase, Failure, Flee,
@@ -53,6 +53,7 @@ use crate::resources::OccupancyMap;
 use crate::effect::EffectContext;
 use crate::rules::{EffectSource, Modifier, StatId, apply_modifiers};
 use crate::spell::SpellId;
+use crate::throw::{ThrowAction, throw_reachable};
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
@@ -102,6 +103,10 @@ pub struct PlayerWorld<'w, 's> {
         ),
     >,
     monster_positions: Query<'w, 's, (Entity, &'static Position), With<Monster>>,
+    /// 玩家身体容器（找副手槽里的可投掷物）。
+    bodies: Query<'w, 's, &'static crate::item::Container>,
+    /// 带 `Throw` 组件的物品实体（`Throw` 只由蓝图 throw 部件装配出来）。
+    throwables: Query<'w, 's, &'static crate::item::Throw>,
 }
 
 /// 一个 AI actor 的数据：实体 id + 基础属性 + 所在格。
@@ -278,6 +283,7 @@ impl ActionName {
             "Move" => "迈开脚步",
             "BasicAttack" => "举起了武器",
             "Cast" => "开始施法",
+            "Throw" => "投掷出去",
             _ => "行动",
         }
     }
@@ -621,6 +627,10 @@ enum PlayerAction {
     BasicAttack(Entity),
     /// 施法（DsnE26）：法术编号在生成期固定，目标留给校验阶段选。
     Cast(SpellId),
+    /// 投掷（Gm9）：目标格在生成期固定（落点必中，落点上站谁由校验/结算处理）。
+    Throw {
+        target: (usize, usize),
+    },
 }
 
 /// 玩家行动生成（C2/C3）：把已确认的玩家命令翻译成 **active action 实体**。
@@ -745,6 +755,30 @@ pub fn player_action_generation_system(
             }
             (PlayerAction::Cast(spell_id), SpeedRule::Fixed, spell.cast_av)
         }
+        PlayerCommand::Throw { dx, dy } => {
+            let (nx, ny) = position.offset(dx, dy);
+            // 取用口径（Gm9）：看副手，不看快捷键——副手没有可投掷物就拒绝；
+            // 行囊里的石子由应用层在进入瞄准前自动装填，核心不替输入层做这件事。
+            let off_hand_throwable = world
+                .bodies
+                .get(player)
+                .ok()
+                .and_then(|body| body.slot(crate::item::off_hand_slot_index()))
+                .is_some_and(|item| world.throwables.get(item).is_ok());
+            if !off_hand_throwable {
+                refuse(&mut event_log, "副手没有可投掷的东西");
+                return;
+            }
+            if !throw_reachable(&movement.map, position.to_tuple(), (nx, ny)) {
+                refuse(&mut event_log, "那个位置投不到：太远或视线被挡住");
+                return;
+            }
+            (
+                PlayerAction::Throw { target: (nx, ny) },
+                SpeedRule::Fixed,
+                THROW_DURATION_AV,
+            )
+        }
     };
 
     // 收桶（求值第 ② 步）：玩家脚下这一格的修正 + 玩家名下效果声明的无视来源。
@@ -789,6 +823,9 @@ pub fn player_action_generation_system(
             // 目标不在生成期固定：校验阶段按"此刻视野里最近的敌人"重新选，
             // 吟唱期间目标跑动/换目标都由此兜住（DsnE26）。
             action_cmd.insert((ActionName("Cast"), crate::spell::CastSpell { spell }));
+        }
+        PlayerAction::Throw { target } => {
+            action_cmd.insert((ActionName("Throw"), ThrowAction { target }));
         }
     }
 
@@ -1082,6 +1119,7 @@ pub fn build_action_poc_schedule() -> Schedule {
                     crate::action::validation::validate_move_system,
                     crate::action::validation::validate_basic_attack_system,
                     crate::action::validation::validate_cast_system,
+                    crate::action::validation::validate_throw_system,
                     crate::action::validation::validate_chase_system,
                     crate::action::validation::validate_flee_system,
                     crate::action::validation::validate_wander_system,

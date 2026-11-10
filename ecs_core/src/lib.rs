@@ -24,6 +24,7 @@ pub mod schedule;
 pub mod spatial;
 pub mod spell;
 pub mod system;
+pub mod throw;
 pub mod world;
 
 #[cfg(test)]
@@ -45,6 +46,7 @@ pub use schedule::*;
 pub use spatial::*;
 pub use spell::*;
 pub use system::*;
+pub use throw::*;
 pub use world::*;
 
 pub use world::loop_ as world_loop;

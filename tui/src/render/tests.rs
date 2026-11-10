@@ -653,7 +653,7 @@ fn the_events_panel_marks_levels_and_keeps_one_timeline() {
 #[test]
 fn unimplemented_pages_show_a_placeholder() {
     let mut scene = base_scene();
-    // 投掷页仍未迁移（S4），走占位分支。
+    // 投掷选择页仍未迁移（当前直接进入瞄准页），走占位分支。
     scene.ui = UiView::ThrowSelect(render_api::ListView::new("投掷"));
 
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
@@ -663,7 +663,30 @@ fn unimplemented_pages_show_a_placeholder() {
 
     let text = buffer_text_compact(&terminal);
 
-    assert!(text.contains("投掷系统尚未迁移"), "应当说明为何是空的");
+    assert!(text.contains("投掷选择页尚未迁移"), "应当说明为何是空的");
+}
+
+/// 瞄准页把弹道画到地图上，并给出落点/可投性提示。
+#[test]
+fn the_throw_aim_page_draws_the_path_and_hint() {
+    let mut scene = base_scene();
+    let player = scene.player.as_ref().expect("场景要有玩家").position;
+    let target = (player.0 + 2, player.1);
+    let mut aim = render_api::ThrowAimView::new(target)
+        .with_path(vec![player, (player.0 + 1, player.1), target])
+        .with_valid(true);
+    aim.footer = "方向键移动  Enter 投掷  Esc 取消".to_string();
+    scene.ui = UiView::ThrowAim(aim);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("测试终端");
+    terminal
+        .draw(|frame| render_frame(frame, &scene))
+        .expect("绘制不得失败");
+
+    let text = buffer_text_compact(&terminal);
+    assert!(text.contains("投掷"), "要有投掷提示: {text}");
+    assert!(text.contains("可投"), "合法落点要显示可投: {text}");
+    assert!(text.contains("弹道3格"), "要显示弹道长度: {text}");
 }
 
 /// 背包页是**真页面**（DsnA5）：两条导航栏 + 两条内容栏 + 详情 + 底部提示。

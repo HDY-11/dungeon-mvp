@@ -22,8 +22,8 @@ use crate::components::{Health, Mana, Position};
 use crate::entity_cls::Player;
 use crate::item::{
     Amount, BODY, BehaviorEffect, BehaviorTrigger, Behaviors, Consumable, Container, Equippable,
-    GroundItemAt, Item, ItemDef, ItemId, ItemTag, pack_slot_index, spawn_item_assembled,
-    stack_weight,
+    GroundItemAt, Item, ItemDef, ItemId, ItemTag, Throw, off_hand_slot_index, pack_slot_index,
+    spawn_item_assembled, stack_weight,
 };
 use crate::resources::{EventLog, EventMessage};
 use crate::rules::refresh_player_vitals;
@@ -621,6 +621,67 @@ pub fn pack_item_id(world: &World, pack_slot: usize) -> Option<ItemId> {
     let pack = pack_entity(world, player).ok()?;
     let item = slot_of(world, pack, pack_slot).ok()?;
     world.get::<Item>(item).map(|item| item.id)
+}
+
+// ── 投掷取用（Gm9） ─────────────────────────────────
+
+/// 玩家副手里那件可投掷物（读 `Throw` 组件；不查标签，标签只决定槽位收不收）。
+pub fn off_hand_throwable(world: &World) -> Option<Entity> {
+    let player = player_entity(world).ok()?;
+    let body = world.get::<Container>(player)?;
+    let item = body.slot(off_hand_slot_index())?;
+    world.get::<Throw>(item).map(|_| item)
+}
+
+/// 把行囊里第一堆可投掷物**整堆**移到副手（Gm9「副手持、主手投」）。返回物品编号。
+///
+/// 副手已被占（盾或另一堆投掷物）就失败——投掷是主动动作，换下来的东西没有去处；
+/// 让玩家自己先收好。失败时物品留在原格（先取出再放，放不回就塞回原格）。
+pub fn load_throwable_from_pack(world: &mut World) -> Result<ItemId, ItemActionError> {
+    let player = player_entity(world)?;
+    let pack = pack_entity(world, player)?;
+    let off = off_hand_slot_index();
+    let body = world.get::<Container>(player).ok_or(ItemActionError::NoPlayer)?;
+    if body.slot(off).is_some() {
+        return Err(ItemActionError::NoRoom);
+    }
+    let pack_len = world
+        .get::<Container>(pack)
+        .map(Container::len)
+        .unwrap_or(0);
+    let mut found: Option<(usize, ItemId)> = None;
+    for slot in 0..pack_len {
+        let Some(item) = world.get::<Container>(pack).and_then(|c| c.slot(slot)) else {
+            continue;
+        };
+        if world.get::<Throw>(item).is_none() {
+            continue;
+        }
+        if let Some(id) = world.get::<Item>(item).map(|item| item.id) {
+            found = Some((slot, id));
+            break;
+        }
+    }
+    let (slot, id) = found.ok_or(ItemActionError::NotUsable)?;
+    let item = take_from(world, pack, slot).ok_or(ItemActionError::EmptySlot)?;
+    let inserted = world
+        .get_mut::<Container>(player)
+        .ok_or(ItemActionError::NoPlayer)
+        .and_then(|mut body| {
+            body.insert(off, item, id.def().tags)
+                .map_err(|_| ItemActionError::NoRoom)
+        });
+    if inserted.is_err() {
+        let _ = put_back(world, pack, slot, item);
+        return Err(ItemActionError::NoRoom);
+    }
+    Ok(id)
+}
+
+/// 副手里那件可投掷物的基础伤害（没有则 `None`）。
+pub fn off_hand_throw_damage(world: &World) -> Option<f64> {
+    let item = off_hand_throwable(world)?;
+    world.get::<Throw>(item).map(|throw| throw.damage)
 }
 
 #[cfg(test)]

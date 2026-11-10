@@ -1,5 +1,5 @@
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "items": [
     {
       "id": 0,
@@ -136,8 +136,8 @@
       "desc": "边缘锋利的石块，适合投掷。",
       "weight": 0.2,
       "max_stack": 20,
-      "parts": [],
-      "tags": []
+      "parts": [{ "type": "throw", "damage": 3.0 }],
+      "tags": ["throwable"]
     },
     {
       "id": 23,

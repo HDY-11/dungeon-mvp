@@ -93,11 +93,14 @@ pub fn render_frame(terminal_frame: &mut Frame, scene: &SceneFrame) {
             match ui {
                 UiView::Look(look) => render_look_overlay(terminal_frame, areas.camera, look),
                 UiView::Dialog(dialog) => render_dialog_overlay(terminal_frame, areas.full, dialog),
-                UiView::ThrowSelect(_) | UiView::ThrowAim(_) => render_placeholder(
+                UiView::ThrowAim(aim) => {
+                    render_throw_aim_overlay(terminal_frame, areas.camera, scene, aim)
+                }
+                UiView::ThrowSelect(_) => render_placeholder(
                     terminal_frame,
                     areas.full,
                     "投掷",
-                    "投掷系统尚未迁移到 ecs_core（Dsn25 S4），此页为占位。",
+                    "投掷选择页尚未迁移（当前直接进入瞄准页）。",
                 ),
                 _ => {}
             }
@@ -306,7 +309,7 @@ fn render_status(frame: &mut Frame, area: Rect, scene: &SceneFrame) {
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(
-        "e：背包    ?：查看    q/Esc：退出",
+        "e：背包    t：投掷    ?：查看    q/Esc：退出",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -486,8 +489,74 @@ fn visible_entity_at(scene: &SceneFrame, x: i32, y: i32) -> Option<&EntityView> 
         .max_by_key(|entity| entity.layer)
 }
 
-fn render_look_overlay(frame: &mut Frame, area: Rect, look: &render_api::LookView) {
-    // 光标位置换算到终端格：相机已经把世界原点定好了，这里只做平移。
+/// 投掷瞄准的叠加层：在已画好的地图上标出弹道与落点，并在相机内底部给一行提示。
+///
+/// 地图格坐标到终端格只做平移（相机原点由 `presentation` 算好），越界的弹道格直接跳过。
+fn render_throw_aim_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    scene: &SceneFrame,
+    aim: &render_api::ThrowAimView,
+) {
+    let inner = inner_rect(area, 1);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let visible = scene.camera.visible_rect();
+    let origin_x = visible.min_x.floor() as i32;
+    let origin_y = visible.min_y.floor() as i32;
+    let color = if aim.valid { Color::Cyan } else { Color::Red };
+    let style = Style::default().fg(color);
+
+    let to_screen = |x: i32, y: i32| -> Option<(u16, u16)> {
+        let col = x - origin_x;
+        let row = y - origin_y;
+        if col < 0 || row < 0 {
+            return None;
+        }
+        let (col, row) = (col as u16, row as u16);
+        (col < inner.width && row < inner.height).then(|| (inner.x + col, inner.y + row))
+    };
+
+    {
+        let buffer = frame.buffer_mut();
+        for &(x, y) in &aim.path {
+            if let Some(cell) = to_screen(x, y) {
+                buffer[cell].set_symbol("*");
+                buffer[cell].set_style(style);
+            }
+        }
+        if let Some(cell) = to_screen(aim.cursor.0, aim.cursor.1) {
+            buffer[cell].set_symbol("X");
+            buffer[cell].set_style(style);
+        }
+    }
+
+    let target = aim
+        .target
+        .as_ref()
+        .map_or_else(|| "空地".to_string(), |entity| entity.name.clone());
+    let hint = format!(
+        "投掷 光标({},{}) 落点：{} 弹道 {} 格 {}",
+        aim.cursor.0,
+        aim.cursor.1,
+        target,
+        aim.path.len(),
+        if aim.valid { "可投" } else { "不可投" }
+    );
+    let hint_area = Rect {
+        x: inner.x,
+        y: inner.y + inner.height - 1,
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(Color::Black).bg(color)))),
+        hint_area,
+    );
+}
+
+fn render_look_overlay(frame: &mut Frame, area: Rect, look: &render_api::LookView) {    // 光标位置换算到终端格：相机已经把世界原点定好了，这里只做平移。
     // 换算失败的唯一原因是视口尺寸为 0（终端太小），此时不画光标。
     let mut lines = Vec::new();
     lines.push(Line::from(format!(

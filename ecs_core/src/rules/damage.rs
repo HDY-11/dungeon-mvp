@@ -136,6 +136,11 @@ fn finite_at_least_zero(value: f64) -> f64 {
     }
 }
 
+/// 供其它伤害形状（投掷…）复用的输入清理口径。
+pub(crate) fn cleaned(value: f64) -> f64 {
+    finite_at_least_zero(value)
+}
+
 /// 计算一次近战的结果。
 ///
 /// 纯函数：不碰 `World`、不取随机数（`crit_roll` 由调用方给）、不发事件。

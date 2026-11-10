@@ -26,7 +26,8 @@
 
 use bevy_ecs::prelude::*;
 use render_api::{
-    DialogView, EntityView, LookView, PageKind, Pane, TileInfo, UiTextLine, UiView, VisualKey,
+    DialogView, EntityView, LookView, PageKind, Pane, ThrowAimView, TileInfo, UiTextLine, UiView,
+    VisualKey,
 };
 
 use crate::extract::ExtractConfig;
@@ -59,6 +60,12 @@ pub enum UiIntent {
     OpenLook { x: usize, y: usize },
     /// 移动 Look 光标。
     MoveLookCursor { dx: i32, dy: i32 },
+    /// 打开投掷瞄准页，光标落在给定世界坐标（应用层先自动装填/自动瞄准）。
+    OpenThrow { x: usize, y: usize },
+    /// 移动投掷瞄准光标（页栈不动世界；夹取由应用层带世界尺寸做）。
+    MoveThrowCursor { dx: i32, dy: i32 },
+    /// 确认投掷（应用层转成 `PlayerCommand::Throw`）。
+    ConfirmThrow,
     /// 切换游戏画面的面板焦点（Tab，顺时针：摄像机 → 信息 → 状态 → 事件）。
     CyclePaneFocus,
     /// 信息栏移动选中行（`dy` 为 ±1；焦点在信息栏时方向键改为选行）。
@@ -80,6 +87,8 @@ pub struct PageStack {
     kind: PageKind,
     /// Look 页的光标（世界坐标）。
     look_cursor: (i32, i32),
+    /// 投掷瞄准页的光标（世界坐标）。
+    throw_cursor: (i32, i32),
     /// 当前 `Dialog` 页是否是退出确认（决定 `Enter` 的含义）。
     quit_pending: bool,
     /// 背包页的焦点位（顺时针 Nav1 → Nav2 → Context2 → Context1）。
@@ -108,6 +117,7 @@ impl PageStack {
         Self {
             kind: PageKind::Game,
             look_cursor: (0, 0),
+            throw_cursor: (0, 0),
             quit_pending: false,
             inventory_focus: render_api::InventoryFocus::Nav1,
             inventory_nav1_selected: 0,
@@ -254,6 +264,31 @@ impl PageStack {
         self.look_cursor.1 = (self.look_cursor.1 + dy).clamp(0, max_y);
     }
 
+    /// 投掷瞄准页的光标（世界坐标）。
+    pub const fn throw_cursor(&self) -> (i32, i32) {
+        self.throw_cursor
+    }
+
+    /// 打开投掷瞄准页，光标落在给定世界坐标。
+    ///
+    /// 自动装填与"默认瞄准谁"属于应用层的世界交互，不在这里做。
+    pub fn open_throw(&mut self, x: usize, y: usize) {
+        self.kind = PageKind::ThrowAim;
+        self.throw_cursor = (x as i32, y as i32);
+        self.quit_pending = false;
+    }
+
+    /// 移动投掷瞄准光标（夹在世界范围内）。非投掷页不响应。
+    pub fn move_throw_cursor(&mut self, dx: i32, dy: i32, world: (usize, usize)) {
+        if self.kind != PageKind::ThrowAim {
+            return;
+        }
+        let max_x = world.0.saturating_sub(1) as i32;
+        let max_y = world.1.saturating_sub(1) as i32;
+        self.throw_cursor.0 = (self.throw_cursor.0 + dx).clamp(0, max_x);
+        self.throw_cursor.1 = (self.throw_cursor.1 + dy).clamp(0, max_y);
+    }
+
     /// 处理一个页栈意图；返回 `true` 表示页栈消费了它。
     ///
     /// 返回 `false` 的两种情况：`None`（没有意图），以及"这个意图在当前页面
@@ -279,6 +314,11 @@ impl PageStack {
                 // `false`——让"忘了带世界尺寸"变成调用方的编译期/测试期问题，
                 // 而不是偷偷移动一个不夹取的光标。
                 let _ = (dx, dy);
+                false
+            }
+            // 投掷页的光标移动/确认同样需要世界或命令，由应用层落地；
+            // 页栈只负责"现在开着瞄准页、光标在哪"。
+            UiIntent::OpenThrow { .. } | UiIntent::MoveThrowCursor { .. } | UiIntent::ConfirmThrow => {
                 false
             }
             UiIntent::OpenInventory => {
@@ -384,6 +424,9 @@ impl PageStack {
                 UiView::Dialog(DialogView::confirm("退出", "确认退出游戏？"))
             }
             PageKind::Look => UiView::Look(self.look_view(frame)),
+            // 投掷页的正式内容（弹道/命中目标）要读世界，由提取层特判构建；
+            // 这里给一个只有光标的最小视图，保证页栈单测不依赖世界。
+            PageKind::ThrowAim => UiView::ThrowAim(ThrowAimView::new(self.throw_cursor)),
             // R2 之前不会进入这些页；给一个空视图而不是 panic——页栈状态若被
             // 外部改成未实现的页，游戏不该直接崩掉。
             _ => UiView::Game,

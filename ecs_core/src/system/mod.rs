@@ -39,33 +39,44 @@ pub use perception::{fov_system, update_map_memory_system, update_visible_memory
 
 use crate::events::{
     ActionFailedEvent, ActionSucceededEvent, AttackEvent, AttackIntentEvent, DeathEvent,
-    LevelUpEvent, SpellIntentEvent,
+    LevelUpEvent, SpellIntentEvent, ThrowIntentEvent,
 };
 use crate::schedule::CoreSettleSchedule;
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
+
+/// 结算末尾要统一 `update()` 的事件缓冲集合。
+///
+/// 打包成 [`SystemParam`]：每新增一种事件，只需往这里加一个字段，
+/// `update_events_system` 的签名不会随事件种类膨胀（否则很快会撞
+/// `clippy::too_many_arguments`）。字段与 [`crate::events`] 一一对应。
+#[derive(SystemParam)]
+pub struct CoreEventBuffers<'w> {
+    attack_intents: ResMut<'w, Events<AttackIntentEvent>>,
+    attack_events: ResMut<'w, Events<AttackEvent>>,
+    death_events: ResMut<'w, Events<DeathEvent>>,
+    level_up_events: ResMut<'w, Events<LevelUpEvent>>,
+    action_succeeded: ResMut<'w, Events<ActionSucceededEvent>>,
+    action_failed: ResMut<'w, Events<ActionFailedEvent>>,
+    spell_intents: ResMut<'w, Events<SpellIntentEvent>>,
+    throw_intents: ResMut<'w, Events<ThrowIntentEvent>>,
+}
 
 /// 每轮结算末尾更新所有事件缓冲。
 ///
 /// 必须在所有 `EventReader` 之后运行：它交换双缓冲并清理旧事件，
 /// 防止下一轮重新读取历史事件（I90）。
 ///
-/// **新增事件时要同时加到这里**，否则该事件会跨轮残留。
-pub fn update_events_system(
-    mut attack_intents: ResMut<Events<AttackIntentEvent>>,
-    mut attack_events: ResMut<Events<AttackEvent>>,
-    mut death_events: ResMut<Events<DeathEvent>>,
-    mut level_up_events: ResMut<Events<LevelUpEvent>>,
-    mut action_succeeded: ResMut<Events<ActionSucceededEvent>>,
-    mut action_failed: ResMut<Events<ActionFailedEvent>>,
-    mut spell_intents: ResMut<Events<SpellIntentEvent>>,
-) {
-    attack_intents.update();
-    attack_events.update();
-    death_events.update();
-    level_up_events.update();
-    action_succeeded.update();
-    action_failed.update();
-    spell_intents.update();
+/// **新增事件时要同时加到 [`CoreEventBuffers`] 里**，否则该事件会跨轮残留。
+pub fn update_events_system(mut events: CoreEventBuffers) {
+    events.attack_intents.update();
+    events.attack_events.update();
+    events.death_events.update();
+    events.level_up_events.update();
+    events.action_succeeded.update();
+    events.action_failed.update();
+    events.spell_intents.update();
+    events.throw_intents.update();
 }
 
 /// 构建标准结算 Schedule（标签为 [`CoreSettleSchedule`]）。
@@ -83,6 +94,10 @@ pub fn build_core_schedule() -> Schedule {
             // 放在 apply_damage_system 之后、中毒之前：法术伤害先扣血，
             // 本轮的死亡判定照常收口；法术不参与"中毒"这条链。
             crate::spell::resolve_spell_system,
+            // 投掷（Gm9）：settle 只发 ThrowIntentEvent；伤害在这里落地，消耗系统
+            // 随后从副手扣 1。放在死亡判定之前，投掷击杀能在本轮收口。
+            crate::throw::resolve_throw_system,
+            crate::throw::consume_thrown_item_system,
             // 效果时长（DsnE12 第 4 条）：先统一推进所有 `EffectDuration`；payload 系统
             // （如中毒 tick）读到的剩余时长必须是"这一轮已经走完"的值，否则发作晚一轮。
             crate::effect::advance_effect_durations_system,

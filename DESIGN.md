@@ -25,7 +25,7 @@
 | 分层与边界 | DsnX1 · DsnX2 · DsnX13 · DsnX15 |
 | 渲染契约 | DsnX14 |
 | 数据与存档 | DsnX10 · DsnX17 |
-| 物品 / 装备 / 技能 / 合成（多为未迁移） | DsnX3 · DsnX4 · DsnX5 · DsnX6 · DsnX7 · DsnX8 · DsnX9 · DsnX12 |
+| 物品 / 装备 / 技能 / 合成（多为未迁移；投掷已迁移为 DsnE28） | DsnX3 · DsnX4 · DsnX5 · DsnX6 · DsnX7 · DsnX8 · DsnX9 · DsnX12 |
 | 流程与文档 | DsnX11 · DsnX16 |
 | 路线 | DsnX18 |
 
@@ -142,8 +142,11 @@ render 自 `timeline.rs` 使用 `ActionQueue`/`ActionKindV3`/`PlayerPreview` 后
 **原编号：** `DsnX5`（迁移前）
 <!-- &/DsnX5 -->
 
-<!-- &DsnX6  主手/副手双槽，投掷物走副手（未迁移） -->
+<!-- &DsnX6  主手/副手双槽，投掷物走副手（已由 DsnE28 取代） -->
 ### DsnX6 主手/副手系统
+
+> **状态：已被取代（2026-11-10）。** 副手槽的"盾或可投掷物"规则与投掷取用在
+> `ecs_core/DESIGN.md` 的 DsnE28 落地；本条保留迁移前的背景（旧 Equipment 结构问题）。
 
 **决策**
 
@@ -171,8 +174,12 @@ t 键 → 列出 throwable 物品 → 选择目标 → 自动装副手 → 瞄�
 **原编号：** `DsnX6`（迁移前）
 <!-- &/DsnX6 -->
 
-<!-- &DsnX7  投掷作为一等 AV 行动，不再旁路（未迁移） -->
+<!-- &DsnX7  投掷作为一等 AV 行动，不再旁路（已由 DsnE28 取代） -->
 ### DsnX7 投掷作为一等 AV 行动
+
+> **状态：已被取代（2026-11-10）。** 投掷已按行动链落地（`ecs_core/DESIGN.md`
+> DsnE28）：生成 → 校验 → settle → 结算，世界正常推进；`CanThrow` 与怪物投掷仍是
+> 开放问题；页栈瞄准页按 DsnE28 的 UI 决策实现。
 
 **决策**
 

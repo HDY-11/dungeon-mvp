@@ -125,3 +125,20 @@ pub fn monster_count_range(floor: u32) -> (usize, usize) {
     (4 + step.saturating_mul(3), 6 + step.saturating_mul(4))
 }
 
+// ── 投掷（Gm9） ──────────────────────────────────────
+
+/// 投掷行动的基础耗时（AV，固定耗时，不吃攻速）。
+///
+/// Gm9 旧案给 190；比徒手攻击（300）快，但每次要消耗一件可投掷物。
+pub const THROW_DURATION_AV: f64 = 190.0;
+
+/// 投掷射程（切比雪夫距离，格）。
+pub const THROW_RANGE: usize = 5;
+
+/// 投掷基础伤害的楼层加成步长：`floor(层数 / 步长)`。
+///
+/// Gm9 旧案是 `3 + floor(层/2)`；当前实现只取物品固定伤害，这条常量留给
+/// "另设新计算方式"的预留（用户 m10559 Q4）。保持为 0 即不接楼层加成。
+pub const THROWN_FLOOR_BONUS_STEP: u32 = 0;
+
+

@@ -171,9 +171,30 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
             render_api::PageKind::Dialog => InputOutcome::Ui(UiIntent::ConfirmQuit),
             // 背包页：身体行 = 卸下，行囊行 = 装上（行由应用层按视图光标解析）。
             render_api::PageKind::Inventory => InputOutcome::Ui(UiIntent::InventoryConfirm),
+            // 投掷瞄准页：Enter 确认投掷（落点由应用层转成 `PlayerCommand::Throw`）。
+            render_api::PageKind::ThrowAim => InputOutcome::Ui(UiIntent::ConfirmThrow),
             _ => InputOutcome::Ignored,
         },
         other => {
+            // 投掷瞄准页：方向键移动落点光标，x/Esc 取消（Esc 已在上面的覆盖页分支处理）。
+            if matches!(input.page, render_api::PageKind::ThrowAim) {
+                return match other {
+                    Key::Up | Key::Char('k') => {
+                        InputOutcome::Ui(UiIntent::MoveThrowCursor { dx: 0, dy: -1 })
+                    }
+                    Key::Down | Key::Char('j') => {
+                        InputOutcome::Ui(UiIntent::MoveThrowCursor { dx: 0, dy: 1 })
+                    }
+                    Key::Left | Key::Char('h') => {
+                        InputOutcome::Ui(UiIntent::MoveThrowCursor { dx: -1, dy: 0 })
+                    }
+                    Key::Right | Key::Char('l') => {
+                        InputOutcome::Ui(UiIntent::MoveThrowCursor { dx: 1, dy: 0 })
+                    }
+                    Key::Char('x') => InputOutcome::Ui(UiIntent::ClosePage),
+                    _ => InputOutcome::Ignored,
+                };
+            }
             // 背包页：方向键按焦点位分流（导航栏上左右切页签、内容栏上下移行），
             // Enter 装/卸/拿、r 使用、d 丢弃 —— 这些键**不**驱动世界行动。
             if matches!(input.page, render_api::PageKind::Inventory) {
@@ -243,6 +264,11 @@ fn map_key(event: render_api::KeyEvent, input: &PresentationInput) -> InputOutco
                 Key::Char('1') => InputOutcome::Command(PlayerCommand::Cast { slot: 0 }),
                 Key::Char('2') => InputOutcome::Command(PlayerCommand::Cast { slot: 1 }),
                 Key::Char('3') => InputOutcome::Command(PlayerCommand::Cast { slot: 2 }),
+                // 投掷：t 进入瞄准页（应用层负责自动装填与初始落点）。
+                Key::Char('t') => InputOutcome::Ui(UiIntent::OpenThrow {
+                    x: input.player_position.0,
+                    y: input.player_position.1,
+                }),
                 // 背包页（R2 只读版）：e 开/关；页内 ↑/↓ 移光标。
                 Key::Char('e') => {
                     if in_overlay {
@@ -279,6 +305,14 @@ pub fn apply_ui_intent(pages: &mut PageStack, intent: UiIntent, world: (usize, u
         UiIntent::MoveLookCursor { dx, dy } => {
             if pages.kind() == render_api::PageKind::Look {
                 pages.move_look_cursor(dx, dy, world);
+                true
+            } else {
+                false
+            }
+        }
+        UiIntent::MoveThrowCursor { dx, dy } => {
+            if pages.kind() == render_api::PageKind::ThrowAim {
+                pages.move_throw_cursor(dx, dy, world);
                 true
             } else {
                 false
