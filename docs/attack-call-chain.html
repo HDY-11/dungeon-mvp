@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>攻击调用链与数据变化 · dungeon-mvp</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c22; --panel2:#1d242c; --line:#2b3540;
+    --text:#d7dee8; --dim:#8b98a8; --accent:#7cc4ff; --green:#8fd98f;
+    --orange:#f0b46a; --red:#ff8f8f; --purple:#c9a7ff; --yellow:#f2e07a;
+    --mono:"Cascadia Code","JetBrains Mono",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 36px 80px;background:var(--bg);color:var(--text);
+    font:14px/1.65 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  h1{font-size:24px;margin:0 0 4px;letter-spacing:.5px}
+  h2{font-size:18px;margin:38px 0 12px;padding-left:10px;border-left:3px solid var(--accent)}
+  h3{font-size:15px;margin:22px 0 8px;color:var(--accent)}
+  .sub{color:var(--dim);margin:0 0 22px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--dim);font-size:12.5px;margin-bottom:18px}
+  .meta code{color:var(--yellow)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:10px 0}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 9px;vertical-align:top;text-align:left}
+  th{background:var(--panel2);color:var(--accent);font-weight:600;white-space:nowrap}
+  td code, .panel code{font-family:var(--mono);font-size:12.5px;color:var(--yellow)}
+  code.path{color:var(--green)}
+  pre{background:#0b0e12;border:1px solid var(--line);border-radius:6px;padding:12px 14px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;margin:10px 0}
+  pre .c{color:#6f7f90} pre .k{color:#ff9d9d} pre .s{color:#8fd98f} pre .n{color:#7cc4ff}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  .tag{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11.5px;margin-right:6px;
+    border:1px solid var(--line);color:var(--dim)}
+  .t-gen{color:var(--purple);border-color:var(--purple)}
+  .t-tick{color:var(--yellow);border-color:var(--yellow)}
+  .t-val{color:var(--orange);border-color:var(--orange)}
+  .t-exec{color:var(--accent);border-color:var(--accent)}
+  .t-core{color:var(--green);border-color:var(--green)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:980px){.two{grid-template-columns:1fr}}
+  .attack{border:1px solid var(--line);border-radius:10px;padding:2px 18px 14px;margin:18px 0;background:var(--panel)}
+  .attack.a{border-top:4px solid var(--orange)}
+  .attack.b{border-top:4px solid var(--accent)}
+  .attack h2{margin-top:16px;border-left:0;padding-left:0}
+  .timeline{display:flex;align-items:center;gap:0;margin:16px 0 6px;font-family:var(--mono);font-size:12px}
+  .tl-seg{padding:8px 0 26px;text-align:center;position:relative;flex:1}
+  .tl-seg .bar{height:10px;border-radius:5px;background:var(--panel2);border:1px solid var(--line)}
+  .tl-seg.hit .bar{background:linear-gradient(90deg,#3a2a1a,#8a5a2a)}
+  .tl-seg.hit2 .bar{background:linear-gradient(90deg,#16364a,#2f7aa8)}
+  .tl-seg span{position:absolute;left:0;right:0;bottom:2px;color:var(--dim)}
+  .chip{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+    padding:2px 8px;margin:2px 4px 2px 0;font-family:var(--mono);font-size:12px}
+  .delta{color:var(--orange);font-family:var(--mono)}
+  .ok{color:var(--green)} .warn{color:var(--orange)} .bad{color:var(--red)}
+  .note{color:var(--dim);font-size:12.5px;border-left:3px solid var(--line);padding-left:10px;margin:10px 0}
+  .flownum{font-family:var(--mono);color:var(--accent)}
+  .center{text-align:center}
+</style>
+</head>
+<body>
+
+<h1>攻击的完整调用链与数据变化</h1>
+<p class="sub">一次玩家命令内发生的两次攻击：哥布林先手（AV 235）→ 玩家反击（AV 240）。逐阶段列出函数、文件位置与组件/资源变化。</p>
+
+<div class="meta">
+  <span>仓库：<code>dungeon-mvp</code></span>
+  <span>基线：<code>HEAD 23734eb</code>（bevy_ecs 0.20.1）</span>
+  <span>场景：玩家 (10,10) · 哥布林 (11,10) · 地面</span>
+  <span>随机示例：<code>crit_roll(A)=0.62</code>，<code>crit_roll(B)=0.03</code></span>
+  <span class="warn">注：当前武器节奏仍是旧的 300 ms 体系；内容的 1700 AV 方案尚未实现</span>
+</div>
+
+<h2>0. 初始快照</h2>
+<div class="two">
+  <div class="panel">
+    <h3>玩家实体</h3>
+    <table>
+      <tr><th>组件 / 资源</th><th>值</th></tr>
+      <tr><td><code>Position</code></td><td>(10, 10)</td></tr>
+      <tr><td><code>Health</code></td><td>80 / 80 <span class="note">DsnE25：Lv1 = 80</span></td></tr>
+      <tr><td><code>Mana</code></td><td>12 / 12</td></tr>
+      <tr><td><code>Stats</code></td><td>ATTACK 8 · DEFENSE 4 · MOVE 1.25 · ATK_SPD 1.25 · STR 4 · CRIT 5% ×1.5 · DMG_BONUS 0</td></tr>
+      <tr><td><code>Container(BODY)</code></td><td>主手 = 锈铁剑（<code>Item(0)</code>）</td></tr>
+      <tr><td>锈铁剑实体</td><td><code>Weapon{300ms, strength_cap 6}</code> · <code>Modifiers[attack +3]</code> · <code>WeaponProgress{Lv1, exp 0}</code></td></tr>
+      <tr><td><code>SpellBook / ManaRegen</code></td><td>初始两招 · progress 0</td></tr>
+      <tr><td><code>Idle</code> / <code>Active</code></td><td>Idle = 有；Active = 无</td></tr>
+    </table>
+  </div>
+  <div class="panel">
+    <h3>哥布林实体（F1）</h3>
+    <table>
+      <tr><th>组件 / 资源</th><th>值</th></tr>
+      <tr><td><code>Position</code></td><td>(11, 10)（与玩家相邻）</td></tr>
+      <tr><td><code>Health</code></td><td>18 / 18</td></tr>
+      <tr><td><code>Stats</code></td><td>ATTACK 6 · DEFENSE 4 · MOVE/ATK_SPD 1.06383 · STR — · CRIT 5% ×1.5</td></tr>
+      <tr><td><code>MonsterKindId</code> / abilities</td><td>Goblin · Chase/Flee/Wander/Wait</td></tr>
+      <tr><td><code>Aggro</code></td><td>空威胁表，无 last_known</td></tr>
+      <tr><td><code>OwnedEffects</code></td><td>空</td></tr>
+      <tr><td>地面/容器</td><td>无（装备只在尸体掉落里出现）</td></tr>
+    </table>
+  </div>
+</div>
+<div class="panel">
+  <h3>世界资源</h3>
+  <span class="chip">WorldClock.total_av = 0</span>
+  <span class="chip">WorldClock.last_step_av = 0</span>
+  <span class="chip">TurnManager.game_over = false</span>
+  <span class="chip">OccupancyMap: (10,10)→player, (11,10)→goblin</span>
+  <span class="chip">事件缓冲全空</span>
+  <span class="chip">EventLog 空（容量 200，连续同文合并）</span>
+</div>
+
+<h2>1. 玩家输入 → 挂载行动（不进推进）</h2>
+<table>
+  <tr><th>#</th><th>调用</th><th>位置</th><th>数据变化</th></tr>
+  <tr><td>1</td><td><code>translate_key(KeyCode)</code></td><td><code class="path">src/keys.rs:25</code></td><td>方向键 → <code>InputEvent::Key</code></td></tr>
+  <tr><td>2</td><td><code>App::handle</code> → <code>map_input_event</code></td><td><code class="path">src/lib.rs:133</code> · <code class="path">presentation/src/input/mod.rs:107</code></td><td>→ <code>InputOutcome::Command(PlayerCommand::Move{dx:1,dy:0})</code>（玩家看到的目标格有怪物时不允许移动；由核心转成攻击）</td></tr>
+  <tr><td>3</td><td><code>apply_player_command</code></td><td><code class="path">ecs_core/src/world/loop_.rs:62</code></td><td>game_over / player_is_busy 检查 → 写 <code>PlayerActionRequest.command</code></td></tr>
+  <tr><td>4</td><td><code>build_player_mount_schedule</code> = 生成 + 仲裁</td><td><code class="path">ecs_core/src/action/entity.rs:846</code></td><td>只挂载玩家行动，不推进世界</td></tr>
+  <tr><td>4a</td><td><code>player_action_generation_system</code></td><td><code class="path">ecs_core/src/action/entity.rs:656</code></td><td>目标格被怪物占用 → 产出 <code>BasicAttack(goblin)</code>；耗时按主手武器 300 ms</td></tr>
+  <tr><td>4b</td><td>AV 计算（SpeedRule::Attack）</td><td><code class="path">action/entity.rs</code> SpeedRule</td><td><code>300 / 1.25 = 240 AV</code>；修正器收桶 <code>collect_actor</code>（无影响）</td></tr>
+  <tr><td>4c</td><td>spawn 行动实体 + <code>begin_action</code></td><td><code class="path">action/entity.rs:214</code></td><td>新实体带 <code>ActionOf(player) / Priority(-1000) / ActionTimer{240} / ActiveAction / ActionName / BasicAttack</code>；玩家加 <code>Active</code></td></tr>
+</table>
+<div class="note">此时<strong>还没有任何伤害</strong>。命令"被接受"的判定就是玩家身上出现了 <code>Active</code>（<code>player_is_busy</code>）。</div>
+
+<h2>2. 推进循环：两次攻击的 AV 时间轴</h2>
+<div class="panel">
+  <div class="timeline">
+    <div class="tl-seg"><div class="bar"></div><span>t=0 · 玩家行动挂载（240 AV）</span></div>
+    <div class="tl-seg hit"><div class="bar"></div><span>t=235 · 哥布林追击到点，决定攻击</span></div>
+    <div class="tl-seg hit2"><div class="bar"></div><span>t=240 · 玩家攻击到点</span></div>
+  </div>
+  <p>循环实现：<code class="path">ecs_core/src/world/loop_.rs:42 advance_one_round</code> = <code>ActionPocSchedule</code> + <code>run_settle_systems</code>；由 <code>:50 advance_until_player_acted</code> 反复运行，直到玩家不再 <code>Active</code> 或游戏结束。</p>
+  <p><strong>为什么哥布林先打：</strong>每轮 <code>tick_action_timers_system</code>（<code class="path">action/entity.rs:963</code>）只推进"所有 active action 里最小的正剩余 AV"。</p>
+  <span class="chip">Round 1：step = min(240, 235) = 235</span>
+  <span class="chip">Round 2：step = min(5, 235) = 5</span>
+</div>
+
+<div class="attack a">
+<h2>A. 攻击 1：哥布林 → 玩家（t=235）</h2>
+
+<h3><span class="tag t-gen">ActionPoc · Generate</span> AI 候选生成</h3>
+<table>
+  <tr><th>系统</th><th>位置</th><th>产出</th></tr>
+  <tr><td><code>wander_generation_system</code></td><td><code class="path">action/entity.rs:457</code></td><td>哥布林：<code>Wander</code> 候选，AV = 500 / 1.06383 ≈ 470</td></tr>
+  <tr><td><code>flee_generation_system</code></td><td><code class="path">action/entity.rs:490</code></td><td>满血 → 不产出</td></tr>
+  <tr><td><code>wait_generation_system</code></td><td><code class="path">action/entity.rs:526</code></td><td>哥布林：<code>Wait</code> 候选，固定 800</td></tr>
+  <tr><td><code>chase_generation_system</code></td><td><code class="path">action/entity.rs:556</code></td><td>哥布林：<code>Chase</code> 候选，AV = 250 / 1.06383 ≈ 235</td></tr>
+</table>
+<p>每个候选都是独立实体：<code>ActionOf(goblin) / ActionPriority / ActionSource::Ai / ActionName / ActionTimer / 行为组件 / Candidate</code>。此刻哥布林仍是 <code>Idle</code>，没有 ActiveAction。</p>
+
+<h3><span class="tag t-gen">ActionPoc · Arbitrate</span> 仲裁</h3>
+<p><code class="path">action/entity.rs:882 action_arbitration_system</code>：同一 actor 的候选里取优先级最小（数值越小越优先）：<code>Flee -200 &lt; Chase -100 &lt; Wander -50 &lt; Wait 0</code>。哥布林选中 <code>Chase</code>，获得 <code>ActiveAction</code> 并加 <code>Active</code>；其余候选被回收。玩家已有 ActiveAction（挂载阶段），不在仲裁范围。</p>
+
+<h3><span class="tag t-tick">ActionPoc · Tick</span> 时钟推进 235 AV</h3>
+<table>
+  <tr><th>对象</th><th>之前</th><th>之后</th></tr>
+  <tr><td><code>WorldClock.total_av</code></td><td>0</td><td class="delta">235</td></tr>
+  <tr><td><code>WorldClock.last_step_av</code></td><td>0</td><td class="delta">235</td></tr>
+  <tr><td>玩家 <code>ActionTimer.remaining_av</code></td><td>240</td><td class="delta">5</td></tr>
+  <tr><td>哥布林 Chase <code>remaining_av</code></td><td>235</td><td class="delta">0 + Ready</td></tr>
+</table>
+<p>玩家行动还差 5 AV，本轮不会被校验/落地。</p>
+
+<h3><span class="tag t-val">ActionPoc · Validate</span> 追击定案：目标与决策</h3>
+<table>
+  <tr><th>步骤</th><th>位置</th><th>数据</th></tr>
+  <tr><td><code>validate_chase_system</code></td><td><code class="path">action/validation.rs:234</code></td><td>哥布林 Ready；<code>Viewshed</code> 包含玩家 (10,10)；目标 = 威胁表最高者，否则玩家 → player</td></tr>
+  <tr><td>相邻判定</td><td>同上</td><td>Chebyshev 距离 1 且可见 → <code>Decision::Attack(player)</code></td></tr>
+  <tr><td><code>apply_decision</code></td><td><code class="path">action/validation.rs</code></td><td>插入 <code>AttackTarget(player)</code>；预留目标格（本场景不动位置）</td></tr>
+</table>
+<p>同时玩家 BasicAttack 仍剩 5 AV，<code>validate_basic_attack_system</code>（<code class="path">validation.rs:493</code>）因未 Ready 而跳过。</p>
+
+<h3><span class="tag t-exec">ActionPoc · Execute</span> 落地只声明意图，不算伤害</h3>
+<table>
+  <tr><th>调用</th><th>位置</th><th>数据变化</th></tr>
+  <tr><td><code>settle_action_system</code></td><td><code class="path">action/settle.rs:62</code></td><td>读到 <code>AttackTarget(player)</code> → 写 <code>AttackIntentEvent{attacker: goblin, target: player}</code>；<code>events.succeed(action, goblin)</code></td></tr>
+</table>
+<div class="note">settle 是<strong>落地器</strong>，不是判定器：它只把校验阶段的决策变成事件。伤害在核心结算链里算一次。</div>
+
+<h3><span class="tag t-exec">ActionPoc · Complete</span></h3>
+<p><code class="path">action/entity.rs:1003 action_completion_system</code>：消费 <code>ActionSucceededEvent</code>，despawn 哥布林名下行动子实体，<code>finish_action</code>（<code>entity.rs:223</code>）移除 <code>Active</code>、恢复 <code>Idle</code>。</p>
+
+<h3><span class="tag t-core">CoreSettleSchedule</span> 攻击 1 的数据变化</h3>
+<table>
+  <tr><th>#</th><th>系统</th><th>位置</th><th>输入</th><th>输出 / 变化</th></tr>
+  <tr><td>1</td><td><code>resolve_attack_system</code></td><td><code class="path">system/combat.rs:38</code></td><td><code>AttackIntentEvent</code></td><td>攻击 6 · 力量 0 · 力量上限 4（空手）· 防御 4 · 暴资 roll 0.62 &gt; 5% → 不暴击；护甲 4/(4+4)=0.5 → <strong>伤害 = 6 × 0.5 = 3</strong>；写 <code>AttackEvent{damage 3.0, is_crit false}</code></td></tr>
+  <tr><td>2</td><td><code>apply_damage_system</code></td><td><code class="path">system/combat.rs:162</code></td><td><code>AttackEvent</code></td><td>玩家 <code>Health</code> 80 → <strong>77</strong>；写 <code>DamageTakenEvent{source goblin, target player, 3.0}</code>；经验只给攻击方主手武器——哥布林没有武器实体，跳过</td></tr>
+  <tr><td>3</td><td><code>resolve_spell / resolve_throw / consume_thrown</code></td><td><code class="path">spell、throw</code></td><td>本场景无</td><td>空转</td></tr>
+  <tr><td>4</td><td><code>advance_effect_durations_system</code></td><td><code class="path">effect/duration.rs</code></td><td>无 <code>EffectDuration</code></td><td>空转</td></tr>
+  <tr><td>5</td><td><code>poison_tick / poison_apply</code></td><td><code class="path">effect/status.rs</code></td><td>无</td><td>空转</td></tr>
+  <tr><td>6</td><td><code>expire_effects_system</code></td><td><code class="path">effect/duration.rs</code></td><td>无</td><td>空转</td></tr>
+  <tr><td>7</td><td><code>check_death_system</code></td><td><code class="path">system/death.rs:38</code></td><td>玩家 77/80</td><td>存活；无事件</td></tr>
+  <tr><td>8</td><td><code>apply_exp_system</code></td><td><code class="path">system/experience.rs:34</code></td><td>无 DeathEvent</td><td>空转</td></tr>
+  <tr><td>9</td><td><code>refresh_vitals_system</code></td><td><code class="path">rules/vitals.rs:85</code></td><td>76? 不，当前 77</td><td>上限仍 80，不治疗，不改</td></tr>
+  <tr><td>10</td><td><code>mana_regen_system</code></td><td><code class="path">rules/vitals.rs</code></td><td>last_step_av = 235；蓝满</td><td>满池不攒：ManaRegen.progress 保持 0</td></tr>
+  <tr><td>11</td><td><code>fov / map_memory / visible_memory</code></td><td><code class="path">system/perception.rs</code></td><td>玩家位置未变</td><td>视野/记忆不变</td></tr>
+  <tr><td>12</td><td><code>rebuild_occupancy</code></td><td><code class="path">system/occupancy.rs</code></td><td>位置未变</td><td>占用图不变</td></tr>
+  <tr><td>13</td><td><code>rebuild_cell_effects / heal_spring</code></td><td><code class="path">effect/cell.rs</code></td><td>玩家不在泉眼</td><td>不变</td></tr>
+  <tr><td>14</td><td><code>threat_system</code></td><td><code class="path">monster/aggro.rs:222</code></td><td>DamageTakenEvent</td><td>受击者是玩家：<strong>玩家没有 Aggro 组件 → 不记仇恨</strong>；全场威胁表衰减（空表无变化）</td></tr>
+  <tr><td>15</td><td><code>update_events_system</code></td><td><code class="path">system/mod.rs:72</code></td><td>9 个事件缓冲</td><td>全部 <code>update()</code>，Round 1 的事件不会在 Round 2 被重读</td></tr>
+</table>
+<div class="panel">
+  <strong>Round 1 结束快照</strong><br>
+  <span class="chip">total_av = 235</span>
+  <span class="chip">玩家 HP 77/80</span>
+  <span class="chip">玩家 ActionTimer 5</span>
+  <span class="chip">哥布林 Idle（无 ActiveAction）</span>
+  <span class="chip">哥布林 Aggro 仍空</span>
+  <span class="chip">EventLog += 「对冒险者造成 3 点伤害」</span>
+</div>
+</div>
+
+<div class="attack b">
+<h2>B. 攻击 2：玩家 → 哥布林（t=240）</h2>
+<p>Round 1 结束时玩家仍 <code>Active</code>（行动剩 5 AV），所以 <code>advance_until_player_acted</code> 再跑一轮。Round 2 里玩家行动先到点。</p>
+
+<h3><span class="tag t-gen">ActionPoc · Generate / Arbitrate</span></h3>
+<p>AI 生成器为哥布林重新生成候选（Chase 235 / Wander 470 / Wait 800），仲裁授予新的 <code>Chase</code>；玩家行动仍在，不参与仲裁。</p>
+
+<h3><span class="tag t-tick">ActionPoc · Tick</span> 推进 5 AV</h3>
+<table>
+  <tr><th>对象</th><th>之前</th><th>之后</th></tr>
+  <tr><td><code>WorldClock.total_av</code></td><td>235</td><td class="delta">240</td></tr>
+  <tr><td><code>WorldClock.last_step_av</code></td><td>235</td><td class="delta">5</td></tr>
+  <tr><td>玩家 <code>ActionTimer.remaining_av</code></td><td>5</td><td class="delta">0 + Ready</td></tr>
+  <tr><td>哥布林 Chase <code>remaining_av</code></td><td>235</td><td class="delta">230</td></tr>
+</table>
+
+<h3><span class="tag t-val">ActionPoc · Validate</span></h3>
+<table>
+  <tr><th>调用</th><th>位置</th><th>数据</th></tr>
+  <tr><td><code>validate_basic_attack_system</code></td><td><code class="path">action/validation.rs:493</code></td><td>玩家 Ready；目标哥布林 (11,10) 在 8 邻格内且存活 → <code>AttackTarget(goblin)</code></td></tr>
+  <tr><td>预留</td><td><code class="path">action/validation.rs</code> Reservation</td><td>攻击目标不需要占格，写入决策即可</td></tr>
+</table>
+
+<h3><span class="tag t-exec">ActionPoc · Execute / Complete</span></h3>
+<p><code>settle_action_system</code> 写 <code>AttackIntentEvent{attacker: player, target: goblin}</code>；<code>action_completion_system</code> despawn 玩家行动实体，<code>finish_action</code> 移除 <code>Active</code> → <code>Idle</code>。此后玩家不再 busy，推进循环结束。</p>
+
+<h3><span class="tag t-core">CoreSettleSchedule</span> 攻击 2 的数据变化</h3>
+<table>
+  <tr><th>#</th><th>系统</th><th>位置</th><th>输入</th><th>输出 / 变化</th></tr>
+  <tr><td>1</td><td><code>resolve_attack_system</code></td><td><code class="path">system/combat.rs:38</code></td><td><code>AttackIntentEvent</code></td><td>攻击基础 8 + 锈铁剑修正 <strong>+3</strong> = 11；力量 4，上限 6 → <code>+4×0.5 = 2</code>；基础 13；暴击 roll 0.03 &lt; 5% → 暴击 ×1.5；哥布林防御 4 → 护甲 0.5 → <strong>伤害 = 13 × 1.5 × 0.5 = 9.75</strong>；写 <code>AttackEvent{9.75, is_crit true}</code></td></tr>
+  <tr><td>2</td><td><code>apply_damage_system</code></td><td><code class="path">system/combat.rs:162</code></td><td><code>AttackEvent</code></td><td>哥布林 <code>Health</code> 18 → <strong>8.25</strong>；写 <code>DamageTakenEvent{source player, target goblin, 9.75}</code>；<code>award_weapon_exp</code>：9.75 × 普通品质倍率 1.0 = <strong>exp 9.75</strong>（Lv1 阈值 30，未升级）</td></tr>
+  <tr><td>3–6</td><td>法术/投掷/效果/中毒</td><td><code class="path">spell、throw、effect</code></td><td>无</td><td>空转</td></tr>
+  <tr><td>7</td><td><code>check_death_system</code></td><td><code class="path">system/death.rs:38</code></td><td>哥布林 8.25/18</td><td>存活，无 DeathEvent</td></tr>
+  <tr><td>8–10</td><td>经验/上限/回蓝</td><td><code class="path">experience、vitals</code></td><td>无升级</td><td>玩家 HP 不变；蓝满不攒</td></tr>
+  <tr><td>11–13</td><td>感知/占用/格效果</td><td><code class="path">perception、occupancy、cell</code></td><td>位置未变</td><td>不变</td></tr>
+  <tr><td>14</td><td><code>threat_system</code></td><td><code class="path">monster/aggro.rs:222</code></td><td>DamageTakenEvent</td><td>哥布林有 <code>Aggro</code>：记玩家威胁 <code>max(1, 9.75) = 9.75</code>，并 <code>remember(10,10)</code>；随后按 last_step_av=5 衰减 <code>5/1000×10 = 0.05</code> → <strong>威胁 9.70</strong></td></tr>
+  <tr><td>15</td><td><code>update_events_system</code></td><td><code class="path">system/mod.rs:72</code></td><td>事件缓冲</td><td>清空；Round 3 不会重读本轮的 AttackEvent/DamageTakenEvent</td></tr>
+</table>
+<div class="panel">
+  <strong>最终快照（一次玩家命令走完）</strong><br>
+  <span class="chip">total_av = 240</span>
+  <span class="chip">玩家 HP 77/80 · MP 12/12</span>
+  <span class="chip">哥布林 HP 8.25/18</span>
+  <span class="chip">哥布林 Aggro = {player: 9.70}, last_known (10,10)</span>
+  <span class="chip">锈铁剑 WeaponProgress = Lv1, exp 9.75/30</span>
+  <span class="chip">玩家 Idle</span>
+  <span class="chip">EventLog += 「对哥布林造成 10 点伤害（暴击）」</span>
+</div>
+</div>
+
+<h2>3. 调度骨架（代码位置）</h2>
+<div class="two">
+<div class="panel">
+<h3>ActionPocSchedule（一回合内可能跑多次）</h3>
+<pre><code><span class="c">// ecs_core/src/action/entity.rs:1095 build_action_poc_schedule()</span>
+Generate   (wander, flee, wait, chase)        <span class="c">← AI 候选</span>
+ApplyDeferred
+Arbitrate  action_arbitration_system           <span class="c">← 选一个候选，加 ActiveAction</span>
+ApplyDeferred
+Tick       tick_action_timers_system           <span class="c">← 推进最小正 AV，写 last_step_av</span>
+ApplyDeferred
+Validate   (move, basic_attack, cast, throw,   <span class="c">← Ready 的行动定案</span>
+           chase, flee, wander)
+ApplyDeferred
+Execute    settle_action_system                <span class="c">← 写 Position / 发意图事件</span>
+ApplyDeferred
+Complete   action_completion_system            <span class="c">← 消费终态事件，清 Active</span></code></pre>
+</div>
+<div class="panel">
+<h3>CoreSettleSchedule（每轮一次，20 系统 + 事件更新）</h3>
+<pre><code><span class="c">// ecs_core/src/system/mod.rs:88 build_core_schedule()</span>
+resolve_attack           ← AttackIntentEvent → AttackEvent
+apply_damage             ← Health -, DamageTakenEvent, 武器经验
+resolve_spell / resolve_throw / consume_thrown
+advance_effect_durations
+poison_tick / poison_apply / expire_effects
+check_death              ← DeathEvent
+apply_exp                ← 升级/上限
+refresh_vitals / mana_regen
+fov / map_memory / visible_memory
+rebuild_occupancy / rebuild_cell_effects / heal_spring
+threat_system            ← 统一伤害出口 → 威胁表
+update_events_system     ← 最后：交换全部事件双缓冲</code></pre>
+</div>
+</div>
+<div class="note"><code>advance_until_player_acted</code> 的循环 = 反复跑上面两张表，直到玩家 <code>Active</code> 消失。因此怪物可以在玩家一次行动期间行动多次（AV 更小者先到点）。</div>
+
+<h2>4. 审查要点：这两次攻击体现了哪些架构约束</h2>
+<table>
+  <tr><th>约束</th><th>在本次调用链里的体现</th><th>位置</th></tr>
+  <tr><td>决策与执行分离</td><td>校验阶段只写 <code>AttackTarget</code>；结算阶段只发 <code>AttackIntentEvent</code>；伤害只有 <code>resolve_attack_system</code> 算一次</td><td><code class="path">action/validation.rs</code>、<code class="path">action/settle.rs:62</code>、<code class="path">system/combat.rs:38</code></td></tr>
+  <tr><td>单一真相源</td><td>伤害结果只通过事件传递；血量只有 <code>apply_damage_system</code> 写；威胁只从 <code>DamageTakenEvent</code> 读</td><td><code class="path">events.rs</code></td></tr>
+  <tr><td>一轮内事件双缓冲</td><td>Execute 写意图，CoreSettle 同轮消费；<code>update_events_system</code> 最后统一 <code>update()</code>，Round 2 不会重读 Round 1 的攻击</td><td><code class="path">system/mod.rs:72</code></td></tr>
+  <tr><td>AV 是唯一节奏源</td><td>哥布林 235 先手、玩家 240 后手；加速/减速只改 AV，不改伤害</td><td><code class="path">action/entity.rs:963</code></td></tr>
+  <tr><td>关系组件</td><td>行动实体经 <code>ActionOf</code> 归属 actor 并级联销毁；效果经 <code>EffectOf</code> 归属目标</td><td><code class="path">action/ownership.rs</code>、<code class="path">effect/ownership.rs</code></td></tr>
+  <tr><td>版本顺序坑</td><td>bevy 0.20 的 <code>Entity::to_bits()</code> 是 NonMax 倒序，平局/仲裁一律用 <code>index_u32()</code></td><td><code class="path">action/entity.rs:882</code></td></tr>
+  <tr><td>B0001 查询冲突</td><td><code>apply_damage_system</code> 要 <code>&amp;mut WeaponProgress</code>，所以不用 <code>EffectContext</code>（内部持只读同名查询），改本地两个只读查询</td><td><code class="path">system/combat.rs:190</code></td></tr>
+</table>
+
+<h2>5. 当前口径与内容侧新方案的差距（供决策）</h2>
+<table>
+  <tr><th>项</th><th>当前实现</th><th>content v1.1 / 用户新要求</th><th>影响</th></tr>
+  <tr><td>玩家武器节奏</td><td>锈铁剑 300 ms ÷ 攻速 1.25 ≈ 240 AV</td><td>1700 AV（1.7 s 挥一次），攻速回 1.0</td><td>全部 AV、效果持续时间、怪物攻击频率都要重算；单次伤害需下调</td></tr>
+  <tr><td>怪物节奏</td><td>追击/游荡/逃跑各 250/500/250 AV ÷ 移速；攻击动作混在追击里</td><td>移动 AV/格、攻击 AV 分开（巨鼠 286/571…）</td><td>需要怪物武器/攻击间隔字段 + 生成器改造</td></tr>
+  <tr><td>on-hit 效果</td><td>仅中毒硬编码蝎子；无眩晕/流血/迟缓</td><td>4 效果 + 武器 part + 免疫矩阵</td><td>本表之后实现（尚未开始）</td></tr>
+  <tr><td>地图</td><td>一张 80×60 单图 = 一个区块</td><td>层 = 方块区块网；区块方形；多区块切换</td><td>需新增层/区块数据与切换流程</td></tr>
+</table>
+
+<p class="note">本页数值是按当前代码（<code>HEAD 23734eb</code>）手算的可复现示例：暴击掷数假设为 0.62 与 0.03；若改用固定种子，可用测试把这两次攻击的完整快照断言下来。等 1700 AV 方案落地后，本页的 AV/伤害/效果时长全部需要按新表重算。</p>
+
+</body>
+</html>
