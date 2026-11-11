@@ -78,20 +78,20 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     // `action::generation::player::PlayerActionRequest` 在 C8 删除旧链路后消失。
     world.insert_resource(crate::action::entity::PlayerActionRequest::default());
 
-    world.insert_resource(bevy_ecs::event::Events::<AttackIntentEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<AttackEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<DeathEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<LevelUpEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<ActionSucceededEvent>::default());
-    world.insert_resource(bevy_ecs::event::Events::<ActionFailedEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<AttackIntentEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<AttackEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<DeathEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<LevelUpEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<ActionSucceededEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<ActionFailedEvent>::default());
     // 施法意图（DsnE26）：settle 写、`resolve_spell_system` 读。
-    world.insert_resource(bevy_ecs::event::Events::<SpellIntentEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<SpellIntentEvent>::default());
     // 投掷意图（Gm9）：settle 写、`resolve_throw_system`/`consume_thrown_item_system` 读。
-    world.insert_resource(bevy_ecs::event::Events::<ThrowIntentEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<ThrowIntentEvent>::default());
     // 已落地伤害（DsnE29）：近战/法术/投掷写，仇恨系统读；统一伤害出口。
-    world.insert_resource(bevy_ecs::event::Events::<DamageTakenEvent>::default());
+    world.insert_resource(bevy_ecs::message::Messages::<DamageTakenEvent>::default());
 
-    // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 EventReader 游标等系统状态。
+    // 持久 Schedule：只注册一次，之后用 label 重复运行，保留 MessageReader 游标等系统状态。
     world.add_schedule(build_init_schedule());
     world.add_schedule(build_core_schedule());
     // 行动链路（C7 起接进主循环）：生成 → 仲裁 → tick → **校验** → 落地 → completion。

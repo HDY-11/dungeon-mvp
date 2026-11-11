@@ -52,20 +52,20 @@ use bevy_ecs::system::SystemParam;
 /// `clippy::too_many_arguments`）。字段与 [`crate::events`] 一一对应。
 #[derive(SystemParam)]
 pub struct CoreEventBuffers<'w> {
-    attack_intents: ResMut<'w, Events<AttackIntentEvent>>,
-    attack_events: ResMut<'w, Events<AttackEvent>>,
-    death_events: ResMut<'w, Events<DeathEvent>>,
-    level_up_events: ResMut<'w, Events<LevelUpEvent>>,
-    action_succeeded: ResMut<'w, Events<ActionSucceededEvent>>,
-    action_failed: ResMut<'w, Events<ActionFailedEvent>>,
-    spell_intents: ResMut<'w, Events<SpellIntentEvent>>,
-    throw_intents: ResMut<'w, Events<ThrowIntentEvent>>,
-    damage_taken: ResMut<'w, Events<DamageTakenEvent>>,
+    attack_intents: ResMut<'w, Messages<AttackIntentEvent>>,
+    attack_events: ResMut<'w, Messages<AttackEvent>>,
+    death_events: ResMut<'w, Messages<DeathEvent>>,
+    level_up_events: ResMut<'w, Messages<LevelUpEvent>>,
+    action_succeeded: ResMut<'w, Messages<ActionSucceededEvent>>,
+    action_failed: ResMut<'w, Messages<ActionFailedEvent>>,
+    spell_intents: ResMut<'w, Messages<SpellIntentEvent>>,
+    throw_intents: ResMut<'w, Messages<ThrowIntentEvent>>,
+    damage_taken: ResMut<'w, Messages<DamageTakenEvent>>,
 }
 
 /// 每轮结算末尾更新所有事件缓冲。
 ///
-/// 必须在所有 `EventReader` 之后运行：它交换双缓冲并清理旧事件，
+/// 必须在所有 `MessageReader` 之后运行：它交换双缓冲并清理旧事件，
 /// 防止下一轮重新读取历史事件（I90）。
 ///
 /// **新增事件时要同时加到 [`CoreEventBuffers`] 里**，否则该事件会跨轮残留。
@@ -150,7 +150,7 @@ pub fn build_core_schedule() -> Schedule {
 /// 直接运行一次核心结算系统。
 ///
 /// Schedule 已由 `insert_core_resources` 注册；这里只按 label 运行，
-/// 不重新构建，因此 `EventReader` 游标等系统状态会跨轮保留。
+/// 不重新构建，因此 `MessageReader` 游标等系统状态会跨轮保留。
 pub fn run_settle_systems(world: &mut World) {
     world.run_schedule(CoreSettleSchedule);
 }

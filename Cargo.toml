@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy_ecs = "0.16"
+bevy_ecs = { workspace = true }
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 # 旧 `dungeon-*` crate 已归档到 `archive/`（R5，见 archive/README.md）：
@@ -45,5 +45,5 @@ members = [
 
 [workspace.dependencies]
 log = "0.4"
-bevy_ecs = "0.16"
+bevy_ecs = { version = "0.20.1", default-features = false, features = ["std"] }
 render-api = { path = "render-api" }

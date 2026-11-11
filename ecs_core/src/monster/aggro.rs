@@ -86,8 +86,9 @@ impl Aggro {
             .iter()
             .max_by(|a, b| {
                 a.value.total_cmp(&b.value).then_with(|| {
-                    // 值相同时让 bits 小者胜出（max_by 视角反转）。
-                    b.source.to_bits().cmp(&a.source.to_bits())
+                    // 值相同时让实体编号小者胜出（max_by 视角反转）。
+                    // 0.20 的 to_bits 是倒序编码，不能用。
+                    b.source.index_u32().cmp(&a.source.index_u32())
                 })
             })
             .map(|entry| entry.source)
@@ -141,7 +142,7 @@ impl Aggro {
 /// 读 [`DamageTakenEvent`]（近战/法术/投掷的统一出口），只对带 [`Aggro`] 的受击者
 /// 生效——玩家没有该组件，所以玩家被打不会产生仇恨。
 pub fn record_threat_system(
-    mut damage_taken: EventReader<DamageTakenEvent>,
+    mut damage_taken: MessageReader<DamageTakenEvent>,
     mut aggro: Query<&mut Aggro>,
     positions: Query<&Position>,
 ) {
@@ -150,7 +151,7 @@ pub fn record_threat_system(
 
 /// 「记威胁」的纯逻辑：两个系统共享同一实现，避免规则两份。
 fn record_hits(
-    damage_taken: &mut EventReader<DamageTakenEvent>,
+    damage_taken: &mut MessageReader<DamageTakenEvent>,
     aggro: &mut Query<&mut Aggro>,
     positions: &Query<&Position>,
 ) {
@@ -219,7 +220,7 @@ fn decay_threat(clock: &WorldClock, aggro: &mut Query<&mut Aggro>, healths: &Que
 /// 需要插在两者之间——合成一个系统后，"本轮伤害先记、再按同一轮 AV 衰减"的
 /// 顺序是函数体内的顺序，不需要调度保证。
 pub fn threat_system(
-    mut damage_taken: EventReader<DamageTakenEvent>,
+    mut damage_taken: MessageReader<DamageTakenEvent>,
     mut aggro: Query<&mut Aggro>,
     positions: Query<&Position>,
     clock: Res<WorldClock>,

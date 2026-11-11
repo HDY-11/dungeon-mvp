@@ -110,13 +110,13 @@ fn casting_spends_mana_and_hurts_the_target() {
     let player = spawn_test_player(&mut world, (10, 10));
     let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (11, 10), 30.0, 4.0);
     world
-        .resource_mut::<bevy_ecs::event::Events<SpellIntentEvent>>()
-        .send(SpellIntentEvent {
+        .resource_mut::<bevy_ecs::message::Messages<SpellIntentEvent>>()
+        .write(SpellIntentEvent {
             caster: player,
             spell: SpellId(0),
             target: monster,
         });
-    world.run_system_once(resolve_spell_system).unwrap();
+    world.run_system_once(resolve_spell_system).expect("system should run");
 
     // 火花术 5 + 法术精通 8 = 13 点魔法伤害；耗蓝 3。
     let health = *world.get::<Health>(monster).expect("怪物还活着");
@@ -136,13 +136,13 @@ fn healing_restores_the_caster_and_spends_mana() {
     let player = spawn_test_player(&mut world, (10, 10));
     world.get_mut::<Health>(player).unwrap().current = 40.0;
     world
-        .resource_mut::<bevy_ecs::event::Events<SpellIntentEvent>>()
-        .send(SpellIntentEvent {
+        .resource_mut::<bevy_ecs::message::Messages<SpellIntentEvent>>()
+        .write(SpellIntentEvent {
             caster: player,
             spell: SpellId(1),
             target: player,
         });
-    world.run_system_once(resolve_spell_system).unwrap();
+    world.run_system_once(resolve_spell_system).expect("system should run");
 
     // 治愈术 12 + 精通 8 = 20 点回复；耗蓝 6。
     let health = *world.get::<Health>(player).unwrap();
@@ -162,13 +162,13 @@ fn a_heal_without_mana_fizzles_for_free() {
     // 治愈术要 6 点蓝，只留 2 点。
     world.get_mut::<Mana>(player).unwrap().current = 2.0;
     world
-        .resource_mut::<bevy_ecs::event::Events<SpellIntentEvent>>()
-        .send(SpellIntentEvent {
+        .resource_mut::<bevy_ecs::message::Messages<SpellIntentEvent>>()
+        .write(SpellIntentEvent {
             caster: player,
             spell: SpellId(1),
             target: player,
         });
-    world.run_system_once(resolve_spell_system).unwrap();
+    world.run_system_once(resolve_spell_system).expect("system should run");
 
     let health = *world.get::<Health>(player).unwrap();
     assert_eq!(health.current, 40.0, "法力不足时不能治疗");
@@ -186,13 +186,13 @@ fn a_dead_target_wastes_the_mana() {
     let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (11, 10), 30.0, 4.0);
     world.despawn(monster);
     world
-        .resource_mut::<bevy_ecs::event::Events<SpellIntentEvent>>()
-        .send(SpellIntentEvent {
+        .resource_mut::<bevy_ecs::message::Messages<SpellIntentEvent>>()
+        .write(SpellIntentEvent {
             caster: player,
             spell: SpellId(0),
             target: monster,
         });
-    world.run_system_once(resolve_spell_system).unwrap();
+    world.run_system_once(resolve_spell_system).expect("system should run");
 
     // 锁定目标的成本在扣蓝那一刻就付了：目标已经倒下，法术落空但法力照扣。
     let mana = *world.get::<Mana>(player).unwrap();

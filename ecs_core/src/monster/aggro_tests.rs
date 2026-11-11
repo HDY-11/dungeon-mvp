@@ -16,7 +16,7 @@ use bevy_ecs::system::RunSystemOnce;
 
 fn fresh_world() -> World {
     let mut world = World::new();
-    world.insert_resource(Events::<DamageTakenEvent>::default());
+    world.insert_resource(Messages::<DamageTakenEvent>::default());
     world.insert_resource(WorldClock::default());
     world
 }
@@ -33,7 +33,7 @@ fn spawn_monster(world: &mut World, at: (usize, usize), hp: f64) -> Entity {
 }
 
 fn hit(world: &mut World, source: Entity, target: Entity, amount: f64) {
-    world.send_event(DamageTakenEvent {
+    world.write_message(DamageTakenEvent {
         source: Some(source),
         target,
         amount,

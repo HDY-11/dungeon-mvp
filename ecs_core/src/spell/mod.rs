@@ -172,7 +172,7 @@ pub fn nearest_enemy_in_range(
         .min_by(|(left_distance, left), (right_distance, right)| {
             left_distance
                 .total_cmp(right_distance)
-                .then_with(|| left.to_bits().cmp(&right.to_bits()))
+                .then_with(|| left.index_u32().cmp(&right.index_u32()))
         })
         .map(|(_, entity)| entity)
 }
@@ -215,12 +215,12 @@ type SpellVictims<'w, 's> = Query<
 ///
 /// 目标在吟唱期间死掉时法术落空（法力照扣）；这是"锁定目标"口径的一部分。
 pub fn resolve_spell_system(
-    mut intents: EventReader<SpellIntentEvent>,
+    mut intents: MessageReader<SpellIntentEvent>,
     mut casters: Query<(&mut Mana, &MagicMastery, Option<&EntityName>, Has<Player>)>,
     mut players: Query<(&mut Health, &Position), With<Player>>,
     mut bodies: SpellVictims,
     effects: EffectContext,
-    mut damage_taken: EventWriter<DamageTakenEvent>,
+    mut damage_taken: MessageWriter<DamageTakenEvent>,
     mut event_log: ResMut<EventLog>,
 ) {
     for intent in intents.read() {

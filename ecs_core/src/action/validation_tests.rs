@@ -30,7 +30,7 @@ use crate::schedule::ActionPocSchedule;
 use crate::spell::SpellId;
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
 use crate::throw::ThrowAction;
-use bevy_ecs::event::Events;
+use bevy_ecs::message::Messages;
 use bevy_ecs::system::RunSystemOnce;
 
 // ── 场景脚手架 ───────────────────────────────────────
@@ -51,11 +51,11 @@ fn open_world() -> (World, Entity) {
 /// 清空行动链路关心的三个事件缓冲（数"本轮产生了什么"之前必须先归零）。
 fn clear_events(world: &mut World) {
     world
-        .resource_mut::<Events<ActionSucceededEvent>>()
+        .resource_mut::<Messages<ActionSucceededEvent>>()
         .clear();
-    world.resource_mut::<Events<ActionFailedEvent>>().clear();
+    world.resource_mut::<Messages<ActionFailedEvent>>().clear();
     world
-        .resource_mut::<Events<AttackIntentEvent>>()
+        .resource_mut::<Messages<AttackIntentEvent>>()
         .clear();
 }
 
@@ -184,7 +184,7 @@ fn the_second_claimant_of_a_cell_loses_before_anyone_moves() {
         "校验阶段不得移动任何人——写位置是落地阶段的事"
     );
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
         "被挡的 `Move` 必须失败（`Move` 的语义是「走到那一步」）"
     );
@@ -213,7 +213,7 @@ fn settle_lands_the_reserved_step_and_frees_the_old_cell() {
         "旧格必须腾出（否则这个人变成两格）"
     );
     assert_eq!(
-        world.resource::<Events<ActionSucceededEvent>>().len(),
+        world.resource::<Messages<ActionSucceededEvent>>().len(),
         1,
         "落地之后恰好一个成功事件"
     );
@@ -234,12 +234,12 @@ fn settle_never_invents_a_step_without_a_decision() {
 
     assert_eq!(position_of(&world, actor), (8, 8), "没有定案就必须原地");
     assert_eq!(
-        world.resource::<Events<ActionSucceededEvent>>().len(),
+        world.resource::<Messages<ActionSucceededEvent>>().len(),
         1,
         "`Wait` 没有校验器 = 永远有效（无条件成功）"
     );
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         0,
         "`Wait` 不得失败"
     );
@@ -261,7 +261,7 @@ fn a_blocked_player_move_fails_and_reports_the_reason() {
         world.get::<MoveTarget>(action).is_none(),
         "被墙挡住的移动不得定案"
     );
-    assert_eq!(world.resource::<Events<ActionFailedEvent>>().len(), 1);
+    assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
     let log = world.resource::<EventLog>();
     let reason = super::super::execution::movement::BlockReason::Wall.describe();
     assert!(
@@ -296,12 +296,12 @@ fn a_blocked_wander_stays_put_but_still_succeeds() {
 
     assert_eq!(position_of(&world, actor), (1, 1), "全被挡时只能原地");
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         0,
         "游荡被挡不得记成失败"
     );
     assert_eq!(
-        world.resource::<Events<ActionSucceededEvent>>().len(),
+        world.resource::<Messages<ActionSucceededEvent>>().len(),
         1,
         "游荡被挡也算这一步做完"
     );
@@ -381,7 +381,7 @@ fn each_validator_only_claims_its_own_action_type() {
         "只有 `Wander` 消费随机数（其余四个校验器都不许碰 RNG）"
     );
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         0,
         "五个行动都不该失败"
     );
@@ -432,12 +432,12 @@ fn a_chase_with_no_path_stays_put_and_succeeds() {
     );
     assert_eq!(position_of(&world, chaser), (30, 30), "追击者原地不动");
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         0,
         "被挡的追击不算失败"
     );
     assert_eq!(
-        world.resource::<Events<ActionSucceededEvent>>().len(),
+        world.resource::<Messages<ActionSucceededEvent>>().len(),
         1,
         "被挡的追击仍算这一步做完"
     );
@@ -454,7 +454,7 @@ fn a_chase_without_sight_or_memory_fails() {
 
     assert!(world.get::<MoveTarget>(action).is_none());
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
         "看不见又没记忆的追击必须失败"
     );
@@ -471,7 +471,7 @@ fn a_flee_above_the_exit_threshold_fails() {
     run_validators(&mut world);
 
     assert!(world.get::<MoveTarget>(action).is_none(), "不该再逃");
-    assert_eq!(world.resource::<Events<ActionFailedEvent>>().len(), 1);
+    assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
 }
 
 /// `Flee` 的预留只有**一格**：八个方向都试算过，但只有选中的那个被占住。
@@ -531,7 +531,7 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
             Some(&AttackTarget(target)),
             "相邻且存活时必须定案为攻击"
         );
-        assert_eq!(world.resource::<Events<ActionFailedEvent>>().len(), 0);
+        assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 0);
     }
 
     // 不相邻 → 失败。
@@ -541,7 +541,7 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
         let action = mount_ready(&mut world, player, BasicAttack { target });
         run_validators(&mut world);
         assert!(world.get::<AttackTarget>(action).is_none(), "够不着不得定案");
-        assert_eq!(world.resource::<Events<ActionFailedEvent>>().len(), 1);
+        assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
     }
 
     // 相邻但目标已死 → 失败。
@@ -555,7 +555,7 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
             world.get::<AttackTarget>(action).is_none(),
             "打尸体不得定案"
         );
-        assert_eq!(world.resource::<Events<ActionFailedEvent>>().len(), 1);
+        assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
     }
 }
 
@@ -570,9 +570,9 @@ fn settle_emits_the_attack_intent_for_an_attack_decision() {
 
     run_validate_and_settle(&mut world);
 
-    let intents = world.resource::<Events<AttackIntentEvent>>();
+    let intents = world.resource::<Messages<AttackIntentEvent>>();
     assert_eq!(intents.len(), 1, "一次攻击恰好一个意图");
-    let intents = world.resource_mut::<Events<AttackIntentEvent>>();
+    let intents = world.resource_mut::<Messages<AttackIntentEvent>>();
     let mut cursor = intents.get_cursor();
     let collected: Vec<(Entity, Entity)> = cursor
         .read(&intents)
@@ -606,7 +606,7 @@ fn a_queued_chase_is_cancelled_the_moment_it_loses_the_target() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
         "排队中的追击失去目标必须立刻取消（ECS43：否则空占槽位）"
     );
@@ -627,7 +627,7 @@ fn a_queued_flee_is_cancelled_when_health_recovers() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
         "排队中的逃跑在血量恢复后必须立刻取消"
     );
@@ -644,7 +644,7 @@ fn a_queued_basic_attack_is_cancelled_when_the_target_walks_away() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
         "排队中的攻击在目标离开后必须立刻取消"
     );
@@ -698,7 +698,7 @@ fn a_queued_action_is_never_decided_reserved_or_randomised() {
         "排队中的行动不得消耗随机数（否则整局随机流会漂）"
     );
     assert_eq!(
-        world.resource::<Events<ActionFailedEvent>>().len(),
+        world.resource::<Messages<ActionFailedEvent>>().len(),
         0,
         "仍然有效的排队行动不该被取消"
     );
@@ -733,7 +733,7 @@ fn cast_validation_targets_the_nearest_visible_enemy_and_settles_an_intent() {
         "施法应锁定视野内最近的敌人"
     );
     let intents: Vec<SpellIntentEvent> = world
-        .resource_mut::<Events<SpellIntentEvent>>()
+        .resource_mut::<Messages<SpellIntentEvent>>()
         .drain()
         .collect();
     assert_eq!(intents.len(), 1, "落地阶段必须恰好发一个施法意图");
@@ -756,7 +756,7 @@ fn cast_validation_fails_without_mana_and_without_a_target() {
 
     // 有蓝但视野里没有敌人：同样失败。
     world.get_mut::<Mana>(player).unwrap().current = 20.0;
-    let failed_before = world.resource::<Events<ActionFailedEvent>>().len();
+    let failed_before = world.resource::<Messages<ActionFailedEvent>>().len();
     let action2 = mount_ready(&mut world, player, CastSpell { spell: SpellId(1) });
     // 治愈术是自施法，不需要目标；换成火花术来测"无目标"。
     world.entity_mut(action2).remove::<CastSpell>().insert(CastSpell {
@@ -764,7 +764,7 @@ fn cast_validation_fails_without_mana_and_without_a_target() {
     });
     run_validate_and_settle(&mut world);
     assert!(
-        world.resource::<Events<ActionFailedEvent>>().len() > failed_before,
+        world.resource::<Messages<ActionFailedEvent>>().len() > failed_before,
         "视野里没有敌人时火花术必须失败"
     );
     assert!(world.get::<CastTarget>(action2).is_none());
@@ -802,7 +802,7 @@ fn throw_validation_targets_the_chosen_cell_and_settles_an_intent() {
         "投掷的落点就是载荷里的格子（落点必中）"
     );
     let intents: Vec<ThrowIntentEvent> = world
-        .resource_mut::<Events<ThrowIntentEvent>>()
+        .resource_mut::<Messages<ThrowIntentEvent>>()
         .drain()
         .collect();
     assert_eq!(intents.len(), 1, "落地阶段必须恰好发一个投掷意图");
@@ -823,7 +823,7 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
     run_validate_and_settle(&mut world);
     assert!(world.get::<ThrowTarget>(action).is_none(), "副手空了不得定案");
     assert!(
-        !world.resource::<Events<ActionFailedEvent>>().is_empty(),
+        !world.resource::<Messages<ActionFailedEvent>>().is_empty(),
         "副手空了要让行动失败"
     );
 

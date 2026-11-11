@@ -50,8 +50,8 @@ fn settle_does_not_reapply_old_events() {
     let target = world.spawn((Health::new(100.0), Stats::new())).id();
 
     world
-        .resource_mut::<Events<AttackIntentEvent>>()
-        .send(AttackIntentEvent { attacker, target });
+        .resource_mut::<Messages<AttackIntentEvent>>()
+        .write(AttackIntentEvent { attacker, target });
 
     run_settle_systems(&mut world);
     let hp_after_first = world.get::<Health>(target).unwrap().current;
@@ -76,8 +76,8 @@ fn attack_applies_damage_once() {
     let target = world.spawn((Health::new(100.0), Stats::new())).id();
 
     world
-        .resource_mut::<Events<AttackIntentEvent>>()
-        .send(AttackIntentEvent { attacker, target });
+        .resource_mut::<Messages<AttackIntentEvent>>()
+        .write(AttackIntentEvent { attacker, target });
     run_settle_systems(&mut world);
 
     let hp_after_first = world.get::<Health>(target).expect("目标必须存活").current;
@@ -96,8 +96,8 @@ fn attack_applies_damage_once() {
 
     // 再发一次同样的意图 → 恰好再扣一次。
     world
-        .resource_mut::<Events<AttackIntentEvent>>()
-        .send(AttackIntentEvent { attacker, target });
+        .resource_mut::<Messages<AttackIntentEvent>>()
+        .write(AttackIntentEvent { attacker, target });
     run_settle_systems(&mut world);
     assert_eq!(
         world.get::<Health>(target).unwrap().current,
@@ -147,7 +147,7 @@ fn monster_death_rewards_exp_and_levels_up() {
     // `PendingExp` 已在 Phase E 删除）。这里不做「缓冲为空」的断言——那测的是
     // `Events::update()` 的轮转时机，不是本用例的业务契约。真正要钉住的是
     // **奖励只结算一次**：再跑一轮结算，等级与经验都不得再变（I90 契约）。
-    world.resource_mut::<Events<DeathEvent>>().update();
+    world.resource_mut::<Messages<DeathEvent>>().update();
     let level_before = world.get::<Level>(player).unwrap().0;
     let exp_before = world.get::<Experience>(player).unwrap().exp;
     run_settle_systems(&mut world);
@@ -219,8 +219,8 @@ fn a_dead_player_does_not_level_up_or_heal() {
     world.get_mut::<Health>(player).unwrap().current = 0.0;
 
     world
-        .resource_mut::<Events<DeathEvent>>()
-        .send(DeathEvent {
+        .resource_mut::<Messages<DeathEvent>>()
+        .write(DeathEvent {
             entity: Entity::PLACEHOLDER,
             reward: 50.0,
         });
@@ -252,8 +252,8 @@ fn experience_below_threshold_does_not_level_up() {
     let max_hp_before = world.get::<Health>(player).unwrap().max;
     // 直接投喂一个没有实体的死亡事件：奖励 30 点（不足以升级）。
     world
-        .resource_mut::<Events<DeathEvent>>()
-        .send(DeathEvent {
+        .resource_mut::<Messages<DeathEvent>>()
+        .write(DeathEvent {
             entity: Entity::PLACEHOLDER,
             reward: 30.0,
         });
@@ -430,8 +430,8 @@ fn damage_feeds_the_main_hand_weapons_growth() {
         .spawn((Health::new(100.0), Stats::new(), EntityName("木桩".into())))
         .id();
     world
-        .resource_mut::<Events<AttackIntentEvent>>()
-        .send(AttackIntentEvent {
+        .resource_mut::<Messages<AttackIntentEvent>>()
+        .write(AttackIntentEvent {
             attacker: player,
             target,
         });

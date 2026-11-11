@@ -32,11 +32,11 @@ type ExpPlayer = (
 /// 非玩家实体的死亡奖励会**被忽略**（当前设计里只有玩家吃经验）；若未来要让
 /// 召唤物/宠物分经验，就在这里按实体筛选，而不是在死亡侧改奖励数值。
 pub fn apply_exp_system(
-    mut death_events: EventReader<DeathEvent>,
+    mut death_events: MessageReader<DeathEvent>,
     mut players: Query<ExpPlayer, With<Player>>,
     effects: EffectContext,
     mut event_log: ResMut<EventLog>,
-    mut level_events: EventWriter<LevelUpEvent>,
+    mut level_events: MessageWriter<LevelUpEvent>,
 ) {
     let gained: f64 = death_events
         .read()

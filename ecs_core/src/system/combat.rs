@@ -16,7 +16,7 @@ use bevy_ecs::system::SystemParam;
 
 /// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
 ///
-/// 参数偏多（8 个）是 ECS 系统的固有形状——`EventReader` / `Query` / `ResMut`
+/// 参数偏多（8 个）是 ECS 系统的固有形状——`MessageReader` / `Query` / `ResMut`
 /// 每类都是一个独立入参，折成 DTO 会丢掉 Bevy 的参数校验（「可变访问是否冲突」
 /// 这类错误会从编译期推迟到运行期）。这里保留显式签名。
 ///
@@ -36,12 +36,12 @@ use bevy_ecs::system::SystemParam;
 /// 所以这里用 `collect_actor` 而不是带格子的 `collect`。
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_system(
-    mut attack_intents: EventReader<AttackIntentEvent>,
+    mut attack_intents: MessageReader<AttackIntentEvent>,
     stats: Query<&Stats>,
     names: Query<&EntityName>,
     effects: EffectContext,
     mut rng: ResMut<GameRng>,
-    mut attack_events: EventWriter<AttackEvent>,
+    mut attack_events: MessageWriter<AttackEvent>,
     mut event_log: ResMut<EventLog>,
 ) {
     for intent in attack_intents.read() {
@@ -150,7 +150,7 @@ pub struct DamageSink<'w, 's> {
     items: Query<'w, 's, &'static Item>,
     weapons_data: Query<'w, 's, &'static Weapon>,
     weapons: Query<'w, 's, &'static mut WeaponProgress>,
-    damage_taken: EventWriter<'w, DamageTakenEvent>,
+    damage_taken: MessageWriter<'w, DamageTakenEvent>,
     event_log: ResMut<'w, EventLog>,
 }
 
@@ -159,7 +159,7 @@ pub struct DamageSink<'w, 's> {
 /// 经验量 = 造成的伤害 × 物品品质的 EXP 倍率（DsnE24 阶段 ②）：品质越高升级越慢，
 /// 于是"打同样的伤害，粗劣武器更快追上高等级"。只有**造成伤害**才给经验，
 /// 空挥/未命中（未来有闪避时）不给。
-pub fn apply_damage_system(mut attack_events: EventReader<AttackEvent>, mut sink: DamageSink) {
+pub fn apply_damage_system(mut attack_events: MessageReader<AttackEvent>, mut sink: DamageSink) {
     for event in attack_events.read() {
         if let Ok(mut health) = sink.healths.get_mut(event.target) {
             *health = health.damage(event.damage);

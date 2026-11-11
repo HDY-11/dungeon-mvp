@@ -1,6 +1,6 @@
 # Dungeon MVP
 
-Rust 终端 Roguelike：`ratatui` + `crossterm` + `bevy_ecs`（0.16）。
+Rust 终端 Roguelike：`ratatui` + `crossterm` + `bevy_ecs`（0.20，仅 ECS 子 crate，不开默认特性）。
 
 > **本仓库当前状态：** 业务领域已收敛到单一 crate `ecs_core`。旧实现在 `archive/`
 > （仍可编译可测，只作对照）。新架构已打通"行动 + 战斗 + 经验 + 地图 + 物品（容器/
@@ -16,7 +16,7 @@ cargo check --workspace        # 全工作区构建检查
 # 验收走一条命令（10 步：构建 / 新方向测试 / 端到端 / bin / clippy / 依赖边界 / 文档）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1
 
-cargo test -p ecs_core         # 359 passed
+cargo test -p ecs_core         # 367 passed
 cargo test -p presentation     # 80 passed
 cargo test -p tui              # 44 passed
 ```

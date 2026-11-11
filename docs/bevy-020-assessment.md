@@ -101,3 +101,11 @@
 - `Cargo.toml` / `Cargo.lock` 已按上述实验改动；未改任何业务代码；未提交。
 - 若决定不升级：`git checkout -- Cargo.toml Cargo.lock` 即可回退。
 - 若继续升级：从 S1 开始，按上面映射表批量替换并逐步跑 `cargo check -p ecs_core --all-targets`。
+
+## 9. 执行结果（2026-11-11，已完成）
+
+- 实际迁移：32 个业务文件；`events.rs` 9 个事件改 `#[derive(Message)]`；`schedule.rs` 的 4 个 `ScheduleLabel` 删掉 `as_dyn_eq`/`dyn_hash`；`run_system_once` 12 处补 `.expect`（原先未处理的 `Result` 会静默吞掉参数校验失败）；`SystemState::get/get_mut` 6 处 unwrap；`mvp_loop_test` 两处 unused import 清理。下游 crate（presentation/tui/app/tests）**业务代码零改动**。
+- 唯一语义坑：bevy 0.20 的 `Entity::to_bits()` 改用 `NonMaxU32` 编码（`bits = u32::MAX − index`），**生成顺序与 bits 顺序相反**。原来按 `to_bits()` 升序做的平局/稳定序（行动仲裁、地面/尸体列表、威胁平局、最近目标平局、UI 列表）全部改为 `Entity::index_u32()`；`EntityId::from_bits(to_bits())` 仍作为不透明 id 保留。详见 `ecs_core/LESSONS.md` LECS25。
+- 编译：`cargo check --workspace --all-targets` **0 error / 0 warning**。
+- 测试：`cargo test -p ecs_core --lib` **367 passed**；workspace **29 目标 660 passed / 0 failed / 1 ignored**；四 crate clippy `-D warnings` 全绿。
+- 依赖：`bevy_ecs = { version = "0.20.1", default-features = false, features = ["std"] }`，`bevy_reflect` 不再进树；`archive/*` 四个旧 crate 仍钉 0.16（后续可移出 workspace 去掉双版本编译）。

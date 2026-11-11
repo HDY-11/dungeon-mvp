@@ -220,8 +220,8 @@ pub fn kill_entity(world: &mut World, attacker: Entity, target: Entity) -> bool 
             stats.set(StatId::ATTACK, damage);
         }
         world
-            .resource_mut::<bevy_ecs::event::Events<AttackIntentEvent>>()
-            .send(AttackIntentEvent { attacker, target });
+            .resource_mut::<bevy_ecs::message::Messages<AttackIntentEvent>>()
+            .write(AttackIntentEvent { attacker, target });
         run_settle_systems(world);
     }
     world.get_entity(target).is_err()

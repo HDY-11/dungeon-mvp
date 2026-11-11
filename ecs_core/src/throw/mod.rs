@@ -55,7 +55,7 @@ pub fn throw_path(from: (usize, usize), to: (usize, usize)) -> Vec<(usize, usize
 /// 参数自然会到 10 个；字段分组对应这些问题，系统签名保持一个参数。
 #[derive(SystemParam)]
 pub struct ThrowResolution<'w, 's> {
-    intents: EventReader<'w, 's, ThrowIntentEvent>,
+    intents: MessageReader<'w, 's, ThrowIntentEvent>,
     effects: EffectContext<'w, 's>,
     positions: Query<'w, 's, &'static Position>,
     throwers: Query<
@@ -82,7 +82,7 @@ pub struct ThrowResolution<'w, 's> {
     rng: ResMut<'w, GameRng>,
     commands: Commands<'w, 's>,
     event_log: ResMut<'w, EventLog>,
-    damage_taken: EventWriter<'w, DamageTakenEvent>,
+    damage_taken: MessageWriter<'w, DamageTakenEvent>,
 }
 
 /// 结算一次投掷（`ThrowIntentEvent`）：落点必中——格上站着谁就打谁，没人就只是落地。
@@ -193,7 +193,7 @@ pub fn resolve_throw_system(world: ThrowResolution) {
 /// 与 [`resolve_throw_system`] 读同一个事件：处理顺序由调度决定，互不依赖全文；
 /// 这样即使将来投掷伤害被别的系统接走，消耗仍只发生一次（事件读到就扣）。
 pub fn consume_thrown_item_system(
-    mut intents: EventReader<ThrowIntentEvent>,
+    mut intents: MessageReader<ThrowIntentEvent>,
     mut bodies: Query<&mut Container>,
     mut amounts: Query<&mut Amount>,
     mut commands: Commands,

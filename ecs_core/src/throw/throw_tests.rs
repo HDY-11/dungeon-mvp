@@ -47,8 +47,8 @@ fn ground_items(world: &mut bevy_ecs::world::World, at: (usize, usize)) -> Vec<I
 
 fn send_throw(world: &mut bevy_ecs::world::World, thrower: Entity, target: (usize, usize)) {
     world
-        .resource_mut::<bevy_ecs::event::Events<ThrowIntentEvent>>()
-        .send(ThrowIntentEvent { thrower, target });
+        .resource_mut::<bevy_ecs::message::Messages<ThrowIntentEvent>>()
+        .write(ThrowIntentEvent { thrower, target });
 }
 
 #[test]
@@ -86,8 +86,8 @@ fn throwing_at_a_monster_hurts_it_and_drops_the_stone() {
     let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (11, 10), 30.0, 4.0);
     give_off_hand_stones(&mut world, player, 1);
     send_throw(&mut world, player, (11, 10));
-    world.run_system_once(resolve_throw_system).unwrap();
-    world.run_system_once(consume_thrown_item_system).unwrap();
+    world.run_system_once(resolve_throw_system).expect("system should run");
+    world.run_system_once(consume_thrown_item_system).expect("system should run");
 
     // 基值 3，怪物防御 0 → 护甲域 1，无暴击/增伤/抗性。
     let health = *world.get::<Health>(monster).expect("怪物还活着");
@@ -109,8 +109,8 @@ fn a_throw_consumes_only_one_stone_from_the_off_hand_stack() {
     let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (11, 10), 30.0, 4.0);
     let stone = give_off_hand_stones(&mut world, player, 3);
     send_throw(&mut world, player, (11, 10));
-    world.run_system_once(resolve_throw_system).unwrap();
-    world.run_system_once(consume_thrown_item_system).unwrap();
+    world.run_system_once(resolve_throw_system).expect("system should run");
+    world.run_system_once(consume_thrown_item_system).expect("system should run");
 
     assert_eq!(world.get::<Amount>(stone).unwrap().0, 2);
     assert_eq!(
@@ -125,8 +125,8 @@ fn throwing_at_an_empty_cell_just_lands_there() {
     let (mut world, player) = scene();
     give_off_hand_stones(&mut world, player, 1);
     send_throw(&mut world, player, (13, 10));
-    world.run_system_once(resolve_throw_system).unwrap();
-    world.run_system_once(consume_thrown_item_system).unwrap();
+    world.run_system_once(resolve_throw_system).expect("system should run");
+    world.run_system_once(consume_thrown_item_system).expect("system should run");
 
     assert_eq!(ground_items(&mut world, (13, 10)), vec![ItemId(18)]);
     let body = world.get::<Container>(player).expect("玩家有身体容器");
@@ -140,8 +140,8 @@ fn a_throw_without_an_off_hand_item_is_a_no_op() {
     world.entity_mut(player).insert(body);
     let monster = spawn_test_monster(&mut world, MonsterKindId::Rat, (11, 10), 30.0, 4.0);
     send_throw(&mut world, player, (11, 10));
-    world.run_system_once(resolve_throw_system).unwrap();
-    world.run_system_once(consume_thrown_item_system).unwrap();
+    world.run_system_once(resolve_throw_system).expect("system should run");
+    world.run_system_once(consume_thrown_item_system).expect("system should run");
 
     assert_eq!(world.get::<Health>(monster).unwrap().current, 30.0);
     assert!(ground_items(&mut world, (11, 10)).is_empty());

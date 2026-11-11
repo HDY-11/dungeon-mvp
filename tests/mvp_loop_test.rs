@@ -423,7 +423,7 @@ fn mvp_viewport_resize_is_safe() {
 #[test]
 fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
     use ecs_core::ItemTag;
-    use ecs_core::item::{Amount, BODY, Container, Item, ItemId, pack_slot_index};
+    use ecs_core::item::{BODY, Container, ItemId, pack_slot_index};
 
     let mut app = quiet_app(2026);
     let player = player_entity(app.world_mut());
@@ -490,7 +490,7 @@ fn the_inventory_page_equips_and_unequips_through_the_keyboard() {
 /// 没有调用方（核心动作单测全绿，玩家却拿不到东西）。
 #[test]
 fn the_inventory_page_loots_a_corpse_through_the_keyboard() {
-    use ecs_core::item::{Amount, Container, Item, ItemId, CORPSE, pack_slot_index};
+    use ecs_core::item::{Container, ItemId, CORPSE, pack_slot_index};
     use ecs_core::monster::{Corpse, MonsterKindId};
     use render_api::{InventoryNav, UiView};
 

@@ -584,7 +584,7 @@ fn corpses_underfoot(world: &World, player: Entity) -> Vec<Entity> {
             (position.to_tuple() == here).then(|| entity.id())
         })
         .collect();
-    corpses.sort_by_key(|entity| entity.to_bits());
+    corpses.sort_by_key(|entity| entity.index_u32());
     corpses
 }
 
@@ -600,7 +600,7 @@ fn ground_items_underfoot(world: &World, player: Entity) -> Vec<Entity> {
             (at.to_tuple() == here && entity.contains::<ecs_core::Item>()).then(|| entity.id())
         })
         .collect();
-    items.sort_by_key(|entity| entity.to_bits());
+    items.sort_by_key(|entity| entity.index_u32());
     items
 }
 

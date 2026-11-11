@@ -2,12 +2,10 @@
 //!
 //! 这些 Schedule 由 `insert_core_resources` 注册到 `World`，之后通过
 //! `World::run_schedule(label)` 重复运行。**不要**在每次运行前重新
-//! `Schedule::new(...)`：那会丢失 `EventReader` 游标、`Local` 等系统状态，
+//! `Schedule::new(...)`：那会丢失 `MessageReader` 游标、`Local` 等系统状态，
 //! 导致事件被重复读取。构建一律用 [`core_schedule`]。
 
-use bevy_ecs::label::DynEq;
 use bevy_ecs::schedule::{LogLevel, Schedule, ScheduleBuildSettings, ScheduleLabel};
-use std::hash::{Hash, Hasher};
 
 /// 本项目**唯一**允许用来构建 core Schedule 的入口。
 ///
@@ -42,14 +40,6 @@ impl ScheduleLabel for CoreInitSchedule {
     fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
         Box::new(self.clone())
     }
-
-    fn as_dyn_eq(&self) -> &dyn DynEq {
-        self
-    }
-
-    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
-        Hash::hash(self, &mut state);
-    }
 }
 
 /// 每轮结算：伤害、死亡、经验、FOV、记忆、占用图、事件更新。
@@ -59,14 +49,6 @@ pub struct CoreSettleSchedule;
 impl ScheduleLabel for CoreSettleSchedule {
     fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
         Box::new(self.clone())
-    }
-
-    fn as_dyn_eq(&self) -> &dyn DynEq {
-        self
-    }
-
-    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
-        Hash::hash(self, &mut state);
     }
 }
 
@@ -81,14 +63,6 @@ impl ScheduleLabel for ActionPocSchedule {
     fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
         Box::new(self.clone())
     }
-
-    fn as_dyn_eq(&self) -> &dyn DynEq {
-        self
-    }
-
-    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
-        Hash::hash(self, &mut state);
-    }
 }
 
 /// 玩家行动挂载：生成 + 仲裁，**不含**推进/执行。
@@ -101,14 +75,6 @@ pub struct PlayerMountSchedule;
 impl ScheduleLabel for PlayerMountSchedule {
     fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
         Box::new(self.clone())
-    }
-
-    fn as_dyn_eq(&self) -> &dyn DynEq {
-        self
-    }
-
-    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
-        Hash::hash(self, &mut state);
     }
 }
 

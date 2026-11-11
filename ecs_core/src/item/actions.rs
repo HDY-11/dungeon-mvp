@@ -284,7 +284,7 @@ pub fn take_from_ground(
             }
         }
     }
-    ground.sort_by_key(|(entity, ..)| entity.to_bits());
+    ground.sort_by_key(|(entity, ..)| entity.index_u32());
     let (entity, id, amount) = *ground.get(ground_index).ok_or(ItemActionError::NoGround)?;
     let def = id.def();
 
@@ -419,7 +419,7 @@ fn corpses_underfoot(world: &mut World, at: (usize, usize)) -> Vec<Entity> {
         .filter(|(_, position)| position.to_tuple() == at)
         .map(|(entity, _)| entity)
         .collect();
-    corpses.sort_by_key(|entity| entity.to_bits());
+    corpses.sort_by_key(|entity| entity.index_u32());
     corpses
 }
 

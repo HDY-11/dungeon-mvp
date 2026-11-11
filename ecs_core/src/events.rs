@@ -5,7 +5,7 @@
 use bevy_ecs::prelude::*;
 
 /// 一次已确认的普通攻击意图。伤害尚未计算。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttackIntentEvent {
     pub attacker: Entity,
     pub target: Entity,
@@ -14,7 +14,7 @@ pub struct AttackIntentEvent {
 /// 一次已结算的普通攻击结果。
 ///
 /// `damage` 是已经过攻击/防御/暴击计算后的最终伤害。
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct AttackEvent {
     pub attacker: Entity,
     pub target: Entity,
@@ -29,7 +29,7 @@ pub struct AttackEvent {
 /// 订阅这一个事件，因此不会随伤害来源增加而改。
 ///
 /// `source` 可以为空（陷阱、毒、坠落等无施害者的伤害），此时不产生仇恨。
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct DamageTakenEvent {
     pub source: Option<Entity>,
     pub target: Entity,
@@ -44,7 +44,7 @@ pub struct DamageTakenEvent {
 /// （REFACTOR.md §10.8：`PendingExp` 是绕过 `DeathEvent` 的旁路，已删除）。
 ///
 /// 消费者：`system::experience::apply_exp_system`（只把奖励给玩家）。
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct DeathEvent {
     pub entity: Entity,
     /// 该实体死亡时应给玩家的经验；无奖励的实体（例如玩家自己）为 0。
@@ -52,7 +52,7 @@ pub struct DeathEvent {
 }
 
 /// 行动执行成功。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionSucceededEvent {
     pub entity: Entity,
 }
@@ -62,7 +62,7 @@ pub struct ActionSucceededEvent {
 /// 与 [`AttackIntentEvent`] 同构：落地阶段只发"我要对谁放什么"，具体伤害/治疗
 /// 由 `spell::resolve_spell_system` 按规则计算——战斗公式（DsnE9）与法术公式
 /// 都不认识"落地"这件事。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpellIntentEvent {
     pub caster: Entity,
     pub spell: crate::spell::SpellId,
@@ -73,7 +73,7 @@ pub struct SpellIntentEvent {
 ///
 /// 与 [`AttackIntentEvent`] / [`SpellIntentEvent`] 同构：落地器只发"谁往哪格扔"，
 /// 命中判定（落点格上有没有活物）与伤害公式都不在落地阶段。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThrowIntentEvent {
     pub thrower: Entity,
     /// 落点格（世界坐标）；落点必中，即使没有活物也照常落地。
@@ -81,13 +81,13 @@ pub struct ThrowIntentEvent {
 }
 
 /// 行动执行失败（保活条件不再成立）。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionFailedEvent {
     pub entity: Entity,
 }
 
 /// 玩家升级（可能一轮多次）。
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LevelUpEvent {
     pub entity: Entity,
     pub new_level: u64,

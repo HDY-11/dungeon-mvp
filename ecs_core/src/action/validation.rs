@@ -58,7 +58,7 @@
 //! - `BasicAttack`：前置条件不成立 = 失败；
 //! - `Wait`：没有校验器 = 永远成立（"没有校验器"就是"无条件有效"的表达）。
 
-use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionEvents, PendingAction};
+use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionMessages, PendingAction};
 use crate::balance::FLEE_HP_RATIO_EXIT;
 use crate::combat::can_attack_positions;
 use crate::components::{
@@ -181,7 +181,7 @@ impl Reservation<'_> {
 pub fn validate_move_system(
     mut commands: Commands,
     mut reservation: Reservation,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntryPayload<Move>, PendingAction<Move>>,
     actors: Query<(&Position, Has<PlayerMarker>)>,
     mut event_log: ResMut<EventLog>,
@@ -234,7 +234,7 @@ pub struct ChaseWorld<'w, 's> {
 pub fn validate_chase_system(
     mut commands: Commands,
     mut reservation: Reservation,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     mut world: ChaseWorld,
 ) {
     use crate::spatial::pathfinding::astar;
@@ -349,7 +349,7 @@ pub fn validate_chase_system(
 pub fn validate_flee_system(
     mut commands: Commands,
     mut reservation: Reservation,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntry, PendingAction<Flee>>,
     positions: Query<&Position>,
     healths: Query<&Health>,
@@ -449,7 +449,7 @@ pub fn validate_wander_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut rng: ResMut<GameRng>,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntry, PendingAction<Wander>>,
     actors: Query<&Position>,
 ) {
@@ -492,7 +492,7 @@ pub fn validate_wander_system(
 /// 到点且条件仍成立时才**定案**为攻击。
 pub fn validate_basic_attack_system(
     mut commands: Commands,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntryPayload<BasicAttack>, PendingAction<BasicAttack>>,
     positions: Query<&Position>,
     healths: Query<&Health>,
@@ -528,7 +528,7 @@ pub fn validate_basic_attack_system(
 /// 定案之后目标死掉则由结算侧处理成"法术落空"（法力照扣，见 `resolve_spell_system`）。
 pub fn validate_cast_system(
     mut commands: Commands,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntryPayload<CastSpell>, PendingAction<CastSpell>>,
     casters: Query<(&Position, &SpellBook, &Mana, &Viewshed, Has<PlayerMarker>)>,
     monsters: Query<(Entity, &Position), With<crate::entity_cls::Monster>>,
@@ -588,7 +588,7 @@ pub fn validate_cast_system(
 /// 只是防御性复查一遍，避免将来加入可破坏地形时静默穿过。
 pub fn validate_throw_system(
     mut commands: Commands,
-    mut events: ActionEvents,
+    mut events: ActionMessages,
     actions: Query<ActionEntryPayload<ThrowAction>, PendingAction<ThrowAction>>,
     actors: Query<(&Position, Has<PlayerMarker>, &Container)>,
     throwables: Query<&Throw>,

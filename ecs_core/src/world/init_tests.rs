@@ -129,7 +129,7 @@ fn mud_and_plain_cells_report_their_cost_through_the_unified_entry() {
     let plain = plain_walkable_cell(&mut world);
 
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
-    let context = system.get_mut(&mut world);
+    let context = system.get_mut(&mut world).unwrap();
 
     let mud_attrs: CellAttributes = context.cell_attributes(mud.0, mud.1);
     assert!(mud_attrs.has_effect, "泥潭格必须报告「有效果」");

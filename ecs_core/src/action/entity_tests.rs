@@ -58,7 +58,7 @@ fn validate_and_settle(world: &mut World) {
 /// 一个 actor 同时只能有一个 `ActiveAction`；违反即为实现 bug。
 const MAX_ACTIONS_PER_ACTOR: usize = 1;
 
-/// 授予顺序必须是**显式排序**（按 `(priority, bits)` 升序），不能是 `HashMap` 的迭代顺序。
+/// 授予顺序必须是**显式排序**（按 `(priority, index)` 升序），不能是 `HashMap` 的迭代顺序。
 ///
 /// 这条守的是个跨进程才显形的属性：`HashMap` 的 `RandomState` **每进程种子不同**，
 /// 所以"迭代顺序"在同一进程里恒定、在两次运行之间却可能不同——单进程测试永远看不见
@@ -67,31 +67,31 @@ const MAX_ACTIONS_PER_ACTOR: usize = 1;
 /// 8 个条目让"哈希顺序恰好等于排序顺序"的概率降到 1/8!（≈2.5e-5），
 /// 因此任何人删掉 `ordered_grants` 里的那次排序，这条几乎必然失败。
 #[test]
-fn grant_order_is_sorted_by_priority_then_action_bits() {
+fn grant_order_is_sorted_by_priority_then_action_index() {
     let mut world = World::new();
-    let mut winners: HashMap<Entity, (Entity, i32, u64)> = HashMap::new();
-    let mut key_of: HashMap<Entity, (i32, u64)> = HashMap::new();
+    let mut winners: HashMap<Entity, (Entity, i32, u32)> = HashMap::new();
+    let mut key_of: HashMap<Entity, (i32, u32)> = HashMap::new();
 
     for i in 0..8i32 {
         let actor = world.spawn_empty().id();
         let action = world.spawn_empty().id();
-        // 优先级交错（-100 / 0 / 100），bits 反向：插入顺序与目标顺序故意不一致。
+        // 优先级交错（-100 / 0 / 100），index 反向：插入顺序与目标顺序故意不一致。
         let priority = (i % 3) * 100 - 100;
-        let bits = 1000 - i as u64;
-        winners.insert(actor, (action, priority, bits));
-        key_of.insert(actor, (priority, bits));
+        let index = 1000 - i as u32;
+        winners.insert(actor, (action, priority, index));
+        key_of.insert(actor, (priority, index));
     }
 
-    let actual: Vec<(i32, u64)> = ordered_grants(&winners)
+    let actual: Vec<(i32, u32)> = ordered_grants(&winners)
         .iter()
         .map(|(actor, _)| key_of[actor])
         .collect();
-    let mut expected: Vec<(i32, u64)> = key_of.values().copied().collect();
+    let mut expected: Vec<(i32, u32)> = key_of.values().copied().collect();
     expected.sort_unstable();
-    assert_eq!(actual, expected, "授予顺序必须按 (priority, bits) 升序");
+    assert_eq!(actual, expected, "授予顺序必须按 (priority, index) 升序");
 
     // 若本进程的哈希顺序恰好不等于排序结果，再直接断言"不是哈希顺序"。
-    let hash_order: Vec<(i32, u64)> = winners.keys().map(|actor| key_of[actor]).collect();
+    let hash_order: Vec<(i32, u32)> = winners.keys().map(|actor| key_of[actor]).collect();
     if hash_order != expected {
         assert_ne!(actual, hash_order, "授予顺序不得是哈希迭代顺序");
     }
@@ -347,7 +347,7 @@ fn arbitration_picks_higher_priority_and_cleans_up_candidates() {
     assert!(world.get::<Idle>(actor).is_none());
 }
 
-/// 同优先级时按 `action_entity.to_bits()` 升序打破平局（全序，无 RNG）。
+/// 同优先级时按 `action_entity.index_u32()` 升序打破平局（全序，无 RNG）。
 #[test]
 fn arbitration_tie_break_is_deterministic() {
     let (mut world, _player) = poc_world();
@@ -376,15 +376,15 @@ fn arbitration_tie_break_is_deterministic() {
         ))
         .id();
     assert!(
-        first.to_bits() < second.to_bits(),
-        "测试前提：先 spawn 的 bits 更小"
+        first.index_u32() < second.index_u32(),
+        "测试前提：先 spawn 的 index 更小"
     );
 
     let _ = world.run_system_once(action_arbitration_system);
 
     assert!(
         world.get::<ActiveAction>(first).is_some(),
-        "同优先级时 bits 小者胜出"
+        "同优先级时 index 小者胜出"
     );
     assert!(world.get_entity(second).is_err(), "另一个候选必须被清理");
 }
@@ -1065,7 +1065,7 @@ fn player_move_into_monster_declares_attack() {
 #[test]
 fn attack_action_emits_intent_and_damage_resolves_once() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let (mut world, player) = player_move_scene((10, 10));
     let monster = spawn_test_monster(
@@ -1087,7 +1087,7 @@ fn attack_action_emits_intent_and_damage_resolves_once() {
     let _ = world.run_system_once(tick_action_timers_system);
     validate_and_settle(&mut world);
     assert_eq!(
-        world.resource::<Events<AttackIntentEvent>>().len(),
+        world.resource::<Messages<AttackIntentEvent>>().len(),
         1,
         "执行器应当恰好发出一个攻击意图"
     );
@@ -1461,7 +1461,7 @@ fn mount_ready_chase(world: &mut World, monster: Entity) -> Entity {
 #[test]
 fn chase_action_three_outcome_contracts() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let player_tile = (40, 40);
     let monster_tile = (34, 40);
@@ -1483,7 +1483,7 @@ fn chase_action_three_outcome_contracts() {
         let memory_after = world
             .get::<Aggro>(monster)
             .and_then(Aggro::last_known);
-        let intents = world.resource::<Events<AttackIntentEvent>>().len();
+        let intents = world.resource::<Messages<AttackIntentEvent>>().len();
 
         match (sees, memory) {
             (true, _) => {
@@ -1529,7 +1529,7 @@ fn world_run_completion_only(world: &mut World) {
 #[test]
 fn chase_adjacent_visible_declares_attack() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let player_tile = (40, 40);
     let monster_tile = (41, 40);
@@ -1545,7 +1545,7 @@ fn chase_adjacent_visible_declares_attack() {
         "相邻时不得移动（应当原地攻击）"
     );
     assert_eq!(
-        world.resource::<Events<AttackIntentEvent>>().len(),
+        world.resource::<Messages<AttackIntentEvent>>().len(),
         1,
         "相邻且可见时应当发出一个攻击意图"
     );
@@ -1676,7 +1676,7 @@ fn idle_and_failure_are_mutually_exclusive() {
 /// 与 LECS21（查询静默返回空）是同一类问题的两个面。
 ///
 /// 这里的触发方式是「参数依赖的资源不存在」：空世界只塞了地图与占用图，
-/// 没有 `Events<..>`，于是校验器里的 `EventWriter` / `ActionEvents` 拿不到资源。
+/// 没有 `Messages<..>`，于是校验器里的 `MessageWriter` / `ActionMessages` 拿不到资源。
 /// （注意**不要**指望用"组件类型没注册"来触发：未注册的组件在查询里是**静默返回空**，
 /// 那正是 LECS21 记录的那个陷阱，它不会让系统报错。）
 #[test]
@@ -1778,7 +1778,7 @@ fn mount_ready_flee(world: &mut World, monster: Entity) -> Entity {
 #[test]
 fn flee_action_four_outcome_contracts() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let player_tile = (40, 40);
     let monster_tile = (36, 40);
@@ -1797,7 +1797,7 @@ fn flee_action_four_outcome_contracts() {
             "逃跑必须增大与玩家的距离：{monster_tile:?} → {after:?}"
         );
         assert_eq!(
-            world.resource::<Events<AttackIntentEvent>>().len(),
+            world.resource::<Messages<AttackIntentEvent>>().len(),
             0,
             "有路可逃时不得攻击"
         );
@@ -1849,7 +1849,7 @@ fn flee_action_four_outcome_contracts() {
         }
         // 上一个情形可能留下未消费的意图事件；先清空再计数，
         // 否则 `Events::len()` 会把残留算进本情形。
-        world.resource_mut::<Events<AttackIntentEvent>>().update();
+        world.resource_mut::<Messages<AttackIntentEvent>>().update();
         mount_ready_flee(&mut world, monster);
         validate_and_settle(&mut world);
 
@@ -1869,7 +1869,7 @@ fn flee_action_four_outcome_contracts() {
             "情形「被堵{name}」时无处可逃，必须原地不动"
         );
         assert_eq!(
-            world.resource::<Events<AttackIntentEvent>>().len(),
+            world.resource::<Messages<AttackIntentEvent>>().len(),
             expect_intent,
             "情形「被堵{name}」的攻击意图数不符（相邻且可见才反咬）"
         );
@@ -1907,7 +1907,7 @@ fn flee_generation_requires_low_health() {
 
 /// 一次「到期 → 校验 → 落地 → 完成」的往返，返回 action 实体是否已被回收。
 ///
-/// **H1 之后口径已统一**：终态一律经 `ActionEvents::succeed` / `::fail` 结束行动，
+/// **H1 之后口径已统一**：终态一律经 `ActionMessages::succeed` / `::fail` 结束行动，
 /// 那对方法是行动终态的**唯一出口**——同时清 `Ready` 并**恰好**发一个终态事件。
 /// 所以这里可以（也应该）同时断言两件事：
 ///
@@ -1920,7 +1920,7 @@ fn flee_generation_requires_low_health() {
 /// 只跑到点行动自己的那一段（校验 + 落地）+ completion，避免整轮调度把「一步」变成多步。
 fn run_one_action_roundtrip(world: &mut World, action: Entity) {
     use crate::events::{ActionFailedEvent, ActionSucceededEvent};
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let _ = world.run_system_once(tick_action_timers_system);
     assert!(
@@ -1933,16 +1933,16 @@ fn run_one_action_roundtrip(world: &mut World, action: Entity) {
     // 用 `clear()` 而不是 `update()`：`update()` 是**缓冲区轮换**（事件会存活两轮，
     // 且 reader 游标不会回退），在测试里清不干净——真正的"归零"是 `clear()`。
     world
-        .resource_mut::<Events<ActionSucceededEvent>>()
+        .resource_mut::<Messages<ActionSucceededEvent>>()
         .clear();
-    world.resource_mut::<Events<ActionFailedEvent>>().clear();
+    world.resource_mut::<Messages<ActionFailedEvent>>().clear();
 
     // 校验 → 落地：与生产调度同序（`ActionPhase::Validate` + `Execute`）。
     // 五个校验器一起跑是安全的——每个只认领自己那一种行动（过滤器是 `ReadyAction<A>`）。
     validate_and_settle(world);
 
-    let emitted = world.resource::<Events<ActionSucceededEvent>>().len()
-        + world.resource::<Events<ActionFailedEvent>>().len();
+    let emitted = world.resource::<Messages<ActionSucceededEvent>>().len()
+        + world.resource::<Messages<ActionFailedEvent>>().len();
     assert_eq!(
         emitted, 1,
         "每个到期的 action 必须恰好产生一个完成/失败事件"
@@ -2010,7 +2010,7 @@ fn parity_move_scenario() {
 #[test]
 fn parity_basic_attack_scenario() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     let (mut world, player) = player_move_scene((10, 10));
     let monster = spawn_test_monster(
@@ -2022,7 +2022,7 @@ fn parity_basic_attack_scenario() {
     );
     world.entity_mut(monster).insert(ExperienceReward(10.0));
     crate::system::run_settle_systems(&mut world);
-    world.resource_mut::<Events<AttackIntentEvent>>().update();
+    world.resource_mut::<Messages<AttackIntentEvent>>().update();
 
     world.resource_mut::<PlayerActionRequest>().command =
         Some(PlayerCommand::Move { dx: 1, dy: 0 });
@@ -2034,7 +2034,7 @@ fn parity_basic_attack_scenario() {
     let _ = world.run_system_once(tick_action_timers_system);
     validate_and_settle(&mut world);
     assert_eq!(
-        world.resource::<Events<AttackIntentEvent>>().len(),
+        world.resource::<Messages<AttackIntentEvent>>().len(),
         1,
         "攻击执行器必须恰好发一个意图"
     );
@@ -2144,7 +2144,7 @@ fn parity_flee_scenario() {
 #[test]
 fn parity_all_actions_leave_no_residue() {
     use crate::events::AttackIntentEvent;
-    use bevy_ecs::event::Events;
+    use bevy_ecs::message::Messages;
 
     // 每个元素：行动名 + 搭场景并返回 (world, actor, action)。
     type Case = (&'static str, fn() -> (World, Entity, Entity));
@@ -2173,7 +2173,7 @@ fn parity_all_actions_leave_no_residue() {
             1.0,
         );
         crate::system::run_settle_systems(&mut world);
-        world.resource_mut::<Events<AttackIntentEvent>>().update();
+        world.resource_mut::<Messages<AttackIntentEvent>>().update();
         world.resource_mut::<PlayerActionRequest>().command =
             Some(PlayerCommand::Move { dx: 1, dy: 0 });
         let _ = world.run_system_once(player_action_generation_system);
@@ -2314,9 +2314,9 @@ fn action_phases_keep_their_total_order_and_execute_group_is_open() {
         validate_move_system, validate_wander_system,
     };
 
-    fn extension_system(mut probe: ResMut<ActionOrderProbe>, mut events: ActionEvents) {
+    fn extension_system(mut probe: ResMut<ActionOrderProbe>, mut events: ActionMessages) {
         // 这个"扩展执行器"什么都不做，只用自己有没有拿到终态出口来证明
-        // 「往 Execute 组加一行」确实接进了链路（ActionEvents 是落地器的专属参数）。
+        // 「往 Execute 组加一行」确实接进了链路（ActionMessages 是落地器的专属参数）。
         let _ = &mut events;
         probe.execute += 1;
     }
@@ -2443,7 +2443,7 @@ fn movement_chain_coexists_with_settle_systems() {
     //
     // `.before(resolve_attack_system)` 不是装饰：`action_completion_system` 读终态事件，
     // 而 `update_events_system` 在结算末尾交换事件缓冲——**跑在它后面就等于读不到本轮事件**
-    // （事件已被丢弃，`EventReader` 游标也被推过）。这是把 `ambiguity_detection` 提到
+    // （事件已被丢弃，`MessageReader` 游标也被推过）。这是把 `ambiguity_detection` 提到
     // `LogLevel::Error` 之后抓到的第一处隐性顺序依赖：两者访问冲突，但此前没人声明顺序。
     //
     // 同理，校验器/落地器与 `rebuild_occupancy_system` 都写占用图、与 `poison_*` 都写

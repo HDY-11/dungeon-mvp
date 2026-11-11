@@ -154,7 +154,7 @@ pub(crate) type ActionEntryPayload<A> = (Entity, &'static ActionOf, &'static A, 
 
 /// 行动终态的**唯一出口**：执行器只能经它结束一个行动。
 ///
-/// # 为什么把两个 `EventWriter` 藏起来（Phase H1 / ECS35 / ECS36）
+/// # 为什么把两个 `MessageWriter` 藏起来（Phase H1 / ECS35 / ECS36）
 ///
 /// H1 之前，每个执行器手写三件事：`remove::<Ready>()`（只有 `Move` 写了）、
 /// `write(ActionSucceededEvent)`、`write(ActionFailedEvent)`。这带来一个**编译器
@@ -162,22 +162,22 @@ pub(crate) type ActionEntryPayload<A> = (Entity, &'static ActionOf, &'static A, 
 /// `Active`（生成系统被 `Without<Active>` 挡住，不再为它产出候选）→ action 子实体
 /// 永久泄漏，且无任何报错。
 ///
-/// 现在**字段是私有的**：执行器拿不到 `EventWriter`，只能调 [`Self::succeed`] 或
+/// 现在**字段是私有的**：执行器拿不到 `MessageWriter`，只能调 [`Self::succeed`] 或
 /// [`Self::fail`]，两者都**同时**做「清 `Ready`」+「恰好写一个事件」。于是
 /// 「恰好一个终态事件 + `Ready` 被消费」从**约定**变成了**类型层面的保证**。
 ///
 /// 清理放在这里（而不是留给 completion 的 `despawn` 顺带做）还有一层意义：
 /// 它去掉了「`Ready` 清理由谁负责」这一处只有注释兜着的不变式（ECS36）。
 #[derive(SystemParam)]
-pub struct ActionEvents<'w, 's> {
-    succeeded: EventWriter<'w, ActionSucceededEvent>,
-    failed: EventWriter<'w, ActionFailedEvent>,
+pub struct ActionMessages<'w, 's> {
+    succeeded: MessageWriter<'w, ActionSucceededEvent>,
+    failed: MessageWriter<'w, ActionFailedEvent>,
     /// `Commands<'w, 's>` 需要两个生命周期：`'w` 借 `Entities`，`'s` 借延迟命令队列
     /// （bevy 0.16 的 `Commands` 定义即如此，所以本 `SystemParam` 也必须带两个参数）。
     commands: Commands<'w, 's>,
 }
 
-impl ActionEvents<'_, '_> {
+impl ActionMessages<'_, '_> {
     /// 行动成功结束：清 `Ready` + 发 [`ActionSucceededEvent`]（恰好一个）。
     pub fn succeed(&mut self, action: Entity, actor: Entity) {
         self.commands.entity(action).remove::<Ready>();
@@ -233,7 +233,7 @@ fn finish_action(actor_cmd: &mut EntityCommands, succeeded: bool) {
 
 // ── 优先级表（REFACTOR.md §3.5） ──────────────────────
 //
-// 仲裁取**最小** `(ActionPriority, to_bits())`，所以优先级越高 = 数值越小。
+// 仲裁取**最小** `(ActionPriority, index_u32())`，所以优先级越高 = 数值越小。
 // 与 §3.5 一一对应：Flee 200 > Chase 100 > Wander 50 > Wait 0。
 
 pub const PRIORITY_FLEE: i32 = -200;
@@ -247,7 +247,7 @@ pub const PRIORITY_PLAYER: i32 = -1000;
 
 // ── action 实体组件 ──────────────────────────────────
 
-/// 仲裁排序键。**越小越优先**；同值由 `action_entity.to_bits()` 升序打破平局。
+/// 仲裁排序键。**越小越优先**；同值由 `action_entity.index_u32()` 升序打破平局。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ActionPriority(pub i32);
 
@@ -861,8 +861,11 @@ pub fn build_player_mount_schedule() -> Schedule {
 
 /// 每个 actor 至多留下一个 `ActiveAction`，其余候选与落后候选一律 despawn。
 ///
-/// 比较器是 `(ActionPriority, action_entity.to_bits())` 的**全序**：不含随机数。
-/// 同优先级时 entity bits 小者胜出，保证结果可复现（REFACTOR.md §3.4）。
+/// 比较器是 `(ActionPriority, action_entity.index_u32())` 的**全序**：不含随机数。
+/// 同优先级时实体编号小者胜出，保证结果可复现（REFACTOR.md §3.4）。
+///
+/// 注意：bevy 0.20 的 `Entity::to_bits()` 用 NonMax 编码（数值 = u32::MAX − index），
+/// 直接按 bits 排序会把生成顺序反过来，因此这里用 `index_u32()`。
 ///
 /// # 发命令的顺序也必须确定（Phase H11 后的确定性修补）
 ///
@@ -871,8 +874,8 @@ pub fn build_player_mount_schedule() -> Schedule {
 /// 迭代顺序可能不同 → 命令发出顺序不同 → `insert(ActiveAction)` 造成的 **archetype 创建
 /// 顺序**不同 → 之后所有系统对这些 archetype 的**查询迭代顺序**不同 → 若有系统在迭代中
 /// x，随机流的分配就变了。
-/// 回收循环同理：`despawn` 顺序决定实体 id 的复用顺序，进而改变未来的 `to_bits()`，
-/// 而 `to_bits()` 正是仲裁的平局打破键。
+/// 回收循环同理：`despawn` 顺序决定实体 id 的复用顺序，从而影响未来行动的
+/// `index_u32()` 分配顺序（它正是仲裁的平局打破键）。
 ///
 /// 最终**状态**本身与顺序无关（每条命令作用在不同实体上），所以这类洞在单进程内、
 /// 在现有测试里都不会显形——只在跨进程对比同一颗种子时才看得见。
@@ -886,7 +889,7 @@ pub fn action_arbitration_system(
     let busy_actors: HashSet<Entity> = active_actions.iter().map(ActionOf::parent).collect();
 
     // 每个 actor 选一个赢家：(priority, bits) 最小者。
-    let mut winners: HashMap<Entity, (Entity, i32, u64)> = HashMap::new();
+    let mut winners: HashMap<Entity, (Entity, i32, u32)> = HashMap::new();
     let mut losers: Vec<Entity> = Vec::new();
 
     for (action, priority, child_of) in &candidates {
@@ -895,19 +898,19 @@ pub fn action_arbitration_system(
             losers.push(action);
             continue;
         }
-        let bits = action.to_bits();
+        let index = action.index_u32();
         match winners.get(&actor) {
-            Some((_, best_priority, best_bits))
-                if (*best_priority, *best_bits) <= (priority.0, bits) =>
+            Some((_, best_priority, best_index))
+                if (*best_priority, *best_index) <= (priority.0, index) =>
             {
                 losers.push(action);
             }
             Some((previous, ..)) => {
                 losers.push(*previous);
-                winners.insert(actor, (action, priority.0, bits));
+                winners.insert(actor, (action, priority.0, index));
             }
             None => {
-                winners.insert(actor, (action, priority.0, bits));
+                winners.insert(actor, (action, priority.0, index));
             }
         }
     }
@@ -917,24 +920,24 @@ pub fn action_arbitration_system(
         let mut actor_cmd = commands.entity(actor);
         begin_action(&mut actor_cmd);
     }
-    // 回收顺序同样显式化：见函数文档（despawn 顺序影响实体 id 复用 → 影响 `to_bits()`）。
-    losers.sort_unstable_by_key(|action| action.to_bits());
+    // 回收顺序同样显式化：见函数文档（despawn 顺序影响实体 id 复用 → 影响 index_u32 分配）。
+    losers.sort_unstable_by_key(|action| action.index_u32());
     for loser in losers {
         commands.entity(loser).despawn();
     }
 }
 
-/// 授予顺序：按 `(priority, action bits)` **升序**——与仲裁键同序，且与哈希迭代顺序无关。
+/// 授予顺序：按 `(priority, action index)` **升序**——与仲裁键同序，且与哈希迭代顺序无关。
 ///
 /// 抽成独立函数只为一件事：让"顺序规则"能被单测钉住。系统内联排序的话，
 /// "这里要不要排序"就只剩注释在守（而注释不会失败）。
-fn ordered_grants(winners: &HashMap<Entity, (Entity, i32, u64)>) -> Vec<(Entity, Entity)> {
-    let mut grants: Vec<(Entity, Entity, i32, u64)> = winners
+fn ordered_grants(winners: &HashMap<Entity, (Entity, i32, u32)>) -> Vec<(Entity, Entity)> {
+    let mut grants: Vec<(Entity, Entity, i32, u32)> = winners
         .iter()
-        .map(|(actor, (action, priority, bits))| (*actor, *action, *priority, *bits))
+        .map(|(actor, (action, priority, index))| (*actor, *action, *priority, *index))
         .collect();
-    // bits 唯一，所以这是严格全序（`sort_unstable` 的稳定性不构成依赖）。
-    grants.sort_unstable_by_key(|&(_, _, priority, bits)| (priority, bits));
+    // index 唯一，所以这是严格全序（`sort_unstable` 的稳定性不构成依赖）。
+    grants.sort_unstable_by_key(|&(_, _, priority, index)| (priority, index));
     grants
         .into_iter()
         .map(|(actor, action, ..)| (actor, action))
@@ -992,15 +995,15 @@ pub fn tick_action_timers_system(world: &mut World) {
 /// 这是 `ActionSucceeded/FailedEvent` 从零消费者的死事件变成真实状态回转机制的地方
 /// （§3.6.6）；它也是唯一允许写 actor `Idle`/`Failure` 的地方之一。
 ///
-/// H1 之后职责边界更清楚了：**终态出口（[`ActionEvents`]）负责"结束行动"**
+/// H1 之后职责边界更清楚了：**终态出口（[`ActionMessages`]）负责"结束行动"**
 /// （清 `Ready` + 恰好一个事件），**本系统负责"回收并回转 actor"**。
 /// 这里的 `remove::<Ready>()` 因此只剩防御意义（执行器已清过），保留它是为了
 /// 万一有别的路径给 actor 挂了 `Ready`（actor 的 `Ready` 与 action 实体的 `Ready`
 /// 是同一个组件类型）。
 pub fn action_completion_system(
     mut commands: Commands,
-    mut succeeded: EventReader<ActionSucceededEvent>,
-    mut failed: EventReader<ActionFailedEvent>,
+    mut succeeded: MessageReader<ActionSucceededEvent>,
+    mut failed: MessageReader<ActionFailedEvent>,
     actions: Query<(Entity, &ActionOf), With<ActiveAction>>,
 ) {
     let done: Vec<(Entity, bool)> = succeeded

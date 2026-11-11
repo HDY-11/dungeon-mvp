@@ -138,7 +138,7 @@ fn collect_is_empty_without_effects() {
         .expect("玩家必须有 Position")
         .to_tuple();
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
-    let context = system.get_mut(&mut world);
+    let context = system.get_mut(&mut world).unwrap();
     let collected = context.collect(player, position);
     assert!(
         collected.is_empty(),
@@ -161,7 +161,7 @@ fn collect_reads_cell_and_actor_sides_separately() {
         .expect("玩家必须有 Position")
         .to_tuple();
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
-    let collected = system.get_mut(&mut world).collect(player, position);
+    let collected = system.get_mut(&mut world).unwrap().collect(player, position);
 
     assert_eq!(collected.cell.len(), 1, "脚下这一格贡献一条修正");
     assert_eq!(
@@ -199,7 +199,7 @@ fn a_status_effect_entity_contributes_to_the_actor_bucket() {
     world.run_schedule(crate::schedule::CoreSettleSchedule);
 
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
-    let actor_mods = system.get_mut(&mut world).collect_actor(player);
+    let actor_mods = system.get_mut(&mut world).unwrap().collect_actor(player);
 
     assert_eq!(actor_mods.len(), 1, "一条效果实体贡献一条修正");
     assert_eq!(
@@ -218,7 +218,7 @@ fn a_status_effect_entity_contributes_to_the_actor_bucket() {
     world.despawn(buff);
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
     assert!(
-        system.get_mut(&mut world).collect_actor(player).is_empty(),
+        system.get_mut(&mut world).unwrap().collect_actor(player).is_empty(),
         "效果实体一旦消失，加成必须同步消失"
     );
 }
@@ -228,7 +228,7 @@ fn a_status_effect_entity_contributes_to_the_actor_bucket() {
 fn out_of_bounds_cell_is_never_walkable() {
     let (mut world, _player) = player_scene();
     let mut system = bevy_ecs::system::SystemState::<EffectContext>::new(&mut world);
-    let context = system.get_mut(&mut world);
+    let context = system.get_mut(&mut world).unwrap();
     let attributes = context.cell_attributes(crate::map::MAP_WIDTH, 0);
     assert_eq!(attributes, CellAttributes::OUT_OF_BOUNDS);
     assert!(!attributes.walkable);

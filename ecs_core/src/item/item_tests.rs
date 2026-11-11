@@ -16,7 +16,7 @@ use crate::events::{AttackEvent, AttackIntentEvent};
 use crate::map::Tile;
 use crate::rules::{StatId, apply_modifiers};
 use crate::test_util::{fill_map, single_tile_scene, spawn_test_monster};
-use bevy_ecs::event::Events;
+use bevy_ecs::message::Messages;
 use bevy_ecs::system::{RunSystemOnce, SystemState};
 
 // ── 场景脚手架 ───────────────────────────────────────
@@ -95,7 +95,7 @@ fn pack_count(world: &mut World, player: Entity, id: ItemId) -> u32 {
 fn effective(world: &mut World, actor: Entity, stat: StatId, base: f64) -> f64 {
     let mut state = SystemState::<EffectContext>::new(world);
     let mods = {
-        let context = state.get(world);
+        let context = state.get(world).unwrap();
         context.collect_actor(actor)
     };
     apply_modifiers(stat, base, &mods, &[])
@@ -361,7 +361,7 @@ fn trail_boots_still_ignore_the_terrain_bucket() {
 
     let mut state = SystemState::<EffectContext>::new(&mut world);
     let collected = {
-        let context = state.get(&world);
+        let context = state.get(&world).unwrap();
         context.collect(player, (10, 10))
     };
     assert!(
@@ -379,7 +379,7 @@ fn the_weapon_replaces_the_attack_duration() {
     let (mut world, player) = open_world();
     let unarmed = {
         let mut state = SystemState::<EffectContext>::new(&mut world);
-        state.get(&world).main_hand_weapon_speed(player)
+        state.get(&world).unwrap().main_hand_weapon_speed(player)
     };
     assert_eq!(unarmed, None, "空手时用空手基准");
 
@@ -388,7 +388,7 @@ fn the_weapon_replaces_the_attack_duration() {
 
     let hammer = {
         let mut state = SystemState::<EffectContext>::new(&mut world);
-        state.get(&world).main_hand_weapon_speed(player)
+        state.get(&world).unwrap().main_hand_weapon_speed(player)
     };
     assert_eq!(hammer, Some(450.0), "石锤 450ms");
 }
@@ -399,7 +399,7 @@ fn the_weapon_supplies_the_strength_cap() {
     let (mut world, player) = open_world();
     let unarmed = {
         let mut state = SystemState::<EffectContext>::new(&mut world);
-        state.get(&world).main_hand_strength_cap(player)
+        state.get(&world).unwrap().main_hand_strength_cap(player)
     };
     assert_eq!(unarmed, None, "空手没有武器上限，用 balance 的默认值");
 
@@ -408,7 +408,7 @@ fn the_weapon_supplies_the_strength_cap() {
 
     let sword = {
         let mut state = SystemState::<EffectContext>::new(&mut world);
-        state.get(&world).main_hand_strength_cap(player)
+        state.get(&world).unwrap().main_hand_strength_cap(player)
     };
     assert_eq!(sword, Some(6.0), "锈铁剑的力量上限是 6");
 }
@@ -473,13 +473,13 @@ fn equipment_bonus_reaches_the_damage_pipeline() {
     crate::system::run_settle_systems(&mut world);
 
     fn swing(world: &mut World, player: Entity, target: Entity) -> f64 {
-        world.send_event(AttackIntentEvent {
+        world.write_message(AttackIntentEvent {
             attacker: player,
             target,
         });
         let _ = world.run_system_once(crate::system::combat::resolve_attack_system);
         world
-            .resource_mut::<Events<AttackEvent>>()
+            .resource_mut::<Messages<AttackEvent>>()
             .drain()
             .next()
             .expect("必须产生一次攻击事件")

@@ -36,7 +36,7 @@ fn poison_of(world: &World, victim: Entity) -> Vec<(Entity, Poison)> {
 }
 
 fn hit(world: &mut World, attacker: Entity, target: Entity) {
-    world.send_event(AttackEvent {
+    world.write_message(AttackEvent {
         attacker,
         target,
         damage: 3.0,

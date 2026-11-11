@@ -29,7 +29,7 @@
 //! `world/init.rs` 的出生点），`scripts/docs_check.py` 用白名单把这条钉成门禁——
 //! 白名单窄才有意义，所以落地系统不能和大堆生成/仲裁代码躺在同一个文件里。
 
-use crate::action::entity::{ActionEvents, ActiveAction};
+use crate::action::entity::{ActionMessages, ActiveAction};
 use crate::action::validation::{AttackTarget, CastTarget, MoveTarget, ThrowTarget};
 use crate::action::ownership::ActionOf;
 use crate::components::{Position, Ready};
@@ -63,10 +63,10 @@ pub fn settle_action_system(
     actions: Query<ReadyDecision, (With<ActiveAction>, With<Ready>)>,
     mut positions: Query<&mut Position>,
     mut occupancy: ResMut<OccupancyMap>,
-    mut intents: EventWriter<AttackIntentEvent>,
-    mut spells: EventWriter<SpellIntentEvent>,
-    mut throws: EventWriter<ThrowIntentEvent>,
-    mut events: ActionEvents,
+    mut intents: MessageWriter<AttackIntentEvent>,
+    mut spells: MessageWriter<SpellIntentEvent>,
+    mut throws: MessageWriter<ThrowIntentEvent>,
+    mut events: ActionMessages,
 ) {
     for (action, child_of, move_target, attack_target, cast_target, cast_spell, throw_target) in
         &actions

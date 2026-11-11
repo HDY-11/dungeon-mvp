@@ -208,12 +208,12 @@ fn despawn_player_actions(world: &mut World, player: Entity) {
 
 /// 清空六个事件缓冲：跨层的旧事件（上一层的伤害/死亡/终态）不该在新层继续被读。
 fn clear_events(world: &mut World) {
-    world.resource_mut::<Events<AttackIntentEvent>>().clear();
-    world.resource_mut::<Events<AttackEvent>>().clear();
-    world.resource_mut::<Events<DeathEvent>>().clear();
-    world.resource_mut::<Events<LevelUpEvent>>().clear();
-    world.resource_mut::<Events<ActionSucceededEvent>>().clear();
-    world.resource_mut::<Events<ActionFailedEvent>>().clear();
+    world.resource_mut::<Messages<AttackIntentEvent>>().clear();
+    world.resource_mut::<Messages<AttackEvent>>().clear();
+    world.resource_mut::<Messages<DeathEvent>>().clear();
+    world.resource_mut::<Messages<LevelUpEvent>>().clear();
+    world.resource_mut::<Messages<ActionSucceededEvent>>().clear();
+    world.resource_mut::<Messages<ActionFailedEvent>>().clear();
 }
 
 #[cfg(test)]

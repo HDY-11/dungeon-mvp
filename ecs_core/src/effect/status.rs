@@ -79,7 +79,7 @@ impl Poison {
 /// 叠层，改动点就是这里的次数与时长策略）。
 pub fn poison_apply_system(
     mut commands: Commands,
-    mut attacks: EventReader<AttackEvent>,
+    mut attacks: MessageReader<AttackEvent>,
     attackers: Query<&MonsterKindId>,
     victims: Query<(&Health, Option<&OwnedEffects>)>,
     mut poisons: Query<&mut Poison>,

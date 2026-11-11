@@ -38,7 +38,7 @@ type DeathCandidate = (
 pub fn check_death_system(
     mut commands: Commands,
     query: Query<DeathCandidate>,
-    mut death_events: EventWriter<DeathEvent>,
+    mut death_events: MessageWriter<DeathEvent>,
     mut turn_manager: ResMut<TurnManager>,
     mut rng: ResMut<GameRng>,
     mut event_log: ResMut<EventLog>,
