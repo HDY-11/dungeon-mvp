@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon MVP · 实体 / 组件 / 系统关系图</title>
+<style>
+  :root {
+    --bg: #0e1420;
+    --panel: #161e2e;
+    --panel-2: #1c2638;
+    --line: #2b3950;
+    --ink: #e6edf7;
+    --muted: #94a3b8;
+    --dim: #6b7c93;
+    --action: #38bdf8;
+    --combat: #f59e0b;
+    --effect: #a78bfa;
+    --item: #34d399;
+    --data: #60a5fa;
+    --event: #fb7185;
+    --player: #f472b6;
+    --monster: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 36px clamp(16px, 4vw, 56px) 72px;
+    background: radial-gradient(1200px 600px at 20% -10%, #1b2b45 0%, var(--bg) 55%) fixed;
+    color: var(--ink);
+    font: 14px/1.65 "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: .5px; }
+  h2 { margin: 0 0 14px; font-size: 17px; color: #cbd5e1; letter-spacing: .5px; }
+  h2 .no { color: var(--action); margin-right: 8px; font-variant-numeric: tabular-nums; }
+  h3 { margin: 0 0 10px; font-size: 14px; color: #dbe6f5; }
+  p { margin: 8px 0; }
+  small { color: var(--muted); font-size: 12px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 26px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  section {
+    background: linear-gradient(180deg, rgba(255,255,255,.02), transparent 60%);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    margin: 0 0 22px;
+  }
+  .note { color: var(--dim); font-size: 12px; border-left: 2px solid var(--line); padding-left: 10px; margin-top: 12px; }
+  .flow { display: flex; align-items: stretch; flex-wrap: wrap; gap: 10px; }
+  .node {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-width: 130px;
+    flex: 0 0 auto;
+  }
+  .node b { display: block; font-size: 13px; font-weight: 600; }
+  .node small { display: block; margin-top: 2px; line-height: 1.45; }
+  .arrow { color: var(--dim); align-self: center; font-size: 18px; padding: 0 2px; }
+  .k-action { border-top: 2px solid var(--action); }
+  .k-combat { border-top: 2px solid var(--combat); }
+  .k-effect { border-top: 2px solid var(--effect); }
+  .k-item   { border-top: 2px solid var(--item); }
+  .k-data   { border-top: 2px solid var(--data); }
+  .k-event  { border-top: 2px solid var(--event); }
+
+  .phases { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1100px) { .phases { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 680px)  { .phases { grid-template-columns: 1fr; } }
+  .phase {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 150px;
+  }
+  .phase h4 { margin: 0; font-size: 13px; color: var(--action); }
+  .phase .tag { font-size: 11px; color: var(--dim); }
+  .sys {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 11.5px;
+    color: #cbd5e1;
+    background: rgba(148,163,184,.08);
+    border: 1px solid rgba(148,163,184,.12);
+    border-radius: 6px;
+    padding: 2px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sys.fire { color: #fde68a; border-color: rgba(245,158,11,.35); }
+  .payload {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    align-items: center;
+    background: rgba(56,189,248,.06);
+    border: 1px dashed rgba(56,189,248,.35);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .payload .lab { color: var(--action); font-size: 12px; margin-right: 2px; }
+  .chip {
+    display: inline-block;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 11.5px;
+    color: #dbeafe;
+    background: rgba(96,165,250,.12);
+    border: 1px solid rgba(96,165,250,.25);
+    border-radius: 999px;
+    padding: 1px 9px;
+    margin: 2px 4px 2px 0;
+    white-space: nowrap;
+  }
+  .chip.g { color: #d1fae5; background: rgba(52,211,153,.10); border-color: rgba(52,211,153,.28); }
+  .chip.p { color: #fae8ff; background: rgba(167,139,250,.12); border-color: rgba(167,139,250,.3); }
+  .chip.o { color: #ffedd5; background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.28); }
+  .chip.r { color: #ffe4e6; background: rgba(251,113,133,.10); border-color: rgba(251,113,133,.28); }
+  .chip.d { color: var(--dim); background: rgba(148,163,184,.08); border-color: rgba(148,163,184,.16); }
+  .muted { color: var(--muted); }
+
+  .chain { display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row .grp {
+    flex: 0 0 118px;
+    color: var(--dim);
+    font-size: 12px;
+    text-align: right;
+    padding-right: 4px;
+  }
+  @media (max-width: 720px) { .row .grp { flex-basis: 100%; text-align: left; } }
+  .step {
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 11.5px;
+    padding: 4px 9px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: #dbe6f5;
+  }
+  .step.hot { border-color: rgba(245,158,11,.45); color: #fde68a; }
+  .step.eff { border-color: rgba(167,139,250,.4); color: #e9d5ff; }
+  .step.obs { border-color: rgba(56,189,248,.3); color: #bae6fd; }
+  .step.end { border-color: rgba(251,113,133,.5); color: #fecdd3; }
+  .sarrow { color: var(--dim); }
+
+  .entity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .ent {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .ent h3 { display: flex; align-items: center; gap: 8px; }
+  .ent .key { font-size: 11px; color: var(--dim); font-family: "Cascadia Code", Consolas, monospace; }
+  .ent .chips { margin-top: 2px; }
+  .ent.player h3 { color: var(--player); }
+  .ent.monster h3 { color: var(--monster); }
+  .ent.item h3 { color: var(--item); }
+  .ent.action h3 { color: var(--action); }
+  .ent.effect h3 { color: var(--effect); }
+  .ent.other h3 { color: #cbd5e1; }
+
+  .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 { color: var(--data); }
+  .card ul { margin: 6px 0 0; padding-left: 18px; }
+  .card li { margin: 4px 0; font-size: 12.5px; color: #c7d2e5; }
+  .mono { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12.5px; }
+  .kv dt { color: var(--dim); font-family: "Cascadia Code", Consolas, monospace; }
+  .kv dd { margin: 0; color: #c7d2e5; }
+  footer { color: var(--dim); font-size: 12px; text-align: center; margin-top: 28px; line-height: 1.8; }
+  .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:0 8px; font-size:11px; color:var(--muted); margin-left:8px; }
+</style>
+</head>
+<body>
+
+<h1>Dungeon MVP · 实体 / 组件 / 系统 关系图</h1>
+<p class="sub">bevy_ecs 0.16.1 · 数据驱动 · 单一写者 · 事件流水线 &nbsp;—&nbsp; 以 HEAD <span class="mono">2a69176</span> 为准</p>
+<div class="legend">
+  <span><i class="dot" style="background:var(--action)"></i>行动 / 调度</span>
+  <span><i class="dot" style="background:var(--combat)"></i>战斗数值</span>
+  <span><i class="dot" style="background:var(--effect)"></i>效果 / 状态</span>
+  <span><i class="dot" style="background:var(--item)"></i>物品 / 容器</span>
+  <span><i class="dot" style="background:var(--data)"></i>数据注册表</span>
+  <span><i class="dot" style="background:var(--event)"></i>事件 / 资源</span>
+</div>
+
+<section>
+  <h2><span class="no">①</span>一局游戏的循环</h2>
+  <div class="flow">
+    <div class="node k-action"><b>App::handle_input</b><small>sys 33ms 轮询键位<br>→ map_input_event</small></div>
+    <div class="arrow">→</div>
+    <div class="node k-action"><b>UiIntent / PlayerCommand</b><small>背包、查看、退出、移动、<br>施法、投掷、下楼梯</small></div>
+    <div class="arrow">→</div>
+    <div class="node k-action"><b>PlayerMountSchedule</b><small>玩家生成行动<br>+ 仲裁（挂 Active）</small></div>
+    <div class="arrow">→</div>
+    <div class="node k-combat"><b>advance_until_player_acted</b><small>循环推进世界轮：<br><span class="mono">ActionPocSchedule</span> →<br><span class="mono">CoreSettleSchedule</span></small></div>
+    <div class="arrow">→</div>
+    <div class="node k-data"><b>App::refresh</b><small><span class="mono">extract_scene_frame</span><br>→ SceneFrame（契约层）</small></div>
+    <div class="arrow">→</div>
+    <div class="node k-event"><b>tui 渲染</b><small>四栏 / 背包页 / 瞄准页<br>事件栏 · 信息栏</small></div>
+  </div>
+  <p class="note">App 是唯一主循环；<span class="mono">presentation</span> 把输入翻译成意图、把世界抽成 <span class="mono">SceneFrame</span>，<span class="mono">tui</span> 只消费契约、不依赖 <span class="mono">ecs_core</span>。</p>
+</section>
+
+<section>
+  <h2><span class="no">②</span>行动流水线 <span class="pill">ActionPocSchedule · 6 阶段</span></h2>
+  <div class="phases">
+    <div class="phase">
+      <h4>Generate</h4><span class="tag">只 spawn 候选，不写 actor 状态</span>
+      <span class="sys">player_action_generation</span>
+      <span class="sys">wait_generation</span>
+      <span class="sys">chase_generation</span>
+      <span class="sys">wander_generation</span>
+      <span class="sys">flee_generation</span>
+    </div>
+    <div class="phase">
+      <h4>Arbitrate</h4><span class="tag">每个 actor 挑一个候选转正</span>
+      <span class="sys">action_arbitration_system</span>
+      <span class="tag">优先级：Player(-1000) &lt; Flee(-200) &lt; Chase(-100) &lt; Wander(-50) &lt; Wait(0)</span>
+    </div>
+    <div class="phase">
+      <h4>Tick</h4><span class="tag">推进 AV；归零插 <span class="mono">Ready</span></span>
+      <span class="sys">tick_action_timers_system</span>
+      <span class="tag">最小正剩余 AV → 推进 WorldClock.total_av / last_step_av</span>
+    </div>
+    <div class="phase">
+      <h4>Validate</h4><span class="tag">定案 + 占用预留（串行）</span>
+      <span class="sys">validate_move</span>
+      <span class="sys">validate_basic_attack</span>
+      <span class="sys">validate_cast</span>
+      <span class="sys">validate_throw</span>
+      <span class="sys">validate_chase</span>
+      <span class="sys">validate_flee</span>
+      <span class="sys">validate_wander</span>
+    </div>
+    <div class="phase">
+      <h4>Execute</h4><span class="tag">只落地，不再判定</span>
+      <span class="sys fire">settle_action_system</span>
+      <span class="tag">写 MoveTarget → Position；<br>其余目标 → 发意图事件</span>
+    </div>
+    <div class="phase">
+      <h4>Complete</h4><span class="tag">回收行动实体、回 Idle/Failure</span>
+      <span class="sys">action_completion_system</span>
+    </div>
+  </div>
+  <div class="payload">
+    <span class="lab">行动实体上的组件：</span>
+    <span class="chip">ActionOf(actor)</span>
+    <span class="chip">ActionPriority</span>
+    <span class="chip">ActionSource</span>
+    <span class="chip">ActionName</span>
+    <span class="chip">ActionTimer</span>
+    <span class="chip">ActiveAction</span>
+    <span class="chip">Candidate</span>
+    <span class="chip">Ready</span>
+    <span class="muted">载荷：</span>
+    <span class="chip d">Wait</span><span class="chip d">Move</span><span class="chip d">BasicAttack</span><span class="chip d">Chase</span><span class="chip d">Flee</span><span class="chip d">Wander</span><span class="chip d">CastSpell</span><span class="chip d">ThrowAction</span>
+    <span class="muted">定案：</span>
+    <span class="chip">MoveTarget</span><span class="chip">AttackTarget</span><span class="chip">CastTarget</span><span class="chip">ThrowTarget</span>
+  </div>
+  <p class="note">actor 侧的状态只有 <span class="mono">Idle / Active / Failure</span>（加 <span class="mono">ActionTimer</span>）；行动实体由 <span class="mono">ActionOf → ActionChildren</span> 关系挂载，actor 死亡时级联回收。</p>
+</section>
+
+<section>
+  <h2><span class="no">③</span>核心结算链 <span class="pill">CoreSettleSchedule · 20 + 1 系统</span></h2>
+  <div class="chain">
+    <div class="row"><span class="grp">伤害落地</span>
+      <span class="step hot">resolve_attack</span><span class="sarrow">→</span>
+      <span class="step hot">apply_damage</span><span class="sarrow">→</span>
+      <span class="step hot">resolve_spell</span><span class="sarrow">→</span>
+      <span class="step hot">resolve_throw</span><span class="sarrow">→</span>
+      <span class="step hot">consume_thrown_item</span>
+    </div>
+    <div class="row"><span class="grp">效果生命周期</span>
+      <span class="step eff">advance_effect_durations</span><span class="sarrow">→</span>
+      <span class="step eff">poison_tick</span><span class="sarrow">→</span>
+      <span class="step eff">poison_apply</span><span class="sarrow">→</span>
+      <span class="step eff">expire_effects</span>
+    </div>
+    <div class="row"><span class="grp">死亡 / 成长</span>
+      <span class="step hot">check_death</span><span class="sarrow">→</span>
+      <span class="step">apply_exp</span><span class="sarrow">→</span>
+      <span class="step">refresh_vitals</span><span class="sarrow">→</span>
+      <span class="step">mana_regen</span>
+    </div>
+    <div class="row"><span class="grp">观测派生</span>
+      <span class="step obs">fov</span><span class="sarrow">→</span>
+      <span class="step obs">update_map_memory</span><span class="sarrow">→</span>
+      <span class="step obs">update_visible_memory</span><span class="sarrow">→</span>
+      <span class="step obs">rebuild_occupancy</span><span class="sarrow">→</span>
+      <span class="step obs">rebuild_cell_effects</span><span class="sarrow">→</span>
+      <span class="step obs">heal_spring</span>
+    </div>
+    <div class="row"><span class="grp">仇恨 / 收口</span>
+      <span class="step">threat_system</span><span class="sarrow">→</span>
+      <span class="step end">update_events_system</span>
+      <span class="muted" style="font-size:12px">（必须最后：交换事件双缓冲，否则跨轮残留）</span>
+    </div>
+  </div>
+  <p class="note">伤害来源统一走 <span class="mono">DamageTakenEvent</span>：近战 / 法术 / 投掷各发一次，仇恨系统只订阅这一个出口。死亡判定在效果结算之后，保证“被毒死”“被投死”都在本轮收口。</p>
+</section>
+
+<section>
+  <h2><span class="no">④</span>实体种类 → 组件清单</h2>
+  <div class="entity-grid">
+
+    <div class="ent player">
+      <h3>玩家 <span class="key">entity_cls::Player</span></h3>
+      <div class="chips">
+        <span class="chip">Position</span><span class="chip">Blocks</span><span class="chip">Health</span><span class="chip">Mana</span><span class="chip">ManaRegen</span><span class="chip">Level</span><span class="chip">Experience</span><span class="chip">Stats</span><span class="chip">MagicMastery</span><span class="chip">Viewshed</span><span class="chip">EntityName</span><span class="chip">AttackName</span><span class="chip">SpellBook</span><span class="chip g">Container（身体）</span><span class="chip d">CanMove / CanWait / CanBasicAttack</span><span class="chip d">Idle / Active / Failure</span>
+      </div>
+    </div>
+
+    <div class="ent monster">
+      <h3>怪物 <span class="key">entity_cls::Monster</span></h3>
+      <div class="chips">
+        <span class="chip">MonsterKindId</span><span class="chip">Position</span><span class="chip">Blocks</span><span class="chip">Health</span><span class="chip">Level</span><span class="chip">ExperienceReward</span><span class="chip">Stats</span><span class="chip">MagicMastery</span><span class="chip">Viewshed</span><span class="chip">EntityName</span><span class="chip">AttackName</span><span class="chip o">Aggro</span><span class="chip d">Observable</span><span class="chip d">CanChase / CanFlee / CanWander / CanWait / CanBasicAttack</span><span class="chip d">Idle / Active / Failure</span>
+      </div>
+    </div>
+
+    <div class="ent item">
+      <h3>物品实体 <span class="key">item::Item</span></h3>
+      <div class="chips">
+        <span class="chip g">Item { id }</span><span class="chip g">Amount</span><span class="chip g">Equippable</span><span class="chip g">Consumable</span><span class="chip g">Weapon + WeaponProgress</span><span class="chip g">Throw</span><span class="chip g">Modifiers</span><span class="chip g">Behaviors</span><span class="chip g">Container</span><span class="chip d">在地面：GroundItemAt + Observable</span><span class="chip d">在容器/装备中：无 Position</span>
+      </div>
+    </div>
+
+    <div class="ent other">
+      <h3>尸体 / 楼梯 <span class="key">Corpse · Stairs</span></h3>
+      <div class="chips">
+        <span class="chip">Corpse { kind, name }</span><span class="chip g">Container（4 格）</span><span class="chip d">Observable · Position</span><br>
+        <span class="chip">Stairs</span><span class="chip">Position</span>
+      </div>
+    </div>
+
+    <div class="ent action">
+      <h3>行动实体 <span class="key">action::entity</span></h3>
+      <div class="chips">
+        <span class="chip">ActionOf(actor)</span><span class="chip">ActionPriority</span><span class="chip">ActionSource</span><span class="chip">ActionName</span><span class="chip">ActionTimer</span><span class="chip">ActiveAction</span><span class="chip">Candidate</span><span class="chip">Ready</span><span class="chip d">载荷组件（见 ②）</span>
+      </div>
+    </div>
+
+    <div class="ent effect">
+      <h3>效果实体 <span class="key">effect::</span></h3>
+      <div class="chips">
+        <span class="chip p">EffectOf(target)</span><span class="chip p">EffectModifier(Modifier)</span><span class="chip p">Poison</span><span class="chip p">EffectDuration</span><span class="chip d">target 侧：OwnedEffects</span>
+      </div>
+    </div>
+
+    <div class="ent other">
+      <h3>格子效果 <span class="key">effect::cell</span></h3>
+      <div class="chips">
+        <span class="chip">CellEffectAt { x, y }</span><span class="chip">CellMoveCost</span><span class="chip">CellHeal</span><span class="chip d">索引：CellEffects 资源</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">⑤</span>关系、数据、资源与事件</h2>
+  <div class="three">
+
+    <div class="card">
+      <h3>关系组件（归属）</h3>
+      <ul>
+        <li><span class="mono">ActionOf → ActionChildren</span>：行动子实体，<b>linked_spawn 级联</b>（actor 死亡不留行动实体）。</li>
+        <li><span class="mono">EffectOf → OwnedEffects</span>：效果子实体，<b>linked_spawn 级联</b>（效果随载体死亡一起清）。</li>
+        <li><span class="mono">Container.slots: Vec&lt;Option&lt;Entity&gt;&gt;</span>：身体 / 行囊 / 尸体的“持有”，<b>不级联</b>——装备卸下后物品仍在。</li>
+        <li><span class="mono">GroundItemAt</span>：地面物品只标格子，<b>没有 Position</b>，不参与占用图。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>数据注册表 → 装配</h3>
+      <ul>
+        <li><span class="mono">assets/items.json</span>（schema 9）→ <span class="mono">ITEMS</span> → <span class="mono">Item{id}.def()</span>：<b>parts</b> 决定组件；<span class="mono">spawn_item_assembled</span> 是唯一装配桥。</li>
+        <li><span class="mono">assets/spells.json</span>（schema 1）→ <span class="mono">SPELLS</span> → <span class="mono">SpellBook{ known }</span> / <span class="mono">CastSpell{ spell }</span>。</li>
+        <li><span class="mono">MONSTERS</span>（Rust 静态表）→ <span class="mono">MonsterKindId</span> → 模板决定数值、<span class="mono">Ability</span> 列表决定 <span class="mono">Can*</span> 组件、掉落与尸体装备。</li>
+        <li><span class="mono">ContainerDef</span>：<span class="mono">BODY</span>（7 槽）/ <span class="mono">TRAVELER_PACK</span>（12 槽）/ <span class="mono">CORPSE</span>（4 槽）。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>资源与事件</h3>
+      <ul>
+        <li><b>资源</b>：<span class="mono">Map / MapSeed / FloorNumber / GameRng / MapMemory / VisibleMemory / OccupancyMap / CellEffects / EventLog / TurnManager / WorldClock / PlayerSpawn / StairsPos / PlayerActionRequest</span>。</li>
+        <li><b>事件</b>：<span class="mono">AttackIntent → AttackEvent → DamageTaken</span>；<span class="mono">SpellIntent</span>、<span class="mono">ThrowIntent</span>；<span class="mono">Death / LevelUp</span>；<span class="mono">ActionSucceeded / ActionFailed</span>。</li>
+        <li>事件只做“意图/结果”传递，<b>不在事件里改世界</b>；每轮末尾由 <span class="mono">update_events_system</span> 统一交换缓冲。</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<footer>
+  图由架构现状生成 · 对应 DESIGN DsnE11–DsnE29 / DsnA1–DsnA6 · 详细规则见 GAME.md 与各 crate 的 DESIGN.md<br>
+  <span class="mono">ecs_core</span> 是唯一模拟运行时；<span class="mono">presentation</span> 依赖它，<span class="mono">tui</span> 只依赖 <span class="mono">render-api</span>。
+</footer>
+
+</body>
+</html>
