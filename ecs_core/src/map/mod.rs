@@ -4,9 +4,11 @@ use bevy_ecs::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+pub mod layer;
 pub mod map_gen;
 pub mod tile;
 
+pub use layer::{BlockCoord, BlockInfo, Layer};
 pub use map_gen::*;
 // `Tile` / `TileProps` / `TILE_PROPS` 从 `tile` 子模块转出，公共路径 `map::Tile`
 // 与拆分前完全一致（`map/mod.rs` 只留地图相关的类型与 `Map` 本身）。
