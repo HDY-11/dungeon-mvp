@@ -31,12 +31,15 @@
 
 #![forbid(unsafe_code)]
 
+pub mod frontend;
 pub mod keys;
 
 pub mod save;
 
+pub use frontend::{Frontend, TuiFrontend};
 pub use keys::translate_key;
 
+use std::io;
 use std::path::Path;
 
 use bevy_ecs::prelude::World;
@@ -130,24 +133,24 @@ impl App {
     pub fn handle(&mut self, event: InputEvent) -> bool {
         // 存档是集成层能力（DsnE19）：文件 I/O 不属于世界规则，也不进 `presentation`
         // 的键位表。F5 存、F9 读；失败写日志让玩家看见（静默失败 = 玩家以为存上了）。
-        if let InputEvent::Key(key) = &event {
-            if key.is_press() {
-                match key.key {
-                    Key::F(5) => {
-                        let _ = self.save_to(&save::default_path());
-                        return true;
-                    }
-                    Key::F(9) => {
-                        let path = save::default_path();
-                        match self.load_from(&path) {
-                            Ok(()) => {}
-                            Err(error) => save::push_log(&mut self.world, error.describe()),
-                        }
-                        self.refresh();
-                        return true;
-                    }
-                    _ => {}
+        if let InputEvent::Key(key) = &event
+            && key.is_press()
+        {
+            match key.key {
+                Key::F(5) => {
+                    let _ = self.save_to(&save::default_path());
+                    return true;
                 }
+                Key::F(9) => {
+                    let path = save::default_path();
+                    match self.load_from(&path) {
+                        Ok(()) => {}
+                        Err(error) => save::push_log(&mut self.world, error.describe()),
+                    }
+                    self.refresh();
+                    return true;
+                }
+                _ => {}
             }
         }
 
@@ -161,6 +164,41 @@ impl App {
             InputOutcome::Ui(intent) => self.apply_ui(intent),
             InputOutcome::Command(command) => apply_player_command(&mut self.world, command),
         }
+    }
+
+    /// 用前端驱动主循环，直到游戏请求退出（`q` → 确认弹窗 → Enter）。
+    ///
+    /// 这里只串三件事：**收输入 → 推进世界 → 出画面**。输入从哪来、画到哪、
+    /// 多久一帧都属于 [`Frontend`]，所以同一个循环能跑终端、headless 测试与
+    /// 将来的 GPU 前端。前端在退出时（含出错）都会收到一次 `finish`。
+    pub fn run_with<F: Frontend>(&mut self, frontend: &mut F) -> io::Result<()> {
+        let result = self.run_loop(frontend);
+        let finish = frontend.finish();
+        result.and(finish)
+    }
+
+    fn run_loop<F: Frontend>(&mut self, frontend: &mut F) -> io::Result<()> {
+        while !self.wants_quit() {
+            while let Some(event) = frontend.poll_input() {
+                // `handle` 返回"是否推进了世界"；被拒绝的命令（撞墙）不是错误。
+                let _ = self.handle(event);
+                if self.wants_quit() {
+                    break;
+                }
+            }
+            if self.wants_quit() {
+                break;
+            }
+
+            // 后端自己的每帧事务（TUI：排空日志通道）。
+            frontend.pump(self);
+            // 视口可能随 resize 变化（终端每帧重取；headless 前端可固定）。
+            self.set_viewport(frontend.viewport());
+            let frame = self.refresh();
+            frontend.draw(frame)?;
+            frontend.wait();
+        }
+        Ok(())
     }
 
     /// 存档到 `path`（F5）。成功/失败都会写一条世界日志。

@@ -70,10 +70,10 @@ impl Log for FileLogger {
             line: record.line(),
         };
 
-        if let Ok(sender) = self.sender.lock() {
-            if let Some(sender) = sender.as_ref() {
-                let _ = sender.send(record_for_ui.clone());
-            }
+        if let Ok(sender) = self.sender.lock()
+            && let Some(sender) = sender.as_ref()
+        {
+            let _ = sender.send(record_for_ui.clone());
         }
 
         let Ok(mut guard) = self.file.lock() else {

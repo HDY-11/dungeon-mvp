@@ -23,7 +23,7 @@
 | 主题 | 条目 |
 |---|---|
 | 分层与边界 | DsnX1 · DsnX2 · DsnX13 · DsnX15 |
-| 渲染契约 | DsnX14 |
+| 渲染契约 | DsnX14 · DsnX19 |
 | 数据与存档 | DsnX10 · DsnX17 |
 | 物品 / 装备 / 技能 / 合成（多为未迁移；投掷已迁移为 DsnE28） | DsnX3 · DsnX4 · DsnX5 · DsnX6 · DsnX7 · DsnX8 · DsnX9 · DsnX12 |
 | 流程与文档 | DsnX11 · DsnX16 |
@@ -533,7 +533,8 @@ Last        : TUI draw / GPU sync
 - **R2** 已完成：页栈的 `Look` / `Dialog` / `Inventory`（DsnA5）/ `ThrowAim`（DsnE28）
   均已落地；`ThrowSelect` 只作为 `PageKind/UiView` 的占位变体保留（当前流程不进入，
   `t` 直接进瞄准页并在需要时从行囊自动装填）；输入路由在 `input`（tap-tap 预览未迁移）；
-- **R3**：`bevy_app` 尚未引入（网络阻塞已消失，待做）；`TuiPlugin` 已按插件形状收敛
+- **R3**：`bevy_app` 尚未引入（网络阻塞已消失，待做）；主循环已先从 `main.rs` 抽到
+  `App::run_with` + `Frontend` 接缝（见 DsnX19），`TuiPlugin` 已按插件形状收敛
   （`tui/src/plugin.rs`），补 `impl Plugin` 时调用点不变；
 - **R4/R5**：GPU 后端与旧 crate 清理待续。
 
@@ -800,4 +801,34 @@ action 实体与技能实例都是瞬态子实体；存档只存 actor 状态/�
 
 **状态：** 已定（长期维护）。**换道先改这张表，再改代码。**
 <!-- &/DsnX18 -->
+
+---
+
+<!-- &DsnX19  前端语义接缝：App::run_with + Frontend trait；main.rs 只剩 sys 生命周期 -->
+### DsnX19 前端语义接缝：主循环归 `App`，后端实现 `Frontend`
+
+**决策**
+
+`dungeon-app::App` 持有主循环（`run_with`），前端只实现 `Frontend`：`poll_input` 产出后端无关的 `InputEvent`，`viewport` 给相机视口（不是整窗），`draw` 只收 `SceneFrame`，`pump` 是每帧钩子（TUI 用来排空日志通道），`wait` 决定帧节奏，`finish` 在退出时恢复前端自己的状态。`main.rs` 退化为 `sys` 生命周期（日志 / raw mode / alternate screen）+ 构造前端与 `App` + 运行。
+
+`TuiFrontend` 放在 `dungeon-app` 内，而不是 `tui`：`tui` 只负责 `SceneFrame → ratatui` 的后端渲染（`TuiPlugin`）；若让 `tui` 实现 `Frontend`，它就要依赖 `dungeon-app`（`App` 类型），破坏「后端不依赖集成层」的边界。`Frontend` 与 `App` 同 crate，渲染后端仍留在 `tui`。
+
+**背景与被否方案**
+
+- 被否：终端与主循环继续留在 `main.rs`（旧状）。bin 目标不能被集成测试导入，"主循环接线"只能人工跑一遍；抽出后 `tests/frontend_loop_test.rs` 用脚本前端 headless 断言：循环按输入转帧、视口同步到 `App`、确认退出后收口、`draw` 错误向上冒泡。
+- 被否：立刻引入 `bevy_app` + `ScheduleRunner`（DsnX14 R3 原计划）。当前没有 `bevy_app` 依赖，迁移成本大于收益；`run_with` 与插件宿主不冲突——将来宿主可以承载同一接缝，或把循环交给 `ScheduleRunner`。
+- 被否：`TuiFrontend` 放 `tui`。依赖方向反了（见上），且终端生命周期归 `sys` 的生命周期、不属于后端渲染。
+- 被否：让前端直接消费 `World` / `PageStack`。`draw` 只收 `SceneFrame`，保持 DsnX14 的只读契约；`pump` 的 `&mut App` 仅作后端帧事务，不得用来读游戏状态做渲染。
+
+**代价**
+
+- 主循环移入 lib 后，`main.rs` 里"终端恢复"不再显式可见；退出路径靠 `finish` + `sys` 的 shutdown 顺序，必须由测试覆盖 `draw` 出错分支。
+- `pump(&mut App)` 是一条绕过 `SceneFrame` 的后端→世界耦合；当前只有调试日志用。将来若前端需要更多帧钩子，应优先把数据放进 `SceneFrame`，而不是扩 `pump`。
+- headless 测试的"一帧一输入"只是测试节奏；真实 TUI 会在一次迭代里排空按键队列。测试不应把排空语义写死（`Frontend` 的契约只要求"反复 poll 到 None"）。
+- `wait` / `viewport` 的语义仍属前端：两个后端可能对帧率和视口给出不同答案；布局与相机的唯一权威仍在 `presentation` / `tui::map_viewport`。
+
+**状态：** 已定 — 已落地（`src/frontend.rs`、`App::run_with`、`tests/frontend_loop_test.rs`）。`bevy_app` 宿主仍属 DsnX14 R3。
+
+**关联：** DsnX14（渲染契约与后端插件化）/ DsnE19（存档 I/O 在装配层）/ DsnX13（业务只在 `ecs_core`）/ README 架构章节。
+<!-- &/DsnX19 -->
 

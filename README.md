@@ -55,7 +55,7 @@ ecs_core ──> presentation ──> render-api <── tui（未来还有 gpu�
 | `presentation` | 唯一认识 `ecs_core` 的集成层：世界 → `SceneFrame`、相机、页栈、输入映射 | ratatui / crossterm |
 | `render-api` | 后端无关的只读契约：`SceneFrame` / `VisualKey` / `UiView` / `InputEvent` | `ecs_core` |
 | `tui` | TUI 后端：`VisualKey` → glyph/颜色，`SceneFrame` → ratatui | `ecs_core` / `presentation` |
-| `dungeon-app`（根） | 装配：`App` + 主循环 + 平台键位翻译 | 业务实现 |
+| `dungeon-app`（根） | 装配：`App` + `Frontend` 接缝（`App::run_with` 主循环）+ 平台键位翻译 | 业务实现 |
 
 三条边界由 `scripts/gate.ps1` 用 `cargo tree` 强制（违反即门禁 FAIL）。
 

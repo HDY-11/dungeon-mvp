@@ -106,9 +106,9 @@ fn play_one(seed: u64, max_turns: usize, trace: bool) {
 
     println!("=== seed {seed} ===");
     println!(
-        "开局：楼层 {} / 地图 {} / 怪物 {} 只 / 泥潭 {mud_cells} 格 / 地面物品 {items_start} 件 / 楼梯 {:?}",
+        "开局：楼层 {} / 地图 {:?} / 怪物 {} 只 / 泥潭 {mud_cells} 格 / 地面物品 {items_start} 件 / 楼梯 {:?}",
         world.resource::<ecs_core::FloorNumber>().0,
-        format!("{:?}", ecs_core::map_kind_for(seed, 1)),
+        ecs_core::map_kind_for(seed, 1),
         monsters_at_start,
         stair,
     );
