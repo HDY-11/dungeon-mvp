@@ -1960,6 +1960,9 @@ DsnE25（MP 回复）· DsnA4（信息栏排序归 presentation）· Gm2 / Gm4 /
 `Modifiers`/`Behaviors`/`Container`，`ItemKind` 退役）→ ④ 读取点迁移（`effect/collect`、
 `combat`、`item/actions`、`save`、`presentation`）→ ⑤ 耐久全链路删除、存档 V5、文档同步。
 测试夹具统一走唯一装配桥（直接 `spawn((Item, Amount))` 会缺组件，装备/使用路由失效）。
+**2026-11-11 补：** bevy 0.20 起 `Weapon` 用 `#[require(WeaponProgress)]` 把「武器实体必带
+进度」升级为类型级结构约束，装配桥不再手插 `WeaponProgress`（新增测试
+`weapon_requires_its_progress_component` 守卫）。
 **验收：** `cargo test -p ecs_core` 336 passed；workspace 29 目标 625 passed / 1 ignored；
 四 crate clippy 干净；`docs_check` PASS；`gate.ps1` 10/10；soak 6 种子「异常：无」；
 逐条对照本条目决策清单确认完成。

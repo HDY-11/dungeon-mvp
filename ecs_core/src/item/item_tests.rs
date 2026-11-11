@@ -714,6 +714,27 @@ fn weapons_are_assembled_at_level_one_with_no_experience() {
     );
 }
 
+/// `Weapon` 的 required component：绕过装配桥直接插 `Weapon` 也会自动带进度。
+///
+/// 这保证的是「武器实体一定带 `WeaponProgress`」属于**类型层面**的结构约束，
+/// 而不是只有装配桥记得插。
+#[test]
+fn weapon_requires_its_progress_component() {
+    let mut world = World::new();
+    let spec = ItemId(0).def().weapon().expect("锈铁剑有武器部件");
+    let weapon = world
+        .spawn(Weapon {
+            speed_ms: spec.speed_ms,
+            strength_cap: spec.strength_cap,
+            growth: spec.growth,
+        })
+        .id();
+    let progress = *world
+        .get::<WeaponProgress>(weapon)
+        .expect("插入 Weapon 必须自动带 WeaponProgress（required component）");
+    assert_eq!((progress.level, progress.exp), (1, 0.0));
+}
+
 #[test]
 fn weapon_experience_levels_up_across_the_curved_threshold_and_caps() {
     let growth = ItemId(0)

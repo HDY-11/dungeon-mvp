@@ -109,3 +109,12 @@
 - 编译：`cargo check --workspace --all-targets` **0 error / 0 warning**。
 - 测试：`cargo test -p ecs_core --lib` **367 passed**；workspace **29 目标 660 passed / 0 failed / 1 ignored**；四 crate clippy `-D warnings` 全绿。
 - 依赖：`bevy_ecs = { version = "0.20.1", default-features = false, features = ["std"] }`，`bevy_reflect` 不再进树；`archive/*` 四个旧 crate 仍钉 0.16（后续可移出 workspace 去掉双版本编译）。
+
+## 10. 迁移后补采用（2026-11-11）
+
+迁移提交后，把两处「只修编译错误、没用上新版能力」的地方补上：
+
+- `ecs_core/src/schedule.rs`：4 个 `ScheduleLabel` 手写 impl（每个只剩 `dyn_clone`）换成 `#[derive(ScheduleLabel)]`——0.20 的 `bevy_ecs_macros` 提供该 derive（经 `bevy_ecs::schedule` 重导出）。
+- `ecs_core/src/item/mod.rs`：`Weapon` 组件加 `#[require(WeaponProgress)]`，装配桥不再手插 `WeaponProgress`；新增测试 `weapon_requires_its_progress_component` 钉住「插 `Weapon` 必带 1 级 0 经验的进度」。
+
+验证：`cargo test --workspace` **30 目标 663 passed / 1 ignored**（ecs_core 368）；行为不变，仅结构保证与样板减少。

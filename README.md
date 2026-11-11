@@ -128,7 +128,7 @@ terrain-forge/  地图生成 git submodule
 
 ## 验证与数字
 
-- 测试：`30 个测试目标 / 662 passed / 1 ignored`（每次发布前以 `cargo test --workspace` 实测为准）。
+- 测试：`30 个测试目标 / 663 passed / 1 ignored`（每次发布前以 `cargo test --workspace` 实测为准）。
 - 门禁：`scripts/gate.ps1` **10/10 PASS**（含六 crate clippy `-D warnings`、依赖边界、`docs_check`）。
 - 长跑：`playthrough` 6 个种子，异常：无；覆盖到达 1–4 层。
 - 版本：`bevy_ecs 0.20.1`（`default-features = false, features = ["std"]`）；`ratatui 0.30`；`crossterm 0.29`；edition 2024。

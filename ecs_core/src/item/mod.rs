@@ -151,6 +151,7 @@ pub struct Consumable;
 /// 攻速、力量上限、成长曲线都是**蓝图数据**；实例只额外挂 [`WeaponProgress`]
 /// （等级与经验这类玩家造成的差异）。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[require(WeaponProgress)]
 pub struct Weapon {
     /// 每一击的基础耗时（毫秒）；`AV = 它 ÷ 攻击速度`。
     pub speed_ms: f64,
@@ -259,14 +260,12 @@ impl ItemSpawner for Commands<'_, '_> {
             self.entity(entity).insert(Consumable);
         }
         if let Some(spec) = def.weapon() {
-            self.entity(entity).insert((
-                Weapon {
-                    speed_ms: spec.speed_ms,
-                    strength_cap: spec.strength_cap,
-                    growth: spec.growth,
-                },
-                WeaponProgress::new(),
-            ));
+            // `#[require(WeaponProgress)]`：进度随 `Weapon` 一起自动插入（1 级 0 经验）。
+            self.entity(entity).insert(Weapon {
+                speed_ms: spec.speed_ms,
+                strength_cap: spec.strength_cap,
+                growth: spec.growth,
+            });
         }
         if let Some(spec) = def.throw_spec() {
             self.entity(entity).insert(Throw {
@@ -300,14 +299,12 @@ impl ItemSpawner for World {
             self.entity_mut(entity).insert(Consumable);
         }
         if let Some(spec) = def.weapon() {
-            self.entity_mut(entity).insert((
-                Weapon {
-                    speed_ms: spec.speed_ms,
-                    strength_cap: spec.strength_cap,
-                    growth: spec.growth,
-                },
-                WeaponProgress::new(),
-            ));
+            // 同 `Commands` 实现：进度由 required component 自动补齐。
+            self.entity_mut(entity).insert(Weapon {
+                speed_ms: spec.speed_ms,
+                strength_cap: spec.strength_cap,
+                growth: spec.growth,
+            });
         }
         if let Some(spec) = def.throw_spec() {
             self.entity_mut(entity).insert(Throw {
