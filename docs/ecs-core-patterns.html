@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ecs_core 设计模式地图</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1f2430; --muted: #5d6576;
+    --line: #dfe3ea; --accent: #2f6fdb; --green: #1f8a4c; --amber: #b26a00; --red: #b3261e;
+    --green-bg: #e8f6ee; --amber-bg: #fdf3e1; --red-bg: #fdeceb;
+    --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.65 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 40px 24px 80px; }
+  header h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: .5px; }
+  header p { color: var(--muted); margin: 0 0 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 12px; font-size: 13px; color: var(--muted); }
+  .chip b { color: var(--ink); }
+  h2 { font-size: 21px; margin: 42px 0 6px; padding-bottom: 8px; border-bottom: 2px solid var(--line); }
+  h2 .num { color: var(--accent); font-weight: 600; margin-right: 8px; }
+  h3 { font-size: 16px; margin: 22px 0 10px; color: #333a49; }
+  .lead { color: var(--muted); margin: 6px 0 18px; }
+  /* flow strip */
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 18px 0 6px; }
+  .step { flex: 1 1 130px; background: var(--panel); border: 1px solid var(--line);
+    border-top: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; min-width: 120px; }
+  .step b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .step span { font-size: 12px; color: var(--muted); }
+  .arrow { align-self: center; color: #aab2c0; font-size: 18px; }
+  /* cards */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; box-shadow: 0 1px 2px rgba(20,30,50,.04); }
+  .card h4 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+  .b-ok { color: var(--green); border-color: #b9e3c9; background: var(--green-bg); }
+  .b-note { color: var(--amber); border-color: #eed6a8; background: var(--amber-bg); }
+  .b-risk { color: var(--red); border-color: #f0c0bc; background: var(--red-bg); }
+  .sub { color: var(--muted); font-size: 13px; margin: 2px 0 8px; }
+  .card ul { margin: 6px 0 0; padding-left: 18px; }
+  .card li { margin: 3px 0; font-size: 13.5px; }
+  .ref { font-family: var(--mono); font-size: 12px; color: #3d4a63; background: #f1f4f9;
+    border: 1px solid #e3e8f1; border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
+  .kv { display: grid; grid-template-columns: 84px 1fr; gap: 4px 10px; font-size: 13.5px; margin-top: 8px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+  /* table */
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #eef2f7; font-weight: 600; color: #333a49; }
+  tr:last-child td { border-bottom: none; }
+  /* callout */
+  .callout { background: #eef4ff; border: 1px solid #cfdefa; border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--amber-bg); border-color: #eed6a8; border-left-color: var(--amber); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+  footer { margin-top: 50px; padding-top: 16px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 12.5px; }
+  code { font-family: var(--mono); font-size: 12.5px; }
+  @media print { body { background: #fff; } .card { box-shadow: none; } }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>ecs_core 设计模式地图</h1>
+  <p>不是按 GoF 硬套，而是把仓库里<strong>反复出现、承担明确职责</strong>的组织手法识别出来，标注它们的变体、代表实现与风险。</p>
+  <div class="chips">
+    <span class="chip">基线 <b>00d91f1</b></span>
+    <span class="chip">非测试源码 <b>≈12.4k 行</b></span>
+    <span class="chip">Component derive <b>70</b></span>
+    <span class="chip">消息类型 <b>9</b></span>
+    <span class="chip">SystemParam 聚合 <b>10</b></span>
+    <span class="chip">校验器 <b>7</b></span>
+    <span class="chip">调度标签 <b>4</b></span>
+    <span class="chip">结算链 <b>20 步</b></span>
+    <span class="chip">pub trait <b>1</b>（ItemSpawner）</span>
+  </div>
+  <div class="legend">
+    <span>健康度：</span>
+    <span class="badge b-ok">清晰</span>
+    <span class="badge b-note">可接受但有代价</span>
+    <span class="badge b-risk">需要处理</span>
+  </div>
+</header>
+
+<h2><span class="num">1</span>主链路：一局游戏里模式在哪里出现</h2>
+<p class="lead">一帧的骨架是「命令 → 行动实体 → 六阶段流水线 → 落地事件 → 结算链 → 场景帧」。大部分模式都挂在这条线上。</p>
+
+<div class="flow">
+  <div class="step"><b>输入</b><span>Key → PlayerCommand<br><code>presentation/input</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>生成</b><span>命令/环境 → 行动实体<br><code>action/entity.rs</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>仲裁</b><span>优先级 + 预算<br><code>Reservation</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>计时</b><span>ActionTimer / AV<br><code>tick_action_timers</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>校验</b><span>7 个策略各定案<br><code>validation.rs</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>落地</b><span>唯一写 Position / 发意图<br><code>settle.rs</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>结算</b><span>20 步核心链<br><code>system/mod.rs</code></span></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>输出</b><span>SceneFrame → 前端<br><code>render-api</code></span></div>
+</div>
+
+<h2><span class="num">2</span>模式清单（按职责分组）</h2>
+
+<h3>A. 组织与数据：内容怎么写进世界</h3>
+<div class="grid">
+
+  <div class="card">
+    <h4>注册表 Registry / Table Module <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">静态数据表 + 启动期校验，是全部内容定义的源头。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>JSON 内嵌 + <code>LazyLock</code>（物品、法术）；编译期静态表（属性词表、地块属性、怪物卡、容器布局）。</dd>
+      <dt>代表</dt><dd><span class="ref">item/registry.rs:78-83</span> ITEMS / <span class="ref">spell/mod.rs:42-47</span> SPELLS / <span class="ref">rules/stat.rs:151</span> STATS</dd>
+    </dl>
+    <ul>
+      <li>好处：内容与代码分离、加载失败即启动失败、可反查名字。</li>
+      <li>代价：改数据要重编译；schema 版本需要手动维护。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>蓝图 + 装配器 Prototype / Factory <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">蓝图只描述数据，进世界时由唯一装配桥转成运行时组件，避免"两处真源"。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>物品实体装配（<code>spawn_item_assembled</code>）；<code>ItemSpawner</code> 同时适配 <code>Commands</code> 与 <code>&amp;mut World</code>（适配器）。</dd>
+      <dt>代表</dt><dd><span class="ref">item/mod.rs:242</span> trait ItemSpawner / <span class="ref">item/mod.rs</span> spawn_item_assembled</dd>
+    </dl>
+    <ul>
+      <li>好处：组件形状集中一处；测试/读档走同一条装配路径。</li>
+      <li>代价：装配桥是强耦合点，新增部件要同时改数据与装配。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>词表 + 解释器 Vocabulary / Interpreter <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">用数值 id + 算子表达"任意属性修正"，而不是给每个属性加字段。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd><code>StatId</code> 词表 + <code>ModifierOp</code> 三算子；<code>SpellEffect</code>、<code>BehaviorEffect</code> 两个效果词表；<code>ItemPart</code> 部件词表。</dd>
+      <dt>代表</dt><dd><span class="ref">rules/stat.rs</span> / <span class="ref">rules/modifier.rs</span> / <span class="ref">item/registry.rs</span> ItemPart</dd>
+    </dl>
+    <ul>
+      <li>好处：新增属性/部件不需要改公式代码；解释器（折叠函数）集中。</li>
+      <li>代价：id 是弱类型，错配只有加载期或测试能发现；文档必须维护词表。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>关系组件 Relationship <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub">所有权/归属用 ECS 关系表达，清理由 <code>linked_spawn</code> 或系统负责。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>行动实体 → actor（<code>ActionOf</code>/<code>ActionChildren</code>，级联）；效果 → 宿主（<code>EffectOf</code>/<code>OwnedEffects</code>，级联）；槽位容器（<code>Container.slots</code>，数组、不级联）。</dd>
+      <dt>代表</dt><dd><span class="ref">action/ownership.rs</span> / <span class="ref">effect/ownership.rs</span> / <span class="ref">item/container.rs</span></dd>
+    </dl>
+    <ul>
+      <li>好处：查询"某 actor 名下"天然可表达；级联清理不用手写两遍。</li>
+      <li>代价：容器用数组不走关系，所有权语义分裂成两种；跨关系查询仍是手写遍历。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3>B. 调度：一轮里谁先谁后</h3>
+<div class="grid">
+
+  <div class="card">
+    <h4>阶段化流水线 Pipeline <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">行动生命周期被固定成六段，扩展点是"插一个生成器/校验器"，不是改主函数。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>行动六阶段（Generate → Arbitrate → Tick → Validate → Execute → Complete）；核心结算链 20 步 <code>.chain()</code>；初始化链。</dd>
+      <dt>代表</dt><dd><span class="ref">action/entity.rs</span> ActionPhase / <span class="ref">system/mod.rs</span> build_core_schedule / <span class="ref">schedule.rs</span> 4 个 ScheduleLabel</dd>
+    </dl>
+    <ul>
+      <li>好处：顺序是类型化契约（SystemSet）；每段职责单一。</li>
+      <li>代价：段间大量 <code>ApplyDeferred</code>，隐式时序要靠注释维持；20 步链已触到 bevy 元组上限。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>仲裁器 + 预算 Arbiter / Budget <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">同一 actor 一轮只执行一个行动，选择靠优先级全序；移动预算靠预占。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>优先级排序（同优先级按实体 index 平局）；<code>Reservation::probe / claim / step</code> 三态（试算不污染、成功才预占）。</dd>
+      <dt>代表</dt><dd><span class="ref">action/entity.rs</span> 优先级常量 / <span class="ref">action/validation.rs</span> Reservation</dd>
+    </dl>
+    <ul>
+      <li>好处：确定性；"边试边预留"曾导致寻路污染，probe/claim 拆分是教训沉淀。</li>
+      <li>代价：probe 与 claim 必须保持同一判定逻辑，否则出现"能走但没占到"的缝隙。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>决策与执行分离 Decide / Execute <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">校验器只做"定案"，落地器只做"执行"；两者通过目标组件 + 意图事件连接。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd><code>Decision::{Move,Attack,Cast,Throw,Stay}</code>；意图事件三种（攻击/施法/投掷）再由结算系统消费。</dd>
+      <dt>代表</dt><dd><span class="ref">action/validation.rs</span> apply_decision / <span class="ref">action/settle.rs</span> / <span class="ref">events.rs</span></dd>
+    </dl>
+    <ul>
+      <li>好处：规则可单测；落地只有一个写 Position 的系统；"动作不同"没有长成 switch。</li>
+      <li>代价：一次行动要跨两文件才能读懂；意图事件和消息缓冲需要同时更新。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>延迟命令 + 双缓冲消息 Deferred / Double buffer <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub">世界结构变化统一推迟；事件用 Message 双缓冲，轮末统一 update。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd><code>Commands</code> + <code>ApplyDeferred</code>；<code>CoreEventBuffers</code> 包 9 路事件，<code>update_events_system</code> 收口。</dd>
+      <dt>代表</dt><dd><span class="ref">system/mod.rs:53</span> update_events_system / <span class="ref">action/entity.rs</span> 调度段间 ApplyDeferred</dd>
+    </dl>
+    <ul>
+      <li>好处：系统顺序无关结构变化；事件不会跨轮残留。</li>
+      <li>代价：新增事件类型必须同时改缓冲结构、update 与注册三处，漏一处就是跨轮幽灵事件。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3>C. 行为与生命周期：谁代表一次行动/一个效果</h3>
+<div class="grid">
+
+  <div class="card">
+    <h4>行动即实体 Action as Entity <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">一次行动是 actor 名下的瞬态实体，载荷组件说明"是什么行动"，完成后整棵子树回收。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>玩家/追/逃/游荡/等待五种生成器；载荷 Wait/Move/BasicAttack/Chase/Flee/Wander/CastSpell/ThrowAction；候选-激活（Candidate/ActiveAction/Ready）。</dd>
+      <dt>代表</dt><dd><span class="ref">action/entity.rs</span> / <span class="ref">action/ownership.rs:26</span></dd>
+    </dl>
+    <ul>
+      <li>好处：行动可查询、可中断、可级联清理；AI 与玩家共用一条链。</li>
+      <li>代价：实体数增长（每行动一个实体）；调试要看两级实体。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>效果即实体 Effect as Entity <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">中毒/治疗泉/buff 不是字段，是带宿主关系的实体，生命周期由效果系统所有。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>宿主效果（<code>EffectOf</code> 级联）；格子效果（<code>CellEffectAt</code> + 格索引，不挂宿主）。</dd>
+      <dt>代表</dt><dd><span class="ref">effect/status.rs</span> Poison / <span class="ref">effect/cell.rs</span> CellEffectAt</dd>
+    </dl>
+    <ul>
+      <li>好处：不同效果的可视化/日志/清理统一；buffer 效果有落点。</li>
+      <li>代价：死亡/转移要保证级联语义；格子效果另走索引，双轨。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>单一写者 + 统一出口 Single Writer / Funnel <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">同一状态只有一个系统能写；跨类型伤害只有一个事件出口。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>位置只由 settle 写；生命/法力上限只由 <code>apply_maxima</code> 写；伤害出经由 <code>DamageTakenEvent</code> 收口（近战/法术/投掷都发）。</dd>
+      <dt>代表</dt><dd><span class="ref">action/settle.rs</span> / <span class="ref">rules/vitals.rs</span> / <span class="ref">events.rs:33</span> DamageTakenEvent</dd>
+    </dl>
+    <ul>
+      <li>好处：改一处不会出现两条赋值路径；仇恨/武器经验等消费方只订阅一个事件。</li>
+      <li>代价：出口成为热点文件，新增伤害类型要记得接入。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3>D. 规则、时间与能力门控</h3>
+<div class="grid">
+
+  <div class="card">
+    <h4>策略族校验器 Strategy Validators <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">每种行动一个独立校验系统，按 ActionKind 过滤；新增行动 = 新增一个策略 + 一行调度。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>7 个校验器：move / chase / flee / wander / basic_attack / cast / throw；共享 <code>Reservation</code> 与失败语义。</dd>
+      <dt>代表</dt><dd><span class="ref">action/validation.rs:181-589</span></dd>
+    </dl>
+    <ul>
+      <li>好处：策略之间零依赖；可单独测；"同轮只定一个"由调度保证。</li>
+      <li>代价：校验器之间共享状态（占位预算）是隐式耦合。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>通用时长 Timer / Expiry <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">效果时长不各自为政：统一 <code>EffectDuration</code> 推进、统一到期回收。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>效果时长（effect 实体）；行动计时（ActionTimer，tick 推进）；两者都读 <code>WorldClock.last_step_av</code>。</dd>
+      <dt>代表</dt><dd><span class="ref">effect/duration.rs</span> / <span class="ref">action/entity.rs</span> tick_action_timers_system</dd>
+    </dl>
+    <ul>
+      <li>好处：中毒迁移后"谁负责回收"只有一处答案。</li>
+      <li>代价：tick 语义（跨多点结算）藏在消费者里，时长组件本身不结算。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>标记组件作能力门控 Marker as Capability <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub">AI 能力用零大小组件门控查询（<code>CanChase</code> 等），模板只描述列表。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd><code>CanMove/CanChase/CanFlee/CanWander/CanBasicAttack/CanWait</code>；<code>Observable</code> 显式标记信息栏候选；<code>Player/Monster/Blocks</code> 身份/过滤。</dd>
+      <dt>代表</dt><dd><span class="ref">components.rs</span> / <span class="ref">monster/spawn.rs</span> attach_abilities</dd>
+    </dl>
+    <ul>
+      <li>好处：系统过滤器类型化，AI 生成器不需要知道物种。</li>
+      <li>代价：<strong>能力有两处真源</strong>：模板的 abilities 列表 + spawn 时映射出的组件；新增能力要同时改枚举、映射、生成器。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3>E. 边界：内核如何接到外部（相邻 crate 的可借鉴模式）</h3>
+<div class="grid">
+
+  <div class="card">
+    <h4>契约 DTO + 装配器 Contract / Assembler <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">内核不输出 ratatui 类型，只输出 <code>SceneFrame</code>/<code>UiView</code>；<code>extract</code> 负责 world → DTO 的组装。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>渲染契约（render-api 叶子 crate）；页面视图枚举（Inventory/ThrowAim 由 extract 特判构建）；输入映射（Key → PlayerCommand / UiIntent）。</dd>
+      <dt>代表</dt><dd><span class="ref">render-api</span> / <span class="ref">presentation/src/extract/mod.rs</span> / <span class="ref">presentation/src/ui/mod.rs</span></dd>
+    </dl>
+    <ul>
+      <li>好处：前端可替换；tui 不依赖 ecs_core；契约版本可验证。</li>
+      <li>代价：契约与内核存在两层模型，字段要手工同步。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>前端接缝 Ports &amp; Adapters（DsnX19） <span class="badge b-ok">清晰</span></h4>
+    <div class="sub">主循环归 <code>App::run_with</code>，终端细节退到 <code>Frontend</code> 适配器。</div>
+    <dl class="kv">
+      <dt>变体</dt><dd>trait Frontend（poll_input/viewport/draw/pump/wait/finish）；TuiFrontend；测试用 HeadlessFrontend。</dd>
+      <dt>代表</dt><dd><span class="ref">src/frontend.rs</span> / <span class="ref">tests/frontend_loop_test.rs</span></dd>
+    </dl>
+    <ul>
+      <li>好处：主循环可无终端测试；错误能冒泡。</li>
+      <li>代价：<code>pump</code> 是后端反向持有 App 的窄缝。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h2><span class="num">3</span>变体统计（同一个模式在仓库里有几种写法）</h2>
+<table>
+  <thead><tr><th>模式</th><th>仓库内变体</th><th>典型位置</th><th>健康度</th></tr></thead>
+  <tbody>
+    <tr><td>注册表</td><td>2 个 JSON 注册表 + 3 类编译期表（属性/地块/怪物）+ 若干布局常量</td><td class="ref">item/registry.rs · spell/mod.rs · rules/stat.rs · map/tile.rs · monster/template.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>装配器</td><td>1 条唯一桥 + 2 个 spawner 实现（Commands / World）</td><td class="ref">item/mod.rs:242</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>词表解释器</td><td>3 张词表（Stat/SpellEffect/BehaviorEffect）+ 3 算子 + 6 种 ItemPart</td><td class="ref">rules/* · spell/mod.rs · item/registry.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>关系组件</td><td>2 对双向关系（行动 / 效果）+ 1 个数组容器（槽位）</td><td class="ref">action/ownership.rs · effect/ownership.rs · item/container.rs</td><td><span class="badge b-note">分裂</span></td></tr>
+    <tr><td>流水线</td><td>行动 6 阶段 + 核心结算 20 步 + 初始化链</td><td class="ref">action/entity.rs · system/mod.rs · world/init.rs</td><td><span class="badge b-note">接近上限</span></td></tr>
+    <tr><td>消息事件</td><td>3 个意图事件 + 6 个生命周期/结果事件</td><td class="ref">events.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>策略校验器</td><td>7 个（每个 ActionKind 一个）</td><td class="ref">action/validation.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>时间</td><td>2 种读者（效果时长 / 行动计时），同一时钟</td><td class="ref">effect/duration.rs · action/entity.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+    <tr><td>单一写者</td><td>3 处（位置 / 生命上限 / 物品装配）</td><td class="ref">action/settle.rs · rules/vitals.rs · item/mod.rs</td><td><span class="badge b-ok">清晰</span></td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">4</span>张力与反模式：读代码时最该警惕的五处</h2>
+
+<div class="grid">
+
+  <div class="card">
+    <h4>1. 内容与运行时混在同一文件 <span class="badge b-risk">需要处理</span></h4>
+    <div class="sub">这是"内容 / 纯结构"拆分研究指出的核心问题。</div>
+    <ul>
+      <li><span class="ref">item/container.rs</span>：容器布局数据 + Container 组件</li>
+      <li><span class="ref">monster/template.rs</span>：怪物卡数据 + <code>MonsterKindId: Component</code></li>
+      <li><span class="ref">spell/mod.rs</span>：法术数据 + 施法系统；<span class="ref">rules/vitals.rs</span>：曲线 + 系统</li>
+      <li>后果：注册表"看起来是纯的"，实际依赖了带 bevy 的类型，无法独立成 crate。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>2. SystemParam 聚合体变胖 <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub">用参数对象压参数个数，但把查询耦合藏进了一个结构体。</div>
+    <ul>
+      <li><code>ThrowResolution</code> 约 10 个字段；<code>CoreEventBuffers</code> 9 路事件；<code>PlayerWorld/DamageSink/ChaseWorld</code> 各 4–7 项。</li>
+      <li>好处：函数签名可读；代价：字段增删牵动多个系统，测试要造整个上下文。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>3. 能力双份：模板列表 vs 标记组件 <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub"><code>MonsterTemplate.abilities</code> 与 spawn 时的 <code>Can*</code> 组件是同一事实的两份表示。</div>
+    <ul>
+      <li>新增能力要改三处：Ability 枚举、attach 映射、生成器过滤器。</li>
+      <li>测试能兜住，但内容卡与代码容易漂移。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>4. 隐式顺序契约 <span class="badge b-risk">需要处理</span></h4>
+    <div class="sub">结算链顺序、ApplyDeferred 段、事件 update、装配桥先后全靠集中注册与注释保证。</div>
+    <ul>
+      <li>错误形态：新增系统插错段 → 同轮看不到死亡/仇恨/掉落。</li>
+      <li>缓解：全部调度集中在 <span class="ref">system/mod.rs</span>、<span class="ref">action/entity.rs</span>、<span class="ref">world/init.rs</span> 三处，禁止分散注册。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4>5. 枚举占位与旧类型残留 <span class="badge b-note">可接受但有代价</span></h4>
+    <div class="sub">历史演进留下"从未到达"的变体与已退役类型。</div>
+    <ul>
+      <li><code>ItemKind</code> 已退役；<code>PageKind::ThrowSelect</code> 从未进入；旧 <code>tui::state::PageStack</code> 已无消费者。</li>
+      <li>风险：读代码的人会以为有第二条路径；清理应配合拆分 Step 1 一起做。</li>
+    </ul>
+  </div>
+
+</div>
+
+<h2><span class="num">5</span>与「内容 / 纯结构拆分」的关系</h2>
+<div class="callout">
+  <p>模式识别的结论与拆分研究（<code>docs/ecs-core-split.md</code>）一致：<strong>组织结构本身是清楚的</strong>（流水线、单一写者、策略校验、注册表都成立），真正影响职责清晰度的是<strong>数据的归属</strong>——内容数据与运行时类型绑在同一文件、同一枚举里。</p>
+  <p>因此 Step 1 的目标不是"重写架构"，而是让模式 1–3（注册表 / 装配器 / 词表）能在一个<strong>不导入 bevy</strong> 的模块里独立解释。运行时模式（流水线、关系、效果实体、消息）保持不动。</p>
+</div>
+
+<footer>
+  统计口径：2026-11-12，HEAD <code>00d91f1</code>；行数与符号计数来自 <code>ecs_core/src</code> 全量 grep；"模式"按仓库实际重复出现的职责手法归类，不对应严格的 GoF 定义。
+</footer>
+
+</main>
+</body>
+</html>
