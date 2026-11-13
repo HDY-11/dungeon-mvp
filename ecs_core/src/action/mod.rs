@@ -41,7 +41,7 @@
 //! - [`settle`]：**落地阶段**——全项目唯一写 `Position` 的系统（另一个写入点是生成期出生点）；
 //! - [`ownership`]：行动归属关系（`ActionOf` / `ActionChildren`）——用它而**不用**
 //!   通用 `ChildOf`，让"只有行动实体参与行动仲裁"成为类型保证（ISSUES ECS30/ECS41）；
-//! - [`generation`]：生成侧的类型与条件（`PlayerCommand`、追击/逃跑条件）；
+//! - [`generation`]：生成侧的类型桥（`PlayerCommand`）；
 //! - [`execution`]：执行侧共用件——**纯规则**（`movement::plan_step` 等），不含系统。
 
 pub mod entity;

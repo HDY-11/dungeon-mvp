@@ -52,7 +52,6 @@ pub use status::{
 pub use cell::{
     CellAttributes, CellEffectAt, CellEffects, CellHeal, CellMoveCost, cell_attributes,
     cell_speed_modifier, heal_spring_system, rebuild_cell_effects_system, speed_multiplier_for,
-    tile_at,
 };
 pub use collect::{CollectedModifiers, EffectContext};
 pub use ownership::{EffectModifier, EffectOf, OwnedEffects};

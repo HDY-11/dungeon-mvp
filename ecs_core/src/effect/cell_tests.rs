@@ -5,7 +5,7 @@ use bevy_ecs::system::RunSystemOnce;
 use super::*;
 use crate::components::{Health, Position};
 use crate::entity_cls::Player;
-use crate::map::{TILE_PROPS, TileProps};
+use crate::map::{TILE_PROPS, Tile, TileProps};
 use crate::resources::EventLog;
 
 /// `cell_attributes` 真的**消费**地形表的 `move_cost` 列（而不是只把它摆在结构里）。

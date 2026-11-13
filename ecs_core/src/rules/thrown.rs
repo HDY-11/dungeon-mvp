@@ -6,8 +6,8 @@
 //! - 其余四域（增伤、暴击、护甲、抗性）与近战同构，但分开成独立纯函数，
 //!   将来接穿透、弹药、距离衰减等新维度时只动这里，近战公式不受牵连。
 //!
-//! 楼层加成目前留给 `THROWN_FLOOR_BONUS_STEP`（0 = 不接），调用方把基础值算好后
-//! 传进来即可。纯函数：不碰 `World`、不取随机数（`crit_roll` 由系统层给）。
+//! 楼层加成等新维度目前不接：调用方把基础值算好后传 `base` 即可。纯函数：
+//! 不碰 `World`、不取随机数（`crit_roll` 由系统层给）。
 
 use crate::rules::damage::{CritProfile, armor_multiplier, cleaned, clamp_resistance};
 

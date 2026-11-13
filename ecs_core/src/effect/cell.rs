@@ -24,7 +24,7 @@
 //! **不可达**（读不到、也删不掉），因此 [`rebuild_cell_effects_system`] 遇到冲突会告警，
 //! 而不是静默覆盖。
 
-use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile, TileProps};
+use crate::map::{MAP_HEIGHT, MAP_WIDTH, TileProps};
 use bevy_ecs::prelude::*;
 
 /// 效果实体占据的格子。**专用组件**，理由见模块文档（复用 `Position` 会进占用图）。
@@ -273,14 +273,6 @@ pub fn rebuild_cell_effects_system(
             );
         }
     }
-}
-
-/// 该格的地形（越界返回 `None`）。
-pub fn tile_at(map: &crate::map::Map, x: usize, y: usize) -> Option<Tile> {
-    if x >= MAP_WIDTH || y >= MAP_HEIGHT {
-        return None;
-    }
-    Some(map.tiles[y][x])
 }
 
 #[cfg(test)]

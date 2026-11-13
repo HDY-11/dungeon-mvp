@@ -948,7 +948,7 @@ fn ordered_grants(winners: &HashMap<Entity, (Entity, i32, u32)>) -> Vec<(Entity,
 
 /// 本轮要推进的最小正 AV（只统计 `ActiveAction`）。
 ///
-/// 与 Phase A 的 `execution::positive_timer_delta` 同源；Phase C 会用本函数替换它。
+/// 这是推进世界时钟的唯一来源（旧 Phase A 的同类函数已随旧链路删除）。
 pub fn active_action_timer_delta(world: &mut World) -> f64 {
     let mut query = world.query_filtered::<&ActionTimer, With<ActiveAction>>();
     query

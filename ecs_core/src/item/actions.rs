@@ -615,14 +615,6 @@ pub fn item_amount(world: &World, item: Entity) -> u32 {
     world.get::<Amount>(item).map(|amount| amount.0).unwrap_or(1)
 }
 
-/// 行囊里第 `pack_slot` 格的物品编号（`None` = 空格）。
-pub fn pack_item_id(world: &World, pack_slot: usize) -> Option<ItemId> {
-    let player = player_entity(world).ok()?;
-    let pack = pack_entity(world, player).ok()?;
-    let item = slot_of(world, pack, pack_slot).ok()?;
-    world.get::<Item>(item).map(|item| item.id)
-}
-
 // ── 投掷取用（Gm9） ─────────────────────────────────
 
 /// 玩家副手里那件可投掷物（读 `Throw` 组件；不查标签，标签只决定槽位收不收）。
@@ -676,12 +668,6 @@ pub fn load_throwable_from_pack(world: &mut World) -> Result<ItemId, ItemActionE
         return Err(ItemActionError::NoRoom);
     }
     Ok(id)
-}
-
-/// 副手里那件可投掷物的基础伤害（没有则 `None`）。
-pub fn off_hand_throw_damage(world: &World) -> Option<f64> {
-    let item = off_hand_throwable(world)?;
-    world.get::<Throw>(item).map(|throw| throw.damage)
 }
 
 #[cfg(test)]

@@ -61,7 +61,7 @@ pub use container::{
     BODY, CORPSE, Container, ContainerDef, InsertError, ItemTag, SlotAccept, SlotDef, TRAVELER_PACK,
 };
 pub use actions::{
-    ItemActionError, drop_from_pack, equip_from_pack, load_throwable_from_pack, off_hand_throw_damage,
+    ItemActionError, drop_from_pack, equip_from_pack, load_throwable_from_pack,
     off_hand_throwable, take_from_corpse, take_from_ground, unequip_to_pack, use_from_pack,
 };
 pub use loot::{LootEntry, roll_loot};
@@ -366,13 +366,7 @@ pub fn pack_slot_index() -> usize {
 }
 
 /// 身体上「主手」那一个槽位的下标（由过滤表推出）。
-pub fn main_hand_slot_index() -> usize {
-    BODY.slots
-        .iter()
-        .position(|slot| slot.accept.accepts(&[ItemTag::Weapon]))
-        .expect("BODY 必须有主手槽位")
-}
-
+///
 /// 身体上「副手」那一个槽位的下标（盾与可投掷物都进这里）。
 pub fn off_hand_slot_index() -> usize {
     BODY.slots

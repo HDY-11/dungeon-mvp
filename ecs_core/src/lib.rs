@@ -3,14 +3,13 @@
 //! 唯一的游戏逻辑/业务领域层，完全采用 ECS 范式。
 //!
 //! 模块按依赖层级组织：
-//! `components/events/resources/balance/rules -> map/spatial -> action/combat/monster -> effect -> system/world`。
+//! `components/events/resources/balance/rules -> map/spatial -> action/monster -> effect -> system/world`。
 //!
 //! `effect`（Phase H9/H11）依赖 `rules`（修正器形状）与 `map`（地形属性表），
 //! 被 `action` 的生成系统消费（收桶 → AV）。它**不**依赖 `system`/`world`。
 
 pub mod action;
 pub mod balance;
-pub mod combat;
 pub mod components;
 pub mod effect;
 pub mod entity_cls;
@@ -32,7 +31,6 @@ pub mod test_util;
 
 pub use action::*;
 pub use balance::*;
-pub use combat::*;
 pub use components::*;
 pub use effect::*;
 pub use entity_cls::*;

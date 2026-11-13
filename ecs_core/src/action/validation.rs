@@ -60,7 +60,6 @@
 
 use crate::action::entity::{ActionEntry, ActionEntryPayload, ActionMessages, PendingAction};
 use crate::balance::FLEE_HP_RATIO_EXIT;
-use crate::combat::can_attack_positions;
 use crate::components::{
     BasicAttack, Chase, Flee, Health, Mana, Move, Position, Viewshed, Wander,
 };
@@ -484,6 +483,14 @@ pub fn validate_wander_system(
         };
         apply_decision(&mut commands.entity(action), decision);
     }
+}
+
+/// 目标当前是否可被近战攻击（8 方向相邻 + 存活）。
+///
+/// 只在 `validate_basic_attack_system` 使用。旧的 `combat` 模块只有这一个函数，
+/// 单独成 mod/dir 没有其他职责，已拍平到这里（2026-11 整理）。
+fn can_attack_positions(attacker: Position, target: Position, target_health: &Health) -> bool {
+    attacker.is_near(target) && target_health.is_alive()
 }
 
 /// `BasicAttack`：前置条件是 [`can_attack_positions`]（8 方向相邻 + 目标存活）。
