@@ -35,12 +35,9 @@ members = [
     "utils",
     "sys",
     "tui",
-    # 已归档的旧架构（R5，见 archive/README.md）：**保留为 members 只为让它们仍可编译/可测**，
-    # 随时能回查历史实现；新代码零依赖。彻底不用时可把下面 4 行连同 `archive/` 一起删掉。
-    "archive/dungeon-core",
-    "archive/dungeon-action",
-    "archive/dungeon-world",
-    "archive/dungeon-render",
+# 已归档的旧架构（R5，见 archive/README.md）**不再列入 workspace members**：
+# 新代码零依赖，移出后 `cargo test --workspace` 不再编译/测试它们（省编译时间）。
+# 需要回查历史实现时，可在 `archive/<crate>` 下单独 `cargo test`（各自 pin bevy_ecs 0.16）。
 ]
 
 [workspace.dependencies]

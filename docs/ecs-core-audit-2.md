@@ -136,3 +136,5 @@ P1 目标：行为零变化的整理。全部落地，`cargo test -p ecs_core` *
 
 验证命令与结果见 §6；clippy 期间发现 `action_arbitration_system` 候选查询超 `type_complexity`
 阈值，按用户要求**不加 `#[allow]`**，改为 `type Candidates<'w,'s>` 别名。
+
+P2 起步：`archive/dungeon-core|action|world|render` 已移出 `[workspace] members`，`cargo test --workspace` 由 30 组降为 **22 组**、活跃测试 **625 passed / 1 ignored**（archive 自身旧测试不再计入）；回查历史时在 `archive/<crate>` 下单独构建。

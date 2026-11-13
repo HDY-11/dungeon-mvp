@@ -23,14 +23,14 @@
 | 内容 | 🚧 | `content/` 为内容草案（世界观/生物/构筑方向），非代码事实源 |
 | 未迁移 | ⬜ | 合成、buff（护盾/狂暴）、技能卷轴与熟练度、怪物投掷 |
 
-> 业务领域已收敛到单一 crate `ecs_core`。旧实现在 `archive/`（仍可编译可测，只作对照）。
+> 业务领域已收敛到单一 crate `ecs_core`。旧实现在 `archive/`（已移出 workspace，需在各自目录单独构建；只作对照）。
 > 更细的状态与数字见 [GAME.md](GAME.md) 头部迁移表、[REFACTOR.md](REFACTOR.md) 与 [DESIGN.md](DESIGN.md)。
 
 ## 快速开始
 
 ```bash
 cargo run                        # 直接开玩（终端需 ≥ 80×24）
-cargo test --workspace           # 全部测试：30 个测试目标
+cargo test --workspace           # 全部测试：22 个测试目标
 ```
 
 一键门禁（构建 / 测试 / 端到端 / clippy × 6 crate / 依赖边界 / 文档）：
@@ -128,7 +128,7 @@ terrain-forge/  地图生成 git submodule
 
 ## 验证与数字
 
-- 测试：`30 个测试目标 / 670 passed / 1 ignored`（每次发布前以 `cargo test --workspace` 实测为准）。
+- 测试：`22 个测试目标 / 625 passed / 1 ignored`（不含 `archive/` 旧 crate；每次发布前以 `cargo test --workspace` 实测为准）。
 - 门禁：`scripts/gate.ps1` **10/10 PASS**（含六 crate clippy `-D warnings`、依赖边界、`docs_check`）。
 - 长跑：`playthrough` 6 个种子，异常：无；覆盖到达 1–4 层。
 - 版本：`bevy_ecs 0.20.1`（`default-features = false, features = ["std"]`）；`ratatui 0.30`；`crossterm 0.29`；edition 2024。
