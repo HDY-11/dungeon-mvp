@@ -147,7 +147,7 @@ P2 起步：`archive/dungeon-core|action|world|render` 已移出 `[workspace] me
 |---|---|---|
 | `rustc -W dead_code` / clippy | 单 crate 内未用私有项 | 内置可用；对 `pub` 项直接失效（本项目 18 个 glob re-export 进一步掩盖） |
 | `cargo-machete` 0.9.2 | **未使用的 Cargo 依赖** | 已安装并运行（见下） |
-| `warnalyzer` | **跨 crate 未使用的 `pub` API** | 最贴近需求；stable 走 rust-analyzer scip 后端，需 `rustup component add rust-analyzer`。本机下载 >10 分钟未完成，已取消，**未跑通**；网络恢复后可补 |
+| `warnalyzer` (git master) | **跨 crate 未使用的 `pub` API** | **已跑通**（见 §8.1）：复用 VS Code 的 rust-analyzer 0.3.3113 生成 SCIP，源码构建 warnalyzer master（scip 后端）；916 条原始命中，需人工分诊 |
 | `cargo-udeps` | 未使用依赖 | 需 nightly 工具链，本机只有 stable |
 | `cargo-fallow` / `unused-pub` | 可见性/未用 pub（WIP） | 未成熟，暂不引入 |
 
@@ -183,3 +183,23 @@ P2 起步：`archive/dungeon-core|action|world|render` 已移出 `[workspace] me
 3. **C 级（`render-api`/`sys`/`utils` 的公共 API）**：先确认它们是否是给未来前端/工具预留的接口；若是，补文档/测试把它变成"有意保留"，否则删除。
 
 工具缺口：`warnalyzer` 跑通后可以给出跨 crate 的权威列表，届时以上启发式清单应被它替换/校正。
+
+### 8.1 warnalyzer 实测（2026-11-13）
+
+- 复用：`C:\Users\24070\.vscode\extensions\rust-lang.rust-analyzer-0.3.3113-win32-x64\server\rust-analyzer.exe`（0.3.3113-standalone），不需要 `rustup component add`；`rust-analyzer scip . --output .scip-index.scip` 约 10 秒产出 9,365,586 字节索引。
+- warnalyzer 构建：crates.io 0.2.0 只支持已移除的 save-analysis 后端；从 `https://github.com/est31/warnalyzer` 源码 `cargo build --release --locked` 成功（构建目录在系统 temp，未入库）。
+- 运行：`warnalyzer .scip-index.scip` → 916 条 `unused`，其中 535 条落在非 `_tests.rs` 文件。但**主体仍是 inline `mod tests` 的测试函数、trait impl 的关联类型/方法、serde/Default 等由编译器或宏使用的项**——与 README 的 known false-positives 一致（scip 后端同样不支持多 leaf：tests 不作为根、泛型 trait 调用可能漏链）。
+- 用 `git grep` 对候选做全仓（生产+测试）复核后，**确认死项（B 级）**：
+  - `ecs_core/src/action/generation/player.rs:34` `PlayerActionRequest::new`（无引用）
+  - `ecs_core/src/balance.rs:44` `LOW_HP_RATIO`（仅 archive 使用）
+  - `ecs_core/src/item/actions.rs:609` `item_name`（tui 自带同名函数，无引用）
+  - `ecs_core/src/item/mod.rs:382` `container_weight`（actions.rs 有私有实现，无引用）
+  - `ecs_core/src/item/registry.rs:221` `ItemDef::is_stackable`
+  - `ecs_core/src/item/registry.rs:311` `ItemDef::has_behavior`
+  - `ecs_core/src/effect/mod.rs:77` `IgnoresSource::covers`
+  - `ecs_core/src/map/tile.rs:215` `Tile::move_cost`
+  - `ecs_core/src/map/mod.rs:128/132/136` `Map::{generate,count_tile,is_away_from_spawn}`
+  - `ecs_core/src/map/layer.rs:100/116` `Layer::{floor,entry}`
+  - `ecs_core/src/components.rs:33` `Position::chebyshev`
+- 误报大类（报告与后续扫描需排除）：`components.rs` 的 `Pool::{with_current,heal,modified}` 与 `Deref`（经 deref 调用）、`item/mod.rs` 的 `ItemSpawner` 两实现（泛型 trait 调用）、`tile.rs::serialize`（Serialize impl）、`render-api`/`tui`/`utils` 的构造器与 trait 方法（宏、glob re-export）。
+- 结论：warnalyzer 能从"跨 crate pub"角度逼近，但**不提供可直接删除清单**；正确流程 = warnalyzer 出候选 → `git grep` 复核（生产+测试）→ 小批删除 → clippy/test/gate。B 级 12 项已确认，可随 P2 一并删。
