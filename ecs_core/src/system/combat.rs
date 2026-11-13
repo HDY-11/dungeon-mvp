@@ -16,9 +16,10 @@ use bevy_ecs::system::SystemParam;
 
 /// 消费 `AttackIntentEvent`，计算最终伤害并写 `AttackEvent`。
 ///
-/// 参数偏多（8 个）是 ECS 系统的固有形状——`MessageReader` / `Query` / `ResMut`
-/// 每类都是一个独立入参，折成 DTO 会丢掉 Bevy 的参数校验（「可变访问是否冲突」
-/// 这类错误会从编译期推迟到运行期）。这里保留显式签名。
+/// 这里保留显式签名（当前 7 个参数，在 clippy 的 `too_many_arguments` 阈值内）。
+/// 若继续增长，抽 `#[derive(SystemParam)]` 分组（本文件的 `DamageSink`、
+/// `action::validation` 的 `ChaseWorld` 是既有先例）——**不要用 `#[allow]` 压下去**：
+/// 每个 allow 都是一处架构信号，要先找架构优化点（m14191 约束）。
 ///
 /// 顺带记录一条实测结论：把这四个查询抽成 `type CombatQueries = (Query<..>, ..)`
 /// **不行**——`Query<'w, 's, D, F>` 的 `'w`/`'s` 必须由系统参数推导，而 `type`
@@ -34,7 +35,6 @@ use bevy_ecs::system::SystemParam;
 ///
 /// 与格子无关：攻击时玩家可能站在减速格上，但那影响的是**节奏**（AV），不是伤害，
 /// 所以这里用 `collect_actor` 而不是带格子的 `collect`。
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_attack_system(
     mut attack_intents: MessageReader<AttackIntentEvent>,
     stats: Query<&Stats>,

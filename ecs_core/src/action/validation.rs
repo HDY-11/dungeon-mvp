@@ -340,20 +340,29 @@ pub fn validate_chase_system(
     }
 }
 
+/// 逃跑校验器要读的世界切片：位置 / 血量 / 视野 / 玩家。
+///
+/// 合成一个 `SystemParam` 而不是四个独立参数：这些查询在保活与定案两段里都要用，
+/// 且能把 `validate_flee_system` 的参数数量压回 clippy 的阈值内——这里不许用
+/// `#[allow(clippy::too_many_arguments)]` 绕开（m14191 约束）。
+#[derive(SystemParam)]
+pub struct FleeWorld<'w, 's> {
+    positions: Query<'w, 's, &'static Position>,
+    healths: Query<'w, 's, &'static Health>,
+    viewsheds: Query<'w, 's, &'static Viewshed>,
+    player: Query<'w, 's, Entity, With<PlayerMarker>>,
+}
+
 /// `Flee`：保活（仍在滞回区间）→ 最远的合法方向 / 无路可逃则反咬 / 否则原地。
 ///
 /// 保活对所有待执行逃跑生效（ECS43）：血量回到 [`FLEE_HP_RATIO_EXIT`] 以上立刻取消，
 /// 不等到到点——否则一个已经不必逃的怪物会继续占着槽位。
-#[allow(clippy::too_many_arguments)]
 pub fn validate_flee_system(
     mut commands: Commands,
     mut reservation: Reservation,
     mut events: ActionMessages,
     actions: Query<ActionEntry, PendingAction<Flee>>,
-    positions: Query<&Position>,
-    healths: Query<&Health>,
-    viewsheds: Query<&Viewshed>,
-    player: Query<Entity, With<PlayerMarker>>,
+    world: FleeWorld,
 ) {
     const DIRECTIONS: [(isize, isize); 8] = [
         (0, -1),
@@ -370,7 +379,8 @@ pub fn validate_flee_system(
         let actor = child_of.parent();
 
         // 保活：血量回到滞回退出阈值以上 → 不再逃。
-        if !healths
+        if !world
+            .healths
             .get(actor)
             .is_ok_and(|health| health.ratio() < FLEE_HP_RATIO_EXIT)
         {
@@ -382,15 +392,15 @@ pub fn validate_flee_system(
         if !ready {
             continue;
         }
-        let Ok(player_entity) = player.single() else {
+        let Ok(player_entity) = world.player.single() else {
             events.fail(action, actor);
             continue;
         };
-        let Ok(player_position) = positions.get(player_entity).map(Position::to_tuple) else {
+        let Ok(player_position) = world.positions.get(player_entity).map(Position::to_tuple) else {
             events.fail(action, actor);
             continue;
         };
-        let Ok(self_position) = positions.get(actor).map(Position::to_tuple) else {
+        let Ok(self_position) = world.positions.get(actor).map(Position::to_tuple) else {
             events.fail(action, actor);
             continue;
         };
@@ -423,7 +433,8 @@ pub fn validate_flee_system(
             None => {
                 // 无路可逃：相邻且看得见就反咬一口（与旧实现一致）。
                 let near = self_tile.is_near(player_tile);
-                let sees = viewsheds
+                let sees = world
+                    .viewsheds
                     .get(actor)
                     .ok()
                     .is_some_and(|viewshed| viewshed.can_see(player_position));
