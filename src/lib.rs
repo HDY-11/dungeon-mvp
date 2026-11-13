@@ -49,7 +49,7 @@ use presentation::{
     apply_ui_intent, map_input_event,
 };
 use render_api::{InputEvent, Key, SceneFrame};
-use tui::{DevLogBuffer, TuiPlugin};
+use tui::DevLogBuffer;
 
 /// 装配好的游戏实例：世界 + 集成层状态 + 后端接缝。
 ///
@@ -396,19 +396,4 @@ impl App {
     }
 }
 
-/// 便捷：把世界里的开发者日志缓冲**拷贝一份**交给后端。
-///
-/// 为什么是拷贝而不是引用：`App::refresh(&mut self)` 与 `App::world(&self)`
-/// 的借用无法在同一表达式里共存（一个要可变、一个要不可变），而日志面板每帧
-/// 最多几十行字符串——拷贝的代价远小于为了让借用通过而把 `App` 拆成两块状态。
-///
-/// 这也是渲染唯一一次接触 `World`，读的还是 TUI 自己的调试资源而非游戏状态；
-/// 等调试面板搬进 `SceneFrame` 之后，这个函数就该消失。
-pub fn dev_log(world: &World) -> Option<DevLogBuffer> {
-    world.get_resource::<DevLogBuffer>().cloned()
-}
 
-/// 后端插件（当前只有 TUI；GPU 后端将来扮演同一角色）。
-pub fn tui_plugin() -> TuiPlugin {
-    TuiPlugin::new()
-}

@@ -178,6 +178,7 @@ P2 起步：`archive/dungeon-core|action|world|render` 已移出 `[workspace] me
 处置建议（按风险从低到高）：
 
 1. **A 级（应用层遗留，建议立即删）**：`src/lib.rs` 的 `dev_log`/`tui_plugin`；`tui/src/state.rs` 的 `ThrowPreview`/`LookCursor`/`InventoryUI`/`RenderMemory`（旧页栈/渲染状态，前端接缝后已无消费者）。
+   - 2026-11-13 已执行：`tui/src/state.rs` 只留 `DevLogLine`/`DevLogBuffer`，`DialogKind`/`Page`/`PageStack` 一并删除；`src/lib.rs` 删除 `dev_log`/`tui_plugin`。
 2. **B 级（`ecs_core` 内部未用方法，随 P2 清理）**：`LOW_HP_RATIO`、`covers`、`has_behavior`、`is_away_from_spawn`、`random_f32`。
 3. **C 级（`render-api`/`sys`/`utils` 的公共 API）**：先确认它们是否是给未来前端/工具预留的接口；若是，补文档/测试把它变成"有意保留"，否则删除。
 

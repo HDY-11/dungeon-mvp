@@ -1,82 +1,12 @@
-//! UI 状态资源。
+//! 后端自己的 UI 资源：**只剩开发者日志缓冲**。
 //!
-//! 这些状态属于渲染/交互层，不应进入业务 core。
+//! 页栈/查看光标/背包状态/投掷预览等都已经迁到 `presentation::ui::PageStack`
+//! （契约见 `render-api`）；这里曾经重复定义过一套，前端接缝（DsnX19）之后
+//! 全部删除，避免出现两份 UI 状态。
 
-use bevy_ecs::prelude::*;
-use std::collections::HashMap;
+use bevy_ecs::prelude::Resource;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DialogKind {
-    Quit,
-    Descend,
-}
-
-impl DialogKind {
-    pub const fn title(self) -> &'static str {
-        match self {
-            DialogKind::Quit => "确认退出？",
-            DialogKind::Descend => "确认下楼？",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Page {
-    Game,
-    Look,
-    ThrowSelect,
-    ThrowAim,
-    Inventory,
-    Dialog(DialogKind),
-}
-
-#[derive(Resource, Default)]
-pub struct PageStack(pub Vec<Page>);
-
-impl PageStack {
-    pub fn push(&mut self, page: Page) {
-        self.0.push(page);
-    }
-
-    pub fn pop(&mut self) -> Option<Page> {
-        self.0.pop()
-    }
-
-    pub fn current(&self) -> &Page {
-        self.0.last().unwrap_or(&Page::Game)
-    }
-}
-
-/// 投掷瞄准预览。
-#[derive(Resource, Default)]
-pub struct ThrowPreview {
-    pub active: bool,
-    pub cursor: (usize, usize),
-    pub path: Vec<(usize, usize)>,
-    pub valid_target: bool,
-}
-
-/// 查看模式光标。
-#[derive(Resource)]
-pub struct LookCursor {
-    pub active: bool,
-    pub x: usize,
-    pub y: usize,
-}
-
-/// 背包页 UI 状态。
-#[derive(Resource, Default)]
-pub struct InventoryUI {
-    pub active: bool,
-    pub panel: bool,
-    pub left_sel: usize,
-    pub right_sel: usize,
-    pub detail: bool,
-    pub detail_source: usize,
-    pub detail_idx: usize,
-}
-
-/// 开发者日志面板数据。由应用层从 `sys::LogRecord` 转换后写入。
+/// 开发者日志面板的一行。
 #[derive(Debug, Clone)]
 pub struct DevLogLine {
     pub level: String,
@@ -113,10 +43,4 @@ impl DevLogBuffer {
             self.lines.pop_front();
         }
     }
-}
-
-/// 由渲染层记录的实体最后可见位置。
-#[derive(Resource, Default)]
-pub struct RenderMemory {
-    pub entries: HashMap<bevy_ecs::entity::Entity, (usize, usize)>,
 }
