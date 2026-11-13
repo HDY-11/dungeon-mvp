@@ -1,65 +1,40 @@
 //! 行动实体链路（REFACTOR.md §3.6 / §11.3 Phase C；DESIGN DsnE8）。
 //!
-//! **一个行动 = 一个 actor 的瞬态子实体**，取代中央分派的 `ActionKind`：
+//! **一个行动 = 一个 actor 的瞬态子实体**，取代中央分派的 `ActionKind`。
 //!
-//! ```text
-//! Generation（每个行为一个生成系统，只 spawn 候选，不碰 actor 状态）
-//!     ↓ ApplyDeferred
-//! Arbitration（唯一写入 actor 行动状态的系统）
-//!     ↓
-//! Tick（推进 ActiveAction 的 ActionTimer，归零加 Ready）
-//!     ↓
-//! Validate（每个行动一个校验器：**定案 + 预留格子**，不写 Position）
-//!     ↓ ApplyDeferred（MoveTarget / AttackTarget 落盘）
-//! Execution（**一个**通用落地器，零中央 match；只写结果）
-//!     ↓ ActionSucceeded / ActionFailedEvent
-//! Completion（唯一 despawn action 实体 + 回转 actor `Idle` / `Failure` 的系统）
-//! ```
+//! 本模块保留链路中**必须共享**的部分：
 //!
-//! # 现状
+//! - actor 行动状态机（`Idle`/`Active`/`Failure` 的唯一写入口 `begin_action` / `finish_action`）；
+//! - action 实体组件（`ActionOf` 另有 ownership 模块）与优先级表；
+//! - 速度规则 `SpeedRule` / `SpeedModifiers` 与共享查询别名；
+//! - 终态出口 `ActionMessages`（执行器只能经它结束行动）。
 //!
-//! - **已接主循环**（C7）：`world/loop_.rs` 每轮运行
-//!   [`build_action_poc_schedule`]，玩家命令先经 [`build_player_mount_schedule`]；
-//! - **旧模型已删除**（C8）：`ActionKind` / `mount_action` 中央 match / actor 上的
-//!   行动 ZST / 独占执行系统都不复存在；
-//! - 调度标签仍叫 `ActionPocSchedule`（Phase B 遗留名），为少改调用点保留。
+//! 链路其余部件按职责拆到兄弟模块：
 //!
-//! # 与 actor 组件模型的关系
+//! - [`crate::action::generation`]：AI/玩家生成（只 spawn 候选或 active action）；
+//! - [`crate::action::arbitration`]：仲裁与 tick；
+//! - [`crate::action::completion`]：终态回收与调度装配；
+//! - [`crate::action::validation`] / [`crate::action::settle`]：判定与落地。
 //!
-//! `Can*` 仍是 actor 上的 ZST 组件（回答“能不能做”）；action 实体只回答
-//! “正在考虑/执行什么”。actor 的 `Idle`/`Active`/`Failure` 仍是行动状态，
-//! 但**只有仲裁与 completion 可以写**：生成系统一律不碰，且 `Idle`/`Failure` 互斥。
+//! 完整六阶段图见 `docs/architecture-map.html` 与 `action/mod.rs`。
 //!
 //! # 不存档
 //!
 //! action 实体是瞬态子实体；存档只存 actor 状态，读档后重新生成行动
 //! （见 REFACTOR.md §10.7）。
 
-use crate::action::generation::player::PlayerCommand;
 use crate::action::ownership::ActionOf;
-use crate::action::settle::settle_action_system;
-use crate::balance::{
-    CHASE_DURATION, FLEE_DURATION, FLEE_HP_RATIO, THROW_DURATION_AV, UNARMED_ATTACK_DURATION,
-    WAIT_DURATION, WANDER_DURATION, action_av,
-};
-use crate::components::{
-    ActionTimer, Active, BasicAttack, CanChase, CanFlee, CanWait, CanWander, Chase, Failure, Flee,
-    Health, Idle, Move, Position, Ready, Stats, Viewshed, Wait, Wander,
-};
+use crate::balance::action_av;
+use crate::components::{Active, Failure, Idle, Position, Ready, Stats, Viewshed};
 use crate::entity_cls::{Monster, Player};
 use crate::events::{ActionFailedEvent, ActionSucceededEvent};
-use crate::monster::Aggro;
-use crate::map::{MAP_HEIGHT, MAP_WIDTH, Map};
+
+use crate::map::Map;
 use crate::resources::OccupancyMap;
-use crate::effect::EffectContext;
 use crate::rules::{EffectSource, Modifier, StatId, apply_modifiers};
-use crate::spell::SpellId;
-use crate::throw::{ThrowAction, throw_reachable};
-use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::Or;
 use bevy_ecs::system::SystemParam;
-use std::collections::{HashMap, HashSet};
 
 // ── 查询与参数别名 ───────────────────────────────────
 //
@@ -75,7 +50,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// `Without<Active>` 挡的是「自己已经有行动」，注意它**挡不住**
 /// 「actor 名下有 `ActiveAction` 子实体」——仲裁系统另有一道显式检查（§3.4）。
-type AiActor<C> = (
+pub(crate) type AiActor<C> = (
     With<Monster>,
     With<C>,
     Without<Active>,
@@ -83,7 +58,7 @@ type AiActor<C> = (
 );
 
 /// 玩家路径的 actor 数据：实体 id + 位置 + 基础属性（速度在 `Stats` 里）。
-type PlayerActorData = (Entity, &'static Position, Option<&'static Stats>);
+pub(crate) type PlayerActorData = (Entity, &'static Position, Option<&'static Stats>);
 
 /// 玩家生成器要读的"世界现状"：自己、挡路的怪物、法术书/法力/视野、怪物位置。
 ///
@@ -92,9 +67,9 @@ type PlayerActorData = (Entity, &'static Position, Option<&'static Stats>);
 /// 这里的字段回答的是同一个问题——"玩家此刻下令时，世界里有什么可参考"。
 #[derive(SystemParam)]
 pub struct PlayerWorld<'w, 's> {
-    players: Query<'w, 's, PlayerActorData, (With<Player>, Without<Active>)>,
-    monsters: Query<'w, 's, (), With<Monster>>,
-    books: Query<
+    pub(crate) players: Query<'w, 's, PlayerActorData, (With<Player>, Without<Active>)>,
+    pub(crate) monsters: Query<'w, 's, (), With<Monster>>,
+    pub(crate) books: Query<
         'w,
         's,
         (
@@ -103,11 +78,11 @@ pub struct PlayerWorld<'w, 's> {
             &'static Viewshed,
         ),
     >,
-    monster_positions: Query<'w, 's, (Entity, &'static Position), With<Monster>>,
+    pub(crate) monster_positions: Query<'w, 's, (Entity, &'static Position), With<Monster>>,
     /// 玩家身体容器（找副手槽里的可投掷物）。
-    bodies: Query<'w, 's, &'static crate::item::Container>,
+    pub(crate) bodies: Query<'w, 's, &'static crate::item::Container>,
     /// 带 `Throw` 组件的物品实体（`Throw` 只由蓝图 throw 部件装配出来）。
-    throwables: Query<'w, 's, &'static crate::item::Throw>,
+    pub(crate) throwables: Query<'w, 's, &'static crate::item::Throw>,
 }
 
 /// 一个 AI actor 的数据：实体 id + 基础属性 + 所在格。
@@ -121,14 +96,8 @@ pub struct PlayerWorld<'w, 's> {
 ///
 /// `With<C>` / `Without<Active>` / `Or<..>` 是 **filter**，不能写进数据元组，
 /// 所以必须与 [`AiActor`] 一起作为 `Query` 的两个泛型参数给出去。
-type AiActorData = (Entity, Option<&'static Stats>, &'static Position);
+pub(crate) type AiActorData = (Entity, Option<&'static Stats>, &'static Position);
 
-/// 仲裁的输入：尚未激活的候选（优先级 + 归属）。
-///
-/// 归属用 [`ActionOf`] 而**不是**通用 `ChildOf`：仲裁会 `despawn` 落选者，
-/// 因此"这条查询只可能匹配到行动实体"必须是**类型保证**，不能靠 filter 恰好写对
-/// （ISSUES ECS30 / ECS41）。
-type CandidateAction = (Entity, &'static ActionPriority, &'static ActionOf);
 
 /// 校验阶段的范围：**该 actor 名下某种行动**，到点与否都要看（ISSUES ECS43）。
 ///
@@ -211,7 +180,7 @@ pub struct MovementContext<'w> {
 ///
 /// 调用点：[`player_action_generation_system`]（玩家路径不参与 AI 仲裁）与
 /// [`action_arbitration_system`]（AI 候选转正）。两处语义必须完全一致。
-fn begin_action(actor_cmd: &mut EntityCommands) {
+pub(crate) fn begin_action(actor_cmd: &mut EntityCommands) {
     actor_cmd.remove::<Idle>();
     actor_cmd.remove::<Failure>();
     actor_cmd.insert(Active);
@@ -220,7 +189,7 @@ fn begin_action(actor_cmd: &mut EntityCommands) {
 /// actor **结束**一个行动：清 `Active`，按结果置 `Idle` / `Failure`。
 ///
 /// 唯一调用点：completion（终态出口）。
-fn finish_action(actor_cmd: &mut EntityCommands, succeeded: bool) {
+pub(crate) fn finish_action(actor_cmd: &mut EntityCommands, succeeded: bool) {
     actor_cmd.remove::<Active>();
     if succeeded {
         actor_cmd.remove::<Failure>();
@@ -273,8 +242,10 @@ pub struct ActionName(pub &'static str);
 impl ActionName {
     /// 进行中事件的一句话（DsnE21）："哥布林举起了武器" 这类**已起手**的说法。
     ///
-    /// 文案与动作标识放在一起：新增行动时编译器逼着在这里补一句，事件栏不会
-    /// 显示 `BasicAttack` 这种内部标识。已落定的事实文案仍由规则层的日志给。
+    /// 文案与动作标识放在一起：事件栏不会显示 `BasicAttack` 这种内部标识。
+    /// 新增行动若忘了登记文案，第一次进入事件栏时会 panic——这里刻意不用
+    /// `_ => "行动"` 的兜底，因为静默的兜底会让漏登记永远不被发现。已落定的事实
+    /// 文案仍由规则层的日志给。
     pub fn phrase(self) -> &'static str {
         match self.0 {
             "Wander" => "游荡起来",
@@ -285,7 +256,7 @@ impl ActionName {
             "BasicAttack" => "举起了武器",
             "Cast" => "开始施法",
             "Throw" => "投掷出去",
-            _ => "行动",
+            other => panic!("未登记的行动名: {other}"),
         }
     }
 }
@@ -430,7 +401,7 @@ const FALLBACK_SPEED: f64 = 1.0;
 ///
 /// 缺失**不应**被静默忽略（LESSONS.md LECS21 的同类问题：查询不匹配就是静静地
 /// 什么都不做），所以回退前先告警，让「漏挂 Stats」在日志里可见。
-fn actor_speeds(actor: Entity, stats: Option<&Stats>) -> ActorSpeeds {
+pub(crate) fn actor_speeds(actor: Entity, stats: Option<&Stats>) -> ActorSpeeds {
     let speed_or_fallback = |stat: StatId| {
         stats.map_or_else(
             || {
@@ -449,701 +420,6 @@ fn actor_speeds(actor: Entity, stats: Option<&Stats>) -> ActorSpeeds {
     }
 }
 
-// ── 生成系统 ─────────────────────────────────────────
-//
-// 生成系统只 spawn 候选：不写 actor 的 `Idle/Active/Failure`，不写计时器。
-
-/// 游荡候选：空闲/失败且具 `CanWander` 的怪物各产出一个 `Wander` 候选。
-pub fn wander_generation_system(
-    mut commands: Commands,
-    actors: Query<AiActorData, AiActor<CanWander>>,
-    effects: EffectContext,
-) {
-    for (actor, stats, position) in &actors {
-        let collected = effects.collect(actor, position.to_tuple());
-        commands.spawn((
-            ActionOf(actor),
-            ActionPriority(PRIORITY_WANDER),
-            ActionSource::Ai,
-            ActionName("Wander"),
-            ActionTimer {
-                remaining_av: SpeedRule::Move.action_av_ignoring(
-                    WANDER_DURATION,
-                    actor_speeds(actor, stats),
-                    SpeedModifiers {
-                        actor: &collected.actor,
-                        cell: &collected.cell,
-                    },
-                    &collected.ignored,
-                ),
-            },
-            Wander,
-            Candidate,
-        ));
-    }
-}
-
-/// 逃跑候选：生命占比低于进入阈值且具 `CanFlee`。
-///
-/// 存在意义有两个：让仲裁真的需要比较优先级（Flee 200 > Wander 50），
-/// 以及给 §3.6.4「每个行为一个生成系统」提供第二个样本。
-pub fn flee_generation_system(
-    mut commands: Commands,
-    actors: Query<(Entity, Option<&Stats>, &Health, &Position), AiActor<CanFlee>>,
-    effects: EffectContext,
-) {
-    for (actor, stats, health, position) in &actors {
-        if health.ratio() >= FLEE_HP_RATIO {
-            continue;
-        }
-        let collected = effects.collect(actor, position.to_tuple());
-        commands.spawn((
-            ActionOf(actor),
-            ActionPriority(PRIORITY_FLEE),
-            ActionSource::Ai,
-            ActionName("Flee"),
-            ActionTimer {
-                remaining_av: SpeedRule::Move.action_av_ignoring(
-                    FLEE_DURATION,
-                    actor_speeds(actor, stats),
-                    SpeedModifiers {
-                        actor: &collected.actor,
-                        cell: &collected.cell,
-                    },
-                    &collected.ignored,
-                ),
-            },
-            Flee,
-            Candidate,
-        ));
-    }
-}
-
-/// 等待候选（C1）：兜底行为，任何空闲且具 `CanWait` 的 actor 都会产出一个 `Wait`。
-///
-/// 与 `Wander` / `Flee` 的差别：**永远有候选**，因此仲裁必然有结果，
-/// 有能力的 actor 不会出现「没有任何行动」的空转（§3.3 的兜底语义）。
-pub fn wait_generation_system(
-    mut commands: Commands,
-    actors: Query<Entity, AiActor<CanWait>>,
-) {
-    for actor in &actors {
-        commands.spawn((
-            ActionOf(actor),
-            ActionPriority(PRIORITY_WAIT),
-            ActionSource::Ai,
-            ActionName("Wait"),
-            // 固定耗时：等待不受任何速度倍率影响（REFACTOR.md §11.6 第 4 项），
-            // 因此也**不传修正器**——`Fixed` 分支根本不读它。
-            ActionTimer {
-                remaining_av: SpeedRule::Fixed.action_av(
-                    WAIT_DURATION,
-                    actor_speeds(actor, None),
-                    SpeedModifiers::EMPTY,
-                ),
-            },
-            Wait,
-            Candidate,
-        ));
-    }
-}
-
-/// 追击候选（C5）：可见玩家、仍有记忆、或仇恨表里还有目标（DsnE29）。
-///
-/// 旧条件只有"看见玩家或有最后已知位置"；仇恨表加入后，被其他来源打过的怪物
-/// 即使看不见玩家也会产生追击候选（记忆由 `record_threat_system` 写入，
-/// 具体锁谁在 `validate_chase_system` 里按威胁值决定）。
-pub fn chase_generation_system(
-    mut commands: Commands,
-    actors: Query<AiActorData, AiActor<CanChase>>,
-    viewsheds: Query<&Viewshed>,
-    aggro: Query<&Aggro>,
-    player: Query<&Position, With<Player>>,
-    effects: EffectContext,
-) {
-    let player_position = player.single().ok().map(Position::to_tuple);
-
-    for (actor, stats, position) in &actors {
-        let awareness = aggro.get(actor).ok();
-        let can_see_player = player_position.is_some_and(|player| {
-            viewsheds
-                .get(actor)
-                .ok()
-                .is_some_and(|viewshed| viewshed.can_see(player))
-        });
-        let has_aggro = awareness.is_some_and(|aggro| !aggro.is_empty());
-        let has_memory = awareness.is_some_and(|aggro| aggro.last_known().is_some());
-        if !can_see_player && !has_aggro && !has_memory {
-            continue;
-        }
-        let collected = effects.collect(actor, position.to_tuple());
-        commands.spawn((
-            ActionOf(actor),
-            ActionPriority(PRIORITY_CHASE),
-            ActionSource::Ai,
-            ActionName("Chase"),
-            ActionTimer {
-                remaining_av: SpeedRule::Move.action_av_ignoring(
-                    CHASE_DURATION,
-                    actor_speeds(actor, stats),
-                    SpeedModifiers {
-                        actor: &collected.actor,
-                        cell: &collected.cell,
-                    },
-                    &collected.ignored,
-                ),
-            },
-            Chase,
-            Candidate,
-        ));
-    }
-}
-
-// ── 玩家路径生成（C2） ────────────────────────────────
-//
-// 玩家输入不走 AI 生成/仲裁：`PlayerActionRequest` → 直接产出 active action。
-
-/// 玩家行动请求（C2）：与旧 `generation::player::PlayerActionRequest` 同形，
-/// 但由 action 实体链路消费——**玩家路径直接产出 active action，不进 AI 仲裁**
-/// （§3.6.4）。C3 补上「走向怪物 = 攻击」的分支。
-#[derive(Resource, Default)]
-pub struct PlayerActionRequest {
-    pub command: Option<PlayerCommand>,
-}
-
-impl PlayerActionRequest {
-    pub fn new(command: PlayerCommand) -> Self {
-        Self {
-            command: Some(command),
-        }
-    }
-}
-
-/// 玩家路径的行动种类（内部用，避免与 `ActionKind` 混淆）。
-#[derive(Debug, Clone, Copy)]
-enum PlayerAction {
-    Wait,
-    Move(Move),
-    BasicAttack(Entity),
-    /// 施法（DsnE26）：法术编号在生成期固定，目标留给校验阶段选。
-    Cast(SpellId),
-    /// 投掷（Gm9）：目标格在生成期固定（落点必中，落点上站谁由校验/结算处理）。
-    Throw {
-        target: (usize, usize),
-    },
-}
-
-/// 玩家行动生成（C2/C3）：把已确认的玩家命令翻译成 **active action 实体**。
-///
-/// 与 AI 生成系统的三条差别（都是 §3.6.4 的规定）：
-///
-/// 1. 过滤 `With<Player>` 而不是 `With<Monster>`——玩家与怪物互不覆盖；
-/// 2. 直接产出 `ActiveAction` 并写 actor 的 `Active`，**不经过仲裁**；
-/// 3. 产出前先做同一套合法性检查（越界 / 占用 / [`moved_position`]），
-///    失败即拒绝请求（等价旧 `player_action_generation_system` 的「请求无效，未挂载」）。
-///
-/// **「走向怪物 = 攻击」**（C3）：按旧实现的口径——目标格被占用时，占用者是怪物
-/// 就产出 `BasicAttack`，否则拒绝请求。
-///
-/// **忙碌判定的依据**：查询用 `Without<Active>` 而不是 `Without<ActiveAction>`。
-/// `ActiveAction` 挂在**子实体**上，actor 身上看不到它；actor 自己的 `Active`
-/// 才是「正在行动」的权威标记（与仲裁系统用 `Without<Active>` 过滤 AI 候选一致）。
-///
-/// 计时迁移期沿用旧口径：`Move`/`BasicAttack` 用 `UNARMED_ATTACK_DURATION`、
-/// `Wait` 用 `WAIT_DURATION`，都乘敏捷系数（Phase D 才换成倍率组件）。
-///
-/// [`moved_position`]: crate::action::execution::movement::moved_position
-pub fn player_action_generation_system(
-    mut commands: Commands,
-    mut request: ResMut<PlayerActionRequest>,
-    world: PlayerWorld,
-    movement: MovementContext,
-    effects: EffectContext,
-    mut event_log: ResMut<crate::resources::EventLog>,
-) {
-    // 被拒绝时给玩家一句话（ISSUES SYN6）：此前三条拒绝路径都只写 `log::debug`，
-    // 玩家看不到任何反馈，无法区分"撞墙""被挡住""卡住了"。
-    // 连续重复会被 `EventLog::push` 合并成 (×N)（SYN8）。
-    fn refuse(log: &mut crate::resources::EventLog, reason: &str) {
-        log.push(crate::resources::EventMessage::system(reason));
-    }    let Some(command) = request.command.take() else {
-        return;
-    };
-
-    let Ok((player, position, stats)) = world.players.single() else {
-        log::warn!("玩家请求无法处理（玩家不存在或已有行动）: {command:?}");
-        return;
-    };
-
-    let (action, rule, duration) = match command {
-        PlayerCommand::Wait => (PlayerAction::Wait, SpeedRule::Fixed, WAIT_DURATION),
-        // 下楼在 `apply_player_command` 里就被拦走了（它不是行动）。真走到这里说明
-        // 有人绕过那个入口塞了命令进来——记一条错误并按"没做成"处理，而不是
-        // 静默当成 `Wait`（那会让"按了 > 却没下楼"变成一个查不到的迷）。
-        PlayerCommand::Descend => {
-            log::error!("下楼命令不该进入行动生成：它没有行动实体");
-            refuse(&mut event_log, "下楼要在楼梯上按 >");
-            return;
-        }
-        PlayerCommand::Move { dx, dy } => {
-            let (nx, ny) = position.offset(dx, dy);
-            if nx >= MAP_WIDTH || ny >= MAP_HEIGHT {
-                log::debug!("玩家移动越界，拒绝请求: ({dx},{dy})");
-                refuse(&mut event_log, "那边是墙外，走不过去");
-                return;
-            }
-            if let Some(occupant) = movement.occupancy.entity_at(nx, ny) {
-                if world.monsters.get(occupant).is_ok() {
-                    // 走向怪物 = 声明攻击（与旧实现一致）。
-                    (
-                        PlayerAction::BasicAttack(occupant),
-                        SpeedRule::Attack,
-                        UNARMED_ATTACK_DURATION,
-                    )
-                } else {
-                    log::debug!("玩家移动目标被非怪物占用，拒绝请求: ({nx},{ny})");
-                    refuse(&mut event_log, "那里有东西挡着");
-                    return;
-                }
-            } else if crate::action::execution::movement::moved_position(
-                &movement.map, &movement.occupancy, *position, dx, dy,
-            )
-            .is_none()
-            {
-                log::debug!("玩家移动非法，拒绝请求: ({dx},{dy})");
-                refuse(&mut event_log, "那边过不去");
-                return;
-            } else {
-                (
-                    PlayerAction::Move(Move { dx, dy }),
-                    SpeedRule::Move,
-                    UNARMED_ATTACK_DURATION,
-                )
-            }
-        }
-        PlayerCommand::Cast { slot } => {
-            let Ok((book, mana, viewshed)) = world.books.get(player) else {
-                log::warn!("玩家没有法术书，拒绝施法");
-                refuse(&mut event_log, "你还没有学会任何法术");
-                return;
-            };
-            let Some(spell_id) = book.get(usize::from(slot)) else {
-                refuse(&mut event_log, "那个法术格是空的");
-                return;
-            };
-            let spell = spell_id.def();
-            if mana.current < f64::from(spell.mp_cost) {
-                refuse(&mut event_log, "法力不足，念不出这个法术");
-                return;
-            }
-            // 目标在别处校验：生成期只拒绝"连个能选的目标都没有"的情形，
-            // 免得玩家花一个吟唱才被告知什么都打不到。
-            if spell.targeting == crate::spell::SpellTargeting::NearestEnemy
-                && crate::spell::nearest_enemy_in_range(
-                    *position,
-                    viewshed,
-                    spell.range,
-                    world
-                        .monster_positions
-                        .iter()
-                        .map(|(entity, position)| (entity, *position)),
-                )
-                .is_none()
-            {
-                refuse(&mut event_log, "视野里没有可施法的目标");
-                return;
-            }
-            (PlayerAction::Cast(spell_id), SpeedRule::Fixed, spell.cast_av)
-        }
-        PlayerCommand::Throw { dx, dy } => {
-            let (nx, ny) = position.offset(dx, dy);
-            // 取用口径（Gm9）：看副手，不看快捷键——副手没有可投掷物就拒绝；
-            // 行囊里的石子由应用层在进入瞄准前自动装填，核心不替输入层做这件事。
-            let off_hand_throwable = world
-                .bodies
-                .get(player)
-                .ok()
-                .and_then(|body| body.slot(crate::item::off_hand_slot_index()))
-                .is_some_and(|item| world.throwables.get(item).is_ok());
-            if !off_hand_throwable {
-                refuse(&mut event_log, "副手没有可投掷的东西");
-                return;
-            }
-            if !throw_reachable(&movement.map, position.to_tuple(), (nx, ny)) {
-                refuse(&mut event_log, "那个位置投不到：太远或视线被挡住");
-                return;
-            }
-            (
-                PlayerAction::Throw { target: (nx, ny) },
-                SpeedRule::Fixed,
-                THROW_DURATION_AV,
-            )
-        }
-    };
-
-    // 收桶（求值第 ② 步）：玩家脚下这一格的修正 + 玩家名下效果声明的无视来源。
-    let collected = effects.collect(player, position.to_tuple());
-    // 武器攻速（GAME.md Gm7「武器攻速」）：主手武器覆盖攻击的基础耗时。
-    // 移动仍用 `UNARMED_ATTACK_DURATION`——Gm7 的旧口径把"移动/攻击耗时"都挂在武器上，
-    // 那是旧系统的一个副作用；把移动交给移速是这一版有意的改动（记在 DsnE11 的代价里）。
-    let duration = match action {
-        PlayerAction::BasicAttack(_) => effects
-            .main_hand_weapon_speed(player)
-            .unwrap_or(UNARMED_ATTACK_DURATION),
-        _ => duration,
-    };
-    let remaining_av = rule.action_av_ignoring(
-        duration,
-        actor_speeds(player, stats),
-        SpeedModifiers {
-            actor: &collected.actor,
-            cell: &collected.cell,
-        },
-        &collected.ignored,
-    );
-
-    let mut action_cmd = commands.spawn((
-        ActionOf(player),
-        ActionPriority(PRIORITY_PLAYER),
-        ActionSource::Player,
-        ActionTimer { remaining_av },
-        ActiveAction,
-    ));
-    match action {
-        PlayerAction::Wait => {
-            action_cmd.insert((ActionName("Wait"), Wait));
-        }
-        PlayerAction::Move(action_move) => {
-            action_cmd.insert((ActionName("Move"), action_move));
-        }
-        PlayerAction::BasicAttack(target) => {
-            action_cmd.insert((ActionName("BasicAttack"), BasicAttack { target }));
-        }
-        PlayerAction::Cast(spell) => {
-            // 目标不在生成期固定：校验阶段按"此刻视野里最近的敌人"重新选，
-            // 吟唱期间目标跑动/换目标都由此兜住（DsnE26）。
-            action_cmd.insert((ActionName("Cast"), crate::spell::CastSpell { spell }));
-        }
-        PlayerAction::Throw { target } => {
-            action_cmd.insert((ActionName("Throw"), ThrowAction { target }));
-        }
-    }
-
-    let mut player_cmd = commands.entity(player);
-    begin_action(&mut player_cmd);
-    log::debug!("玩家行动已挂载: {action:?} player={player:?}");
-}
-
-/// 挂载玩家行动（C2/C3）：生成 + 仲裁两段，**不含** tick/执行/completion。
-///
-/// 主循环（`world/loop_.rs::apply_player_command`）在推进世界之前先单独运行这一次，
-/// 用来「确认命令是否被接受」：
-///
-/// - 旧实现同样是先 `player_action_generation_system` 挂载、再进推进循环；
-/// - 若把挂载和推进放在同一次调度里，玩家会在这一轮就把行动跑完，
-///   调用方随后看到的 `player_is_busy == false` 只是「已经做完了」，
-///   无法区分「命令被拒绝」（本文件第一版就踩了这个坑）。
-pub fn build_player_mount_schedule() -> Schedule {
-    // `core_schedule`（而不是 `Schedule::new`）：构建时强制无歧义，见 `schedule.rs`。
-    let mut schedule = crate::schedule::core_schedule(PlayerMountSchedule);
-    schedule.add_systems(
-        (
-            player_action_generation_system,
-            ApplyDeferred,
-            action_arbitration_system,
-        )
-            .chain(),
-    );
-    schedule
-}
-
-// ── 仲裁系统 ─────────────────────────────────────────
-
-/// 每个 actor 至多留下一个 `ActiveAction`，其余候选与落后候选一律 despawn。
-///
-/// 比较器是 `(ActionPriority, action_entity.index_u32())` 的**全序**：不含随机数。
-/// 同优先级时实体编号小者胜出，保证结果可复现（REFACTOR.md §3.4）。
-///
-/// 注意：bevy 0.20 的 `Entity::to_bits()` 用 NonMax 编码（数值 = u32::MAX − index），
-/// 直接按 bits 排序会把生成顺序反过来，因此这里用 `index_u32()`。
-///
-/// # 发命令的顺序也必须确定（Phase H11 后的确定性修补）
-///
-/// 两个循环（授予、回收）都**不能**用 `HashMap` 的迭代顺序：
-/// `std::collections::HashMap` 的 `RandomState` 每进程种子不同，所以同一世界在两次进程里
-/// 迭代顺序可能不同 → 命令发出顺序不同 → `insert(ActiveAction)` 造成的 **archetype 创建
-/// 顺序**不同 → 之后所有系统对这些 archetype 的**查询迭代顺序**不同 → 若有系统在迭代中
-/// x，随机流的分配就变了。
-/// 回收循环同理：`despawn` 顺序决定实体 id 的复用顺序，从而影响未来行动的
-/// `index_u32()` 分配顺序（它正是仲裁的平局打破键）。
-///
-/// 最终**状态**本身与顺序无关（每条命令作用在不同实体上），所以这类洞在单进程内、
-/// 在现有测试里都不会显形——只在跨进程对比同一颗种子时才看得见。
-pub fn action_arbitration_system(
-    mut commands: Commands,
-    candidates: Query<CandidateAction, (With<Candidate>, Without<ActiveAction>)>,
-    active_actions: Query<&ActionOf, With<ActiveAction>>,
-) {
-    // 已经持有 `ActiveAction` 的 actor：本轮不得再被授予行动。
-    // （候选查询里的 `Without<ActiveAction>` 只保证候选自身未激活，挡不住这种情况。）
-    let busy_actors: HashSet<Entity> = active_actions.iter().map(ActionOf::parent).collect();
-
-    // 每个 actor 选一个赢家：(priority, bits) 最小者。
-    let mut winners: HashMap<Entity, (Entity, i32, u32)> = HashMap::new();
-    let mut losers: Vec<Entity> = Vec::new();
-
-    for (action, priority, child_of) in &candidates {
-        let actor = child_of.parent();
-        if busy_actors.contains(&actor) {
-            losers.push(action);
-            continue;
-        }
-        let index = action.index_u32();
-        match winners.get(&actor) {
-            Some((_, best_priority, best_index))
-                if (*best_priority, *best_index) <= (priority.0, index) =>
-            {
-                losers.push(action);
-            }
-            Some((previous, ..)) => {
-                losers.push(*previous);
-                winners.insert(actor, (action, priority.0, index));
-            }
-            None => {
-                winners.insert(actor, (action, priority.0, index));
-            }
-        }
-    }
-
-    for (actor, winner) in ordered_grants(&winners) {
-        commands.entity(winner).remove::<Candidate>().insert(ActiveAction);
-        let mut actor_cmd = commands.entity(actor);
-        begin_action(&mut actor_cmd);
-    }
-    // 回收顺序同样显式化：见函数文档（despawn 顺序影响实体 id 复用 → 影响 index_u32 分配）。
-    losers.sort_unstable_by_key(|action| action.index_u32());
-    for loser in losers {
-        commands.entity(loser).despawn();
-    }
-}
-
-/// 授予顺序：按 `(priority, action index)` **升序**——与仲裁键同序，且与哈希迭代顺序无关。
-///
-/// 抽成独立函数只为一件事：让"顺序规则"能被单测钉住。系统内联排序的话，
-/// "这里要不要排序"就只剩注释在守（而注释不会失败）。
-fn ordered_grants(winners: &HashMap<Entity, (Entity, i32, u32)>) -> Vec<(Entity, Entity)> {
-    let mut grants: Vec<(Entity, Entity, i32, u32)> = winners
-        .iter()
-        .map(|(actor, (action, priority, index))| (*actor, *action, *priority, *index))
-        .collect();
-    // index 唯一，所以这是严格全序（`sort_unstable` 的稳定性不构成依赖）。
-    grants.sort_unstable_by_key(|&(_, _, priority, index)| (priority, index));
-    grants
-        .into_iter()
-        .map(|(actor, action, ..)| (actor, action))
-        .collect()
-}
-
-// ── Tick ─────────────────────────────────────────────
-
-/// 本轮要推进的最小正 AV（只统计 `ActiveAction`）。
-///
-/// 这是推进世界时钟的唯一来源（旧 Phase A 的同类函数已随旧链路删除）。
-pub fn active_action_timer_delta(world: &mut World) -> f64 {
-    let mut query = world.query_filtered::<&ActionTimer, With<ActiveAction>>();
-    query
-        .iter(world)
-        .map(|timer| timer.remaining_av)
-        .filter(|remaining| *remaining > 0.0)
-        .min_by(|a, b| a.partial_cmp(b).expect("ActionTimer must not be NaN"))
-        .unwrap_or(0.0)
-}
-
-/// 推进所有 `ActiveAction` 的计时器；归零者加 `Ready`（执行门禁）。
-pub fn tick_action_timers_system(world: &mut World) {
-    let delta = active_action_timer_delta(world);
-
-    // 把"这一轮推进了多少 AV"记到世界时钟上：状态效果按 AV 计时（ISSUES ECS46），
-    // 不能按"结算了多少轮"计——一次玩家行动会跨好几个世界轮。
-    if let Some(mut clock) = world.get_resource_mut::<crate::resources::WorldClock>() {
-        clock.last_step_av = delta;
-        clock.total_av += delta;
-    }
-
-    let mut ready_actions = Vec::new();
-    {
-        let mut query = world.query_filtered::<(Entity, &mut ActionTimer), With<ActiveAction>>();
-        for (action, mut timer) in query.iter_mut(world) {
-            if delta > 0.0 && timer.remaining_av > 0.0 {
-                timer.remaining_av = (timer.remaining_av - delta).max(0.0);
-            }
-            if timer.remaining_av <= 0.0 {
-                ready_actions.push(action);
-            }
-        }
-    }
-
-    for action in ready_actions {
-        world.entity_mut(action).insert(Ready);
-    }
-}
-
-// ── Completion ───────────────────────────────────────
-
-/// 消费 `ActionSucceeded` / `ActionFailedEvent`：despawn action 实体，actor 回 `Idle`/`Failure`。
-///
-/// 这是 `ActionSucceeded/FailedEvent` 从零消费者的死事件变成真实状态回转机制的地方
-/// （§3.6.6）；它也是唯一允许写 actor `Idle`/`Failure` 的地方之一。
-///
-/// H1 之后职责边界更清楚了：**终态出口（[`ActionMessages`]）负责"结束行动"**
-/// （清 `Ready` + 恰好一个事件），**本系统负责"回收并回转 actor"**。
-/// 这里的 `remove::<Ready>()` 因此只剩防御意义（执行器已清过），保留它是为了
-/// 万一有别的路径给 actor 挂了 `Ready`（actor 的 `Ready` 与 action 实体的 `Ready`
-/// 是同一个组件类型）。
-pub fn action_completion_system(
-    mut commands: Commands,
-    mut succeeded: MessageReader<ActionSucceededEvent>,
-    mut failed: MessageReader<ActionFailedEvent>,
-    actions: Query<(Entity, &ActionOf), With<ActiveAction>>,
-) {
-    let done: Vec<(Entity, bool)> = succeeded
-        .read()
-        .map(|event| (event.entity, true))
-        .chain(failed.read().map(|event| (event.entity, false)))
-        .collect();
-
-    for (actor, is_success) in done {
-        // 该 actor 的所有 action 实体：despawn 的实体无法再查询，
-        // 因此按“归属 + 仍是 ActiveAction”逐个回收。
-        //
-        // 这里**不需要**先判断 actor 是否还在：`ActionOf` 是 `linked_spawn` 关系，
-        // actor 被 despawn 时它名下的行动实体已经一并消失（见 `action::ownership`）。
-        let targets: Vec<Entity> = actions
-            .iter()
-            .filter(|(_, action_of)| action_of.parent() == actor)
-            .map(|(action, _)| action)
-            .collect();
-        for action in targets {
-            commands.entity(action).despawn();
-        }
-
-        if let Ok(mut actor_cmd) = commands.get_entity(actor) {
-            // 行动状态的收尾只有一处实现（见 `finish_action`）：清 `Active`/计时器/`Ready`，
-            // 并把 `Idle` 与 `Failure` 置成互斥的两个状态。
-            finish_action(&mut actor_cmd, is_success);
-            actor_cmd.remove::<ActionTimer>();
-            actor_cmd.remove::<Ready>();
-        }
-    }
-}
-
-// ── PoC 调度（Phase C 逐步扩成正式链路） ──────────────
-//
-// 生成（AI 候选 + 玩家 active）→ 仲裁 → tick → 执行 → completion。
-//
-// 全链路都是**普通系统**：没有 exclusive `&mut World` 系统，因此这条调度可以被
-// 自由组合（见 `entity_tests.rs` 里把它追加进 `CoreSettleSchedule` 的共存测试）。
-//
-// **已接主循环**（C7）：`world/loop_.rs` 每轮运行它；玩家命令先经
-// [`build_player_mount_schedule`] 挂载，再进推进循环。
-/// 行动链路的角色分组（Phase H3）：调度里唯一需要登记"位置"的地方。
-///
-/// 每个角色是一个**独立扩展点**——新增一个执行器只要往
-/// [`ActionPhase::Execute`] 的列表里加一行，不需要读懂整条链路的顺序，也不必修改
-/// 生成/仲裁/tick/完成 任何一处。
-///
-/// **顺序由这里定义一次**（`Generate → Arbitrate → Tick → Execute → Complete`），
-/// 由 [`build_action_poc_schedule`] 用 `.chain()` 钉住；角色之间必须保持这个全序，
-/// 因为后一个角色的输入正是前一个角色的输出。
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ActionPhase {
-    /// 生成候选 / 挂载玩家行动（只 spawn，不写 actor 行动状态）。
-    Generate,
-    /// 每个 actor 挑一个候选转正（唯一写 actor 行动状态的系统）。
-    Arbitrate,
-    /// 推进 `ActiveAction` 的 `ActionTimer`，归零加 `Ready`。
-    Tick,
-    /// **定案 + 预留**：每个行动一个校验器，决定"落在哪 / 打谁 / 还该做吗"，
-    /// 并把目标格立刻占住（串行阶段，所以同一轮不会有人抢同一格）。
-    ///
-    /// 没有校验器 = 永远有效（`Wait` 就是这样）。
-    Validate,
-    /// 落地：把上一阶段定下的结果写进世界，**不再判定**。
-    Execute,
-    /// 回收 action 实体并把 actor 转回 `Idle` / `Failure`。
-    Complete,
-}
-
-/// 组建行动链路调度：生成 → 仲裁 → tick → 执行 → 完成。
-///
-/// H3 把原先「13 个系统一条 `.chain()`」改成**按角色分组的链**。两者语义等价
-/// （分组之间仍是全序，组内保持插入顺序），但扩展点的形状变了：
-///
-/// | | H3 之前 | H3 之后 |
-/// |---|---|---|
-/// | 加一个执行器 | 在 13 项的长链里找位置，并确认它与前后系统的顺序 | 往 [`ActionPhase::Execute`] 加一行 |
-/// | 加一个生成器 | 同上 | 往 [`ActionPhase::Generate`] 加一行 |
-/// | 顺序在哪定义 | 隐含在一条长元组的书写顺序里 | [`ActionPhase`] 的全序 + 本函数的 `.chain()`，一处 |
-///
-/// **为什么仍未合并成一组**（对应 LESSONS `LECS22`）：调度里**顺序协调的中央点**
-/// 是 ECS 消除不掉的那一类中央点。分组能把它显式化（"谁先谁后"变成一个有名字的
-/// 枚举），但不能把它变没——所以这里的目标是"加第 N 个只改一处"，不是"零处"。
-///
-/// **`ApplyDeferred` 的位置不能省**：生成器用 `Commands` spawn 候选，仲裁用 `Query`
-/// 读候选；不把命令落盘，仲裁会看到空世界（Phase C 的 `.chain()` 已包含这一点，
-/// 分组后必须逐处保留）。
-pub fn build_action_poc_schedule() -> Schedule {
-    let mut schedule = crate::schedule::core_schedule(ActionPocSchedule);
-    schedule.add_systems(
-        (
-            (
-                // ---- Generate：只 spawn，不写 actor 行动状态 ----
-                (
-                    player_action_generation_system,
-                    wait_generation_system,
-                    chase_generation_system,
-                    wander_generation_system,
-                    flee_generation_system,
-                )
-                    .chain()
-                    .in_set(ActionPhase::Generate),
-                // 仲裁要看到候选实体，所以候选必须在这里落盘。
-                ApplyDeferred,
-                // ---- Arbitrate ----
-                action_arbitration_system.in_set(ActionPhase::Arbitrate),
-                // 仲裁的 spawn/despawn 落盘后再推进计时器。
-                ApplyDeferred,
-                // ---- Tick ----
-                tick_action_timers_system.in_set(ActionPhase::Tick),
-                // 校验阶段写的组件（`MoveTarget`/`AttackTarget`）要先落盘，执行器才看得到。
-                ApplyDeferred,
-                // ---- Validate：定案 + 预留。加一个行动只改这一段（外加它自己的生成器） ----
-                (
-                    crate::action::validation::validate_move_system,
-                    crate::action::validation::validate_basic_attack_system,
-                    crate::action::validation::validate_cast_system,
-                    crate::action::validation::validate_throw_system,
-                    crate::action::validation::validate_chase_system,
-                    crate::action::validation::validate_flee_system,
-                    crate::action::validation::validate_wander_system,
-                )
-                    .chain()
-                    .in_set(ActionPhase::Validate),
-                // 校验器用 Commands 挂 `MoveTarget` / `AttackTarget`，执行器要用。
-                ApplyDeferred,
-                // ---- Execute：一个通用落地器（判定已在上一阶段完成） ----
-                settle_action_system.in_set(ActionPhase::Execute),
-                // completion 要读到执行器写的终态事件。
-                ApplyDeferred,
-                // ---- Complete ----
-                action_completion_system.in_set(ActionPhase::Complete),
-            )
-                .chain(),
-        ),
-    );
-    schedule
-}
-
 // ── 测试 ─────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1158,6 +434,7 @@ mod tests {
     //! `action::entity::tests::<name>`，只影响 `--exact` 过滤）。
 
     use super::*;
+    use crate::balance::{UNARMED_ATTACK_DURATION, WAIT_DURATION, WANDER_DURATION};
     use crate::balance::{MAX_SPEED, MIN_SPEED, clamp_speed};
 
     /// 浮点比较容差。

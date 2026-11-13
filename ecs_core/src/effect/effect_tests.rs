@@ -5,8 +5,8 @@
 //! 之后 AV 的变化方向与幅度是否符合设计（DsnE10 的五步、DsnE12 的三个落点）。
 
 use super::*;
-use crate::action::generation::PlayerCommand;
-use crate::action::entity::{PlayerActionRequest};
+use crate::action::PlayerCommand;
+use crate::action::PlayerActionRequest;
 use crate::balance::UNARMED_ATTACK_DURATION;
 use crate::components::{ActionTimer, Position};
 use crate::map::Tile;

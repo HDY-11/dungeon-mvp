@@ -4,10 +4,20 @@
 //! 通过 `entity.rs` 末尾的 `#[path = "entity_tests.rs"] mod tests;` 引入。
 
 use super::*;
-use crate::action::generation::player::PlayerCommand;
+use crate::action::arbitration::*;
+use crate::components::{CanChase, CanFlee, CanWander, Chase, Flee, Health, Wait, Wander};
+use crate::schedule::ActionPocSchedule;
+use bevy_ecs::entity::EntityHashMap;
+use crate::action::completion::*;
+use crate::action::generation::*;
+use crate::action::ownership::ActionOf;
+use crate::balance::{UNARMED_ATTACK_DURATION, WAIT_DURATION, WANDER_DURATION};
+use crate::components::{BasicAttack, Move};
+use crate::throw::ThrowAction;
+use crate::action::player_command::PlayerCommand;
 use crate::action::settle::settle_action_system;
 use crate::components::{
-    CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Mana, Viewshed,
+    ActionTimer, CanBasicAttack, CanMove, CanWait, Experience, ExperienceReward, Mana, Viewshed,
 };
 use crate::map::{MAP_HEIGHT, MAP_WIDTH, Tile};
 use crate::monster::Aggro;
@@ -46,7 +56,7 @@ fn validate_and_settle(world: &mut World) {
                 validate_wander_system,
             )
                 .chain(),
-            // 校验器用 `Commands` 挂 `MoveTarget` / `AttackTarget`，落地器要用。
+            // 校验器用 `Commands` 挂 `Landing`，落地器要用。
             ApplyDeferred,
             settle_action_system,
         )
@@ -69,8 +79,8 @@ const MAX_ACTIONS_PER_ACTOR: usize = 1;
 #[test]
 fn grant_order_is_sorted_by_priority_then_action_index() {
     let mut world = World::new();
-    let mut winners: HashMap<Entity, (Entity, i32, u32)> = HashMap::new();
-    let mut key_of: HashMap<Entity, (i32, u32)> = HashMap::new();
+    let mut winners: EntityHashMap<(Entity, i32, u32)> = EntityHashMap::new();
+    let mut key_of: EntityHashMap<(i32, u32)> = EntityHashMap::new();
 
     for i in 0..8i32 {
         let actor = world.spawn_empty().id();

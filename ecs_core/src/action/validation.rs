@@ -68,55 +68,49 @@ use crate::item::{Container, Throw, off_hand_slot_index};
 use crate::map::Map;
 use crate::monster::Aggro;
 use crate::resources::{EventLog, EventMessage, GameRng, OccupancyMap};
-use crate::spell::{CastSpell, SpellBook, SpellTargeting, nearest_enemy_in_range};
+use crate::spell::{CastSpell, SpellBook, SpellId, SpellTargeting, nearest_enemy_in_range};
 use crate::throw::{ThrowAction, throw_reachable};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 
 use super::movement::{BlockReason, MovePlan, plan_step};
 
-/// 校验阶段定下的**落点**。落地阶段只负责把它写进 `Position`。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MoveTarget(pub Position);
-
-/// 校验阶段定下的**攻击目标**。落地阶段只负责发 `AttackIntentEvent`。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AttackTarget(pub Entity);
-
-/// 校验阶段定下的**法术目标**（DsnE26）。落地阶段只负责发 `SpellIntentEvent`。
+/// 校验阶段定下的落点/目标。落地阶段只负责把它写进世界。
 ///
-/// 与 [`AttackTarget`] 分开而不是共用一个 `Entity`：两者落地成不同的事件，
-/// 类型分开后 settle 不需要再回头查"这一发到底是普攻还是法术"。
+/// 为什么是一个枚举而不是四个 marker 组件：落地是一张**穷尽表**，加行动时
+/// 编译器会逼你处理新分支；marker 组件时代，新行动漏写 settle 分支只会静默地
+/// "原地完成"。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CastTarget(pub Entity);
-
-/// 校验阶段定下的**投掷落点**（Gm9）。落地阶段只负责发 `ThrowIntentEvent`。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThrowTarget(pub (usize, usize));
+pub enum Landing {
+    Move(Position),
+    Attack(Entity),
+    Cast { spell: SpellId, target: Entity },
+    Throw { landing: (usize, usize) },
+}
 
 /// 一次"定案"的结果：要么落脚、要么打人、要么施法、要么投掷、要么原地不动（仍然算这一步做完）。
 enum Decision {
     Move(Position),
     Attack(Entity),
-    Cast(Entity),
-    Throw((usize, usize)),
+    Cast { spell: SpellId, target: Entity },
+    Throw { landing: (usize, usize) },
     Stay,
 }
 
-/// 把决策落到 action 实体上：`MoveTarget` / `AttackTarget` / `CastTarget` / `ThrowTarget` / 什么都不加（= 原地不动）。
+/// 把决策落到 action 实体上：`Landing` 的对应分支；`Stay` 什么都不加（= 原地不动）。
 fn apply_decision(cmd: &mut EntityCommands, decision: Decision) {
     match decision {
         Decision::Move(to) => {
-            cmd.insert(MoveTarget(to));
+            cmd.insert(Landing::Move(to));
         }
         Decision::Attack(target) => {
-            cmd.insert(AttackTarget(target));
+            cmd.insert(Landing::Attack(target));
         }
-        Decision::Cast(target) => {
-            cmd.insert(CastTarget(target));
+        Decision::Cast { spell, target } => {
+            cmd.insert(Landing::Cast { spell, target });
         }
-        Decision::Throw(target) => {
-            cmd.insert(ThrowTarget(target));
+        Decision::Throw { landing } => {
+            cmd.insert(Landing::Throw { landing });
         }
         Decision::Stay => {}
     }
@@ -595,7 +589,13 @@ pub fn validate_cast_system(
         if !ready {
             continue;
         }
-        apply_decision(&mut commands.entity(action), Decision::Cast(target));
+        apply_decision(
+            &mut commands.entity(action),
+            Decision::Cast {
+                spell: cast.spell,
+                target,
+            },
+        );
     }
 }
 
@@ -641,7 +641,9 @@ pub fn validate_throw_system(
         }
         apply_decision(
             &mut commands.entity(action),
-            Decision::Throw(payload.target),
+            Decision::Throw {
+                landing: payload.target,
+            },
         );
     }
 }

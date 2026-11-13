@@ -322,7 +322,7 @@ fn fov_memory_and_occupancy_update() {
         }
         if crate::world_loop::apply_player_command(
             &mut world,
-            crate::action::generation::player::PlayerCommand::Move { dx, dy },
+            crate::action::player_command::PlayerCommand::Move { dx, dy },
         ) {
             moved = Some((nx, ny));
             break;
@@ -450,4 +450,87 @@ fn damage_feeds_the_main_hand_weapons_growth() {
             .any(|message| message.text.contains("升到了 2 级")),
         "升级应写进事件栏（玩家要能看见）"
     );
+}
+
+
+/// 事件缓冲自检（P1e）：`CoreEventBuffers` 是手写清单，新增事件时最容易漏
+/// `update`，漏了就会在下一轮被重新读到。这里把 9 类事件各写一条，跑一轮
+/// `update_events_system`，断言每类当前缓冲都清空。
+///
+/// 新增事件时**必须同时**补三处：`events.rs` 的类型、`CoreEventBuffers`/`update_events_system`、
+/// 本测试。任何一处漏了，这个测试会失败（最后一处）或编译失败（前两处）。
+#[test]
+fn update_events_system_drains_every_core_message_type() {
+    use super::update_events_system;
+    use bevy_ecs::message::Messages;
+    use bevy_ecs::system::RunSystemOnce;
+    use crate::events::{
+        ActionFailedEvent, ActionSucceededEvent, AttackEvent, DamageTakenEvent, LevelUpEvent,
+        SpellIntentEvent, ThrowIntentEvent,
+    };
+
+    let mut world = test_world();
+    let actor = world.spawn_empty().id();
+    let target = world.spawn_empty().id();
+
+    world.write_message(AttackIntentEvent {
+        attacker: actor,
+        target,
+    });
+    world.write_message(AttackEvent {
+        attacker: actor,
+        target,
+        damage: 1.0,
+        is_crit: false,
+    });
+    world.write_message(DamageTakenEvent {
+        source: Some(actor),
+        target,
+        amount: 1.0,
+    });
+    world.write_message(DeathEvent {
+        entity: target,
+        reward: 0.0,
+    });
+    world.write_message(ActionSucceededEvent { entity: actor });
+    world.write_message(SpellIntentEvent {
+        caster: actor,
+        spell: crate::spell::SpellId(0),
+        target,
+    });
+    world.write_message(ThrowIntentEvent {
+        thrower: actor,
+        target: (0, 0),
+    });
+    world.write_message(ActionFailedEvent { entity: actor });
+    world.write_message(LevelUpEvent {
+        entity: actor,
+        new_level: 2,
+    });
+
+    // 第一轮把消息从"新"缓冲挪到"旧"缓冲；第二轮清掉旧缓冲。
+    // 某类事件若漏在 `update_events_system` 之外，两轮之后它的缓冲仍有消息。
+    for round in 0..2 {
+        world
+            .run_system_once(update_events_system)
+            .unwrap_or_else(|error| panic!("update_events_system 第 {round} 轮被跳过: {error}"));
+    }
+
+    assert!(world
+        .resource::<Messages<AttackIntentEvent>>()
+        .is_empty());
+    assert!(world.resource::<Messages<AttackEvent>>().is_empty());
+    assert!(world
+        .resource::<Messages<DamageTakenEvent>>()
+        .is_empty());
+    assert!(world.resource::<Messages<DeathEvent>>().is_empty());
+    assert!(world
+        .resource::<Messages<ActionSucceededEvent>>()
+        .is_empty());
+    assert!(world.resource::<Messages<SpellIntentEvent>>().is_empty());
+    assert!(world.resource::<Messages<ThrowIntentEvent>>().is_empty());
+    assert!(world
+        .resource::<Messages<ActionFailedEvent>>()
+        .is_empty());
+    assert!(world.resource::<Messages<LevelUpEvent>>().is_empty());
 }

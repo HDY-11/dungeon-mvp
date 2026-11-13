@@ -120,3 +120,19 @@ Select-String -Path (Get-ChildItem -Recurse -Filter *.rs ecs_core,src,presentati
 # 行数 Top20
 Get-ChildItem ecs_core/src -Recurse -Filter *.rs | ForEach-Object { "$((Get-Content $_).Count)`t$($_.FullName)" } | Sort-Object { [int]($_ -split "`t")[0] } -Descending | Select-Object -First 20
 ```
+
+## 7. P1 执行结果（2026-11-13）
+
+P1 目标：行为零变化的整理。全部落地，`cargo test -p ecs_core` **375 passed**，
+`cargo test --workspace --no-fail-fast` 30 组 **670 passed / 1 ignored**，六 crate clippy 全绿，`docs_check` PASS。
+
+| 切片 | 内容 | 结果 |
+|---|---|---|
+| P1a | `action/execution/movement.rs`→`action/movement.rs`（删 `can_move_to`）、`action/generation/player.rs`→`action/player_command.rs`，删两个目录 | 完成 |
+| P1b | `action/entity.rs` 1408→685 行；新 `generation/ai.rs`、`generation/player.rs`、`arbitration.rs`（144 行）、`completion.rs`（191 行） | 完成 |
+| P1c | 仲裁 `std::HashSet/HashMap<Entity>` → `EntityHashSet`/`EntityHashMap`，确定性键保持 `index_u32` | 完成 |
+| P1d | `Landing` 枚举取代四个 target 组件；`settle_action_system` 改穷尽 `match`；`validation_tests` 用视图辅助函数 | 完成 |
+| P1e | `ActionName::phrase` 去静默兜底（未登记 panic）；`update_events_system` 自检测试（9 类事件两轮 update 后缓冲清空） | 完成 |
+
+验证命令与结果见 §6；clippy 期间发现 `action_arbitration_system` 候选查询超 `type_complexity`
+阈值，按用户要求**不加 `#[allow]`**，改为 `type Candidates<'w,'s>` 别名。

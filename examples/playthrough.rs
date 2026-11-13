@@ -494,7 +494,7 @@ fn step_toward(from: (usize, usize), to: (usize, usize)) -> (isize, isize) {
 fn can_step(world: &World, pos: (usize, usize), dx: isize, dy: isize) -> bool {
     let map = world.resource::<Map>();
     let occupancy = world.resource::<ecs_core::OccupancyMap>();
-    ecs_core::action::execution::movement::moved_position(
+    ecs_core::action::movement::moved_position(
         map,
         occupancy,
         Position::new(pos.0, pos.1),

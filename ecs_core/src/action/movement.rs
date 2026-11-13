@@ -4,15 +4,14 @@
 //!
 //! | 层 | 内容 | 在哪 |
 //! |---|---|---|
-//! | **纯规则** | [`plan_step`] / [`can_move_to`] / [`moved_position`]：不碰 `World`，只吃「位置 + 方向 + 地图/占用图引用」 | 本模块 |
+//! | **纯规则** | [`plan_step`] / [`moved_position`]：不碰 `World`，只吃「位置 + 方向 + 地图/占用图引用」 | 本模块 |
 //! | **判定 + 预留** | 校验器调 [`plan_step`]，合法就立刻占住目标格 | `action::validation` |
-//! | **落地** | 把定案写进 `Position` 并腾出旧格 | `action::entity::settle_action_system` |
+//! | **落地** | 把定案写进 `Position` 并腾出旧格 | `action::settle` |
 //!
 //! # 为什么规则要返回"原因"而不是 `bool`
 //!
 //! 因为拒绝原因要能给玩家看（ISSUES SYN6：撞墙、被挡、穿角三种情况玩家必须能区分），
-//! 而且**只能有一个地方产生这个原因**。`can_move_to` 只是 [`plan_step`] 的
-//! `bool` 视图，保留它是因为既有调用点与测试都在用它。
+//! 而且**只能有一个地方产生这个原因**。
 //!
 //! # 为什么"判定"只能有一处
 //!
@@ -112,23 +111,6 @@ pub fn plan_step(
         }
     }
     MovePlan::Allowed(Position::new(nx, ny))
-}
-
-/// 判断 `(x, y)` 能否向 `(dx, dy)` 移动。
-///
-/// [`plan_step`] 的 `bool` 视图；保留它是因为既有调用点与测试都在用这个形状。
-pub fn can_move_to(
-    map: &Map,
-    occupancy: &OccupancyMap,
-    x: usize,
-    y: usize,
-    dx: isize,
-    dy: isize,
-) -> bool {
-    matches!(
-        plan_step(map, occupancy, Position::new(x, y), dx, dy),
-        MovePlan::Allowed(_)
-    )
 }
 
 /// 合法移动的落点；非法（越界/不可走/被占用/对角穿墙）返回 `None`。

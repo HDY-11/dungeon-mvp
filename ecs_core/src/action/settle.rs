@@ -7,9 +7,9 @@
 //!
 //! | 校验器留下的 | 落地做什么 |
 //! |---|---|
-//! | [`MoveTarget`] | 写 `Position`，并腾出旧格（预留时目标格已经写上 actor） |
-//! | [`AttackTarget`] | 写 `AttackIntentEvent`（伤害仍归结算链路） |
-//! | [`CastTarget`] | 写 `SpellIntentEvent`（扣蓝/效果仍归结算链路，DsnE26） |
+//! | [`Landing::Move`] | 写 `Position`，并腾出旧格（预留时目标格已经写上 actor） |
+//! | [`Landing::Attack`] | 写 `AttackIntentEvent`（伤害仍归结算链路） |
+//! | [`Landing::Cast`] | 写 `SpellIntentEvent`（扣蓝/效果仍归结算链路，DsnE26） |
 //! | 什么都没留 | 原地——仍然算这一步做完（`Wait`，以及被挡的 `Wander`/`Chase`/`Flee`） |
 //!
 //! # 为什么是**一个**系统而不是六个
@@ -30,35 +30,29 @@
 //! 白名单窄才有意义，所以落地系统不能和大堆生成/仲裁代码躺在同一个文件里。
 
 use crate::action::entity::{ActionMessages, ActiveAction};
-use crate::action::validation::{AttackTarget, CastTarget, MoveTarget, ThrowTarget};
+use crate::action::validation::Landing;
 use crate::action::ownership::ActionOf;
 use crate::components::{Position, Ready};
 use crate::events::{AttackIntentEvent, SpellIntentEvent, ThrowIntentEvent};
 use crate::resources::OccupancyMap;
-use crate::spell::CastSpell;
 use bevy_ecs::prelude::*;
 
 /// 落地器的查询：**到点**的行动 + 校验阶段留下的定案。
 ///
-/// `Option` 本身就是"没有定案"的表达：校验器只对 `Move` 写 `MoveTarget`、只对
-/// 攻击写 `AttackTarget`、只对施法写 `CastTarget`、只对投掷写 `ThrowTarget`，
+/// `Option` 本身就是"没有定案"的表达：校验器只对 `Move` 写 `Landing::Move`、只对
+/// 攻击写 `Landing::Attack`、只对施法写 `Landing::Cast`、只对投掷写 `Landing::Throw`，
 /// 别的行动（`Wait`）什么都不写——那个 `None` 就是"原地完成"。`CastSpell` 与
-/// `CastTarget` 成对出现：前者是"放什么"，后者是"对谁放"。
+/// `Landing::Cast` 成对出现：前者是"放什么"，后者是"对谁放"。
 /// 抽成别名同时解决 `clippy::type_complexity`，也让这件**契约**有了一个可引用的名字。
-pub(crate) type ReadyDecision = (
-    Entity,
-    &'static ActionOf,
-    Option<&'static MoveTarget>,
-    Option<&'static AttackTarget>,
-    Option<&'static CastTarget>,
-    Option<&'static CastSpell>,
-    Option<&'static ThrowTarget>,
-);
+pub(crate) type ReadyDecision = (Entity, &'static ActionOf, Option<&'static Landing>);
 
-/// 落地：把校验阶段定下的落点/目标写进世界。
+/// 落地：把校验阶段定下的决策写进世界。
 ///
-/// 它**不判定**：没有 `MoveTarget` 就没有移动，哪怕目标格此刻空着也不会自己走一步
-/// （`validation_tests::settle_never_invents_a_step_without_a_decision` 钉住这条）。
+/// 落地器**不判定**：没有 `Landing` 就意味着"原地完成"；即便目标格此刻空着，
+/// 它也不会自己走一步。
+///
+/// 一张穷尽 `match` 是这里唯一需要维护的东西：`Landing` 增加分支时编译器会报错，
+/// 不再依赖"记得去 settle 里加一段 `if let`"。
 pub fn settle_action_system(
     actions: Query<ReadyDecision, (With<ActiveAction>, With<Ready>)>,
     mut positions: Query<&mut Position>,
@@ -68,61 +62,51 @@ pub fn settle_action_system(
     mut throws: MessageWriter<ThrowIntentEvent>,
     mut events: ActionMessages,
 ) {
-    for (action, child_of, move_target, attack_target, cast_target, cast_spell, throw_target) in
-        &actions
-    {
-        let actor = child_of.parent();
-
-        if let Some(MoveTarget(to)) = move_target {
-            let Ok(mut position) = positions.get_mut(actor) else {
-                events.fail(action, actor);
-                continue;
-            };
-            let from = *position;
-            // 腾出旧格：校验阶段预留时已经把 actor 写进目标格，所以这里只清旧的。
-            // 只清"确实是自己的那一格"——占用图在整轮里都是权威，不能盲清。
-            if occupancy.entity_at(from.x, from.y) == Some(actor) {
-                occupancy.clear_at(from.x, from.y);
+    for (action, action_of, landing) in &actions {
+        let actor = action_of.parent();
+        match landing {
+            None => {}
+            Some(Landing::Move(to)) => {
+                let Ok(mut position) = positions.get_mut(actor) else {
+                    events.fail(action, actor);
+                    continue;
+                };
+                let from = *position;
+                // 腾出旧格：校验阶段预留时已经把这个 actor 写进目标格，所以这里只清旧的。
+                // 只清"确实是自己的那一格"——占用图在整轮里都是权威，不能盲清。
+                if occupancy.entity_at(from.x, from.y) == Some(actor) {
+                    occupancy.clear_at(from.x, from.y);
+                }
+                position.x = to.x;
+                position.y = to.y;
+                log::debug!(
+                    "落地: actor={actor:?} ({},{}) -> ({},{})",
+                    from.x,
+                    from.y,
+                    to.x,
+                    to.y
+                );
             }
-            position.x = to.x;
-            position.y = to.y;
-            log::debug!(
-                "落地: actor={actor:?} ({},{}) → ({},{})",
-                from.x,
-                from.y,
-                to.x,
-                to.y
-            );
+            Some(Landing::Attack(victim)) => {
+                intents.write(AttackIntentEvent {
+                    attacker: actor,
+                    target: *victim,
+                });
+            }
+            Some(Landing::Cast { spell, target }) => {
+                spells.write(SpellIntentEvent {
+                    caster: actor,
+                    spell: *spell,
+                    target: *target,
+                });
+            }
+            Some(Landing::Throw { landing }) => {
+                throws.write(ThrowIntentEvent {
+                    thrower: actor,
+                    target: *landing,
+                });
+            }
         }
-
-        if let Some(AttackTarget(victim)) = attack_target {
-            intents.write(AttackIntentEvent {
-                attacker: actor,
-                target: *victim,
-            });
-        }
-
-        if let Some(CastTarget(target)) = cast_target {
-            // `CastSpell` 与 `CastTarget` 是同一个校验器成对写下的；缺一半说明
-            // 校验器有 bug，宁可失败也不发一个不知道是什么的法术。
-            let Some(cast) = cast_spell else {
-                events.fail(action, actor);
-                continue;
-            };
-            spells.write(SpellIntentEvent {
-                caster: actor,
-                spell: cast.spell,
-                target: *target,
-            });
-        }
-
-        if let Some(ThrowTarget(landing)) = throw_target {
-            throws.write(ThrowIntentEvent {
-                thrower: actor,
-                target: *landing,
-            });
-        }
-
         events.succeed(action, actor);
     }
 }

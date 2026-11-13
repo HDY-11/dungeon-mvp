@@ -37,26 +37,32 @@
 //! 模块布局（**一个阶段一个文件**，读目录就能看出流水线）：
 //!
 //! - [`entity`]：action 实体链路本体（组件、生成/仲裁/tick、完成、调度），C7 起已接进主循环；
-//! - [`validation`]：**校验阶段**——每个行动一个校验器，定案 + 预留（`MoveTarget`/`AttackTarget`）；
+//! - [`validation`]：**校验阶段**——每个行动一个校验器，定案 + 预留（`Landing`）；
 //! - [`settle`]：**落地阶段**——全项目唯一写 `Position` 的系统（另一个写入点是生成期出生点）；
 //! - [`ownership`]：行动归属关系（`ActionOf` / `ActionChildren`）——用它而**不用**
 //!   通用 `ChildOf`，让"只有行动实体参与行动仲裁"成为类型保证（ISSUES ECS30/ECS41）；
-//! - [`generation`]：生成侧的类型桥（`PlayerCommand`）；
-//! - [`execution`]：执行侧共用件——**纯规则**（`movement::plan_step` 等），不含系统。
+//! - [`player_command`]：生成侧的类型桥（`PlayerCommand`）；
+//! - [`movement`]：执行侧共用件——**纯规则**（`plan_step` / `moved_position`），不含系统。
 
+pub mod arbitration;
+pub mod completion;
 pub mod entity;
-pub mod execution;
 pub mod generation;
+pub mod movement;
 pub mod ownership;
+pub mod player_command;
 pub mod settle;
 pub mod validation;
 
 pub use entity::{
     ActionName, ActionPriority, ActionSource, ActiveAction, Candidate, PRIORITY_CHASE,
-    PRIORITY_FLEE, PRIORITY_PLAYER, PRIORITY_WAIT, PRIORITY_WANDER, PlayerActionRequest,
+    PRIORITY_FLEE, PRIORITY_PLAYER, PRIORITY_WAIT, PRIORITY_WANDER,
 };
-pub use execution::*;
+pub use arbitration::*;
+pub use completion::*;
 pub use generation::*;
+pub use movement::*;
 pub use ownership::{ActionChildren, ActionOf};
+pub use player_command::*;
 pub use settle::settle_action_system;
-pub use validation::{AttackTarget, MoveTarget};
+pub use validation::Landing;

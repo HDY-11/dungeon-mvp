@@ -1,8 +1,10 @@
-//! 行动生成侧的类型桥（玩家命令 → action 实体由 `action::entity` 负责）。
+//! 行动生成侧：AI 候选与玩家 active action。
 //!
-//! 旧 AI 条件函数（`chase_condition` / `flee_condition` / `wants_to_flee` /
-//! `player_visible_to`）在 action 实体链路落地后已无调用者，作为 C8 遗留一并删除。
+//! 生成系统**只 spawn 候选/active action**，不写 actor 的 `Idle`/`Active`/`Failure`
+//! （玩家路径例外：它直接产出 active action，见 [`player`]）。
 
+pub mod ai;
 pub mod player;
 
+pub use ai::*;
 pub use player::*;

@@ -50,7 +50,7 @@ pub struct ActionPocSchedule;
 /// 玩家行动挂载：生成 + 仲裁，**不含**推进/执行。
 ///
 /// `apply_player_command` 先单独跑这一次来确认命令是否被接受；见
-/// `action::entity::build_player_mount_schedule` 的说明。
+/// `action::completion::build_player_mount_schedule` 的说明。
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerMountSchedule;
 

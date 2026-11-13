@@ -164,12 +164,12 @@ fn the_second_claimant_of_a_cell_loses_before_anyone_moves() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.get::<MoveTarget>(first_action),
-        Some(&MoveTarget(Position::new(4, 11))),
+        move_landing(&world, first_action),
+        Some(Position::new(4, 11)),
         "先判定的那个必须拿到落点"
     );
     assert!(
-        world.get::<MoveTarget>(second_action).is_none(),
+        move_landing(&world, second_action).is_none(),
         "同一轮里第二个想进同一格的行动不得拿到落点"
     );
     // 预留发生在**落地之前**：这正是"判定只有一处"能成立的原因。
@@ -220,7 +220,7 @@ fn settle_lands_the_reserved_step_and_frees_the_old_cell() {
     assert!(world.get::<Ready>(action).is_none(), "终态出口要清 Ready");
 }
 
-/// 落地器**不判定**：没有 `MoveTarget` 就意味着"原地"，绝不会自己算一步。
+/// 落地器**不判定**：没有 `Landing::Move` 就意味着"原地"，绝不会自己算一步。
 ///
 /// 这条是"判定只有一处"的反面保证：如果有人把判定塞回落地器，被挡的移动会
 /// 自己找一格走掉，这条用例就会失败（`Wait` 没有校验器 → 必须原地）。
@@ -258,12 +258,12 @@ fn a_blocked_player_move_fails_and_reports_the_reason() {
     run_validators(&mut world);
 
     assert!(
-        world.get::<MoveTarget>(action).is_none(),
+        move_landing(&world, action).is_none(),
         "被墙挡住的移动不得定案"
     );
     assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
     let log = world.resource::<EventLog>();
-    let reason = super::super::execution::movement::BlockReason::Wall.describe();
+    let reason = super::super::movement::BlockReason::Wall.describe();
     assert!(
         log.messages.iter().any(|message| message.text == reason),
         "玩家的失败原因必须进 EventLog（期望含「{reason}」）：{:?}",
@@ -352,27 +352,27 @@ fn each_validator_only_claims_its_own_action_type() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.get::<MoveTarget>(move_action),
-        Some(&MoveTarget(Position::new(20, 21))),
+        move_landing(&world, move_action),
+        Some(Position::new(20, 21)),
         "`Move` 应当按 payload 定案"
     );
     assert_eq!(
-        world.get::<AttackTarget>(attack_action),
-        Some(&AttackTarget(player)),
+        attack_landing(&world, attack_action),
+        Some(player),
         "`BasicAttack` 应当定案为攻击玩家"
     );
     assert_eq!(
-        world.get::<MoveTarget>(chase_action),
-        Some(&MoveTarget(Position::new(30, 31))),
+        move_landing(&world, chase_action),
+        Some(Position::new(30, 31)),
         "`Chase` 应当朝最后已知位置走 A* 首步"
     );
     assert_eq!(
-        world.get::<MoveTarget>(flee_action),
-        Some(&MoveTarget(Position::new(4, 9))),
+        move_landing(&world, flee_action),
+        Some(Position::new(4, 9)),
         "`Flee` 应当选最远的合法方向（平局取方向表里更靠前的）"
     );
     assert!(
-        world.get::<MoveTarget>(wander_action).is_some(),
+        move_landing(&world, wander_action).is_some(),
         "空地上游荡必须拿到一个落点"
     );
     assert_eq!(
@@ -427,7 +427,7 @@ fn a_chase_with_no_path_stays_put_and_succeeds() {
     run_validate_and_settle(&mut world);
 
     assert!(
-        world.get::<MoveTarget>(action).is_none(),
+        move_landing(&world, action).is_none(),
         "无路可走时不得定案（不能凭空造一步）"
     );
     assert_eq!(position_of(&world, chaser), (30, 30), "追击者原地不动");
@@ -452,7 +452,7 @@ fn a_chase_without_sight_or_memory_fails() {
 
     run_validators(&mut world);
 
-    assert!(world.get::<MoveTarget>(action).is_none());
+    assert!(move_landing(&world, action).is_none());
     assert_eq!(
         world.resource::<Messages<ActionFailedEvent>>().len(),
         1,
@@ -470,7 +470,7 @@ fn a_flee_above_the_exit_threshold_fails() {
 
     run_validators(&mut world);
 
-    assert!(world.get::<MoveTarget>(action).is_none(), "不该再逃");
+    assert!(move_landing(&world, action).is_none(), "不该再逃");
     assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
 }
 
@@ -527,8 +527,8 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
         let action = mount_ready(&mut world, player, BasicAttack { target });
         run_validators(&mut world);
         assert_eq!(
-            world.get::<AttackTarget>(action),
-            Some(&AttackTarget(target)),
+            attack_landing(&world, action),
+            Some(target),
             "相邻且存活时必须定案为攻击"
         );
         assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 0);
@@ -540,7 +540,7 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
         let target = monster_at(&mut world, (14, 10));
         let action = mount_ready(&mut world, player, BasicAttack { target });
         run_validators(&mut world);
-        assert!(world.get::<AttackTarget>(action).is_none(), "够不着不得定案");
+        assert!(attack_landing(&world, action).is_none(), "够不着不得定案");
         assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
     }
 
@@ -552,7 +552,7 @@ fn a_basic_attack_needs_adjacency_and_a_living_target() {
         let action = mount_ready(&mut world, player, BasicAttack { target });
         run_validators(&mut world);
         assert!(
-            world.get::<AttackTarget>(action).is_none(),
+            attack_landing(&world, action).is_none(),
             "打尸体不得定案"
         );
         assert_eq!(world.resource::<Messages<ActionFailedEvent>>().len(), 1);
@@ -611,7 +611,7 @@ fn a_queued_chase_is_cancelled_the_moment_it_loses_the_target() {
         "排队中的追击失去目标必须立刻取消（ECS43：否则空占槽位）"
     );
     assert!(
-        world.get::<MoveTarget>(action).is_none(),
+        move_landing(&world, action).is_none(),
         "取消它，而不是替它算一步"
     );
 }
@@ -631,7 +631,7 @@ fn a_queued_flee_is_cancelled_when_health_recovers() {
         1,
         "排队中的逃跑在血量恢复后必须立刻取消"
     );
-    assert!(world.get::<MoveTarget>(action).is_none());
+    assert!(move_landing(&world, action).is_none());
 }
 
 /// 排队中的攻击：目标走开 → 立刻取消。
@@ -648,7 +648,7 @@ fn a_queued_basic_attack_is_cancelled_when_the_target_walks_away() {
         1,
         "排队中的攻击在目标离开后必须立刻取消"
     );
-    assert!(world.get::<AttackTarget>(action).is_none());
+    assert!(attack_landing(&world, action).is_none());
 }
 
 /// **定案与预留不提前**：排队中的行动即使仍然有效，也不许定方向、不许占格、不许取随机数。
@@ -680,11 +680,11 @@ fn a_queued_action_is_never_decided_reserved_or_randomised() {
     run_validators(&mut world);
 
     assert!(
-        world.get::<MoveTarget>(chase).is_none(),
+        move_landing(&world, chase).is_none(),
         "排队中的追击不得提前定案"
     );
     assert!(
-        world.get::<MoveTarget>(wander).is_none(),
+        move_landing(&world, wander).is_none(),
         "排队中的游荡不得提前定案"
     );
     assert_eq!(
@@ -728,7 +728,7 @@ fn cast_validation_targets_the_nearest_visible_enemy_and_settles_an_intent() {
     run_validate_and_settle(&mut world);
 
     assert_eq!(
-        world.get::<CastTarget>(action).map(|target| target.0),
+        cast_landing(&world, action),
         Some(near),
         "施法应锁定视野内最近的敌人"
     );
@@ -750,7 +750,7 @@ fn cast_validation_fails_without_mana_and_without_a_target() {
     let action = mount_ready(&mut world, player, CastSpell { spell: SpellId(0) });
     run_validate_and_settle(&mut world);
     assert!(
-        world.get::<CastTarget>(action).is_none(),
+        cast_landing(&world, action).is_none(),
         "法力不足时不得定案"
     );
 
@@ -767,7 +767,7 @@ fn cast_validation_fails_without_mana_and_without_a_target() {
         world.resource::<Messages<ActionFailedEvent>>().len() > failed_before,
         "视野里没有敌人时火花术必须失败"
     );
-    assert!(world.get::<CastTarget>(action2).is_none());
+    assert!(cast_landing(&world, action2).is_none());
 }
 
 // ── 投掷（Gm9 / DsnE28）──────────────────────────────
@@ -797,7 +797,7 @@ fn throw_validation_targets_the_chosen_cell_and_settles_an_intent() {
     run_validate_and_settle(&mut world);
 
     assert_eq!(
-        world.get::<ThrowTarget>(action).map(|target| target.0),
+        throw_landing(&world, action),
         Some((12, 10)),
         "投掷的落点就是载荷里的格子（落点必中）"
     );
@@ -821,7 +821,7 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
         .take_slot(off_hand_slot_index());
     let action = mount_ready(&mut world, player, ThrowAction { target: (12, 10) });
     run_validate_and_settle(&mut world);
-    assert!(world.get::<ThrowTarget>(action).is_none(), "副手空了不得定案");
+    assert!(throw_landing(&world, action).is_none(), "副手空了不得定案");
     assert!(
         !world.resource::<Messages<ActionFailedEvent>>().is_empty(),
         "副手空了要让行动失败"
@@ -838,7 +838,7 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
     );
     run_validate_and_settle(&mut world);
     assert!(
-        world.get::<ThrowTarget>(action2).is_none(),
+        throw_landing(&world, action2).is_none(),
         "射程外不得定案"
     );
 
@@ -848,7 +848,7 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
     let action3 = mount_ready(&mut world, player, ThrowAction { target: (13, 10) });
     run_validate_and_settle(&mut world);
     assert!(
-        world.get::<ThrowTarget>(action3).is_none(),
+        throw_landing(&world, action3).is_none(),
         "视线被挡不得定案"
     );
 }
@@ -856,7 +856,7 @@ fn throw_validation_fails_when_the_off_hand_is_empty_or_the_cell_is_out_of_reach
 /// DsnE29：追击目标 = 威胁最高者，而不是永远玩家。
 ///
 /// 玩家可见、但威胁表里另一只怪更高；追击者应当定案攻击那只怪。
-/// 这条钉住"仇恨层只换目标选择、不换行动原语"：输出的仍是 `AttackTarget`。
+/// 这条钉住"仇恨层只换目标选择、不换行动原语"：输出的仍是 `Landing::Attack`。
 #[test]
 fn a_chase_attacks_the_highest_threat_instead_of_the_player() {
     let (mut world, player) = open_world();
@@ -877,12 +877,43 @@ fn a_chase_attacks_the_highest_threat_instead_of_the_player() {
     run_validators(&mut world);
 
     assert_eq!(
-        world.get::<AttackTarget>(action),
-        Some(&AttackTarget(rival)),
+        attack_landing(&world, action),
+        Some(rival),
         "威胁最高的 rival 应当优先于玩家"
     );
     assert!(
-        world.get::<AttackTarget>(action) != Some(&AttackTarget(player)),
+        attack_landing(&world, action) != Some(player),
         "玩家只在没有更高威胁时才成为目标"
     );
+}
+
+
+// ── Landing 视图辅助（P1d：四个 target 组件合并为 Landing 枚举） ──
+
+fn move_landing(world: &World, action: Entity) -> Option<Position> {
+    match world.get::<Landing>(action) {
+        Some(Landing::Move(position)) => Some(*position),
+        _ => None,
+    }
+}
+
+fn attack_landing(world: &World, action: Entity) -> Option<Entity> {
+    match world.get::<Landing>(action) {
+        Some(Landing::Attack(target)) => Some(*target),
+        _ => None,
+    }
+}
+
+fn cast_landing(world: &World, action: Entity) -> Option<Entity> {
+    match world.get::<Landing>(action) {
+        Some(Landing::Cast { target, .. }) => Some(*target),
+        _ => None,
+    }
+}
+
+fn throw_landing(world: &World, action: Entity) -> Option<(usize, usize)> {
+    match world.get::<Landing>(action) {
+        Some(Landing::Throw { landing }) => Some(*landing),
+        _ => None,
+    }
 }

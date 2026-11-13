@@ -70,7 +70,7 @@ pub fn player_health(world: &World) -> Health {
 
 /// 在当前地图上找一个“可走且相邻”的方向；找不到返回 `None`。
 ///
-/// 判定与 [`crate::action::execution::movement::can_move_to`] 同源语义
+/// 判定与 [`crate::action::movement::moved_position`] 同源语义
 /// （越界 / 不可走 / 被占用都算不可走），但不检查对角 corner-cutting。
 pub fn find_walkable_step(world: &World, pos: (usize, usize)) -> Option<(isize, isize)> {
     let map = world.resource::<Map>();

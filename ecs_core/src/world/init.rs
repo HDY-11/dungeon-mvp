@@ -75,8 +75,8 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.insert_resource(PlayerSpawn((0, 0)));
     world.insert_resource(StairsPos((0, 0)));
     // 玩家行动请求：action 实体链路的输入口（C2 起）。旧链路的同名资源
-    // `action::generation::player::PlayerActionRequest` 在 C8 删除旧链路后消失。
-    world.insert_resource(crate::action::entity::PlayerActionRequest::default());
+    // `action::player_command::PlayerActionRequest` 在 C8 删除旧链路后消失。
+    world.insert_resource(crate::action::PlayerActionRequest::default());
 
     world.insert_resource(bevy_ecs::message::Messages::<AttackIntentEvent>::default());
     world.insert_resource(bevy_ecs::message::Messages::<AttackEvent>::default());
@@ -95,9 +95,9 @@ pub fn insert_core_resources(world: &mut World, config: WorldInitConfig) {
     world.add_schedule(build_init_schedule());
     world.add_schedule(build_core_schedule());
     // 行动链路（C7 起接进主循环）：生成 → 仲裁 → tick → **校验** → 落地 → completion。
-    world.add_schedule(crate::action::entity::build_action_poc_schedule());
+    world.add_schedule(crate::action::completion::build_action_poc_schedule());
     // 玩家行动挂载（生成 + 仲裁，不含推进）。
-    world.add_schedule(crate::action::entity::build_player_mount_schedule());
+    world.add_schedule(crate::action::completion::build_player_mount_schedule());
 
     log::info!("core 资源初始化完成: seed={}", config.map_seed);
 }

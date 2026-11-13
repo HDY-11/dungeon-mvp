@@ -8,8 +8,8 @@
 //! 旧的 `decide_monster_actions` / `mount_action` / `run_action_cycle`
 //! 已不再被本模块调用。
 
-use crate::action::entity::PlayerActionRequest;
-use crate::action::generation::player::PlayerCommand;
+use crate::action::PlayerActionRequest;
+use crate::action::player_command::PlayerCommand;
 use crate::components::Active;
 use crate::resources::TurnManager;
 use crate::schedule::{ActionPocSchedule, PlayerMountSchedule};
@@ -102,7 +102,7 @@ pub fn player_alive(world: &World) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::generation::player::PlayerCommand;
+    use crate::action::player_command::PlayerCommand;
     use crate::components::{Failure, Position};
     use crate::test_util::{
         find_blocked_step, find_walkable_step, player_entity, player_pos, stairs_entity_pos,

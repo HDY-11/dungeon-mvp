@@ -1,7 +1,7 @@
 //! `super`（`movement`）的测试：移动规则的纯函数部分。
 //!
 //! 这些测试**不建 `World`**：规则不碰组件才测得快、测得准（DESIGN ECS28 的红利）。
-//! 写入侧（谁真正改 `Position`）在 `apply_move` 的测试里。
+//! 写入侧（谁真正改 `Position`）在 `settle_action_system` 的测试里。
 
 use super::*;
 use crate::map::Tile;
@@ -146,12 +146,16 @@ fn plan_step_reports_why_a_move_is_blocked() {
     );
 }
 
-/// `can_move_to` / `moved_position` 必须是 `plan_step` 的两个视图，不能各自演化出
+/// `moved_position` 必须是 `plan_step` 的视图，不能各自演化出
 /// 第二套规则（那正是 ECS45 之前四份实现的病根）。
 #[test]
-fn the_three_entry_points_agree() {
-    let (mut map, mut occupancy) = scene(&[(10, 10), (11, 10), (10, 11), (11, 11)]);
-    // 再加一点不对称：让 (12,10) 成为墙、(11,11) 有占用
+fn the_entry_points_agree() {
+    let mut map = Map::new();
+    let mut occupancy = OccupancyMap::new();
+    for (x, y) in [(10usize, 10usize), (11, 10), (10, 11), (11, 11)] {
+        map.tiles[y][x] = Tile::Floor;
+    }
+    // 再加一点不对称：让 (12,10) 成为墙、(11,11) 有占用。
     map.tiles[10][12] = Tile::Wall;
     occupancy.set(11, 11, World::new().spawn_empty().id());
 
@@ -162,11 +166,6 @@ fn the_three_entry_points_agree() {
                 let plan = plan_step(&map, &occupancy, from, dx, dy);
                 let allowed = matches!(plan, MovePlan::Allowed(_));
                 assert_eq!(
-                    can_move_to(&map, &occupancy, x, y, dx, dy),
-                    allowed,
-                    "can_move_to 与 plan_step 不一致 @({x},{y}) 方向({dx},{dy})"
-                );
-                assert_eq!(
                     moved_position(&map, &occupancy, from, dx, dy).is_some(),
                     allowed,
                     "moved_position 与 plan_step 不一致 @({x},{y}) 方向({dx},{dy})"
@@ -174,5 +173,4 @@ fn the_three_entry_points_agree() {
             }
         }
     }
-    let _ = &mut map;
 }
