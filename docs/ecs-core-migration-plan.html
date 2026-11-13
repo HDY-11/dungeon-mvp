@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ecs_core 整理与架构优化 · 迁移方案</title>
+<style>
+  :root {
+    --bg:#f5f7fa; --panel:#fff; --ink:#1e2430; --muted:#5b6474; --line:#dde3ec;
+    --accent:#2f6fdb; --green:#1f8a4c; --amber:#a96800; --red:#b3261e; --violet:#6b4bb5;
+    --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  main{max-width:1200px;margin:0 auto;padding:40px 24px 90px}
+  h1{font-size:30px;margin:0 0 6px}
+  .sub{color:var(--muted);margin:0 0 18px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+  .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--muted)}
+  .chip b{color:var(--ink)}
+  h2{font-size:21px;margin:44px 0 8px;padding-bottom:8px;border-bottom:2px solid var(--line)}
+  h2 .num{color:var(--accent);margin-right:8px}
+  h3{font-size:16px;margin:24px 0 10px}
+  .lead{color:var(--muted);margin:6px 0 16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+  .card h4{margin:0 0 4px;font-size:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid}
+  .t-core{color:#1c4fa8;border-color:#bfd3f2;background:#e9f0fc}
+  .t-data{color:#1f7a54;border-color:#b9e3c9;background:#e8f6ee}
+  .t-play{color:#8a5a00;border-color:#eed6a8;background:#fdf3e1}
+  .t-ui{color:#6b4bb5;border-color:#dccdf2;background:#f2ecfb}
+  .t-doc{color:#5b6474;border-color:#d8dee9;background:#eef2f7}
+  .sub2{color:var(--muted);font-size:13px;margin:2px 0 8px}
+  ul{margin:6px 0 0;padding-left:18px}
+  li{margin:3px 0;font-size:13.5px}
+  .ref{font-family:var(--mono);font-size:12px;color:#3d4a63;background:#f1f4f9;border:1px solid #e3e8f1;border-radius:5px;padding:1px 5px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#eef2f7;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  /* timeline */
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:12px 0}
+  .phase h4{margin:0 0 2px;font-size:17px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .m{font-family:var(--mono);font-size:12px;color:#fff;background:var(--accent);border-radius:6px;padding:1px 8px}
+  .est{margin-left:auto;font-size:12.5px;color:var(--muted)}
+  .bar{height:8px;border-radius:99px;background:#e9edf4;margin:10px 0 12px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#5b8def,#2f6fdb)}
+  .phase .cols{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}
+  .phase h5{margin:0 0 4px;font-size:13px;letter-spacing:.3px;color:#39445a;text-transform:uppercase}
+  .phase ul{margin:2px 0 0}
+  .dep{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:8px 0 0}
+  .callout{background:#eef4ff;border:1px solid #cfdefa;border-left:4px solid var(--accent);border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14px}
+  .callout.warn{background:#fdf3e1;border-color:#eed6a8;border-left-color:var(--amber)}
+  .callout.stop{background:#fdeceb;border-color:#f0c0bc;border-left-color:var(--red)}
+  footer{margin-top:52px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+  code{font-family:var(--mono);font-size:12.5px}
+  @media (max-width:760px){.phase .cols{grid-template-columns:1fr}}
+  @media print{body{background:#fff}.card,.phase{box-shadow:none}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>ecs_core 整理与架构优化 · 迁移方案</h1>
+<p class="sub">目标不是重写，而是<strong>把已验证的行为固定住，再一点点把边界做清楚</strong>：内容数据、纯规则、ECS 运行时各归其位；每一阶段都可单独回退。</p>
+<div class="chips">
+  <span class="chip">基线 <b>0cd6679</b></span>
+  <span class="chip">测试 <b>30 目标 · 663 passed / 1 ignored</b></span>
+  <span class="chip">非测试源码 <b>≈12.4k 行</b></span>
+  <span class="chip">Component derive <b>70</b></span>
+  <span class="chip">消息类型 <b>9</b></span>
+  <span class="chip">SystemParam 聚合 <b>10</b></span>
+  <span class="chip">校验器 <b>7</b></span>
+  <span class="chip">核心结算链 <b>20 步</b></span>
+</div>
+
+<h2><span class="num">1</span>原则：先把"整理"定义成可验收的行为</h2>
+<div class="grid">
+  <div class="card">
+    <h4>四条硬规则</h4>
+    <ul>
+      <li><b>行为冻结优先</b>：纯整理阶段（M0–M2）不改变玩家可观察结果；以现有测试与 soak 作为回归基线。</li>
+      <li><b>一阶段一提交</b>：每阶段结束时工作树干净、docs_check 通过、gate 全绿；出问题 <code>git revert</code> 整阶段回退。</li>
+      <li><b>单一写者不变</b>：整理不能把"唯一定案/唯一落地/唯一装配"拆成两条路径。</li>
+      <li><b>不为拆分而拆分</b>：不新增 crate（除非判据满足）；不为并行而并行。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>验收口径</h4>
+    <ul>
+      <li>行为不变阶段：测试数只增不减，soak 6 种子「异常：无」。</li>
+      <li>新增能力阶段：先有测试与 DESIGN 条目，再有实现。</li>
+      <li>每个阶段写一行 <code>REFACTOR.md</code>；涉及取舍的写 DESIGN；数值只进 GAME.md。</li>
+      <li>架构守卫：<code>content/</code> 不得出现 <code>bevy_ecs</code>（元测试）；调度全部集中在三处注册文件。</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="num">2</span>现状体检：要整理什么</h2>
+<table>
+  <thead><tr><th>问题</th><th>证据</th><th>处理阶段</th></tr></thead>
+  <tbody>
+    <tr><td>内容数据与运行时类型混在同一批文件</td><td class="ref">item/container.rs · monster/template.rs · spell/mod.rs · rules/vitals.rs · map/mod.rs</td><td>M1</td></tr>
+    <tr><td>核心结算链是单条 20 系统元组，已到 bevy 上限</td><td class="ref">system/mod.rs build_core_schedule</td><td>M2</td></tr>
+    <tr><td>仲裁与候选实体耦合，落选者也要建实体再删</td><td class="ref">action/entity.rs 生成器 / 仲裁</td><td>M2</td></tr>
+    <tr><td>伤害后的连锁职责都压在 apply_damage 与固定链位上</td><td class="ref">system/combat.rs · monster/aggro.rs · 待做 on-hit</td><td>M3</td></tr>
+    <tr><td>怪物能力两处真源；状态施加硬编码蝎子</td><td class="ref">monster/template.rs abilities → spawn 映射；effect/status.rs</td><td>M3</td></tr>
+    <tr><td>地图=单张 80×60 是硬编码假设</td><td class="ref">map/mod.rs · world/init.rs · 测试钉死坐标</td><td>M4</td></tr>
+    <tr><td>存档只认层编号，不认区块；层尾门未做</td><td class="ref">src/save.rs SaveV5</td><td>M5</td></tr>
+    <tr><td>时间表、武器 AV、怪物攻击 AV 未统一</td><td class="ref">balance.rs · content/TIMING.md</td><td>M6</td></tr>
+    <tr><td>品质成长、气力、闪避/弱点击破、督军教程未落地</td><td class="ref">GAME.md · content/BESTIARY.md</td><td>M7</td></tr>
+    <tr><td>UI 三栏与焦点模型（方向选择 + Tab 锁定）未做</td><td class="ref">presentation/ui · tui/render · render-api v9 待升</td><td>M8</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">3</span>借道完成的架构优化（不是额外工程）</h2>
+<div class="grid">
+  <div class="card"><h4>A1 内容边界 <span class="tag t-data">M1</span></h4><div class="sub2">零 bevy 的 <code>content/</code> 模块 + 元测试守卫。</div><ul><li>注册表/词表/装配器获得独立解释空间；为将来 <code>dungeon-content</code> 留接口。</li><li>先不做 crate 拆分（判据见拆分研究）。</li></ul></div>
+  <div class="card"><h4>A2 调度分组 <span class="tag t-core">M2</span></h4><div class="sub2">20 系统单链改为 5 个命名 SystemSet 链（战斗 / 效果 / 成长 / 空间 / 收口）。</div><ul><li>突破 bevy 元组上限，后续加系统不用再嵌套妥协。</li><li>顺序仍集中在 <code>system/mod.rs</code>，可读性提升。</li></ul></div>
+  <div class="card"><h4>A3 仲裁归约化 <span class="tag t-core">M2</span></h4><div class="sub2">生成器写意图候选 → 纯 reduce 选胜者 → 单写者物化。</div><ul><li>落选者不再建实体；仲裁成为可单测纯函数。</li><li>故意不上并行/原子：当前规模收益为微秒级，确定性优先。</li></ul></div>
+  <div class="card"><h4>A4 相内订阅者 <span class="tag t-core">M3</span></h4><div class="sub2">统一伤害出口扩为"事件 + 消费者"：仇恨、武器经验、on-hit 从 <code>apply_damage</code> 抽出。</div><ul><li>保留流水线主干；只把扇出改成订阅，避免事件驱动世界。</li><li>每个消费者仍在固定相位内显式注册，顺序可测。</li></ul></div>
+  <div class="card"><h4>A5 单一能力来源 <span class="tag t-data">M3</span></h4><div class="sub2">怪物能力与状态施加表由模板数据统一生成，删硬编码。</div><ul><li>Ability → <code>Can*</code> 映射集中；物种→状态表进内容数据。</li><li>新增能力只改数据 + 一个枚举分支。</li></ul></div>
+  <div class="card"><h4>A6 地图配置化 <span class="tag t-play">M4</span></h4><div class="sub2">Map 运行期尺寸、Layer/Block 资源、切图服务。</div><ul><li>默认 80×60 保持现有测试；128×128 只在新区块测试启用。</li><li>单块模式先行，2 块验证后再铺开。</li></ul></div>
+  <div class="card"><h4>A7 存档差异最小化 <span class="tag t-play">M5</span></h4><div class="sub2">V6 存层/块坐标与访问集；区块内容默认"离开重置"。</div><ul><li>不存块内实体，只存必须跨块保留的玩家状态与开关。</li><li>层尾门作为区块坐标的特例，不新增独立门系统。</li></ul></div>
+  <div class="card"><h4>A8 时间表单一来源 <span class="tag t-play">M6</span></h4><div class="sub2">把 TIMING v2 的 AV/伤害系数落进 <code>balance.rs</code> 与数据表。</div><ul><li>武器 AV、怪物攻击 AV、效果时长从一处读取；模拟脚本复用同一套常量。</li></ul></div>
+  <div class="card"><h4>A9 契约与焦点状态 <span class="tag t-ui">M8</span></h4><div class="sub2">SceneFrame.focus 增加锁定态，契约升 v9。</div><ul><li>UI 状态继续留在 presentation，不进 ECS 世界。</li><li>headless 测试覆盖焦点移动/锁定/确认。</li></ul></div>
+</div>
+
+<div class="callout">
+  <p><b>为什么先整理内容边界（M1）再做玩法（M4–M8）：</b> 后续每个玩法阶段都会新增数据字段（状态/武器/怪物/地块）。如果内容定义还混在运行时文件里，每加一个字段都要动 <code>Component</code> 旁边的代码，等于把债务滚进新功能；先把边界立起来，后面每个阶段只碰自己那一层。</p>
+</div>
+
+<h2><span class="num">4</span>阶段计划（串行，每阶段独立可回退）</h2>
+<p class="lead">总计约 <b>15–20 个工作日</b>；M0–M2 为纯整理（行为冻结），M3 起按内容 v1.2 已定稿的范围落玩法，未定内容不实现。</p>
+
+<div class="phase">
+  <h4><span class="m">M0</span>基线冻结与护栏 <span class="est">0.5 天</span></h4>
+  <div class="bar"><i style="width:8%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>记录基线：<code>cargo test --workspace</code>、gate、soak 输出存 <code>docs/migration-baseline.md</code>。</li>
+        <li>在当前 HEAD 打标签 <code>pre-ecs-cleanup</code>（本地 tag），作为逐阶段回退点。</li>
+        <li>建立"架构守卫"骨架测试（先空跑，M1 填内容）。</li>
+        <li>清掉工作树遗留：<code>scripts/tmp_*.py</code>、旧输出文件。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>基线数字与 HEAD 记录一致。</li><li><code>git status</code> 干净。</li></ul>
+      <h5>回退</h5>
+      <ul><li>无代码变更，回退删除文档即可。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：无 · 产出：基线文档 + tag</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M1</span>内容边界：<code>content/</code> 模块 + 去混合文件 <span class="est">1.5 天</span></h4>
+  <div class="bar"><i style="width:12%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>新建 <code>ecs_core/src/content/</code>：<code>item.rs</code>（ItemTag/SlotAccept/SlotDef/ContainerDef/布局常量/Quality/ItemPart/WeaponSpec）、<code>registry.rs</code>（加载与校验）、<code>spell.rs</code>（SpellDef 等）、<code>monster.rs</code>（怪物卡数据）、<code>tile.rs</code>（Tile/TILE_PROPS）。</li>
+        <li>运行时侧保留：<code>Container</code> 组件、<code>MonsterKindId</code>、<code>MonsterStats</code>、系统、资源。</li>
+        <li><code>pub use content::*</code> 保持调用方路径不变；<code>item/registry.rs</code> 等旧路径做一层 re-export 过渡。</li>
+        <li>元测试：扫描 <code>content/**/*.rs</code> 不得出现 <code>bevy_ecs</code>；每个运行时类型对 <code>Component</code> 的 derive 必须在 content 之外。</li>
+        <li>顺带清理：<code>ItemKind</code> 残留引用/注释；<code>map/mod.rs</code> 的 Map 类型抽到 <code>map/map.rs</code>，资源包装留 <code>map/mod.rs</code>。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul>
+        <li>行为零变化：663 tests 全绿，soak 同种子同结果。</li>
+        <li>守卫测试能抓到人为加入的一行 <code>use bevy_ecs</code>（先故意放再删，证明有效）。</li>
+        <li><code>docs_check</code> PASS；REFACTOR 加行。</li>
+      </ul>
+      <h5>风险/回退</h5>
+      <ul><li>re-export 二义性：只允许旧路径 re-export，不复制定义。</li><li>整阶段 <code>git revert</code>。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M0 · 关联：拆分研究 Step 1（不新增 crate）</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M2</span>调度与仲裁整理 <span class="est">2 天</span></h4>
+  <div class="bar"><i style="width:14%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li><b>调度分组</b>：<code>build_core_schedule</code> 拆为五个命名 SystemSet：Combat（resolve/apply/damage funnel）、Effects（duration/poison/on-hit/expire）、Progression（death/exp/上限/回蓝）、Space（fov/memory/occupancy/cell effects）、Presentation（events）。每组内部 <code>.chain()</code>，组间仍集中排序。</li>
+        <li><b>仲裁归约化</b>：抽出纯函数 <code>select_winners(candidates) → grants</code>（优先级全序 + entity index 平局），单测钉死；再让生成器改写成意图候选，胜者才物化行动实体。</li>
+        <li>日志与 AV 行为保持不变：对照测试记录事件文案与 AV 序列。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul>
+        <li>663 tests 全绿；soak 输出逐行一致（除时间戳类字段）。</li>
+        <li>仲裁单测覆盖：同优先级、跨优先级、候选数为 0/1/多。</li>
+        <li>新增系统不再需要改元组长度。</li>
+      </ul>
+      <h5>风险/回退</h5>
+      <ul><li>意图组件化会动生成器与完成路径：先在内存中并行保留旧路径一个阶段，对比日志通过后再删旧路径。</li><li>回退点：M2a（仅分组）与 M2b（仅仲裁）各一提交。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M1（生成器会碰内容定义的类型） · 关联：模式地图"仲裁器/预算"与"流水线"</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M3</span>效果骨架：相内订阅 + on-hit/状态 <span class="est">3 天</span></h4>
+  <div class="bar"><i style="width:16%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>统一伤害出口保持；把武器经验、仇恨记录、on-hit 施加改为消费者系统（仍在固定相位）：<code>DamageTakenEvent</code> → threat / weapon_xp / on_hit。</li>
+        <li>新增 <code>OnHitEffect</code>（WeaponSpec 的 serde part，items schema 10）与状态：Stun / Bleed / SlowMove；复用 <code>EffectDuration</code>、<code>EffectModifier</code>。</li>
+        <li>物种→状态施加表进 content 数据，替换 <code>poison_apply_system</code> 的硬编码蝎子。</li>
+        <li>怪物攻击 AV 从 <code>MonsterTemplate.weapon_speed_ms</code> 读取；新增怪物 BasicAttack 生成器（当前攻击只在 Chase 到点决定）。</li>
+        <li>单体/范围标记进攻击结算，为闪避预留。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul>
+        <li>中毒/效果时长现有测试全绿；新增 on-hit/状态测试（触发概率、阈值、免疫、死亡时点）。</li>
+        <li>模拟校准（TIME v2）复跑一致。</li>
+      </ul>
+      <h5>风险/回退</h5>
+      <ul><li>顺序风险：on-hit 与死亡同轮的先手关系必须有测试钉住；消费者相位显式注册。</li><li>schema 10 与内容侧同步；旧档拒绝。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M1（内容数据）、M2（相位注册） · 关联：content/LAYER1 v1.2、TIMING v2、RULES R4–R7</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M4</span>层—区块地图（S1b + S2） <span class="est">3.5 天</span></h4>
+  <div class="bar"><i style="width:18%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>S1b：<code>Map/MapMemory/OccupancyMap/CellEffects</code> 支持运行期尺寸；默认 80×60，新游戏可传 128×128。</li>
+        <li>S2：区块生成 <code>(seed, floor, cx, cy)</code>、连接口 3 格通道、切图服务（同一层内换块）。</li>
+        <li>只开 2 块验证：0 号块表层洞窟 + 1 块水蚀洞窟；失败/未连接口回退旧地图。</li>
+        <li>渲染/相机/寻路/存档接口按块坐标调整，但不改表现契约字段（先复用）。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>默认 80×60 现有布局测试不改仍绿；128×128 由新测试覆盖。</li><li>2 块来回切 10 次无残留实体、RNG 可重放。</li><li>soak 扩成"跨块"场景后仍「异常：无」。</li></ul>
+      <h5>风险/回退</h5>
+      <ul><li>测试钉死坐标是一次性迁移税：分"默认尺寸"与"新尺寸"两套测试，避免全量重钉。</li><li>回退保留单块模式开关。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M1（地块数据） · 关联：DsnE30、content/MAP_BLOCKS.md</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M5</span>存档 V6 + 层尾门 <span class="est">1.5 天</span></h4>
+  <div class="bar"><i style="width:9%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>SaveV6：存 layer/block 坐标、当前块内玩家位置、已访问块集合、一次性开关/结构发现；块内实体不存（离开重置）。</li>
+        <li>层尾门放在最远块；门只作为坐标/结构，不新增独立系统。</li>
+        <li>旧档 V1–V5 明确拒绝并给出版本提示。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>存读档往返：跨块、切层、死亡边界；ContentVersion 校验仍生效。</li><li>重启后同 seed 同块布局一致。</li></ul>
+      <h5>风险/回退</h5>
+      <ul><li>存档格式变更：版本号 + 拒绝旧档，不做迁移。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M4 · 关联：DsnE19</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M6</span>时间表落地（TIMING v2） <span class="est">2 天</span></h4>
+  <div class="bar"><i style="width:12%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>玩家移动 400 AV/格、等待 800；武器 1700/2600/900/1900/3000 AV；速度回到 1.0。</li>
+        <li>武器伤害系数第六乘区（B 方案）与 <code>damage_multiplier</code> 进 schema 10。</li>
+        <li>怪物移动/攻击 AV 表落到模板；快速怪低伤害高频。</li>
+        <li>效果时长/眩晕/闪避窗口按 TIMING v2 重算并更新测试。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>模拟器复跑 TTK/DPS 与校准文档一致；soak 覆盖到新 AV 后仍通过。</li><li>GAME/内容文档口径同步。</li></ul>
+      <h5>风险/回退</h5>
+      <ul><li>AV 全表变动会改所有动作时序测试：用同一个 commit 批量更新，附对照表。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M3（怪物攻击 AV） · 关联：content/TIMING.md、docs/time-calibration.md</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M7</span>物理切片：品质成长 + 气力/闪避/弱点击破 + 督军教程 <span class="est">3.5 天</span></h4>
+  <div class="bar"><i style="width:21%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>品质 6 档成长：低品质升级更快、单级奖励更低（曲线进 balance + 武器数据）。</li>
+        <li>气力池（<code>Pool</code> 复用，上限 100、每 1000 AV 回 10）+ 闪避行动（第 3 原语）：按移速与提前量折算成功率；不可闪避范围攻击。</li>
+        <li>弱点击破：闪避成功后下一击无视部分防御 + 迟滞 + 流血；演示用 100%。</li>
+        <li>督军三件套（重斩 / 崩山斩单体 / 半血狂暴），闪避在小 boss 战授予。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>闪避窗口/成功率/失败惩罚测试；弱点击破结算顺序（破防→状态→死亡）。</li><li>督军 TTK 与承伤符合校准表；胜利路径可复现（固定 seed）。</li></ul>
+      <h5>风险/回退</h5>
+      <ul><li>第 3 个新原语：先做最小版本（单招），不做多招选择器。</li><li>数值失败时退回上一版常数（集中 balance）。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M3（状态）、M6（时间表） · 关联：content/BESTIARY §8.9/§10.7、RULES R7</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M8</span>UI 三栏细化 + 焦点模型 <span class="est">3 天</span></h4>
+  <div class="bar"><i style="width:18%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>输入：WASD 只移动；方向键专用于焦点选择；Tab 锁定/解锁；Enter 确认。</li>
+        <li>焦点单元：游戏页 2×2 四栏（摄像机不可锁定）；背包页 5 区域；锁定后方向键在单元内操作（列表/滚动/网格）。</li>
+        <li>渲染：未锁定虚线暗框、锁定亮框 + 标题「锁定」；信息/事件/状态栏内容补全。</li>
+        <li>契约升 v9：<code>SceneFrame.focus</code> 增加锁定态；headless 测试覆盖。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>input/ui/extract/tui 四层测试；手测键盘完整路径。</li><li>契约版本与文档一致；旧测试更新。</li></ul>
+      <h5>风险/回退</h5>
+      <ul><li>输入习惯变化：保留 hjkl/方向键旧路径到 M8 末，最终一次切换并写 GAME Gm14。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：M4（切图后可显示区块） · 关联：DsnA2/A4/A6、DsnX19</p>
+</div>
+
+<div class="phase">
+  <h4><span class="m">M9</span>收口：文档、测试分层与复盘 <span class="est">0.5 天</span></h4>
+  <div class="bar"><i style="width:6%"></i></div>
+  <div class="cols">
+    <div>
+      <h5>动作</h5>
+      <ul>
+        <li>REFACTOR/DESIGN/GAME/LESSONS 全量对账；docs_check；架构守卫测试归档。</li>
+        <li>大测试文件按特性拆分（entity_tests 2.4k → 生成/仲裁/完成三份），仅移动不改断言。</li>
+        <li>复盘：哪些整理真正降低了改动成本（文件数/提交数统计），更新架构文档。</li>
+      </ul>
+    </div>
+    <div>
+      <h5>验收</h5>
+      <ul><li>gate 10/10；soak 干净；工作树干净；打标签 <code>ecs-cleanup-done</code>。</li></ul>
+    </div>
+  </div>
+  <p class="dep">依赖：全部</p>
+</div>
+
+<h2><span class="num">5</span>顺序与并行</h2>
+<div class="callout">
+  <p><b>严格串行：</b>M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9。</p>
+  <p><b>可并行的小任务（同阶段内）：</b>文档更新、测试文件拆分、死代码清理可与相邻阶段并行做；但同一文件不允许两阶段同时写。</p>
+  <p><b>可省略/后置：</b>M5（存档 V6）可以等 M4 稳定后再做；M8 可以前移到 M6 之前，如果 UI 反馈优先；M7 可以拆成 M7a（品质+气力）与 M7b（闪避+督军）。</p>
+</div>
+
+<h2><span class="num">6</span>不做什么（明确边界）</h2>
+<div class="grid">
+  <div class="card"><h4>不做 crate 拆分 <span class="tag t-doc">按判据</span></h4><ul><li>M1 只做模块边界；`dungeon-rules` / `dungeon-content` 等 Step 2/3 判据满足再议。</li></ul></div>
+  <div class="card"><h4>不换并行/原子仲裁 <span class="tag t-doc">明确</span></h4><ul><li>只做归约化；确定性优先；规模收益微秒级。</li></ul></div>
+  <div class="card"><h4>不做纯发布-订阅主干 <span class="tag t-doc">明确</span></h4><ul><li>只在相位内做消费者；时间/仲裁/定案/落地仍走流水线。</li></ul></div>
+  <div class="card"><h4>不做未定稿内容 <span class="tag t-doc">内容约束</span></h4><ul><li>魔法（第二层）、友好生物、区块网 &gt;2 块、更多效果类型一律排在 M9 之后，按用户拍板再做。</li></ul></div>
+</div>
+
+<h2><span class="num">7</span>回退与追踪</h2>
+<table>
+  <thead><tr><th>阶段</th><th>回退方式</th><th>追踪文档</th></tr></thead>
+  <tbody>
+    <tr><td>M0</td><td>删基线文档</td><td>docs/migration-baseline.md</td></tr>
+    <tr><td>M1</td><td><code>git revert</code> 单提交（re-export 层保证旧路径仍在）</td><td>REFACTOR 行 + 架构守卫测试</td></tr>
+    <tr><td>M2</td><td>M2a / M2b 分开提交，可只回退后者</td><td>DESIGN 开放项（若引入意图候选语义）</td></tr>
+    <tr><td>M3–M7</td><td>每阶段一提交；数值集中在 balance/内容数据，可单点回退</td><td>DESIGN 条目 + GAME 口径</td></tr>
+    <tr><td>M8</td><td>保留旧键位路径到阶段末，未完成不回退</td><td>DsnX19 补充 + Gm14</td></tr>
+    <tr><td>M9</td><td>打 tag <code>ecs-cleanup-done</code></td><td>LESSONS 复盘</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <p><b>最大风险不是技术，是内容与实现的节奏：</b>M3–M7 的每个数据字段都依赖内容 v1.2 已定稿的条目。若内容侧在阶段中途改口径，一律先记进 <code>content/</code> 并排到 M9 之后，不在迁移中间改 schema；否则会同时丢"整理"与"功能"两条线的可控性。</p>
+</div>
+
+<footer>
+  依据：2026-11-12/13 的代码度量、模式识别（docs/ecs-core-patterns.html）、拆分研究（docs/ecs-core-split.md）、TIMING v2 校准与 content v1.2 定稿。估时为单人工作日的粗估，含测试与文档；每阶段结束必须工作树干净、gate 全绿。
+</footer>
+
+</main>
+</body>
+</html>
