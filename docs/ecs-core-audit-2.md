@@ -138,3 +138,47 @@ P1 目标：行为零变化的整理。全部落地，`cargo test -p ecs_core` *
 阈值，按用户要求**不加 `#[allow]`**，改为 `type Candidates<'w,'s>` 别名。
 
 P2 起步：`archive/dungeon-core|action|world|render` 已移出 `[workspace] members`，`cargo test --workspace` 由 30 组降为 **22 组**、活跃测试 **625 passed / 1 ignored**（archive 自身旧测试不再计入）；回查历史时在 `archive/<crate>` 下单独构建。
+
+## 8. 死代码检测工具与跨 crate 扫描（2026-11-13，用户 m14595）
+
+用户要求「用 Rust 命令行工具检查死代码」。结论：**单 crate 有官方 lint，跨 crate 的 `pub` 死代码没有稳定官方工具**，可用第三方工具补位。
+
+| 工具 | 检测对象 | 状态/结论 |
+|---|---|---|
+| `rustc -W dead_code` / clippy | 单 crate 内未用私有项 | 内置可用；对 `pub` 项直接失效（本项目 18 个 glob re-export 进一步掩盖） |
+| `cargo-machete` 0.9.2 | **未使用的 Cargo 依赖** | 已安装并运行（见下） |
+| `warnalyzer` | **跨 crate 未使用的 `pub` API** | 最贴近需求；stable 走 rust-analyzer scip 后端，需 `rustup component add rust-analyzer`。本机下载 >10 分钟未完成，已取消，**未跑通**；网络恢复后可补 |
+| `cargo-udeps` | 未使用依赖 | 需 nightly 工具链，本机只有 stable |
+| `cargo-fallow` / `unused-pub` | 可见性/未用 pub（WIP） | 未成熟，暂不引入 |
+
+`cargo machete .` 结果与处置：
+
+- `dungeon-app`（根 crate）：`utils` 未使用 → 已从根 `Cargo.toml` 删除（`f8c28d3`；`utils` 仍被 `tui` 使用，crate 保留在 workspace）。
+- `terrain-forge`：`bracket-noise` 未使用 → 属独立成员/submodule，本仓库不动。
+- `archive/dungeon-action`：`rand`；`archive/dungeon-world`：`symmetric-shadowcasting` → 已移出 workspace，仅记录。
+
+跨 crate `pub` 项的替代方案：本次用**临时启发式脚本**（189 个 `.rs`、1074 个 `pub` 项，统计全仓标识符出现次数；脚本已删）得到 55 个疑似项。排除 `terrain-forge` 与明显误报后，活跃 crate 的候选如下（行号为当时文件；显示为「定义处」）：
+
+| crate | 项 | 位置 |
+|---|---|---|
+| `ecs_core` | `LOW_HP_RATIO` | `src/balance.rs:44` |
+| `ecs_core` | `IgnoresSource::covers` | `src/effect/mod.rs:77` |
+| `ecs_core` | `ItemDef::has_behavior` | `src/item/registry.rs:311` |
+| `ecs_core` | `Map::is_away_from_spawn` | `src/map/mod.rs:136` |
+| `ecs_core` | `GameRng::random_f32` | `src/resources.rs:40` |
+| `dungeon-app` | `dev_log`、`tui_plugin` | `src/lib.rs:407/412`（前端接缝后遗留） |
+| `presentation` | `with_follow` | `src/extract/mod.rs:92` |
+| `render-api` | `UiTextLine::with_style`、`TileInfo::with_tile` | `src/ui.rs:126/261` |
+| `tui` | `canvas::{dirty_cells,clear_dirty}`、`catalog::remembered_fg`、`color::{to_ratatui,tuple_to_ratatui,rgb_to_ratatui}`、`layout::{bar,truncate_name,backpack_window_start}`、`state::{ThrowPreview,LookCursor,InventoryUI,RenderMemory}`、`title::draw_title` | 对应文件 |
+| `sys` | `files::{read_bytes,write_bytes_atomic}`、`input::{read_key_blocking,drain_keys}` | 对应文件 |
+| `utils` | `color::entity_color`、`grid::from_cells` | 对应文件 |
+
+误报来源（脚本不覆盖）：宏展开、`pub use x::*` 的 glob 引用、trait impl、入口点、`cfg(test)` 使用。因此这些是**待人工确认的候选**，不是直接删除清单。
+
+处置建议（按风险从低到高）：
+
+1. **A 级（应用层遗留，建议立即删）**：`src/lib.rs` 的 `dev_log`/`tui_plugin`；`tui/src/state.rs` 的 `ThrowPreview`/`LookCursor`/`InventoryUI`/`RenderMemory`（旧页栈/渲染状态，前端接缝后已无消费者）。
+2. **B 级（`ecs_core` 内部未用方法，随 P2 清理）**：`LOW_HP_RATIO`、`covers`、`has_behavior`、`is_away_from_spawn`、`random_f32`。
+3. **C 级（`render-api`/`sys`/`utils` 的公共 API）**：先确认它们是否是给未来前端/工具预留的接口；若是，补文档/测试把它变成"有意保留"，否则删除。
+
+工具缺口：`warnalyzer` 跑通后可以给出跨 crate 的权威列表，届时以上启发式清单应被它替换/校正。
