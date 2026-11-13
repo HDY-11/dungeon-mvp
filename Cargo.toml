@@ -12,7 +12,6 @@ ratatui = "0.30.2"
 ecs_core = { path = "ecs_core" }
 presentation = { path = "presentation" }
 render-api = { workspace = true }
-utils = { path = "utils" }
 sys = { path = "sys" }
 tui = { path = "tui" }
 bincode = "1.3"
