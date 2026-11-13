@@ -104,8 +104,9 @@ sys/            日志与终端按键来源
 src/            dungeon-app：App、Frontend、main
 tests/          端到端 / 存档 / 前端接缝测试
 content/        内容设计草案（世界观/生物/构筑，非代码事实源）
-docs/           架构图（architecture-map.html）、bevy 0.20 升级评估
+docs/           当前图纸/评估/计划（入口：docs/README.md）
 archive/        旧实现（只作对照，不在门禁内）
+history/        已失效/被取代的文档（检索用，不是事实源）
 terrain-forge/  地图生成 git submodule
 ```
 
@@ -121,7 +122,8 @@ terrain-forge/  地图生成 git submodule
 | [REFACTOR.md](REFACTOR.md) | 本分支**还没做完的计划**（做完的已折进 DESIGN/ISSUES） | 本分支开发者 |
 | [RULE.md](RULE.md) / [PROTOCOLS.md](PROTOCOLS.md) | 文档维护规则 / 操作流程与模板 | 所有人 |
 | [content/README.md](content/README.md) | 内容设计草案与待拍板清单 | 内容设计 |
-| [docs/architecture-map.html](docs/architecture-map.html) | 实体/组件/系统关系图（浏览器直接打开） | 新人 / 架构评审 |
+| [docs/README.md](docs/README.md) | 当前文档索引（图纸 / 评估 / 计划 / 契约） | 新人 / 架构评审 |
+| [history/README.md](history/README.md) | 已归档文档清单（被取代 / 快照 / 一次性研究） | 追溯历史 |
 
 **归属判据一句话：** 形状进 `DESIGN`，值进 `GAME`，问题进 `ISSUES`，教训进 `LESSONS`
 （详见 [DESIGN DsnX16](DESIGN.md) 与 [RULE.md §七](RULE.md)）。

@@ -1280,7 +1280,7 @@ DsnE13（身份判据：索引还是实体）| DsnE8（AV：武器改基础耗�
    按 DsnE27 删除），存档升到 V5（见 DsnE19）。箱类容器（放置/打开）仍未做。
 
 **关联：** DsnE16（物品规则层现状）| DsnE13（身份判据：索引还是实体）| DsnE12 / ECS42（两条归属关系）|
-DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家容器树"）| `ecs_core/RESEARCH-item-systems.md`
+DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家容器树"）| `history/RESEARCH-item-systems.md`
 **落地记录（2026-11，第①片）：**
 - **物品实体化**：`Item { id }` + `Amount`（一堆一个实体），`spawn_ground_item` 是"物品出现在世界里"的唯一入口；
 - **身体 = 容器**：玩家挂 `BODY`（七部位），旅者行囊作为**一件物品**塞在「背包」槽里、自带 12 格容器；
@@ -1377,7 +1377,7 @@ DsnE17（层内容由 `(seed, floor)` 重建，决定了"存档只需存玩家�
 **关联：** DsnX10（bincode 快照）| DsnE17 / DsnX17（层内容由 seed 重建）|
 DsnE18（容器是数据，可直接摊平）| DsnE16（物品注册表）| DsnE22 阶段 ④（实例差异形状）|
 DsnE24 阶段 ②（武器养成进度）|
-`ecs_core/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
+`history/RESEARCH-containers-save.md` §3（投影 vs bevy_save/DynamicScene 的取舍、版本放文件头的原因）
 <!-- &/DsnE19 -->
 
 <!-- &DsnE20  重量：每单位重量的注册表数据 + 行囊载重上限；装得下 = 有空槽 且 重量不超；派生不存档 -->

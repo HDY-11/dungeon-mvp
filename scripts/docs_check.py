@@ -27,6 +27,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOC_GLOBS = [
     "*.md", "ecs_core/*.md", "presentation/*.md", "render-api/*.md",
     "tui/*.md", "sys/*.md", "utils/*.md", "archive/*.md", "archive/*/*.md",
+    "docs/*.md", "history/*.md",
 ]
 
 CURRENT_PREFIXES = ("DsnX", "DsnE", "DsnP", "DsnA", "DsnT", "DsnS", "DsnU",
