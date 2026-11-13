@@ -409,7 +409,7 @@
 <table>
   <thead><tr><th>阶段</th><th>回退方式</th><th>追踪文档</th></tr></thead>
   <tbody>
-    <tr><td>M0 基线</td><td>归档基线文档到 history/migration-baseline.md；tag 保留</td><td>../history/migration-baseline.md</td></tr>
+    <tr><td>M0 基线</td><td>归档基线文档到 history 分支的 history/migration-baseline.md（检索用）；tag 保留</td><td>history 分支的 history/migration-baseline.md（检索用）</td></tr>
     <tr><td>P0</td><td>revert <code>7389c5d</code></td><td>docs/ecs-core-audit-2.md</td></tr>
     <tr><td>P1</td><td>a–e 分 5 提交，可逐步回退</td><td>REFACTOR 行 + Landing/仲裁测试</td></tr>
     <tr><td>P2</td><td>显式导出与拆文件分开提交</td><td>REFACTOR 行 + 引用计数脚本</td></tr>
@@ -426,7 +426,7 @@
 </div>
 
 <footer>
-  依据：2026-11-13 的引用计数与全文审计（docs/ecs-core-audit-2.md）、模式识别（docs/ecs-core-patterns.html）、拆分研究（../history/ecs-core-split.md）、TIMING v2 校准、content v1.2。P0 提交 7389c5d；回退基线 tag <code>pre-ecs-cleanup</code> @ f9934b7。估时为单人工作日粗估，含测试与文档；每阶段结束必须工作树干净、clippy 与 gate 通过。
+  依据：2026-11-13 的引用计数与全文审计（docs/ecs-core-audit-2.md）、模式识别（docs/ecs-core-patterns.html）、拆分研究（history 分支的 history/ecs-core-split.md（检索用））、TIMING v2 校准、content v1.2。P0 提交 7389c5d；回退基线 tag <code>pre-ecs-cleanup</code> @ f9934b7。估时为单人工作日粗估，含测试与文档；每阶段结束必须工作树干净、clippy 与 gate 通过。
 </footer>
 
 </main>
